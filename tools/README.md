@@ -23,6 +23,8 @@ swgtool iff <archive.tre> <path>
 swgtool iff-check <dir>
 swgtool export-character <dir> <out_dir> --name <name> --sat <path.sat>... [--weapon <path.lod>]
                          [--bf2-lvl <ingame.lvl> --bf2-bank <bank> --anim <name>...]
+swgtool bake-terrain <dir> <out_prefix> --trn <path.trn> --center <x> <z> --samples <n> --spacing <m>
+                     [--snapshot <path.ws>]
 ```
 
 - **list**: print every file in a TRE archive (uncompressed size, stored size, compressed flag, path).
@@ -44,6 +46,15 @@ swgtool export-character <dir> <out_dir> --name <name> --sat <path.sat>... [--we
   With `--bf2-lvl`, `--bf2-bank`, and one or more `--anim`, Battlefront II animations are retargeted onto the character and written as glTF animations, e.g. `--bf2-lvl <Battlefront>\GameData\Data\_lvl_pc\ingame.lvl --bf2-bank human_0 --anim human_rifle_stand_idle_emote_full --anim human_rifle_stand_runforward`. Clips play in place.
 
   Not handled yet: occlusion zones (hiding body triangles under armor), customization (skin palettes, blend shapes), and LOD levels below the most detailed.
+
+- **bake-terrain**: evaluate a planet's procedural terrain (`.trn`) over a square region and write `<out_prefix>.r32` (float32 heights, row-major, rows along +Z), `<out_prefix>.json` (grid origin, spacing, height range), and `<out_prefix>_preview.png` (shaded relief, north up). With `--snapshot`, compares the baked heights against the world snapshot's placed objects. Example, 4 km around Mos Eisley at 4 m:
+
+  ```powershell
+  swgtool bake-terrain E:\swg_te\extracted\Star_Wars_files game\imported_assets\terrain\tatooine_mos_eisley `
+    --trn terrain/tatooine.trn --center 3500 -4800 --samples 1025 --spacing 4 --snapshot snapshot/tatooine.ws
+  ```
+
+  The fractal noise is a stand-in for SWG's own, so dune-scale detail is approximate (see `swg/terrain.h`).
 
 Supported archives: TRE `0005` (retail discs) and plain `0006`. SWG Restoration's `0006` archives encrypt their file data and are reported as unsupported. We don't decrypt them.
 

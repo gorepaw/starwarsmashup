@@ -10,9 +10,11 @@ add_library(swm_swg STATIC
   swg/skeleton.cpp
   swg/skinned_mesh.cpp
   swg/static_mesh.cpp
+  swg/terrain.cpp
   swg/tre_archive.cpp
   swg/tre_library.cpp
-  swg/tre_scan.cpp)
+  swg/tre_scan.cpp
+  swg/world_snapshot.cpp)
 target_include_directories(swm_swg PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(swm_swg PRIVATE swm::zlib)
 swm_target_warnings(swm_swg)
@@ -21,7 +23,7 @@ add_executable(swgtool swgtool/main.cpp)
 target_link_libraries(swgtool PRIVATE swm_swg)
 swm_target_warnings(swgtool)
 
-foreach(test iff_test image_test manifest_test sha256_test skeleton_test tre_archive_test)
+foreach(test iff_test image_test manifest_test sha256_test skeleton_test terrain_test tre_archive_test)
   add_executable(${test} swg/tests/${test}.cpp)
   target_link_libraries(${test} PRIVATE swm_swg swm::zlib)
   swm_target_warnings(${test})

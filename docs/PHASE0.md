@@ -39,8 +39,12 @@ Provisional decisions:
 - [ ] Determine archive override order (which copy of a path the client loads)
 - [ ] Allowlist extraction: use only files matching the manifest, from any install
 - [x] ~~Measure SWG Restoration coverage~~: not possible. Restoration encrypts its archives, and we don't decrypt them. `swgtool coverage` exists for other installs.
-- [ ] Bake Tatooine (or one region of it) from `.trn` to heightmap and splat maps
-- [ ] Render it in Terrain3D at double precision
+- [x] Bake a Tatooine region from `.trn` to a heightmap (`swgtool bake-terrain`). A 4 km region around Mos Eisley bakes in about 2 s. Checked against the 1,905 objects in the world snapshot (`.ws`): median height error 0.00 m, 77% within 1 m.
+- [x] Render it at its real world coordinates in the double-precision engine (generated mesh, `game/tools/render_terrain.gd`)
+- [ ] Splat maps from the shader affectors (heights only so far)
+- [ ] Exact fractal noise: the generator uses a stand-in gradient noise, so fine detail differs from the original (see [Architecture](ARCHITECTURE.md#asset-pipeline))
+- [ ] Roads (`AROA`), and direction and shader filters (currently ignored)
+- [ ] Terrain3D integration (needs a double-precision build of the addon)
 - [ ] Import one `.pob` building and walk through its interior
 
 ## 4. Networked controller

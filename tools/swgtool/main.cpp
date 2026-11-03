@@ -19,6 +19,9 @@
 #include "retarget/retarget.h"
 #include "swg/character_export.h"
 #include "swg/iff.h"
+#include "swg/image.h"
+#include "swg/terrain.h"
+#include "swg/world_snapshot.h"
 #include "swg/manifest.h"
 #include "swg/tre_archive.h"
 #include "swg/tre_scan.h"
@@ -37,6 +40,8 @@ constexpr const char* usage = R"(usage:
   swgtool iff-check <dir>
   swgtool export-character <dir> <out_dir> --name <name> --sat <path.sat>... [--weapon <path.lod>]
                            [--bf2-lvl <ingame.lvl> --bf2-bank <bank> --anim <name>...]
+  swgtool bake-terrain <dir> <out_prefix> --trn <path.trn> --center <x> <z> --samples <n> --spacing <m>
+                       [--snapshot <path.ws>]
 )";
 
 // Returns the value following `flag` in args, or an empty string.
@@ -472,6 +477,97 @@ int cmd_export_character(const std::vector<std::string>& args) {
     return 0;
 }
 
+// Shaded relief with a sand-to-rock tint, for eyeballing a bake.
+ImageRgba hillshade(const HeightGrid& grid) {
+    const auto [lo_it, hi_it] = std::minmax_element(grid.heights.begin(), grid.heights.end());
+    const float lo = *lo_it, range = std::max(*hi_it - *lo_it, 1.0f);
+    const Vec3 light = normalized(Vec3{-1, 2, -1});
+    ImageRgba image{uint32_t(grid.samples), uint32_t(grid.samples), {}};
+    image.pixels.resize(size_t(grid.samples) * size_t(grid.samples) * 4);
+    for (int row = 0; row < grid.samples; ++row) {
+        for (int column = 0; column < grid.samples; ++column) {
+            const int c0 = std::max(column - 1, 0), c1 = std::min(column + 1, grid.samples - 1);
+            const int r0 = std::max(row - 1, 0), r1 = std::min(row + 1, grid.samples - 1);
+            const float dx = (grid.at(c1, row) - grid.at(c0, row)) / float((c1 - c0) * grid.spacing);
+            const float dz = (grid.at(column, r1) - grid.at(column, r0)) / float((r1 - r0) * grid.spacing);
+            const float shade = std::clamp(dot(normalized(Vec3{-dx, 1, -dz}), light), 0.15f, 1.0f);
+            const float t = (grid.at(column, row) - lo) / range;
+            const float base[3] = {0.85f - 0.3f * t, 0.72f - 0.3f * t, 0.5f - 0.15f * t};
+            // Image rows run top to bottom; put +Z (north) at the top.
+            uint8_t* p = &image.pixels[(size_t(grid.samples - 1 - row) * size_t(grid.samples) + size_t(column)) * 4];
+            for (int ch = 0; ch < 3; ++ch) {
+                p[ch] = uint8_t(std::clamp(base[ch] * shade * 255.0f, 0.0f, 255.0f));
+            }
+            p[3] = 255;
+        }
+    }
+    return image;
+}
+
+int cmd_bake_terrain(const std::vector<std::string>& args) {
+    const std::string trn = option(args, "--trn");
+    const auto center = std::find(args.begin(), args.end(), "--center");
+    const std::string samples = option(args, "--samples"), spacing = option(args, "--spacing");
+    if (args.size() < 2 || trn.empty() || center == args.end() || center + 2 >= args.end() || samples.empty() ||
+        spacing.empty()) {
+        std::cerr << usage;
+        return 2;
+    }
+    const double cx = std::stod(*(center + 1)), cz = std::stod(*(center + 2));
+    TreLibrary library(args[0]);
+    const ProceduralTerrain terrain = parse_procedural_terrain(library.read(trn));
+    std::cerr << std::format("{}: {} top-level layers, {} fractals\n", trn, terrain.layers.size(),
+                             terrain.fractals.size());
+
+    const HeightGrid grid = bake_heights(terrain, cx, cz, std::stoi(samples), std::stod(spacing));
+    const auto [lo, hi] = std::minmax_element(grid.heights.begin(), grid.heights.end());
+
+    const std::filesystem::path prefix = args[1];
+    std::filesystem::create_directories(prefix.parent_path());
+    std::ofstream raw(prefix.string() + ".r32", std::ios::binary);
+    raw.write(reinterpret_cast<const char*>(grid.heights.data()), std::streamsize(grid.heights.size() * 4));
+    std::ofstream meta(prefix.string() + ".json", std::ios::binary);
+    meta << std::format(
+        "{{\n  \"source\": \"{}\",\n  \"samples\": {},\n  \"spacing\": {},\n  \"origin_x\": {},\n  \"origin_z\": {},\n"
+        "  \"min_height\": {},\n  \"max_height\": {},\n  \"format\": \"float32 little-endian, row-major, rows along +Z\"\n}}\n",
+        trn, grid.samples, grid.spacing, grid.origin_x, grid.origin_z, *lo, *hi);
+    write_png(prefix.string() + "_preview.png", hillshade(grid));
+    std::cerr << std::format("heights {:.1f} .. {:.1f} m; wrote {}.r32/.json/_preview.png\n", *lo, *hi, prefix.string());
+
+    const std::string snapshot_path = option(args, "--snapshot");
+    if (!snapshot_path.empty()) {
+        const double far_x = grid.origin_x + grid.spacing * (grid.samples - 1);
+        const double far_z = grid.origin_z + grid.spacing * (grid.samples - 1);
+        std::vector<double> errors;
+        for (const SnapshotNode& node : parse_world_snapshot(library.read(snapshot_path))) {
+            if (node.parent_id != 0 || node.position.x < grid.origin_x || node.position.x > far_x ||
+                node.position.z < grid.origin_z || node.position.z > far_z) {
+                continue;
+            }
+            errors.push_back(node.position.y - grid.sample_world(node.position.x, node.position.z));
+        }
+        if (errors.empty()) {
+            std::cerr << "no snapshot objects in the region\n";
+        } else {
+            std::vector<double> magnitudes;
+            for (const double e : errors) {
+                magnitudes.push_back(std::abs(e));
+            }
+            std::sort(magnitudes.begin(), magnitudes.end());
+            const auto within = [&](double limit) {
+                return 100.0 * double(std::upper_bound(magnitudes.begin(), magnitudes.end(), limit) - magnitudes.begin()) /
+                       double(magnitudes.size());
+            };
+            std::cerr << std::format(
+                "snapshot check: {} world objects; |object y - terrain| median {:.2f} m, 90th pct {:.2f} m; "
+                "within 1 m {:.0f}%, within 3 m {:.0f}%\n",
+                magnitudes.size(), magnitudes[magnitudes.size() / 2], magnitudes[magnitudes.size() * 9 / 10], within(1.0),
+                within(3.0));
+        }
+    }
+    return 0;
+}
+
 } // namespace
 
 int main(int argc, char** argv) {
@@ -502,6 +598,9 @@ int main(int argc, char** argv) {
         }
         if (command == "export-character") {
             return cmd_export_character(args);
+        }
+        if (command == "bake-terrain") {
+            return cmd_bake_terrain(args);
         }
     } catch (const std::exception& e) {
         std::cerr << "error: " << e.what() << "\n";

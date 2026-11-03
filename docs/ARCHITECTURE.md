@@ -80,7 +80,10 @@ Battlefront's level/world format is **not** imported: battlefields are built on 
 JSON sidecars carry the data glTF can't: ODF stats, Galaxies customization variables and palettes, POB portal/cell graphs.
 
 Known hard problems:
-- **Terrain:** bake `.trn` planets to heightmaps and splat maps for Terrain3D first. Port the procedural evaluator later only if needed.
+- **Terrain:** Galaxies planets have no stored heightmaps. Heights come from a procedural rule tree in the `.trn` file (layers of boundaries, filters, and affectors). `tools/swg/terrain` implements that evaluator and bakes regions to heightmaps.
+  - The rule structure, parameters, and operations are decoded from the files. Operation codes were inferred from layer names, e.g. "START-flat" uses op 0 = replace.
+  - The fractal noise is a stand-in: the parameters are SWG's, but the noise function isn't, so dune-scale detail differs from the original. Everything set by boundaries and constant affectors (city plateaus, mesas, flattened areas) matches: baked heights agree with the world snapshot's placed objects (median error 0.00 m around Mos Eisley).
+  - Matching the original noise exactly would mean recovering SWG's noise and random-number functions. That's a separate decision.
 - **Skeletons:** the two games use different rigs. Battlefront's shooter animations are retargeted onto the Galaxies skeleton (`all_b.skt`) offline, in `tools/retarget/`, not with Godot's import-time humanoid retargeting. That keeps the mapping, rest-pose alignment, and weapon-hardpoint handling in our own tested code. For each mapped joint, the Battlefront bone's world rotation away from its rest pose is applied to the Galaxies rest pose after aligning bone directions. Battlefront's data is mirrored in X relative to Galaxies.
 - **Customization:** rebuild Galaxies' `.mgn` blend-shape and palette-hue system in Godot.
 
