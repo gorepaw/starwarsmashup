@@ -1,0 +1,4 @@
+* text=auto
+
+# Manifests are data compared byte-for-byte across machines.
+tools/manifests/*.tsv text eol=lf

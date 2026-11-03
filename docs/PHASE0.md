@@ -6,7 +6,8 @@ Goal: prove the project is technically viable. If all five spikes work, everythi
 
 - [ ] Build the Godot 4 editor from source with `precision=double` (pin the version)
 - [ ] Build godot-cpp with matching precision
-- [ ] CMake project with `core/` (static lib, no Godot) and `godot/` (GDExtension DLL)
+- [x] Root CMake project with presets, zlib via FetchContent, tests via CTest (`tools/` only so far)
+- [ ] Add `core/` (static lib, no Godot) and `godot/` (GDExtension DLL)
 - [ ] "Hello world" GDExtension node that calls into `core/`
 - [ ] Unit test target for `core/`
 - [ ] Confirm hot reload works on Windows
@@ -21,11 +22,12 @@ Goal: prove the project is technically viable. If all five spikes work, everythi
 ## 3. Galaxies world
 
 - [x] Extract the Total Experience reference from the disc cabinets (unshield)
-- [ ] TRE archive reader (disc-era and final-client formats, including TOC indexes)
+- [x] TRE archive reader: `0005` verified on the disc set; plain `0006` supported but not yet tested on real data
 - [ ] IFF chunk parser
-- [ ] Build the Total Experience reference manifest (path + SHA-256 of uncompressed contents), commit to `tools/manifests/`
+- [x] Build the Total Experience reference manifest (path + SHA-256 of uncompressed contents), commit to `tools/manifests/`
+- [ ] Determine archive override order (which copy of a path the client loads)
 - [ ] Allowlist extraction: use only files matching the manifest, from any install
-- [ ] Measure SWG Restoration coverage: what percentage of baseline files match byte-for-byte, and which are missing
+- [x] ~~Measure SWG Restoration coverage~~: not possible. Restoration encrypts its archives, and we don't decrypt them. `swgtool coverage` exists for other installs.
 - [ ] Bake Tatooine (or one region of it) from `.trn` to heightmap and splat maps
 - [ ] Render it in Terrain3D at double precision
 - [ ] Import one `.pob` building and walk through its interior
