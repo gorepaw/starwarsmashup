@@ -14,13 +14,13 @@ Goal: prove the project is technically viable. If all five spikes work, everythi
 
 ## 2. Character: Galaxies body, Battlefront animation
 
-Characters are Galaxies models (for the full Galaxies character creator). Battlefront II supplies animations, weapons, vehicles, props, effects, and sounds. Assets are read from the munged `.lvl` files every Battlefront II owner has, not from the Mod Tools.
+Characters and equipment are Galaxies models (for the full Galaxies character creator and loadout variety). Battlefront II supplies animations, weapon handling, effects, sounds, vehicles, and props. Assets are read from the munged `.lvl` files every Battlefront II owner has, not from the Mod Tools.
 
 - [x] Battlefront `ucfb` (`.lvl`) container reader: `bf2tool`; all 191 `.lvl` files in the Steam install parse
 - [ ] Galaxies skinned character → glTF: skeleton (`.skt`), skinned meshes (`.mgn`), appearance (`.sat`/`.lmg`); one human in armor
 - [ ] Battlefront skeleton (`skel`) and animation (`zaa_`/`zaf_`) decoding: idle and run
 - [ ] Retarget Battlefront animations onto the Galaxies skeleton (Godot humanoid retargeting)
-- [ ] Battlefront weapon model (`modl`) and textures (`tex_`) → glTF, attached to the hand
+- [ ] Galaxies weapon model → glTF, attached to the character's hand hardpoint
 - [ ] Generated materials with modern lighting, source files untouched
 
 ## 3. Galaxies world
@@ -50,4 +50,4 @@ Characters are Galaxies models (for the full Galaxies character creator). Battle
 
 ## Exit criteria
 
-A Galaxies character, lit and holding a Battlefront blaster, runs with Battlefront animations across Galaxies' Tatooine next to a second networked player, walks into a Galaxies building, and is still there after restarting the server.
+A Galaxies character, lit and holding a Galaxies blaster, runs with Battlefront animations across Galaxies' Tatooine next to a second networked player, walks into a Galaxies building, and is still there after restarting the server.

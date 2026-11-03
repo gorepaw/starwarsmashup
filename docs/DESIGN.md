@@ -42,6 +42,7 @@ Battlefront's combat never had a persistent world behind it. Galaxies' world nev
 
 Galaxies has hundreds of weapons and dozens of armor sets. Battlefront has about five weapons per class. The goal is Galaxies' variety without stat gaps that decide fights before they start.
 
+- **Models from Galaxies, feel from Battlefront:** every weapon is a Galaxies model. Battlefront II defines how it handles, plus its effects and sounds.
 - **Archetypes:** each weapon maps to a Battlefront handling type (automatic blaster, burst rifle, sniper, scatter, launcher, etc.). The archetype decides how it feels: fire mode, projectile, overheating.
 - **Sidegrades:** weapons within an archetype trade off rate of fire, damage, heat, accuracy, and range within a narrow band. Different, not strictly better.
 - **Quality:** crafted quality (later) moves stats slightly within the band. This is where Galaxies-style experimentation lives.
