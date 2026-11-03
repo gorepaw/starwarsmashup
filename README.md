@@ -20,4 +20,6 @@ This project does not use, and will not accept contributions derived from, any l
 
 ## Legal
 
+The project's source code is licensed under the [MIT License](LICENSE). That license covers only code written for this project. It grants nothing for any Star Wars, Battlefront, or Galaxies asset or trademark.
+
 Star Wars and all related properties are trademarks of Lucasfilm Ltd. / Disney. Star Wars Battlefront II and Star Wars Galaxies are properties of their respective owners. This is an unofficial, non-commercial fan project and is not affiliated with or endorsed by Lucasfilm, Disney, Electronic Arts, Sony Online Entertainment, Daybreak, or Pandemic Studios.
