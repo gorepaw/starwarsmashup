@@ -1,5 +1,6 @@
 #include "swg/tre_library.h"
 
+#include <algorithm>
 #include <cctype>
 #include <stdexcept>
 #include <tuple>
@@ -60,6 +61,16 @@ TreLibrary::TreLibrary(const std::filesystem::path& dir) {
 
 bool TreLibrary::contains(std::string_view path) const {
     return index_.contains(normalize_path(path));
+}
+
+std::vector<std::string> TreLibrary::paths() const {
+    std::vector<std::string> out;
+    out.reserve(index_.size());
+    for (const auto& [path, location] : index_) {
+        out.push_back(path);
+    }
+    std::sort(out.begin(), out.end());
+    return out;
 }
 
 std::vector<uint8_t> TreLibrary::read(std::string_view path) {

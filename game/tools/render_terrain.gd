@@ -34,7 +34,7 @@ func _init() -> void:
 		return
 
 	var terrain := MeshInstance3D.new()
-	terrain.mesh = _build_mesh(heights, samples, spacing, origin, step)
+	terrain.mesh = build_mesh(heights, samples, spacing, origin, step)
 	var material := StandardMaterial3D.new()
 	material.albedo_color = Color(0.78, 0.66, 0.47)
 	material.roughness = 0.95
@@ -68,7 +68,8 @@ func _process(_delta: float) -> bool:
 	return false
 
 
-func _build_mesh(heights: PackedFloat32Array, samples: int, spacing: float, origin: Vector2, step: int) -> ArrayMesh:
+# Also used by other tools (preload this script).
+static func build_mesh(heights: PackedFloat32Array, samples: int, spacing: float, origin: Vector2, step: int) -> ArrayMesh:
 	var count := (samples - 1) / step + 1
 	var vertices := PackedVector3Array()
 	vertices.resize(count * count)

@@ -19,6 +19,9 @@ public:
 
     bool contains(std::string_view path) const;
 
+    // Every path in the library, sorted.
+    std::vector<std::string> paths() const;
+
     // Throws std::runtime_error if the path isn't in any archive.
     std::vector<uint8_t> read(std::string_view path);
 

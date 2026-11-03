@@ -36,7 +36,7 @@ Provisional decisions:
 - [x] TRE archive reader: `0005` verified on the disc set; plain `0006` supported but not yet tested on real data
 - [x] IFF chunk parser (all 130,954 IFF files in the reference set parse)
 - [x] Build the Total Experience reference manifest (path + SHA-256 of uncompressed contents), commit to `tools/manifests/`
-- [ ] Determine archive override order (which copy of a path the client loads)
+- [ ] Determine archive override order (which copy of a path the client loads). Supporting evidence for the current guess (higher patch levels win): later patches delete files by shipping them empty, e.g. `patch_11_00` empties the test-falcon building files from `patch_05`. `pob-check` counts such files as deleted; `TreLibrary` doesn't special-case them yet.
 - [ ] Allowlist extraction: use only files matching the manifest, from any install
 - [x] ~~Measure SWG Restoration coverage~~: not possible. Restoration encrypts its archives, and we don't decrypt them. `swgtool coverage` exists for other installs.
 - [x] Bake a Tatooine region from `.trn` to a heightmap (`swgtool bake-terrain`). A 4 km region around Mos Eisley bakes in about 2 s. Checked against the 1,905 objects in the world snapshot (`.ws`): median height error 0.00 m, 77% within 1 m.
@@ -45,7 +45,9 @@ Provisional decisions:
 - [ ] Exact fractal noise: the generator uses a stand-in gradient noise, so fine detail differs from the original (see [Architecture](ARCHITECTURE.md#asset-pipeline))
 - [ ] Roads (`AROA`), and direction and shader filters (currently ignored)
 - [ ] Terrain3D integration (needs a double-precision build of the addon)
-- [ ] Import one `.pob` building and walk through its interior
+- [x] Import one `.pob` building and walk through its interior (`swgtool export-building`, `game/tools/walk_building.gd`). The Mos Eisley cantina, placed where the world snapshot has it on the baked terrain. A stormtrooper runs from the street through the front door, both foyers and the main room, up onto the band stage, and on another route into the back office. It uses physics and Godot navigation, and every cell is lit by its own Galaxies lights. 223 of 228 buildings and every floor in the reference set load (`swgtool pob-check`). The rest are 3 buildings in an older layout version (`PRTO 0001`) and 2 deleted by patches.
+  - Floors are the collision and the navigation mesh: Galaxies floors are convex triangles joined at shared edges. Uncrossable boundary edges become walls, while doorway edges and exits to open ground stay open.
+  - Not yet: doors (styles are listed, no door objects placed), the furniture and other objects the snapshot places inside cells, alpha-tested textures, and rendering the outside only through portals (for now the terrain is hidden while the camera is indoors).
 
 ## 4. Networked controller
 

@@ -2,6 +2,7 @@
 // much of a reference an install contains.
 
 #include <algorithm>
+#include <cmath>
 #include <cstdio>
 #include <format>
 #include <fstream>
@@ -17,12 +18,15 @@
 #include "bf2/hash.h"
 #include "bf2/ucfb.h"
 #include "retarget/retarget.h"
+#include "swg/building_export.h"
 #include "swg/character_export.h"
+#include "swg/gltf_assets.h"
 #include "swg/iff.h"
 #include "swg/image.h"
 #include "swg/terrain.h"
 #include "swg/world_snapshot.h"
 #include "swg/manifest.h"
+#include "swg/portal_layout.h"
 #include "swg/tre_archive.h"
 #include "swg/tre_scan.h"
 
@@ -42,6 +46,9 @@ constexpr const char* usage = R"(usage:
                            [--bf2-lvl <ingame.lvl> --bf2-bank <bank> --anim <name>...]
   swgtool bake-terrain <dir> <out_prefix> --trn <path.trn> --center <x> <z> --samples <n> --spacing <m>
                        [--snapshot <path.ws>]
+  swgtool export-building <dir> <out_dir> --pob <path.pob> --name <name>
+  swgtool pob-check <dir>
+  swgtool snapshot <dir> <path.ws> [--match <text>] [--near <x> <z> <radius>]
 )";
 
 // Returns the value following `flag` in args, or an empty string.
@@ -568,6 +575,99 @@ int cmd_bake_terrain(const std::vector<std::string>& args) {
     return 0;
 }
 
+int cmd_export_building(const std::vector<std::string>& args) {
+    const std::string pob = option(args, "--pob"), name = option(args, "--name");
+    if (args.size() < 2 || pob.empty() || name.empty()) {
+        std::cerr << usage;
+        return 2;
+    }
+    TreLibrary library(args[0]);
+    export_building(library, pob, name, args[1], std::cerr);
+    std::cerr << "wrote " << (std::filesystem::path(args[1]) / (name + ".gltf")).string() << " and .json\n";
+    return 0;
+}
+
+// Parses every building (.pob) and floor (.flr), and loads every cell mesh.
+int cmd_pob_check(const std::vector<std::string>& args) {
+    if (args.empty()) {
+        std::cerr << usage;
+        return 2;
+    }
+    TreLibrary library(args[0]);
+    size_t buildings = 0, cells = 0, floors = 0, lights = 0, failed = 0;
+    std::map<std::string, std::pair<size_t, std::string>> failures;  // reason -> (count, first path)
+    size_t deleted = 0;
+    for (const std::string& path : library.paths()) {
+        if (!path.ends_with(".flr") && !path.ends_with(".pob")) {
+            continue;
+        }
+        try {
+            const std::vector<uint8_t> bytes = library.read(path);
+            if (bytes.empty()) {
+                ++deleted;  // a later patch replaced the file with an empty one
+            } else if (path.ends_with(".flr")) {
+                parse_floor(bytes);
+                ++floors;
+            } else {
+                const PortalLayout layout = parse_portal_layout(bytes);
+                for (const PortalLayout::Cell& cell : layout.cells) {
+                    load_static_appearance(library, cell.appearance);
+                    lights += cell.lights.size();
+                }
+                ++buildings;
+                cells += layout.cells.size();
+            }
+        } catch (const std::exception& e) {
+            auto& [count, first] = failures[extension_of(path) + ": " + e.what()];
+            if (count++ == 0) {
+                first = path;
+            }
+            ++failed;
+        }
+    }
+    std::cout << std::format("{} buildings ({} cells, {} lights), {} floors parsed; {} deleted by patches; {} failed\n",
+                             buildings, cells, lights, floors, deleted, failed);
+    for (const auto& [reason, entry] : failures) {
+        std::cout << std::format("  {:>5}  {}  (e.g. {})\n", entry.first, reason, entry.second);
+    }
+    return failed == 0 ? 0 : 1;
+}
+
+int cmd_snapshot(const std::vector<std::string>& args) {
+    if (args.size() < 2) {
+        std::cerr << usage;
+        return 2;
+    }
+    const std::string match = option(args, "--match");
+    const auto near = std::find(args.begin(), args.end(), "--near");
+    const bool use_near = near != args.end() && near + 3 < args.end();
+    const double nx = use_near ? std::stod(*(near + 1)) : 0, nz = use_near ? std::stod(*(near + 2)) : 0;
+    const double radius = use_near ? std::stod(*(near + 3)) : 0;
+
+    TreLibrary library(args[0]);
+    const std::vector<SnapshotNode> nodes = parse_world_snapshot(library.read(args[1]));
+    std::unordered_map<int32_t, size_t> children;
+    for (const SnapshotNode& node : nodes) {
+        ++children[node.parent_id];
+    }
+    size_t shown = 0;
+    for (const SnapshotNode& node : nodes) {
+        if (node.parent_id != 0 || (!match.empty() && node.template_name.find(match) == std::string::npos) ||
+            (use_near && std::hypot(node.position.x - nx, node.position.z - nz) > radius)) {
+            continue;
+        }
+        // Yaw about +Y, in degrees, from the (w, x, y, z) rotation.
+        const Quat& q = node.rotation;
+        const double yaw = std::atan2(2.0 * (q.w * q.y + q.x * q.z), 1.0 - 2.0 * (q.y * q.y + q.x * q.x)) * 180.0 / 3.14159265358979;
+        std::cout << std::format("{:>10}  ({:9.2f}, {:7.2f}, {:9.2f})  yaw {:7.2f}  {:>3} contents  {}\n", node.id,
+                                 node.position.x, node.position.y, node.position.z, yaw, children[node.id],
+                                 node.template_name);
+        ++shown;
+    }
+    std::cerr << std::format("{} of {} objects\n", shown, nodes.size());
+    return 0;
+}
+
 } // namespace
 
 int main(int argc, char** argv) {
@@ -601,6 +701,15 @@ int main(int argc, char** argv) {
         }
         if (command == "bake-terrain") {
             return cmd_bake_terrain(args);
+        }
+        if (command == "export-building") {
+            return cmd_export_building(args);
+        }
+        if (command == "pob-check") {
+            return cmd_pob_check(args);
+        }
+        if (command == "snapshot") {
+            return cmd_snapshot(args);
         }
     } catch (const std::exception& e) {
         std::cerr << "error: " << e.what() << "\n";

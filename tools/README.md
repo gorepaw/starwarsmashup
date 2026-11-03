@@ -25,6 +25,9 @@ swgtool export-character <dir> <out_dir> --name <name> --sat <path.sat>... [--we
                          [--bf2-lvl <ingame.lvl> --bf2-bank <bank> --anim <name>...]
 swgtool bake-terrain <dir> <out_prefix> --trn <path.trn> --center <x> <z> --samples <n> --spacing <m>
                      [--snapshot <path.ws>]
+swgtool export-building <dir> <out_dir> --pob <path.pob> --name <name>
+swgtool pob-check <dir>
+swgtool snapshot <dir> <path.ws> [--match <text>] [--near <x> <z> <radius>]
 ```
 
 - **list**: print every file in a TRE archive (uncompressed size, stored size, compressed flag, path).
@@ -55,6 +58,17 @@ swgtool bake-terrain <dir> <out_prefix> --trn <path.trn> --center <x> <z> --samp
   ```
 
   The fractal noise is a stand-in for SWG's own, so dune-scale detail is approximate (see `swg/terrain.h`).
+
+- **export-building**: export a portalized building (`.pob`) to `<name>.gltf` with one node per cell. Each cell holds its render mesh plus two collision meshes without materials: `<cell>_floor` (walkable triangles from the cell's `.flr`) and `<cell>_walls` (3 m quads rising from the floor's uncrossable edges). The `<name>.json` sidecar lists the portal polygons and, per cell, its portal links, door styles, and lights. Cell meshes may be meshes, LOD lists, component appearances, or redirects (`.msh`, `.lod`, `.cmp`, `.apt`). Example, the Mos Eisley cantina:
+
+  ```powershell
+  swgtool export-building E:\swg_te\extracted\Star_Wars_files game\imported_assets\buildings\thm_tato_cantina `
+    --pob appearance/thm_tato_cantina.pob --name thm_tato_cantina
+  ```
+
+  Not handled yet: doors and the objects placed inside cells.
+- **pob-check**: parse every building and floor, and load every cell mesh. On the Total Experience set: 223 buildings (2,669 cells, 12,617 lights) and 3,896 floors load. 93 files are deleted by later patches (shipped empty), and 3 buildings use an older layout (`PRTO 0001`) that isn't supported.
+- **snapshot**: list a world snapshot's top-level objects (id, position, yaw in degrees, number of objects inside, template), filtered by template substring and/or distance. For example, `--match cantina` finds the Mos Eisley cantina at (3432.35, 5.00, -4818.13), yaw 38.09. A building's object template names its `.pob` (`portalLayoutFilename`).
 
 Supported archives: TRE `0005` (retail discs) and plain `0006`. SWG Restoration's `0006` archives encrypt their file data and are reported as unsupported. We don't decrypt them.
 

@@ -1,13 +1,11 @@
 #include "swg/character_export.h"
 
 #include <algorithm>
-#include <map>
 #include <ostream>
 #include <stdexcept>
 
 #include "swg/appearance.h"
-#include "swg/gltf.h"
-#include "swg/image.h"
+#include "swg/gltf_assets.h"
 #include "swg/manifest.h"
 #include "swg/skeleton.h"
 #include "swg/skinned_mesh.h"
@@ -18,16 +16,10 @@ namespace {
 
 constexpr int max_influences = 4;  // glTF JOINTS_0 / WEIGHTS_0
 
-// After mirroring X into glTF space, SWG's triangles face inward (verified by
-// rendering), so reverse each triangle's winding.
-void append_triangle(std::vector<uint32_t>& indices, uint32_t a, uint32_t b, uint32_t c) {
-    indices.insert(indices.end(), {a, c, b});
-}
-
 class Exporter {
 public:
     Exporter(TreLibrary& library, const std::filesystem::path& out_dir, std::ostream& log)
-        : library_(library), out_dir_(out_dir), log_(log) {}
+        : library_(library), out_dir_(out_dir), log_(log), assets_(library, gltf_, out_dir, log) {}
 
     void run(const CharacterExport& request) {
         if (request.appearances.empty()) {
@@ -145,7 +137,7 @@ private:
             primitive.attributes["JOINTS_0"] = gltf_.add_joints(joints);
             primitive.attributes["WEIGHTS_0"] = gltf_.add_vec4(weights);
             primitive.indices = gltf_.add_indices(indices);
-            primitive.material = material_for(part.shader);
+            primitive.material = assets_.material_for(part.shader);
             gltf_mesh.primitives.push_back(std::move(primitive));
         }
         gltf_.meshes.push_back(std::move(gltf_mesh));
@@ -175,40 +167,14 @@ private:
     void attach_weapon(const std::string& lod_path) {
         const std::string mesh_path = "appearance/" + lod_highest_detail(library_.read(lod_path));
         log_ << "  weapon " << lod_path << " -> " << mesh_path << "\n";
-        const StaticMesh mesh = parse_static_mesh(library_.read(mesh_path));
-
-        Gltf::Mesh gltf_mesh{.name = std::filesystem::path(mesh_path).stem().string()};
-        for (const StaticMesh::Part& part : mesh.parts) {
-            std::vector<Vec3> positions, normals;
-            for (const Vec3& p : part.positions) {
-                positions.push_back(to_gltf(p));
-            }
-            for (const Vec3& n : part.normals) {
-                normals.push_back(to_gltf(n));
-            }
-            Gltf::Primitive primitive;
-            primitive.attributes["POSITION"] = gltf_.add_vec3(positions, true);
-            if (!normals.empty()) {
-                primitive.attributes["NORMAL"] = gltf_.add_vec3(normals, false);
-            }
-            if (!part.uv.empty()) {
-                primitive.attributes["TEXCOORD_0"] = gltf_.add_vec2(part.uv);
-            }
-            std::vector<uint32_t> indices;
-            for (size_t i = 0; i + 2 < part.indices.size(); i += 3) {
-                append_triangle(indices, part.indices[i], part.indices[i + 1], part.indices[i + 2]);
-            }
-            primitive.indices = gltf_.add_indices(indices);
-            primitive.material = material_for(part.shader);
-            gltf_mesh.primitives.push_back(std::move(primitive));
-        }
-        gltf_.meshes.push_back(std::move(gltf_mesh));
+        const int mesh = assets_.add_static_mesh(parse_static_mesh(library_.read(mesh_path)),
+                                                 std::filesystem::path(mesh_path).stem().string());
 
         const int hand = skeleton_.find("hold_r");
         if (hand < 0) {
             throw std::runtime_error("skeleton has no hold_r joint for the weapon");
         }
-        const int weapon_node = add_node({.name = gltf_.meshes.back().name, .mesh = int(gltf_.meshes.size() - 1)});
+        const int weapon_node = add_node({.name = gltf_.meshes.back().name, .mesh = mesh});
         gltf_.nodes[size_t(hand)].children.push_back(weapon_node);
     }
 
@@ -240,35 +206,6 @@ private:
         log_ << "  animation " << clip.name << ": " << clip.rotations.size() << " frames\n";
     }
 
-    int material_for(const std::string& shader_path) {
-        if (const auto it = materials_.find(shader_path); it != materials_.end()) {
-            return it->second;
-        }
-        Gltf::Material material{.name = std::filesystem::path(shader_path).stem().string()};
-        try {
-            const std::string texture = shader_main_texture(library_.read(shader_path));
-            if (!texture.empty()) {
-                material.texture = image_for(texture);
-            }
-        } catch (const std::exception& e) {
-            log_ << "  warning: " << shader_path << ": " << e.what() << "\n";
-        }
-        gltf_.materials.push_back(std::move(material));
-        materials_[shader_path] = int(gltf_.materials.size() - 1);
-        return materials_[shader_path];
-    }
-
-    int image_for(const std::string& texture_path) {
-        if (const auto it = images_.find(texture_path); it != images_.end()) {
-            return it->second;
-        }
-        const std::string file_name = std::filesystem::path(texture_path).stem().string() + ".png";
-        write_png(out_dir_ / file_name, decode_dds(library_.read(texture_path)));
-        gltf_.images.push_back(file_name);
-        images_[texture_path] = int(gltf_.images.size() - 1);
-        return images_[texture_path];
-    }
-
     int add_node(Gltf::Node node) {
         gltf_.nodes.push_back(std::move(node));
         return int(gltf_.nodes.size() - 1);
@@ -278,9 +215,8 @@ private:
     std::filesystem::path out_dir_;
     std::ostream& log_;
     Gltf gltf_;
+    GltfAssets assets_;
     Skeleton skeleton_;
-    std::map<std::string, int> materials_;
-    std::map<std::string, int> images_;
 };
 
 } // namespace
