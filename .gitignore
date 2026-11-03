@@ -1,0 +1,71 @@
+# ===== Game assets: NEVER commit =====
+# Extraction / import output
+/extracted/
+/assets_raw/
+/game_data/
+/game/imported_assets/
+
+# Battlefront II formats
+*.lvl
+*.msh
+*.odf
+*.zaabin
+*.zafbin
+*.wld
+*.ter
+
+# Star Wars Galaxies formats
+*.tre
+*.toc
+*.iff
+*.mgn
+*.pob
+*.trn
+*.sat
+*.lmg
+*.skt
+*.ans
+*.apt
+*.stf
+*.sht
+*.ws
+
+# Textures / audio pulled from the games
+*.dds
+*.tga
+
+# ===== Godot =====
+.godot/
+*.import
+export_presets.cfg
+*.translation
+
+# ===== C++ build =====
+/build/
+/out/
+/bin/
+*.obj
+*.o
+*.lib
+*.a
+*.dll
+*.so
+*.dylib
+*.exp
+*.pdb
+*.ilk
+CMakeUserPresets.json
+CMakeCache.txt
+CMakeFiles/
+compile_commands.json
+
+# ===== Local data =====
+*.sqlite
+*.db
+
+# ===== Editors / OS =====
+.vs/
+.vscode/
+.idea/
+Thumbs.db
+.DS_Store
