@@ -10,6 +10,8 @@ Built on Godot 4 (custom double-precision build) with gameplay in C++.
 
 This repository contains **no** assets from Star Wars Battlefront II or Star Wars Galaxies, and never will. The project will ship an extractor that reads assets from **your own legally owned installs** of those games. Pull requests containing extracted or original game assets will be rejected.
 
+The extractor only uses files that match the original SOE/LucasArts releases byte-for-byte (see [Supported game versions](docs/ARCHITECTURE.md#supported-game-versions)). Work made by other fan projects, such as emulator servers' custom content or HD texture packs, is never extracted without that team's permission.
+
 This project does not use, and will not accept contributions derived from, any leaked Star Wars Galaxies source code.
 
 ## Docs

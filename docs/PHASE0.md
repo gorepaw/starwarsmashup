@@ -20,8 +20,11 @@ Goal: prove the project is technically viable. If all five spikes work, everythi
 
 ## 3. Galaxies world
 
-- [ ] TRE archive reader
+- [ ] TRE archive reader (disc-era and final-client formats, including TOC indexes)
 - [ ] IFF chunk parser
+- [ ] Build the Total Experience reference manifest (path + SHA-256 of uncompressed contents), commit to `tools/manifests/`
+- [ ] Allowlist extraction: use only files matching the manifest, from any install
+- [ ] Measure SWG Restoration coverage: what percentage of baseline files match byte-for-byte, and which are missing
 - [ ] Bake Tatooine (or one region of it) from `.trn` to heightmap and splat maps
 - [ ] Render it in Terrain3D at double precision
 - [ ] Import one `.pob` building and walk through its interior
