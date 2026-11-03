@@ -18,6 +18,7 @@ ctest --preset msvc-release
 swgtool list <archive.tre>
 swgtool manifest <dir> --name <name> --source <text> -o <out.tsv>
 swgtool coverage <manifest.tsv> <dir> [--missing <out.tsv>]
+swgtool groups <manifest.tsv> [--list <group>]
 swgtool iff <archive.tre> <path>
 swgtool iff-check <dir>
 ```
@@ -26,6 +27,7 @@ swgtool iff-check <dir>
 - **manifest**: hash the uncompressed contents of every file in every `.tre` under `<dir>` and write a reference manifest. Refuses to write if any archive or file fails to read.
 - **coverage**: compare an install against a reference manifest. For each reference file it reports `matched` (byte-identical at the same path), `moved` (identical, but only under another path), `changed` (path exists, contents differ), or `absent`, plus a per-folder breakdown and a count of install files that aren't in the reference.
 
+- **groups**: count a manifest's unique files per content group (`base`, `jtl`, `rotw`, `tow`), or list one group's paths with `--list`. `coverage` also reports matches per group.
 - **iff**: print the chunk tree of one IFF file inside an archive, with a hex preview of each chunk's data.
 - **iff-check**: parse every IFF file in every archive under `<dir>` and print per-extension counts, failures, and root form names. On the Total Experience set, all 130,954 IFF files parse with no failures.
 

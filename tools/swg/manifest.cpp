@@ -5,6 +5,7 @@
 #include <istream>
 #include <iterator>
 #include <ostream>
+#include <set>
 #include <stdexcept>
 #include <tuple>
 
@@ -34,6 +35,41 @@ std::string normalize_path(std::string_view path) {
     std::replace(out.begin(), out.end(), '\\', '/');
     const size_t start = out.find_first_not_of('/');
     return start == std::string::npos ? std::string() : out.substr(start);
+}
+
+std::string_view content_group(std::string_view archive_name) {
+    const std::string name = to_lower(std::string(archive_name.substr(archive_name.find_last_of('/') + 1)));
+    if (name.find("sku1") != std::string::npos) {
+        return "jtl";
+    }
+    if (name.find("sku2") != std::string::npos) {
+        return "rotw";
+    }
+    if (name.find("sku3") != std::string::npos) {
+        return "tow";
+    }
+    return "base";
+}
+
+std::map<std::string, std::string> path_content_groups(const Manifest& manifest) {
+    std::map<std::string, std::set<std::string_view>> groups_by_path;
+    for (const ManifestEntry& entry : manifest.entries) {
+        groups_by_path[entry.path].insert(content_group(entry.archive));
+    }
+
+    std::map<std::string, std::string> result;
+    for (const auto& [path, groups] : groups_by_path) {
+        if (groups.contains("base")) {
+            result.emplace(path, "base");
+            continue;
+        }
+        std::string joined;
+        for (const std::string_view group : groups) {
+            joined += (joined.empty() ? "" : "+") + std::string(group);
+        }
+        result.emplace(path, std::move(joined));
+    }
+    return result;
 }
 
 ScanResult scan_tre_directory(const std::filesystem::path& dir, std::ostream& log) {

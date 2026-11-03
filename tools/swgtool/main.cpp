@@ -26,6 +26,7 @@ constexpr const char* usage = R"(usage:
   swgtool list <archive.tre>
   swgtool manifest <dir> --name <name> --source <text> -o <out.tsv>
   swgtool coverage <manifest.tsv> <dir> [--missing <out.tsv>]
+  swgtool groups <manifest.tsv> [--list <group>]
   swgtool iff <archive.tre> <path>
   swgtool iff-check <dir>
 )";
@@ -162,8 +163,10 @@ int cmd_coverage(const std::vector<std::string>& args) {
         }
     }
 
+    const std::map<std::string, std::string> groups = path_content_groups(reference);
     Tally total;
     std::map<std::string, Tally> by_folder;
+    std::map<std::string, Tally> by_group;
     std::vector<std::pair<Status, std::string>> not_matched;
 
     for (const auto& [path, versions] : reference_by_path) {
@@ -189,6 +192,7 @@ int cmd_coverage(const std::vector<std::string>& args) {
         const std::string folder = path.substr(0, path.find('/'));
         total.add(status, size);
         by_folder[folder].add(status, size);
+        by_group[groups.at(path)].add(status, size);
         if (status != Status::matched) {
             not_matched.emplace_back(status, path);
         }
@@ -213,6 +217,13 @@ int cmd_coverage(const std::vector<std::string>& args) {
                                  descriptions[s]);
     }
 
+    std::cout << "\nBy content group (matched / total files):\n";
+    for (const auto& [group, tally] : by_group) {
+        const uint64_t matched = tally.count[int(Status::matched)];
+        std::cout << std::format("  {:<24} {:>7} / {:<7} {:>7}\n", group, matched, tally.total_count,
+                                 percent(matched, tally.total_count));
+    }
+
     std::cout << "\nBy top-level folder (matched / total files):\n";
     for (const auto& [folder, tally] : by_folder) {
         const uint64_t matched = tally.count[int(Status::matched)];
@@ -232,6 +243,47 @@ int cmd_coverage(const std::vector<std::string>& args) {
         std::cout << std::format("Wrote {} unmatched paths to {}\n", not_matched.size(), missing_path);
     }
     return install.errors.empty() ? 0 : 1;
+}
+
+int cmd_groups(const std::vector<std::string>& args) {
+    if (args.empty()) {
+        std::cerr << usage;
+        return 2;
+    }
+    std::ifstream manifest_file(args[0], std::ios::binary);
+    if (!manifest_file) {
+        std::cerr << "cannot open " << args[0] << "\n";
+        return 1;
+    }
+    const Manifest manifest = read_manifest(manifest_file);
+    const std::map<std::string, std::string> groups = path_content_groups(manifest);
+
+    const std::string list_group = option(args, "--list");
+    if (!list_group.empty()) {
+        for (const auto& [path, group] : groups) {
+            if (group == list_group) {
+                std::cout << path << "\n";
+            }
+        }
+        return 0;
+    }
+
+    std::map<std::string, uint64_t> largest_size;
+    for (const ManifestEntry& entry : manifest.entries) {
+        largest_size[entry.path] = std::max(largest_size[entry.path], entry.size);
+    }
+    std::map<std::string, std::pair<uint64_t, uint64_t>> totals;  // group -> (files, bytes)
+    for (const auto& [path, group] : groups) {
+        totals[group].first += 1;
+        totals[group].second += largest_size[path];
+    }
+
+    std::cout << std::format("{} ({} unique files)\n", manifest.name, groups.size());
+    for (const auto& [group, total] : totals) {
+        std::cout << std::format("  {:<10} {:>7} files {:>7}  {:>12}\n", group, total.first,
+                                 percent(total.first, groups.size()), megabytes(total.second));
+    }
+    return 0;
 }
 
 std::string extension_of(const std::string& path) {
@@ -371,6 +423,9 @@ int main(int argc, char** argv) {
         }
         if (command == "coverage") {
             return cmd_coverage(args);
+        }
+        if (command == "groups") {
+            return cmd_groups(args);
         }
         if (command == "iff") {
             return cmd_iff(args);

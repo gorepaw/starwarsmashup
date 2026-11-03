@@ -1,0 +1,11 @@
+[configuration]
+
+entry_symbol = "swm_library_init"
+compatibility_minimum = "4.7"
+reloadable = true
+
+[libraries]
+
+; Double-precision builds only. A single-precision editor finds no library.
+windows.debug.double.x86_64 = "res://bin/swm.windows.template_debug.double.x86_64.dll"
+windows.release.double.x86_64 = "res://bin/swm.windows.template_release.double.x86_64.dll"

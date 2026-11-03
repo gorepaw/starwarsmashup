@@ -8,11 +8,11 @@
 
 ## Engine
 
-- **Godot 4**, custom build with `precision=double` for planet-scale coordinates.
-- Pin one Godot version and upgrade on purpose.
-- **godot-cpp** built with matching precision. Mismatched precision builds fail in confusing ways.
+- **Godot 4.7.2-stable**, custom build with `precision=double` for planet-scale coordinates. Upgrade on purpose, never implicitly.
+- **godot-cpp 10.0.0-stable**, double precision, with bindings generated from an API file dumped from our own editor build (committed in `third_party/godot-api/`). Mismatched precision fails in confusing ways, so the extension enforces it with a `static_assert`, and its `.gdextension` file only lists double-precision libraries.
 - **GDExtension** (not engine modules), for faster rebuilds and hot reload.
-- **CMake** build, Windows-first (MSVC), kept cross-platform.
+- **CMake** build, Windows-first (MSVC), kept cross-platform. Static MSVC runtime (`/MT`) everywhere. C++ exceptions stay enabled; godot-cpp's default would disable them for everything that links it.
+- Setup steps: [BUILDING.md](BUILDING.md).
 
 ## Language
 
@@ -101,6 +101,18 @@ SWG was patched live from 2003 to 2011, so there is no single version of its fil
 - **SWG Restoration installs can't be used.** Restoration's archives (`SwgRestoration_*.tre`, TRE `0006` with 32-byte table entries) encrypt every file's data. We do not decrypt them: that would mean circumventing their protection. A Restoration player needs another source of SOE files (e.g. retail discs) unless the Restoration team chooses to help.
 - **Other community clients** (SWG Legends, SWGEmu) are untested.
 - **Game content may only depend on baseline assets.** Anything a player's install lacks is reported clearly, not silently substituted.
+- **Content groups.** Each reference file belongs to a group, derived from the archive it ships in (`swgtool groups`):
+
+  | Group | Archives | Unique files (Total Experience) | Contents |
+  |---|---|---|---|
+  | `base` | everything not below | 125,416 (89.5%) | planets, cities, creatures, characters, weapons, armor |
+  | `jtl` | `*sku1*` (Jump to Lightspeed) | 11,937 (8.5%) | starships and space assets |
+  | `rotw` | `*sku2*` (Rage of the Wookiees) | 2,750 (2.0%) | Kashyyyk |
+  | `tow` | `*sku3*` (Trials of Obi-Wan) | not on these discs | |
+
+  The sku-to-expansion mapping is inferred from archive contents. A file counts as `base` if any base archive contains it.
+- **Core content requires `base` only.** Hubs, battles, weapons, and armor (roadmap Stages 1–2) must not depend on expansion files. Expansion content is an optional feature that switches off cleanly when its files are missing: for example `jtl` starships as set dressing or vehicles, or `rotw`'s Kashyyyk as a later planet.
+- **Excluding expansions does not make every disc set work.** Disc releases also differ by patch level (Total Experience carries `patch_00` through `patch_15`), so older discs have different versions of many base files. Supporting another disc set means adding a reference manifest for it, and the importer handling older file-format versions.
 - **More references later:** if a common install is missing baseline files because SOE changed them after the disc release, another verified SOE reference manifest can be added. Each manifest records where it came from.
 - **Current manifest:** [`tools/manifests/swg-total-experience-2005.tsv`](../tools/manifests/swg-total-experience-2005.tsv), built with `swgtool` (see [tools/README.md](../tools/README.md)). It has 173,289 entries covering 140,103 unique paths. A path that appears in several archives is listed once per archive. The override order between archives (which copy the client actually loads) is not yet determined.
 - **Policy:** "Use files from your own install." The project never links to or distributes client packages.

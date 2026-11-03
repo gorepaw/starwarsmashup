@@ -19,6 +19,7 @@ This project does not use, and will not accept contributions derived from, any l
 - [Design](docs/DESIGN.md): pillars, combat, professions, housing, economy
 - [Architecture](docs/ARCHITECTURE.md): engine, code layering, networking, persistence, asset pipeline
 - [Phase 0](docs/PHASE0.md): feasibility spikes and task list
+- [Building](docs/BUILDING.md): custom Godot build, C++ build, smoke test
 - [Roadmap](docs/ROADMAP.md): battles first (Stage 1), then weapons and loadouts (Stage 2), then world systems
 
 ## Legal

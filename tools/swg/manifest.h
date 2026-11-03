@@ -3,6 +3,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <iosfwd>
+#include <map>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -34,6 +35,18 @@ struct ScanResult {
 
 // Lowercase, forward slashes, no leading slash.
 std::string normalize_path(std::string_view path);
+
+// Content group of an archive, from its file name:
+//   "jtl"  - sku1 archives (Jump to Lightspeed)
+//   "rotw" - sku2 archives (Rage of the Wookiees)
+//   "tow"  - sku3 archives (Trials of Obi-Wan; not on the Total Experience discs)
+//   "base" - everything else
+// The sku-to-expansion mapping is inferred from archive contents.
+std::string_view content_group(std::string_view archive_name);
+
+// For each unique path: "base" if any base archive contains it, otherwise the
+// expansion group(s) providing it, joined with '+'.
+std::map<std::string, std::string> path_content_groups(const Manifest& manifest);
 
 // Hashes every file in every .tre archive under `dir` (recursively), one
 // archive per thread. Progress goes to `log`. Entries are sorted by path.

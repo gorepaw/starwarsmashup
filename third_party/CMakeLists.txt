@@ -11,3 +11,26 @@ FetchContent_MakeAvailable(zlib)
 # zlib 1.3.1 doesn't attach its include directories to its targets.
 target_include_directories(zlibstatic INTERFACE ${zlib_BINARY_DIR} ${zlib_SOURCE_DIR})
 add_library(swm::zlib ALIAS zlibstatic)
+
+if(SWM_BUILD_GODOT)
+  # Must match the engine build: Godot 4.7, double precision (see docs/ARCHITECTURE.md).
+  # godot-cpp's bundled API files come from single-precision engines, so we use
+  # one dumped from our own editor build: godot --dump-extension-api
+  set(GODOTCPP_CUSTOM_API_FILE "${CMAKE_CURRENT_SOURCE_DIR}/godot-api/extension_api-4.7.2-double.json"
+      CACHE FILEPATH "" FORCE)
+  set(GODOTCPP_PRECISION "double" CACHE STRING "" FORCE)
+  set(GODOTCPP_TARGET "template_debug" CACHE STRING "")
+  set(GODOTCPP_USE_HOT_RELOAD ON CACHE BOOL "")
+  # core/ uses the standard library with exceptions enabled; godot-cpp's
+  # default would define _HAS_EXCEPTIONS=0 for everything that links it.
+  set(GODOTCPP_DISABLE_EXCEPTIONS OFF CACHE BOOL "" FORCE)
+  # Keep our /W4 warnings to our own code.
+  set(GODOTCPP_SYSTEM_HEADERS ON CACHE BOOL "" FORCE)
+
+  FetchContent_Declare(godot-cpp
+    GIT_REPOSITORY https://github.com/godotengine/godot-cpp.git
+    GIT_TAG 10.0.0-stable
+    GIT_SHALLOW TRUE
+    EXCLUDE_FROM_ALL)
+  FetchContent_MakeAvailable(godot-cpp)
+endif()

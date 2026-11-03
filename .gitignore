@@ -59,6 +59,9 @@ CMakeCache.txt
 CMakeFiles/
 compile_commands.json
 
+# ===== Logs =====
+*.log
+
 # ===== Local data =====
 *.sqlite
 *.db

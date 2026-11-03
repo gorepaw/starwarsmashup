@@ -4,13 +4,13 @@ Goal: prove the project is technically viable. If all five spikes work, everythi
 
 ## 1. Toolchain
 
-- [ ] Build the Godot 4 editor from source with `precision=double` (pin the version)
-- [ ] Build godot-cpp with matching precision
-- [x] Root CMake project with presets, zlib via FetchContent, tests via CTest (`tools/` only so far)
-- [ ] Add `core/` (static lib, no Godot) and `godot/` (GDExtension DLL)
-- [ ] "Hello world" GDExtension node that calls into `core/`
-- [ ] Unit test target for `core/`
-- [ ] Confirm hot reload works on Windows
+- [x] Build the Godot editor from source with `precision=double`: 4.7.2-stable (see [BUILDING.md](BUILDING.md))
+- [x] Build godot-cpp with matching precision: 10.0.0-stable, bindings from our editor's API dump
+- [x] Root CMake project with presets, zlib via FetchContent, tests via CTest
+- [x] Add `core/` (static lib, no Godot) and `godot/` (GDExtension DLL)
+- [x] "Hello world" GDExtension class (`SwmInfo`) that calls into `core/`; headless smoke test passes
+- [x] Unit test target for `core/`
+- [ ] Confirm hot reload works on Windows (needs a manual check in the editor)
 
 ## 2. Battlefront II character
 

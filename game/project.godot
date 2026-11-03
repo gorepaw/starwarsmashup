@@ -1,0 +1,9 @@
+; Engine configuration file.
+; Requires the custom double-precision editor build (see docs/ARCHITECTURE.md).
+
+config_version=5
+
+[application]
+
+config/name="Star Wars Mashup"
+config/features=PackedStringArray("4.7")
