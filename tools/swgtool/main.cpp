@@ -13,6 +13,7 @@
 #include <unordered_set>
 #include <vector>
 
+#include "swg/character_export.h"
 #include "swg/iff.h"
 #include "swg/manifest.h"
 #include "swg/tre_archive.h"
@@ -29,12 +30,24 @@ constexpr const char* usage = R"(usage:
   swgtool groups <manifest.tsv> [--list <group>]
   swgtool iff <archive.tre> <path>
   swgtool iff-check <dir>
+  swgtool export-character <dir> <out_dir> --name <name> --sat <path.sat>... [--weapon <path.lod>]
 )";
 
 // Returns the value following `flag` in args, or an empty string.
 std::string option(const std::vector<std::string>& args, const std::string& flag) {
     const auto it = std::find(args.begin(), args.end(), flag);
     return it != args.end() && it + 1 != args.end() ? *(it + 1) : std::string();
+}
+
+// Every value following `flag` in args (the flag may repeat).
+std::vector<std::string> options(const std::vector<std::string>& args, const std::string& flag) {
+    std::vector<std::string> values;
+    for (size_t i = 0; i + 1 < args.size(); ++i) {
+        if (args[i] == flag) {
+            values.push_back(args[i + 1]);
+        }
+    }
+    return values;
 }
 
 std::string megabytes(uint64_t bytes) {
@@ -405,6 +418,21 @@ int cmd_iff_check(const std::vector<std::string>& args) {
     return total_failed == 0 && visit.errors.empty() ? 0 : 1;
 }
 
+int cmd_export_character(const std::vector<std::string>& args) {
+    CharacterExport request;
+    request.name = option(args, "--name");
+    request.appearances = options(args, "--sat");
+    request.weapon_lod = option(args, "--weapon");
+    if (args.size() < 2 || request.name.empty() || request.appearances.empty()) {
+        std::cerr << usage;
+        return 2;
+    }
+    TreLibrary library(args[0]);
+    export_character(library, request, args[1], std::cerr);
+    std::cerr << "wrote " << (std::filesystem::path(args[1]) / (request.name + ".gltf")).string() << "\n";
+    return 0;
+}
+
 } // namespace
 
 int main(int argc, char** argv) {
@@ -432,6 +460,9 @@ int main(int argc, char** argv) {
         }
         if (command == "iff-check") {
             return cmd_iff_check(args);
+        }
+        if (command == "export-character") {
+            return cmd_export_character(args);
         }
     } catch (const std::exception& e) {
         std::cerr << "error: " << e.what() << "\n";

@@ -68,8 +68,44 @@ const IffNode* IffNode::child(std::string_view child_tag) const {
     return it == children.end() ? nullptr : &*it;
 }
 
+const IffNode& IffNode::expect(std::string_view child_tag) const {
+    if (const IffNode* node = child(child_tag)) {
+        return *node;
+    }
+    throw std::runtime_error("IFF: '" + tag + "' has no '" + std::string(child_tag) + "' child");
+}
+
+std::vector<const IffNode*> IffNode::children_with(std::string_view child_tag) const {
+    std::vector<const IffNode*> out;
+    for (const IffNode& node : children) {
+        if (node.tag == child_tag) {
+            out.push_back(&node);
+        }
+    }
+    return out;
+}
+
+std::vector<std::string> iff_strings(std::span<const uint8_t> data) {
+    std::vector<std::string> out;
+    auto begin = data.begin();
+    while (begin != data.end()) {
+        const auto end = std::find(begin, data.end(), uint8_t(0));
+        out.emplace_back(begin, end);
+        begin = end == data.end() ? end : end + 1;
+    }
+    return out;
+}
+
 std::vector<IffNode> parse_iff(std::span<const uint8_t> bytes) {
     return parse_chunks(bytes, 0, 0);
+}
+
+IffNode parse_iff_root(std::span<const uint8_t> bytes) {
+    std::vector<IffNode> roots = parse_iff(bytes);
+    if (roots.size() != 1 || !roots[0].form) {
+        throw std::runtime_error("IFF: expected a single root FORM");
+    }
+    return std::move(roots[0]);
 }
 
 bool looks_like_iff(std::span<const uint8_t> bytes) {

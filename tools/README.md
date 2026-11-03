@@ -21,6 +21,7 @@ swgtool coverage <manifest.tsv> <dir> [--missing <out.tsv>]
 swgtool groups <manifest.tsv> [--list <group>]
 swgtool iff <archive.tre> <path>
 swgtool iff-check <dir>
+swgtool export-character <dir> <out_dir> --name <name> --sat <path.sat>... [--weapon <path.lod>]
 ```
 
 - **list**: print every file in a TRE archive (uncompressed size, stored size, compressed flag, path).
@@ -30,6 +31,16 @@ swgtool iff-check <dir>
 - **groups**: count a manifest's unique files per content group (`base`, `jtl`, `rotw`, `tow`), or list one group's paths with `--list`. `coverage` also reports matches per group.
 - **iff**: print the chunk tree of one IFF file inside an archive, with a hex preview of each chunk's data.
 - **iff-check**: parse every IFF file in every archive under `<dir>` and print per-extension counts, failures, and root form names. On the Total Experience set, all 130,954 IFF files parse with no failures.
+
+- **export-character**: build a glTF character from Galaxies files in every `.tre` under `<dir>`. The first `.sat` (e.g. a species body) defines the skeleton. Every further `.sat` (armor, clothing) is skinned to it. An optional weapon `.lod` attaches to the `hold_r` joint. Writes `<name>.gltf`, `<name>.bin`, and one PNG per texture (decoded from DDS) into `<out_dir>`. Write output only to gitignored folders such as `game/imported_assets/`. Example: a human male in stormtrooper armor with an E-11:
+
+  ```powershell
+  swgtool export-character E:\swg_te\extracted\Star_Wars_files game\imported_assets\characters\stormtrooper `
+    --name stormtrooper --sat appearance/hum_m.sat --sat appearance/armor_stormtrooper_helmet_m.sat ... `
+    --weapon appearance/lod/wp_carbine_e11.lod
+  ```
+
+  Not handled yet: occlusion zones (hiding body triangles under armor), customization (skin palettes, blend shapes), and LOD levels below the most detailed.
 
 Supported archives: TRE `0005` (retail discs) and plain `0006`. SWG Restoration's `0006` archives encrypt their file data and are reported as unsupported. We don't decrypt them.
 

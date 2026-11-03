@@ -1,9 +1,17 @@
 # SWG asset library: TRE archives, hashing, manifests.
 add_library(swm_swg STATIC
+  swg/appearance.cpp
+  swg/character_export.cpp
+  swg/gltf.cpp
   swg/iff.cpp
+  swg/image.cpp
   swg/manifest.cpp
   swg/sha256.cpp
+  swg/skeleton.cpp
+  swg/skinned_mesh.cpp
+  swg/static_mesh.cpp
   swg/tre_archive.cpp
+  swg/tre_library.cpp
   swg/tre_scan.cpp)
 target_include_directories(swm_swg PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(swm_swg PRIVATE swm::zlib)
@@ -13,7 +21,7 @@ add_executable(swgtool swgtool/main.cpp)
 target_link_libraries(swgtool PRIVATE swm_swg)
 swm_target_warnings(swgtool)
 
-foreach(test iff_test manifest_test sha256_test tre_archive_test)
+foreach(test iff_test image_test manifest_test sha256_test skeleton_test tre_archive_test)
   add_executable(${test} swg/tests/${test}.cpp)
   target_link_libraries(${test} PRIVATE swm_swg swm::zlib)
   swm_target_warnings(${test})

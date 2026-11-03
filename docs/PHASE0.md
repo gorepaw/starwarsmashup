@@ -17,11 +17,16 @@ Goal: prove the project is technically viable. If all five spikes work, everythi
 Characters and equipment are Galaxies models (for the full Galaxies character creator and loadout variety). Battlefront II supplies animations, weapon handling, effects, sounds, vehicles, and props. Assets are read from the munged `.lvl` files every Battlefront II owner has, not from the Mod Tools.
 
 - [x] Battlefront `ucfb` (`.lvl`) container reader: `bf2tool`; all 191 `.lvl` files in the Steam install parse
-- [ ] Galaxies skinned character → glTF: skeleton (`.skt`), skinned meshes (`.mgn`), appearance (`.sat`/`.lmg`); one human in armor
+- [x] Galaxies skinned character → glTF (`swgtool export-character`): skeleton (`.skt`), skinned meshes (`.mgn`), appearance (`.sat`/`.lmg`). A human male in the full stormtrooper armor set renders correctly in Godot.
 - [ ] Battlefront skeleton (`skel`) and animation (`zaa_`/`zaf_`) decoding: idle and run
 - [ ] Retarget Battlefront animations onto the Galaxies skeleton (Godot humanoid retargeting)
-- [ ] Galaxies weapon model → glTF, attached to the character's hand hardpoint
-- [ ] Generated materials with modern lighting, source files untouched
+- [x] Galaxies weapon model → glTF, attached to the `hold_r` joint (E-11 carbine)
+- [ ] Generated materials with modern lighting, source files untouched (base color only so far; normal and specular maps not yet used)
+- [ ] Occlusion zones: hide body triangles under worn items (not visibly needed for full armor, but needed for partial outfits)
+
+Provisional decisions to confirm once an animation plays:
+- Skeleton joint rotation order (`post * bind * pre`): best fit to the vertex weights, but its conjugate fits almost as well.
+- Archive priority (patch archives over data archives, by patch level): the client's real search order is still unknown.
 
 ## 3. Galaxies world
 

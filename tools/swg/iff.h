@@ -21,7 +21,20 @@ struct IffNode {
 
     // First direct child with this tag (form name for FORMs), or nullptr.
     const IffNode* child(std::string_view child_tag) const;
+
+    // Like child(), but throws std::runtime_error if missing.
+    const IffNode& expect(std::string_view child_tag) const;
+
+    // All direct children with this tag.
+    std::vector<const IffNode*> children_with(std::string_view child_tag) const;
 };
+
+// Splits a payload of null-terminated strings.
+std::vector<std::string> iff_strings(std::span<const uint8_t> data);
+
+// Parses a file that must contain exactly one root FORM; returns it by value
+// (its spans still view `bytes`).
+IffNode parse_iff_root(std::span<const uint8_t> bytes);
 
 // Parses a buffer of top-level chunks. Nodes view `bytes`, which must outlive
 // them. Throws std::runtime_error on malformed data.
