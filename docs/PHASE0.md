@@ -41,10 +41,19 @@ Provisional decisions:
 - [x] ~~Measure SWG Restoration coverage~~: not possible. Restoration encrypts its archives, and we don't decrypt them. `swgtool coverage` exists for other installs.
 - [x] Bake a Tatooine region from `.trn` to a heightmap (`swgtool bake-terrain`). A 4 km region around Mos Eisley bakes in about 2 s. Checked against the 1,905 objects in the world snapshot (`.ws`): median height error 0.00 m, 77% within 1 m.
 - [x] Render it at its real world coordinates in the double-precision engine (generated mesh, `game/tools/render_terrain.gd`)
-- [ ] Splat maps from the shader affectors (heights only so far)
+- [x] Ground textures from the shader affectors: shader families (`SGRP`), constant and replace affectors, and shader filters. The bake writes a texture-family map plus each family's textures, and `game/rendering/swg_terrain.gdshader` blends them. Mos Eisley comes out as a light-sand plateau with paved streets, surrounded by gravel, sand and rock. Assumptions are in `swg/terrain.h`:
+  - A family applies where the layer's amount reaches the feather clamp. Tatooine's "Flat_Mos_texture" layer uses clamp 0 to paint the city, which a blend-weight reading can't explain.
+  - The shader size is meters per texture repeat.
+  - Only each family's first variant is used.
+  - Edges show the 4 m bake spacing.
+  - `swgtool terrain-trace` lists every layer and affector touching a point, which is how the clamp reading was settled.
 - [ ] Exact fractal noise: the generator uses a stand-in gradient noise, so fine detail differs from the original (see [Architecture](ARCHITECTURE.md#asset-pipeline))
-- [ ] Roads (`AROA`), and direction and shader filters (currently ignored)
-- [ ] Terrain3D integration (needs a double-precision build of the addon)
+- [x] Roads (`AROA`): flatten to their stored height profile and paint their texture within their width, feathered. The shader and direction filters are implemented. Assumptions:
+  - A road's width is its full width.
+  - Direction is the downhill compass bearing.
+  - The heights near Mos Eisley are unchanged (its streets are texture layers, not road affectors), so the snapshot check doesn't exercise roads yet.
+  - Not yet: rivers (`ARIV`, 6 uses, not on Tatooine) and the bitmap filter (`FBIT`, expansion Kashyyyk maps only).
+- [ ] Terrain3D integration: v1.1.0's double-precision build supports worlds up to 65.5 km, enough for a 16 km planet. Building it (SCons, from `E:\godot\terrain3d-1.1.0`) runs third-party build scripts, which needs your go-ahead.
 - [x] Import one `.pob` building and walk through its interior (`swgtool export-building`, `game/tools/walk_building.gd`). The Mos Eisley cantina, placed where the world snapshot has it on the baked terrain. A stormtrooper runs from the street through the front door, both foyers and the main room, up onto the band stage, and on another route into the back office. It uses physics and Godot navigation, and every cell is lit by its own Galaxies lights. 223 of 228 buildings and every floor in the reference set load (`swgtool pob-check`). The rest are 3 buildings in an older layout version (`PRTO 0001`) and 2 deleted by patches.
   - Floors are the collision and the navigation mesh: Galaxies floors are convex triangles joined at shared edges. Uncrossable boundary edges become walls, while doorway edges and exits to open ground stay open.
   - Not yet: doors (styles are listed, no door objects placed), the furniture and other objects the snapshot places inside cells, alpha-tested textures, and rendering the outside only through portals (for now the terrain is hidden while the camera is indoors).

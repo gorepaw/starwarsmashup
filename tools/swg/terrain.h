@@ -11,11 +11,12 @@ namespace swm::swg {
 
 // SWG procedural terrain (.trn, PTAT 0014): a tree of layers. Each layer has
 // boundaries (where it applies, with feathered edges), filters (conditions on
-// height, slope, or a fractal), and affectors (what it does), applied in file
-// order together with nested sub-layers.
+// height, slope, a fractal, aspect, or the ground texture so far), and
+// affectors (what it does), applied in file order together with nested
+// sub-layers.
 //
-// Only height generation is implemented; shader, flora, color, and
-// environment affectors are parsed but ignored.
+// Implemented: heights, ground textures (shader families), and roads. Flora,
+// color, environment, and river affectors are parsed but ignored.
 
 enum class Feather { linear = 0, ease_in = 1, ease_out = 2, ease_in_out = 3 };
 
@@ -46,6 +47,22 @@ private:
     std::array<uint8_t, 512> permutation_{};
 };
 
+// A ground texture family (SFAM in the shader group): interchangeable
+// shaders (variants of one surface) with selection weights.
+struct ShaderFamily {
+    struct Child {
+        std::string shader;  // name under shader/, without extension
+        float weight = 1;
+    };
+    int32_t id = 0;
+    std::string name;
+    std::string surface_properties;  // .iff describing the surface (sound, effects)
+    std::array<uint8_t, 3> color{};  // the editor's map color
+    float shader_size = 2;           // ASSUMPTION: meters per texture repeat
+    float feather_clamp = 1;         // see TerrainAffector::feather_clamp
+    std::vector<Child> children;
+};
+
 struct TerrainBoundary {
     enum class Kind { circle, rectangle, polygon, polyline } kind = Kind::circle;
     std::vector<std::array<double, 2>> points;  // polygon/polyline (x, z)
@@ -59,16 +76,36 @@ struct TerrainBoundary {
 };
 
 struct TerrainFilter {
-    enum class Kind { height, slope, fractal, ignored } kind = Kind::ignored;
-    double min = 0, max = 0;
+    enum class Kind { height, slope, fractal, direction, shader, ignored } kind = Kind::ignored;
+    double min = 0, max = 0;  // height (m), slope or direction (degrees), or fractal value
     Feather feather = Feather::linear;
     double feather_amount = 0;  // fraction of the [min, max] range
     int32_t fractal_id = 0;
     double fractal_scale = 1;
+    int32_t shader_family = 0;  // shader: passes where this family is the ground texture so far
+};
+
+// A road (AROA 0005): a polyline with fixed heights along it. Terrain within
+// the road's width is set to the road's height and given its ground texture.
+struct TerrainRoad {
+    std::vector<std::vector<std::array<double, 3>>> segments;  // (x, height, z) polylines
+    double width = 0;           // ASSUMPTION: full width (half on each side of the line)
+    int32_t shader_family = 0;
+    Feather height_feather = Feather::linear;
+    double height_feather_amount = 0;  // fraction of the half width blended at the edges
+    Feather shader_feather = Feather::linear;
+    double shader_feather_amount = 0;
 };
 
 struct TerrainAffector {
-    enum class Kind { height_constant, height_fractal, height_terrace } kind = Kind::height_constant;
+    enum class Kind {
+        height_constant,
+        height_fractal,
+        height_terrace,
+        shader_constant,
+        shader_replace,
+        road,
+    } kind = Kind::height_constant;
     // 0 replace, 1 add, 2 subtract, 3 multiply. Inferred from Tatooine's layer
     // names: op 0 is used to flatten ("START-flat" 195, "Dune_Seas" 0), op 1 to
     // raise ("Xelric Raise" 200, "Top_Mesa" 70), op 2 to cut ("Ebe_subtract"
@@ -77,6 +114,19 @@ struct TerrainAffector {
     double value = 0;       // constant height, fractal scale, or terrace step
     int32_t fractal_id = 0;
     double terrace_fraction = 0;
+
+    // Ground textures. ASSUMPTION: a family is applied where the layer's
+    // amount is above 0 and at least the feather clamp (the family's unless
+    // overridden): the clamp cuts off the feathered edge. A clamp of 1 then
+    // means "only where fully inside", and 0 "the whole feathered area".
+    // Evidence: Tatooine's "Flat_Mos_texture" layer paints Mos Eisley's flat
+    // area with a clamp override of 0, so 0 must mean visible, not "weight 0".
+    int32_t shader_family = 0;     // the family to apply
+    int32_t replaced_family = -1;  // shader_replace: only where this family is set
+    bool use_feather_clamp = false;
+    double feather_clamp = 1;
+
+    TerrainRoad road;
 };
 
 struct TerrainLayer {
@@ -99,23 +149,33 @@ struct TerrainLayer {
 struct ProceduralTerrain {
     double map_size = 16384;
     std::map<int32_t, Fractal> fractals;
+    std::vector<ShaderFamily> shader_families;
     std::vector<TerrainLayer> layers;
+
+    const ShaderFamily* family(int32_t id) const;
 };
 
 ProceduralTerrain parse_procedural_terrain(std::span<const uint8_t> bytes);
 
-// Heights on a square grid centered at (center_x, center_z), `samples` per
+// A baked square region centered at (center_x, center_z), `samples` per
 // side, `spacing` meters apart. Row-major, rows along +Z.
-struct HeightGrid {
+struct TerrainGrid {
     double origin_x = 0, origin_z = 0;  // world position of sample (0, 0)
     double spacing = 1;
     int samples = 0;
     std::vector<float> heights;
+    std::vector<int32_t> shaders;  // ground texture family id per sample, -1 for none
 
-    float at(int column, int row) const { return heights[size_t(row) * size_t(samples) + size_t(column)]; }
-    float sample_world(double x, double z) const;  // bilinear; clamps to the grid
+    size_t index(int column, int row) const { return size_t(row) * size_t(samples) + size_t(column); }
+    float at(int column, int row) const { return heights[index(column, row)]; }
+    float sample_world(double x, double z) const;  // bilinear height; clamps to the grid
 };
 
-HeightGrid bake_heights(const ProceduralTerrain& terrain, double center_x, double center_z, int samples, double spacing);
+TerrainGrid bake_terrain(const ProceduralTerrain& terrain, double center_x, double center_z, int samples,
+                         double spacing);
+
+// For debugging: every layer and affector that touches the point (x, z), in
+// order, with the layer's amount there and the resulting height and texture.
+std::vector<std::string> trace_terrain(const ProceduralTerrain& terrain, double x, double z);
 
 } // namespace swm::swg

@@ -25,6 +25,7 @@ swgtool export-character <dir> <out_dir> --name <name> --sat <path.sat>... [--we
                          [--bf2-lvl <ingame.lvl> --bf2-bank <bank> --anim <name>...]
 swgtool bake-terrain <dir> <out_prefix> --trn <path.trn> --center <x> <z> --samples <n> --spacing <m>
                      [--snapshot <path.ws>]
+swgtool terrain-trace <dir> --trn <path.trn> --at <x> <z>
 swgtool export-building <dir> <out_dir> --pob <path.pob> --name <name>
 swgtool pob-check <dir>
 swgtool snapshot <dir> <path.ws> [--match <text>] [--near <x> <z> <radius>]
@@ -50,14 +51,23 @@ swgtool snapshot <dir> <path.ws> [--match <text>] [--near <x> <z> <radius>]
 
   Not handled yet: occlusion zones (hiding body triangles under armor), customization (skin palettes, blend shapes), and LOD levels below the most detailed.
 
-- **bake-terrain**: evaluate a planet's procedural terrain (`.trn`) over a square region and write `<out_prefix>.r32` (float32 heights, row-major, rows along +Z), `<out_prefix>.json` (grid origin, spacing, height range), and `<out_prefix>_preview.png` (shaded relief, north up). With `--snapshot`, compares the baked heights against the world snapshot's placed objects. Example, 4 km around Mos Eisley at 4 m:
+- **bake-terrain**: evaluate a planet's procedural terrain (`.trn`) over a square region. Heights, ground textures and roads are evaluated; flora, colors, environments and rivers aren't. It writes:
+  - `<out_prefix>.r32`: float32 heights, row-major, rows along +Z.
+  - `<out_prefix>.shaders`: one byte per sample, the ground-texture family as an index into the JSON's `shader_families`, 255 for none.
+  - `<out_prefix>.json`: grid origin, spacing, height range, and the texture families with their texture file names.
+  - `<out_prefix>_textures/`: the families' textures as PNG.
+  - `<out_prefix>_preview.png` (shaded relief) and `<out_prefix>_ground_preview.png` (relief tinted by each family's map color), both north up.
+
+  With `--snapshot`, compares the baked heights against the world snapshot's placed objects. Example, 4 km around Mos Eisley at 4 m:
 
   ```powershell
   swgtool bake-terrain E:\swg_te\extracted\Star_Wars_files game\imported_assets\terrain\tatooine_mos_eisley `
     --trn terrain/tatooine.trn --center 3500 -4800 --samples 1025 --spacing 4 --snapshot snapshot/tatooine.ws
   ```
 
-  The fractal noise is a stand-in for SWG's own, so dune-scale detail is approximate (see `swg/terrain.h`).
+  The fractal noise is a stand-in for SWG's own, so dune-scale detail is approximate. The rule semantics that were inferred rather than read from the files are marked ASSUMPTION in `swg/terrain.h`.
+
+- **terrain-trace**: print every layer and affector that touches one point, in order, with the layer's amount there and the resulting height and ground texture. For working out what the rules do, e.g. `--trn terrain/tatooine.trn --at 3550 -4780` (central Mos Eisley).
 
 - **export-building**: export a portalized building (`.pob`) to `<name>.gltf` with one node per cell. Each cell holds its render mesh plus two collision meshes without materials: `<cell>_floor` (walkable triangles from the cell's `.flr`) and `<cell>_walls` (3 m quads rising from the floor's uncrossable edges). The `<name>.json` sidecar lists the portal polygons and, per cell, its portal links, door styles, and lights. Cell meshes may be meshes, LOD lists, component appearances, or redirects (`.msh`, `.lod`, `.cmp`, `.apt`). Example, the Mos Eisley cantina:
 

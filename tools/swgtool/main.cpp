@@ -18,6 +18,7 @@
 #include "bf2/hash.h"
 #include "bf2/ucfb.h"
 #include "retarget/retarget.h"
+#include "swg/appearance.h"
 #include "swg/building_export.h"
 #include "swg/character_export.h"
 #include "swg/gltf_assets.h"
@@ -46,6 +47,7 @@ constexpr const char* usage = R"(usage:
                            [--bf2-lvl <ingame.lvl> --bf2-bank <bank> --anim <name>...]
   swgtool bake-terrain <dir> <out_prefix> --trn <path.trn> --center <x> <z> --samples <n> --spacing <m>
                        [--snapshot <path.ws>]
+  swgtool terrain-trace <dir> --trn <path.trn> --at <x> <z>
   swgtool export-building <dir> <out_dir> --pob <path.pob> --name <name>
   swgtool pob-check <dir>
   swgtool snapshot <dir> <path.ws> [--match <text>] [--near <x> <z> <radius>]
@@ -484,8 +486,9 @@ int cmd_export_character(const std::vector<std::string>& args) {
     return 0;
 }
 
-// Shaded relief with a sand-to-rock tint, for eyeballing a bake.
-ImageRgba hillshade(const HeightGrid& grid) {
+// Shaded relief for eyeballing a bake: tinted sand to rock by height, or,
+// with `terrain`, by each sample's ground texture family (its map color).
+ImageRgba hillshade(const TerrainGrid& grid, const ProceduralTerrain* terrain = nullptr) {
     const auto [lo_it, hi_it] = std::minmax_element(grid.heights.begin(), grid.heights.end());
     const float lo = *lo_it, range = std::max(*hi_it - *lo_it, 1.0f);
     const Vec3 light = normalized(Vec3{-1, 2, -1});
@@ -499,7 +502,13 @@ ImageRgba hillshade(const HeightGrid& grid) {
             const float dz = (grid.at(column, r1) - grid.at(column, r0)) / float((r1 - r0) * grid.spacing);
             const float shade = std::clamp(dot(normalized(Vec3{-dx, 1, -dz}), light), 0.15f, 1.0f);
             const float t = (grid.at(column, row) - lo) / range;
-            const float base[3] = {0.85f - 0.3f * t, 0.72f - 0.3f * t, 0.5f - 0.15f * t};
+            float base[3] = {0.85f - 0.3f * t, 0.72f - 0.3f * t, 0.5f - 0.15f * t};
+            if (terrain) {
+                const ShaderFamily* family = terrain->family(grid.shaders[grid.index(column, row)]);
+                for (int ch = 0; ch < 3; ++ch) {
+                    base[ch] = family ? family->color[size_t(ch)] / 255.0f : 0.3f;
+                }
+            }
             // Image rows run top to bottom; put +Z (north) at the top.
             uint8_t* p = &image.pixels[(size_t(grid.samples - 1 - row) * size_t(grid.samples) + size_t(column)) * 4];
             for (int ch = 0; ch < 3; ++ch) {
@@ -526,20 +535,73 @@ int cmd_bake_terrain(const std::vector<std::string>& args) {
     std::cerr << std::format("{}: {} top-level layers, {} fractals\n", trn, terrain.layers.size(),
                              terrain.fractals.size());
 
-    const HeightGrid grid = bake_heights(terrain, cx, cz, std::stoi(samples), std::stod(spacing));
+    const TerrainGrid grid = bake_terrain(terrain, cx, cz, std::stoi(samples), std::stod(spacing));
     const auto [lo, hi] = std::minmax_element(grid.heights.begin(), grid.heights.end());
 
     const std::filesystem::path prefix = args[1];
     std::filesystem::create_directories(prefix.parent_path());
     std::ofstream raw(prefix.string() + ".r32", std::ios::binary);
     raw.write(reinterpret_cast<const char*>(grid.heights.data()), std::streamsize(grid.heights.size() * 4));
+
+    // Ground textures: one byte per sample, an index into shader_families
+    // (255 for none), plus each family's textures decoded to PNG.
+    std::vector<uint8_t> shader_indices(grid.shaders.size(), 255);
+    std::vector<size_t> family_samples(terrain.shader_families.size(), 0);
+    for (size_t i = 0; i < grid.shaders.size(); ++i) {
+        for (size_t f = 0; f < terrain.shader_families.size() && f < 255; ++f) {
+            if (terrain.shader_families[f].id == grid.shaders[i]) {
+                shader_indices[i] = uint8_t(f);
+                ++family_samples[f];
+            }
+        }
+    }
+    std::ofstream shader_file(prefix.string() + ".shaders", std::ios::binary);
+    shader_file.write(reinterpret_cast<const char*>(shader_indices.data()), std::streamsize(shader_indices.size()));
+    const std::filesystem::path texture_dir = prefix.string() + "_textures";
+    std::filesystem::create_directories(texture_dir);
+    std::string families_json;
+    for (size_t f = 0; f < terrain.shader_families.size(); ++f) {
+        const ShaderFamily& family = terrain.shader_families[f];
+        std::string children_json;
+        for (const ShaderFamily::Child& child : family.children) {
+            std::string png;
+            try {
+                const std::string texture = shader_main_texture(library.read("shader/" + child.shader + ".sht"));
+                if (!texture.empty()) {
+                    png = std::filesystem::path(texture).stem().string() + ".png";
+                    write_png(texture_dir / png, decode_dds(library.read(texture)));
+                }
+            } catch (const std::exception& e) {
+                std::cerr << "  warning: shader " << child.shader << ": " << e.what() << "\n";
+            }
+            children_json += std::format("{}{{\"shader\": \"{}\", \"texture\": \"{}\", \"weight\": {}}}",
+                                         children_json.empty() ? "" : ", ", child.shader, png, child.weight);
+        }
+        families_json += std::format(
+            "{}\n    {{\"id\": {}, \"name\": \"{}\", \"color\": [{}, {}, {}], \"size\": {}, \"feather_clamp\": {}, "
+            "\"samples\": {}, \"children\": [{}]}}",
+            f ? "," : "", family.id, family.name, family.color[0], family.color[1], family.color[2],
+            family.shader_size, family.feather_clamp, family_samples[f], children_json);
+    }
+
     std::ofstream meta(prefix.string() + ".json", std::ios::binary);
     meta << std::format(
         "{{\n  \"source\": \"{}\",\n  \"samples\": {},\n  \"spacing\": {},\n  \"origin_x\": {},\n  \"origin_z\": {},\n"
-        "  \"min_height\": {},\n  \"max_height\": {},\n  \"format\": \"float32 little-endian, row-major, rows along +Z\"\n}}\n",
-        trn, grid.samples, grid.spacing, grid.origin_x, grid.origin_z, *lo, *hi);
+        "  \"min_height\": {},\n  \"max_height\": {},\n  \"format\": \"float32 little-endian, row-major, rows along +Z\",\n"
+        "  \"shader_format\": \"uint8 index into shader_families (255: none), row-major, rows along +Z\",\n"
+        "  \"texture_dir\": \"{}\",\n  \"shader_families\": [{}\n  ]\n}}\n",
+        trn, grid.samples, grid.spacing, grid.origin_x, grid.origin_z, *lo, *hi, texture_dir.filename().string(),
+        families_json);
     write_png(prefix.string() + "_preview.png", hillshade(grid));
-    std::cerr << std::format("heights {:.1f} .. {:.1f} m; wrote {}.r32/.json/_preview.png\n", *lo, *hi, prefix.string());
+    write_png(prefix.string() + "_ground_preview.png", hillshade(grid, &terrain));
+    std::cerr << std::format("heights {:.1f} .. {:.1f} m; wrote {}.r32/.shaders/.json, previews, and textures\n", *lo,
+                             *hi, prefix.string());
+    for (size_t f = 0; f < terrain.shader_families.size(); ++f) {
+        if (family_samples[f] > 0) {
+            std::cerr << std::format("  {:>5.1f}%  {}\n", 100.0 * double(family_samples[f]) / double(grid.shaders.size()),
+                                     terrain.shader_families[f].name);
+        }
+    }
 
     const std::string snapshot_path = option(args, "--snapshot");
     if (!snapshot_path.empty()) {
@@ -571,6 +633,21 @@ int cmd_bake_terrain(const std::vector<std::string>& args) {
                 magnitudes.size(), magnitudes[magnitudes.size() / 2], magnitudes[magnitudes.size() * 9 / 10], within(1.0),
                 within(3.0));
         }
+    }
+    return 0;
+}
+
+int cmd_terrain_trace(const std::vector<std::string>& args) {
+    const std::string trn = option(args, "--trn");
+    const auto at = std::find(args.begin(), args.end(), "--at");
+    if (args.empty() || trn.empty() || at == args.end() || at + 2 >= args.end()) {
+        std::cerr << usage;
+        return 2;
+    }
+    TreLibrary library(args[0]);
+    const ProceduralTerrain terrain = parse_procedural_terrain(library.read(trn));
+    for (const std::string& line : trace_terrain(terrain, std::stod(*(at + 1)), std::stod(*(at + 2)))) {
+        std::cout << line << "\n";
     }
     return 0;
 }
@@ -701,6 +778,9 @@ int main(int argc, char** argv) {
         }
         if (command == "bake-terrain") {
             return cmd_bake_terrain(args);
+        }
+        if (command == "terrain-trace") {
+            return cmd_terrain_trace(args);
         }
         if (command == "export-building") {
             return cmd_export_building(args);

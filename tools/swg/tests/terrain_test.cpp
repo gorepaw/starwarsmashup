@@ -76,13 +76,83 @@ void test_layers() {
     bump.steps.push_back({.affector = {.kind = TerrainAffector::Kind::height_constant, .operation = 1, .value = 5}});
     terrain.layers = {base, bump};
 
-    const HeightGrid grid = bake_heights(terrain, 0, 0, 101, 1.0);  // -50..50 m
+    const TerrainGrid grid = bake_terrain(terrain, 0, 0, 101, 1.0);  // -50..50 m
     CHECK(near(grid.sample_world(0, 0), 15));
     CHECK(near(grid.sample_world(40, 40), 10));
 
     // A disabled layer does nothing.
     terrain.layers[1].enabled = false;
-    CHECK(near(bake_heights(terrain, 0, 0, 101, 1.0).sample_world(0, 0), 10));
+    CHECK(near(bake_terrain(terrain, 0, 0, 101, 1.0).sample_world(0, 0), 10));
+}
+
+TerrainBoundary circle_at(double x, double radius, double feather) {
+    TerrainBoundary circle;
+    circle.kind = TerrainBoundary::Kind::circle;
+    circle.center_x = x;
+    circle.radius = radius;
+    circle.feather_amount = feather;
+    return circle;
+}
+
+void test_shaders() {
+    ProceduralTerrain terrain;
+    terrain.shader_families = {{.id = 1, .name = "sand"}, {.id = 2, .name = "rock"}, {.id = 3, .name = "road"}};
+    // Sand everywhere.
+    TerrainLayer base;
+    base.steps.push_back({.affector = {.kind = TerrainAffector::Kind::shader_constant, .shader_family = 1}});
+    // Rock in a circle feathered over its outer half; the default clamp (1)
+    // keeps it to where the layer is fully on.
+    TerrainLayer rock;
+    rock.boundaries.push_back(circle_at(0, 20, 0.5));
+    rock.steps.push_back({.affector = {.kind = TerrainAffector::Kind::shader_constant, .shader_family = 2}});
+    // A clamp override of 0 spreads a texture over the whole feathered area.
+    TerrainLayer wide;
+    wide.boundaries.push_back(circle_at(40, 10, 0.5));
+    wide.steps.push_back({.affector = {.kind = TerrainAffector::Kind::shader_constant,
+                                       .shader_family = 2,
+                                       .use_feather_clamp = true,
+                                       .feather_clamp = 0}});
+    // Replace rock with road, but only where rock is (shader filter + replace).
+    TerrainLayer replace;
+    TerrainFilter on_rock;
+    on_rock.kind = TerrainFilter::Kind::shader;
+    on_rock.shader_family = 2;
+    replace.filters.push_back(on_rock);
+    replace.boundaries.push_back(circle_at(0, 5, 0));
+    replace.steps.push_back(
+        {.affector = {.kind = TerrainAffector::Kind::shader_replace, .shader_family = 3, .replaced_family = 2}});
+    terrain.layers = {base, rock, wide, replace};
+
+    const TerrainGrid grid = bake_terrain(terrain, 20, 0, 121, 1.0);  // x -40..80
+    const auto shader_at = [&](double x) { return grid.shaders[grid.index(int(std::lround(x - grid.origin_x)), 60)]; };
+    CHECK(shader_at(-30) == 1);  // outside everything
+    CHECK(shader_at(8) == 2);    // fully inside the rock circle
+    CHECK(shader_at(15) == 1);   // rock's feathered edge: amount < 1
+    CHECK(shader_at(48) == 2);   // the clamp-0 circle's feathered edge still counts
+    CHECK(shader_at(2) == 3);    // replaced inside the small circle
+}
+
+void test_road() {
+    ProceduralTerrain terrain;
+    terrain.shader_families = {{.id = 7, .name = "road"}};
+    TerrainLayer base;
+    base.steps.push_back({.affector = {.kind = TerrainAffector::Kind::height_constant, .operation = 0, .value = 10}});
+    TerrainLayer road_layer;
+    TerrainAffector road{.kind = TerrainAffector::Kind::road};
+    road.road.segments = {{{-50, 4, 0}, {50, 4, 0}}};  // along X at height 4
+    road.road.width = 8;
+    road.road.shader_family = 7;
+    road.road.height_feather_amount = 0.5;  // outer half of each side blends
+    road_layer.steps.push_back({.affector = road});
+    terrain.layers = {base, road_layer};
+
+    const TerrainGrid grid = bake_terrain(terrain, 0, 0, 41, 1.0);  // -20..20
+    CHECK(near(grid.sample_world(0, 0), 4));     // on the road
+    CHECK(near(grid.sample_world(0, 1), 4));     // inside the unfeathered core (2 m)
+    CHECK(near(grid.sample_world(0, 3), 7));     // halfway through the 2 m feather: weight 0.5
+    CHECK(near(grid.sample_world(0, 10), 10));   // off the road
+    CHECK(grid.shaders[grid.index(20, 20)] == 7);
+    CHECK(grid.shaders[grid.index(20, 30)] == -1);
 }
 
 } // namespace
@@ -92,6 +162,8 @@ int main() {
     test_polygon();
     test_fractal();
     test_layers();
+    test_shaders();
+    test_road();
 
     if (failures == 0) {
         std::printf("terrain_test: all passed\n");

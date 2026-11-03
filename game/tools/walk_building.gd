@@ -348,10 +348,7 @@ func _add_terrain(prefix: String) -> void:
 	var origin := Vector2(meta["origin_x"], meta["origin_z"])
 	_terrain = MeshInstance3D.new()
 	_terrain.mesh = TerrainTool.build_mesh(heights, samples, spacing, origin, 2)
-	var material := StandardMaterial3D.new()
-	material.albedo_color = Color(0.78, 0.66, 0.47)
-	material.roughness = 0.95
-	_terrain.material_override = material
+	_terrain.material_override = TerrainTool.build_material(prefix, meta)
 	root.add_child(_terrain)
 
 	# Collision only near the building: 160 m square at the bake's spacing.

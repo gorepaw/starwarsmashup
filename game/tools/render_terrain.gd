@@ -3,12 +3,16 @@
 #
 #   godot --path game --script res://tools/render_terrain.gd -- <bake_prefix> <output.png> [character.gltf] [step]
 #
-# <bake_prefix> names the .r32/.json pair. [step] samples every Nth height
-# (default 2). SWG is left-handed, so world X is mirrored (Godot x = -SWG x).
+# <bake_prefix> names the .r32/.json pair (plus .shaders and textures, if the
+# bake has ground textures). [step] samples every Nth height (default 2). SWG
+# is left-handed, so world X is mirrored (Godot x = -SWG x).
 # Needs a real window: rendering doesn't run in --headless mode.
 extends SceneTree
 
+const TERRAIN_SHADER = preload("res://rendering/swg_terrain.gdshader")
 const SETTLE_FRAMES := 6
+const TEXTURE_SIZE := 512  # ground textures are resized to this to share one array
+const MAX_FAMILIES := 32   # matches the shader
 
 var _frames := 0
 var _output := ""
@@ -35,10 +39,7 @@ func _init() -> void:
 
 	var terrain := MeshInstance3D.new()
 	terrain.mesh = build_mesh(heights, samples, spacing, origin, step)
-	var material := StandardMaterial3D.new()
-	material.albedo_color = Color(0.78, 0.66, 0.47)
-	material.roughness = 0.95
-	terrain.material_override = material
+	terrain.material_override = build_material(args[0], meta)
 	root.add_child(terrain)
 
 	# Stand at the center of the region.
@@ -66,6 +67,52 @@ func _process(_delta: float) -> bool:
 		quit(0)
 		return true
 	return false
+
+
+# Ground texture material for a bake (rendering/swg_terrain.gdshader), or
+# plain sand if the bake has no ground texture map. Also used by other tools.
+static func build_material(prefix: String, meta: Dictionary) -> Material:
+	var samples: int = meta["samples"]
+	var indices := FileAccess.get_file_as_bytes(prefix + ".shaders")
+	if not meta.has("shader_families") or indices.size() != samples * samples:
+		var plain := StandardMaterial3D.new()
+		plain.albedo_color = Color(0.78, 0.66, 0.47)
+		plain.roughness = 0.95
+		return plain
+
+	# One array layer per family: its first texture, or its map color.
+	var texture_dir := prefix.replace("\\", "/").get_base_dir().path_join(meta["texture_dir"])
+	var images: Array[Image] = []
+	var sizes := PackedFloat32Array()
+	for family: Dictionary in meta["shader_families"]:
+		var image: Image = null
+		var children: Array = family["children"]
+		if not children.is_empty() and children[0]["texture"] != "":
+			image = Image.load_from_file(texture_dir.path_join(children[0]["texture"]))
+		if image == null:
+			var color: Array = family["color"]
+			image = Image.create(4, 4, false, Image.FORMAT_RGBA8)
+			image.fill(Color8(color[0], color[1], color[2]))
+		image.convert(Image.FORMAT_RGBA8)
+		image.resize(TEXTURE_SIZE, TEXTURE_SIZE)
+		image.generate_mipmaps()
+		images.append(image)
+		sizes.append(family["size"])
+	sizes.resize(MAX_FAMILIES)
+	var textures := Texture2DArray.new()
+	textures.create_from_images(images)
+	var family_map := ImageTexture.create_from_image(
+			Image.create_from_data(samples, samples, false, Image.FORMAT_R8, indices))
+
+	var material := ShaderMaterial.new()
+	material.shader = TERRAIN_SHADER
+	material.set_shader_parameter("family_map", family_map)
+	material.set_shader_parameter("family_textures", textures)
+	material.set_shader_parameter("family_size", sizes)
+	material.set_shader_parameter("map_origin", Vector2(meta["origin_x"], meta["origin_z"]))
+	material.set_shader_parameter("map_spacing", float(meta["spacing"]))
+	material.set_shader_parameter("map_samples", samples)
+	return material
 
 
 # Also used by other tools (preload this script).

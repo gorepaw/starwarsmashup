@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <format>
 #include <numeric>
 #include <random>
 #include <stdexcept>
@@ -155,17 +156,79 @@ bool parse_filter(const IffNode& node, TerrainFilter& out) {
         out.min = r.f32();
         out.max = r.f32();
         out.fractal_scale = r.f32();
-    } else if (node.tag == "FDIR" || node.tag == "FSHD") {
-        out.kind = TerrainFilter::Kind::ignored;  // needs aspect / shader maps; treated as passing
+    } else if (node.tag == "FDIR") {
+        out.kind = TerrainFilter::Kind::direction;
+        out.min = r.f32();
+        out.max = r.f32();
+        out.feather = to_feather(r.i32());
+        out.feather_amount = r.f32();
+    } else if (node.tag == "FSHD") {
+        out.kind = TerrainFilter::Kind::shader;
+        out.shader_family = r.i32();
     } else {
         return false;
     }
     return true;
 }
 
-bool parse_height_affector(const IffNode& node, TerrainAffector& out) {
+// AROA 0005: FORM DATA holds FORM HDTA (SGMT chunks of (x, height, z)
+// points, the road's fixed height profile) and a DATA chunk: control points
+// (count, then x/z pairs), width, ground texture family, height feather
+// (function, amount), and texture feather (function, amount).
+void parse_road(const IffNode& node, TerrainRoad& road) {
+    const IffNode& version = version_of(node);
+    if (const IffNode* data = version.child("DATA"); data && data->form) {
+        if (const IffNode* hdta = data->child("HDTA")) {
+            for (const IffNode* sgmt : version_of(*hdta).children_with("SGMT")) {
+                IffReader r(sgmt->data);
+                std::vector<std::array<double, 3>> segment;
+                while (r.remaining() >= 12) {
+                    const double x = r.f32(), y = r.f32();
+                    segment.push_back({x, y, double(r.f32())});
+                }
+                if (!segment.empty()) {
+                    road.segments.push_back(std::move(segment));
+                }
+            }
+        }
+    }
+    IffReader r(read_parameters(version));
+    const std::vector<std::array<double, 2>> control_points = read_points(r);
+    road.width = r.f32();
+    road.shader_family = r.i32();
+    road.height_feather = to_feather(r.i32());
+    road.height_feather_amount = r.f32();
+    road.shader_feather = to_feather(r.i32());
+    road.shader_feather_amount = r.f32();
+    if (road.segments.empty() && !control_points.empty()) {
+        // No height profile: the road only paints its texture (NaN heights).
+        std::vector<std::array<double, 3>> segment;
+        for (const auto& p : control_points) {
+            segment.push_back({p[0], std::nan(""), p[1]});
+        }
+        road.segments.push_back(std::move(segment));
+    }
+}
+
+bool parse_affector(const IffNode& node, TerrainAffector& out) {
+    if (node.tag == "AROA") {
+        out.kind = TerrainAffector::Kind::road;
+        parse_road(node, out.road);
+        return true;
+    }
     IffReader r(read_parameters(version_of(node)));
-    if (node.tag == "AHCN") {
+    if (node.tag == "ASCN") {
+        out.kind = TerrainAffector::Kind::shader_constant;
+        out.shader_family = r.i32();
+        out.use_feather_clamp = r.i32() != 0;
+        out.feather_clamp = r.f32();
+    } else if (node.tag == "ASRP") {
+        out.kind = TerrainAffector::Kind::shader_replace;
+        out.replaced_family = r.i32();
+        out.shader_family = r.i32();
+        out.use_feather_clamp = r.i32() != 0;
+        out.feather_clamp = r.f32();
+    } else if (node.tag == "AHCN") {
         out.kind = TerrainAffector::Kind::height_constant;
         out.operation = r.i32();
         out.value = r.f32();
@@ -213,7 +276,7 @@ TerrainLayer parse_layer(const IffNode& layr) {
                 layer.boundaries.push_back(std::move(boundary));
             } else if (parse_filter(child, filter)) {
                 layer.filters.push_back(filter);
-            } else if (parse_height_affector(child, affector)) {
+            } else if (parse_affector(child, affector)) {
                 layer.steps.push_back({.affector = affector});
             }
         } catch (const std::runtime_error&) {
@@ -269,12 +332,39 @@ Bounds bounds_of(const TerrainBoundary& b) {
     }
 }
 
+// Nearest point on a polyline of (x, height, z) points: (distance, height).
+std::pair<double, double> nearest_on_polyline(const std::vector<std::array<double, 3>>& points, double x, double z) {
+    if (points.size() == 1) {
+        return {std::hypot(x - points[0][0], z - points[0][2]), points[0][1]};
+    }
+    double best = 1e30, height = 0;
+    for (size_t k = 1; k < points.size(); ++k) {
+        const auto& a = points[k - 1];
+        const auto& b = points[k];
+        const double dx = b[0] - a[0], dz = b[2] - a[2];
+        const double length_squared = dx * dx + dz * dz;
+        const double t = length_squared > 0 ? std::clamp(((x - a[0]) * dx + (z - a[2]) * dz) / length_squared, 0.0, 1.0) : 0;
+        const double d = std::hypot(a[0] + t * dx - x, a[2] + t * dz - z);
+        if (d < best) {
+            best = d;
+            height = a[1] + t * (b[1] - a[1]);
+        }
+    }
+    return {best, height};
+}
+
 class Evaluator {
 public:
-    Evaluator(const ProceduralTerrain& terrain, HeightGrid& grid) : terrain_(terrain), grid_(grid) {
+    Evaluator(const ProceduralTerrain& terrain, TerrainGrid& grid) : terrain_(terrain), grid_(grid) {
         const double far = grid.origin_x + grid.spacing * (grid.samples - 1);
         const double far_z = grid.origin_z + grid.spacing * (grid.samples - 1);
         region_ = {grid.origin_x, grid.origin_z, far, far_z};
+    }
+
+    // Logs every layer and affector that touches sample `index`.
+    void trace(size_t index, std::vector<std::string>* out) {
+        trace_index_ = index;
+        trace_ = out;
     }
 
     void run() {
@@ -300,6 +390,49 @@ private:
         const double dx = (grid_.at(c1, row) - grid_.at(c0, row)) / ((c1 - c0) * grid_.spacing);
         const double dz = (grid_.at(column, r1) - grid_.at(column, r0)) / ((r1 - r0) * grid_.spacing);
         return std::atan(std::sqrt(dx * dx + dz * dz)) * 180.0 / pi;
+    }
+
+    // ASSUMPTION: the compass direction the slope faces (downhill), in
+    // degrees: 0 toward +Z, 90 toward +X. Only Tatooine uses direction
+    // filters, in flora layers. Flat ground has no direction (NaN).
+    double direction_degrees(int column, int row) const {
+        const int n = grid_.samples;
+        const int c0 = std::max(column - 1, 0), c1 = std::min(column + 1, n - 1);
+        const int r0 = std::max(row - 1, 0), r1 = std::min(row + 1, n - 1);
+        const double dx = (grid_.at(c1, row) - grid_.at(c0, row)) / ((c1 - c0) * grid_.spacing);
+        const double dz = (grid_.at(column, r1) - grid_.at(column, r0)) / ((r1 - r0) * grid_.spacing);
+        if (dx * dx + dz * dz < 1e-8) {
+            return std::nan("");
+        }
+        return std::atan2(-dx, -dz) * 180.0 / pi;
+    }
+
+    // `angle` brought into [lo, lo + 360) before testing the range.
+    static double direction_amount(double angle, const TerrainFilter& filter) {
+        if (std::isnan(angle)) {
+            return 0;
+        }
+        while (angle < filter.min) {
+            angle += 360;
+        }
+        while (angle >= filter.min + 360) {
+            angle -= 360;
+        }
+        return range_amount(angle, filter.min, filter.max, filter.feather, filter.feather_amount);
+    }
+
+    double feather_clamp(const TerrainAffector& affector) const {
+        if (affector.use_feather_clamp) {
+            return affector.feather_clamp;
+        }
+        const ShaderFamily* family = terrain_.family(affector.shader_family);
+        return family ? family->feather_clamp : 1.0;
+    }
+
+    void set_shader(size_t i, int32_t family, double amount, double clamp) {
+        if (amount > 0 && amount >= clamp - 1e-6) {
+            grid_.shaders[i] = family;
+        }
     }
 
     void process(const TerrainLayer& layer, const std::vector<float>& parent) {
@@ -339,13 +472,38 @@ private:
             }
         }
 
+        path_.push_back(layer.name);
+        if (trace_ && amount[trace_index_] > 0) {
+            std::string path;
+            for (const std::string& name : path_) {
+                path += (path.empty() ? "" : " / ") + name;
+            }
+            trace_->push_back(std::format("layer {}  amount {:.3f}", path, amount[trace_index_]));
+        }
         for (const TerrainLayer::Step& step : layer.steps) {
             if (step.is_layer) {
                 process(layer.children[step.layer], amount);
             } else {
                 apply(step.affector, amount);
+                if (trace_ && amount[trace_index_] > 0) {
+                    trace_step(step.affector);
+                }
             }
         }
+        path_.pop_back();
+    }
+
+    void trace_step(const TerrainAffector& affector) {
+        static constexpr const char* kinds[] = {"height constant", "height fractal", "height terrace",
+                                                "shader constant", "shader replace", "road"};
+        const size_t i = trace_index_;
+        const ShaderFamily* family = terrain_.family(grid_.shaders[i]);
+        const bool road = affector.kind == TerrainAffector::Kind::road;
+        trace_->push_back(std::format("    {} (op {}, value {:.2f}, family {}) -> height {:.2f}, texture {}",
+                                      kinds[size_t(affector.kind)], affector.operation,
+                                      road ? affector.road.width : affector.value,
+                                      road ? affector.road.shader_family : affector.shader_family, grid_.heights[i],
+                                      family ? family->name : "-"));
     }
 
     double filter_amount(const TerrainFilter& filter, int column, int row, double x, double z) const {
@@ -360,6 +518,10 @@ private:
             const double value = f ? f->sample(x, z) * filter.fractal_scale : 0;
             return range_amount(value, filter.min, filter.max, filter.feather, filter.feather_amount);
         }
+        case TerrainFilter::Kind::direction:
+            return direction_amount(direction_degrees(column, row), filter);
+        case TerrainFilter::Kind::shader:
+            return grid_.shaders[grid_.index(column, row)] == filter.shader_family ? 1 : 0;
         case TerrainFilter::Kind::ignored:
             return 1;
         }
@@ -367,12 +529,27 @@ private:
     }
 
     void apply(const TerrainAffector& affector, const std::vector<float>& amount) {
+        if (affector.kind == TerrainAffector::Kind::road) {
+            apply_road(affector.road, amount);
+            return;
+        }
         const int n = grid_.samples;
         const Fractal* f = affector.kind == TerrainAffector::Kind::height_fractal ? fractal(affector.fractal_id) : nullptr;
+        const double clamp = feather_clamp(affector);
         for (int row = 0; row < n; ++row) {
             for (int column = 0; column < n; ++column) {
                 const size_t i = size_t(row) * size_t(n) + size_t(column);
                 if (amount[i] <= 0) {
+                    continue;
+                }
+                if (affector.kind == TerrainAffector::Kind::shader_constant) {
+                    set_shader(i, affector.shader_family, amount[i], clamp);
+                    continue;
+                }
+                if (affector.kind == TerrainAffector::Kind::shader_replace) {
+                    if (grid_.shaders[i] == affector.replaced_family) {
+                        set_shader(i, affector.shader_family, amount[i], clamp);
+                    }
                     continue;
                 }
                 const double h = grid_.heights[i];
@@ -402,8 +579,67 @@ private:
         }
     }
 
+    // Within half the road's width of its height profile, blend toward the
+    // profile's height and apply its texture, feathered toward the edges.
+    void apply_road(const TerrainRoad& road, const std::vector<float>& amount) {
+        const double half = road.width * 0.5;
+        if (half <= 0 || road.segments.empty()) {
+            return;
+        }
+        Bounds bounds{1e30, 1e30, -1e30, -1e30};
+        for (const auto& segment : road.segments) {
+            for (const auto& p : segment) {
+                bounds = {std::min(bounds.min_x, p[0] - half), std::min(bounds.min_z, p[2] - half),
+                          std::max(bounds.max_x, p[0] + half), std::max(bounds.max_z, p[2] + half)};
+            }
+        }
+        if (!bounds.overlaps(region_)) {
+            return;
+        }
+        const int n = grid_.samples;
+        const int c0 = std::clamp(int(std::floor((bounds.min_x - grid_.origin_x) / grid_.spacing)), 0, n - 1);
+        const int c1 = std::clamp(int(std::ceil((bounds.max_x - grid_.origin_x) / grid_.spacing)), 0, n - 1);
+        const int r0 = std::clamp(int(std::floor((bounds.min_z - grid_.origin_z) / grid_.spacing)), 0, n - 1);
+        const int r1 = std::clamp(int(std::ceil((bounds.max_z - grid_.origin_z) / grid_.spacing)), 0, n - 1);
+        const ShaderFamily* family = terrain_.family(road.shader_family);
+        const double clamp = family ? family->feather_clamp : 1.0;
+        const auto edge_weight = [&](Feather feather, double fraction, double edge) {
+            const double width = half * fraction;
+            return width > 0 ? feathered(feather, edge / width) : 1.0;
+        };
+        for (int row = r0; row <= r1; ++row) {
+            for (int column = c0; column <= c1; ++column) {
+                const size_t i = grid_.index(column, row);
+                if (amount[i] <= 0) {
+                    continue;
+                }
+                double distance = 1e30, height = 0;
+                for (const auto& segment : road.segments) {
+                    const auto [d, h] = nearest_on_polyline(segment, world_x(column), world_z(row));
+                    if (d < distance) {
+                        distance = d;
+                        height = h;
+                    }
+                }
+                if (distance >= half) {
+                    continue;
+                }
+                const double edge = half - distance;
+                if (!std::isnan(height)) {
+                    const double w = amount[i] * edge_weight(road.height_feather, road.height_feather_amount, edge);
+                    grid_.heights[i] = float(grid_.heights[i] + (height - grid_.heights[i]) * w);
+                }
+                set_shader(i, road.shader_family,
+                           amount[i] * edge_weight(road.shader_feather, road.shader_feather_amount, edge), clamp);
+            }
+        }
+    }
+
     const ProceduralTerrain& terrain_;
-    HeightGrid& grid_;
+    TerrainGrid& grid_;
+    std::vector<std::string>* trace_ = nullptr;
+    size_t trace_index_ = 0;
+    std::vector<std::string> path_;
     Bounds region_{};
 };
 
@@ -524,7 +760,16 @@ double TerrainBoundary::amount(double x, double z) const {
     return 0;
 }
 
-float HeightGrid::sample_world(double x, double z) const {
+const ShaderFamily* ProceduralTerrain::family(int32_t id) const {
+    for (const ShaderFamily& f : shader_families) {
+        if (f.id == id) {
+            return &f;
+        }
+    }
+    return nullptr;
+}
+
+float TerrainGrid::sample_world(double x, double z) const {
     const double gx = std::clamp((x - origin_x) / spacing, 0.0, double(samples - 1));
     const double gz = std::clamp((z - origin_z) / spacing, 0.0, double(samples - 1));
     const int c0 = std::min(int(gx), samples - 2), r0 = std::min(int(gz), samples - 2);
@@ -543,6 +788,30 @@ ProceduralTerrain parse_procedural_terrain(std::span<const uint8_t> bytes) {
     const IffNode& generator = version_of(version.expect("TGEN"));
 
     ProceduralTerrain terrain;
+    if (const IffNode* shader_group = generator.child("SGRP")) {
+        // SFAM: id, name, surface properties, map color (3 bytes), shader
+        // size, feather clamp, then children (count, then name + weight).
+        for (const IffNode* sfam : version_of(*shader_group).children_with("SFAM")) {
+            IffReader r(sfam->data);
+            ShaderFamily family;
+            family.id = r.i32();
+            family.name = r.cstring();
+            family.surface_properties = r.cstring();
+            for (uint8_t& c : family.color) {
+                c = r.u8();
+            }
+            family.shader_size = r.f32();
+            family.feather_clamp = r.f32();
+            const int32_t count = r.i32();
+            for (int32_t i = 0; i < count; ++i) {
+                ShaderFamily::Child child;
+                child.shader = r.cstring();
+                child.weight = r.f32();
+                family.children.push_back(std::move(child));
+            }
+            terrain.shader_families.push_back(std::move(family));
+        }
+    }
     if (const IffNode* fractal_group = generator.child("MGRP")) {
         for (const IffNode* family : version_of(*fractal_group).children_with("MFAM")) {
             IffReader r(family->expect("DATA").data);
@@ -555,18 +824,35 @@ ProceduralTerrain parse_procedural_terrain(std::span<const uint8_t> bytes) {
     return terrain;
 }
 
-HeightGrid bake_heights(const ProceduralTerrain& terrain, double center_x, double center_z, int samples, double spacing) {
+TerrainGrid bake_terrain(const ProceduralTerrain& terrain, double center_x, double center_z, int samples,
+                         double spacing) {
     if (samples < 2) {
         throw std::runtime_error("terrain bake needs at least 2 samples per side");
     }
-    HeightGrid grid;
+    TerrainGrid grid;
     grid.samples = samples;
     grid.spacing = spacing;
     grid.origin_x = center_x - spacing * (samples - 1) * 0.5;
     grid.origin_z = center_z - spacing * (samples - 1) * 0.5;
     grid.heights.assign(size_t(samples) * size_t(samples), 0.0f);
+    grid.shaders.assign(size_t(samples) * size_t(samples), -1);
     Evaluator(terrain, grid).run();
     return grid;
 }
 
+std::vector<std::string> trace_terrain(const ProceduralTerrain& terrain, double x, double z) {
+    // A 3 x 3 grid at 1 m spacing, so slope and direction filters see neighbors.
+    TerrainGrid grid;
+    grid.samples = 3;
+    grid.spacing = 1;
+    grid.origin_x = x - 1;
+    grid.origin_z = z - 1;
+    grid.heights.assign(9, 0.0f);
+    grid.shaders.assign(9, -1);
+    std::vector<std::string> out;
+    Evaluator evaluator(terrain, grid);
+    evaluator.trace(4, &out);
+    evaluator.run();
+    return out;
+}
 } // namespace swm::swg
