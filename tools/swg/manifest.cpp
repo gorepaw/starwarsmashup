@@ -1,18 +1,15 @@
 #include "swg/manifest.h"
 
 #include <algorithm>
-#include <atomic>
 #include <cctype>
 #include <istream>
 #include <iterator>
-#include <mutex>
 #include <ostream>
 #include <stdexcept>
-#include <thread>
 #include <tuple>
 
 #include "swg/sha256.h"
-#include "swg/tre_archive.h"
+#include "swg/tre_scan.h"
 
 namespace swm::swg {
 namespace {
@@ -24,17 +21,6 @@ constexpr std::string_view source_prefix = "# source: ";
 std::string to_lower(std::string s) {
     std::transform(s.begin(), s.end(), s.begin(), [](unsigned char c) { return char(std::tolower(c)); });
     return s;
-}
-
-std::vector<std::filesystem::path> find_archives(const std::filesystem::path& dir) {
-    std::vector<std::filesystem::path> archives;
-    for (const auto& item : std::filesystem::recursive_directory_iterator(dir)) {
-        if (item.is_regular_file() && to_lower(item.path().extension().string()) == ".tre") {
-            archives.push_back(item.path());
-        }
-    }
-    std::sort(archives.begin(), archives.end());
-    return archives;
 }
 
 bool entry_less(const ManifestEntry& a, const ManifestEntry& b) {
@@ -51,60 +37,22 @@ std::string normalize_path(std::string_view path) {
 }
 
 ScanResult scan_tre_directory(const std::filesystem::path& dir, std::ostream& log) {
-    const std::vector<std::filesystem::path> archives = find_archives(dir);
+    const std::vector<std::filesystem::path> archives = find_tre_archives(dir);
 
     std::vector<std::vector<ManifestEntry>> archive_entries(archives.size());
-    std::vector<std::vector<std::string>> archive_errors(archives.size());
-    std::atomic<size_t> next_archive{0};
-    std::mutex log_mutex;
-    size_t finished = 0;
-
-    auto worker = [&] {
-        for (size_t i; (i = next_archive++) < archives.size();) {
-            const std::string archive_name = std::filesystem::relative(archives[i], dir).generic_string();
-            try {
-                TreArchive tre(archives[i]);
-                // Read in file order to keep disk access sequential.
-                std::vector<TreEntry> entries = tre.entries();
-                std::sort(entries.begin(), entries.end(),
-                          [](const TreEntry& a, const TreEntry& b) { return a.offset < b.offset; });
-                for (const TreEntry& entry : entries) {
-                    try {
-                        const std::vector<uint8_t> data = tre.read(entry);
-                        archive_entries[i].push_back({Sha256::hex_of(data.data(), data.size()), data.size(),
-                                                      archive_name, normalize_path(entry.path)});
-                    } catch (const std::exception& e) {
-                        archive_errors[i].push_back(std::string(e.what()) + " [" + entry.path + "]");
-                    }
-                }
-            } catch (const std::exception& e) {
-                archive_errors[i].push_back(e.what());
-            }
-
-            std::lock_guard lock(log_mutex);
-            log << "[" << ++finished << "/" << archives.size() << "] " << archive_name << ": "
-                << archive_entries[i].size() << " files";
-            if (!archive_errors[i].empty()) {
-                log << ", " << archive_errors[i].size() << " errors";
-            }
-            log << "\n";
-        }
-    };
-
-    const size_t thread_count =
-        std::clamp<size_t>(std::thread::hardware_concurrency(), 1, std::max<size_t>(archives.size(), 1));
-    {
-        std::vector<std::jthread> pool;
-        for (size_t t = 0; t < thread_count; ++t) {
-            pool.emplace_back(worker);
-        }
-    }
+    TreVisitResult visit = visit_tre_archives(
+        archives, dir, log,
+        [&](size_t archive_index, const std::string& archive_name, const TreEntry& entry,
+            const std::vector<uint8_t>& data) {
+            archive_entries[archive_index].push_back(
+                {Sha256::hex_of(data.data(), data.size()), data.size(), archive_name, normalize_path(entry.path)});
+        });
 
     ScanResult result;
     result.archive_count = archives.size();
-    for (size_t i = 0; i < archives.size(); ++i) {
-        std::move(archive_entries[i].begin(), archive_entries[i].end(), std::back_inserter(result.entries));
-        std::move(archive_errors[i].begin(), archive_errors[i].end(), std::back_inserter(result.errors));
+    result.errors = std::move(visit.errors);
+    for (auto& entries : archive_entries) {
+        std::move(entries.begin(), entries.end(), std::back_inserter(result.entries));
     }
     std::sort(result.entries.begin(), result.entries.end(), entry_less);
     return result;

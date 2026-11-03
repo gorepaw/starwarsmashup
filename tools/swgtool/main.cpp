@@ -7,13 +7,16 @@
 #include <fstream>
 #include <iostream>
 #include <map>
+#include <mutex>
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
 
+#include "swg/iff.h"
 #include "swg/manifest.h"
 #include "swg/tre_archive.h"
+#include "swg/tre_scan.h"
 
 namespace {
 
@@ -23,6 +26,8 @@ constexpr const char* usage = R"(usage:
   swgtool list <archive.tre>
   swgtool manifest <dir> --name <name> --source <text> -o <out.tsv>
   swgtool coverage <manifest.tsv> <dir> [--missing <out.tsv>]
+  swgtool iff <archive.tre> <path>
+  swgtool iff-check <dir>
 )";
 
 // Returns the value following `flag` in args, or an empty string.
@@ -229,6 +234,125 @@ int cmd_coverage(const std::vector<std::string>& args) {
     return install.errors.empty() ? 0 : 1;
 }
 
+std::string extension_of(const std::string& path) {
+    const size_t slash = path.rfind('/');
+    const size_t dot = path.rfind('.');
+    return dot == std::string::npos || (slash != std::string::npos && dot < slash) ? "(none)" : path.substr(dot);
+}
+
+void print_iff_tree(const std::vector<IffNode>& nodes, int depth) {
+    for (const IffNode& node : nodes) {
+        const std::string indent(size_t(depth) * 2, ' ');
+        if (node.form) {
+            std::cout << indent << "FORM " << node.tag << "\n";
+            print_iff_tree(node.children, depth + 1);
+            continue;
+        }
+        std::string preview;
+        for (size_t i = 0; i < node.data.size() && i < 16; ++i) {
+            preview += std::format("{:02x} ", node.data[i]);
+        }
+        std::cout << std::format("{}{} {:>8}  {}{}\n", indent, node.tag, node.data.size(), preview,
+                                 node.data.size() > 16 ? "..." : "");
+    }
+}
+
+int cmd_iff(const std::vector<std::string>& args) {
+    if (args.size() < 2) {
+        std::cerr << usage;
+        return 2;
+    }
+    TreArchive tre(args[0]);
+    const std::string wanted = normalize_path(args[1]);
+    for (const TreEntry& entry : tre.entries()) {
+        if (normalize_path(entry.path) == wanted) {
+            const std::vector<uint8_t> data = tre.read(entry);
+            print_iff_tree(parse_iff(data), 0);
+            return 0;
+        }
+    }
+    std::cerr << "not found in archive: " << args[1] << "\n";
+    return 1;
+}
+
+struct ExtensionStats {
+    uint64_t files = 0;
+    uint64_t iff = 0;
+    uint64_t failed = 0;
+    uint64_t multiple_roots = 0;
+    std::map<std::string, uint64_t> root_forms;
+};
+
+int cmd_iff_check(const std::vector<std::string>& args) {
+    if (args.empty()) {
+        std::cerr << usage;
+        return 2;
+    }
+    std::mutex mutex;
+    std::map<std::string, ExtensionStats> by_extension;
+    std::vector<std::string> parse_failures;
+
+    const auto archives = find_tre_archives(args[0]);
+    const TreVisitResult visit = visit_tre_archives(
+        archives, args[0], std::cerr,
+        [&](size_t, const std::string& archive_name, const TreEntry& entry, const std::vector<uint8_t>& data) {
+            const std::string path = normalize_path(entry.path);
+            const bool iff = looks_like_iff(data);
+            std::string failure;
+            std::vector<IffNode> roots;
+            if (iff) {
+                try {
+                    roots = parse_iff(data);
+                } catch (const std::exception& e) {
+                    failure = std::string(e.what()) + " [" + archive_name + ": " + path + "]";
+                }
+            }
+
+            std::lock_guard lock(mutex);
+            ExtensionStats& stats = by_extension[extension_of(path)];
+            stats.files += 1;
+            if (!iff) {
+                return;
+            }
+            stats.iff += 1;
+            if (!failure.empty()) {
+                stats.failed += 1;
+                parse_failures.push_back(std::move(failure));
+                return;
+            }
+            stats.multiple_roots += roots.size() > 1 ? 1 : 0;
+            stats.root_forms[roots.front().tag] += 1;
+        });
+    print_errors(visit.errors);
+
+    std::vector<std::pair<std::string, ExtensionStats>> rows(by_extension.begin(), by_extension.end());
+    std::sort(rows.begin(), rows.end(), [](const auto& a, const auto& b) { return a.second.files > b.second.files; });
+
+    uint64_t total_iff = 0;
+    uint64_t total_failed = 0;
+    std::cout << std::format("{:<10} {:>8} {:>8} {:>7} {:>6}  {}\n", "extension", "files", "iff", "failed", "multi",
+                             "root forms");
+    for (const auto& [extension, stats] : rows) {
+        std::string forms;
+        for (const auto& [form_name, count] : stats.root_forms) {
+            forms += std::format("{}({}) ", form_name, count);
+            if (forms.size() > 60) {
+                forms += "...";
+                break;
+            }
+        }
+        std::cout << std::format("{:<10} {:>8} {:>8} {:>7} {:>6}  {}\n", extension, stats.files, stats.iff,
+                                 stats.failed, stats.multiple_roots, forms);
+        total_iff += stats.iff;
+        total_failed += stats.failed;
+    }
+    std::cout << std::format("\n{} IFF files parsed, {} failed\n", total_iff, total_failed);
+    for (size_t i = 0; i < parse_failures.size() && i < 20; ++i) {
+        std::cout << "  " << parse_failures[i] << "\n";
+    }
+    return total_failed == 0 && visit.errors.empty() ? 0 : 1;
+}
+
 } // namespace
 
 int main(int argc, char** argv) {
@@ -247,6 +371,12 @@ int main(int argc, char** argv) {
         }
         if (command == "coverage") {
             return cmd_coverage(args);
+        }
+        if (command == "iff") {
+            return cmd_iff(args);
+        }
+        if (command == "iff-check") {
+            return cmd_iff_check(args);
         }
     } catch (const std::exception& e) {
         std::cerr << "error: " << e.what() << "\n";

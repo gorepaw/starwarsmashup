@@ -23,7 +23,7 @@ Goal: prove the project is technically viable. If all five spikes work, everythi
 
 - [x] Extract the Total Experience reference from the disc cabinets (unshield)
 - [x] TRE archive reader: `0005` verified on the disc set; plain `0006` supported but not yet tested on real data
-- [ ] IFF chunk parser
+- [x] IFF chunk parser (all 130,954 IFF files in the reference set parse)
 - [x] Build the Total Experience reference manifest (path + SHA-256 of uncompressed contents), commit to `tools/manifests/`
 - [ ] Determine archive override order (which copy of a path the client loads)
 - [ ] Allowlist extraction: use only files matching the manifest, from any install
