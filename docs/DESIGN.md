@@ -30,6 +30,29 @@ Battlefront's combat never had a persistent world behind it. Galaxies' world nev
 
 - **Open-world combat:** PvE (creatures, NPC factions) and opt-in faction PvP.
 - **Conquest battles:** command-post battles fought in the world over contested territory, plus instanced battles (for example 32v32) launched from the world, whose results feed back into it.
+- **Bots:** AI soldiers fill battles, as in Battlefront. They make solo play and testing possible and keep matches full when few players are online.
+
+## Battles and hubs
+
+- **Hubs:** players queue for battles from Galaxies cities, at faction recruiters or war terminals. Mos Eisley is the first hub. Later, player cities can host their own war terminals.
+- **Battlefields are chunks of Galaxies planets**, not imported Battlefront levels: bounded areas of real terrain with command posts, Galaxies structures, and Battlefront props as cover.
+- **Progression of the battlefield:** instanced matches on terrain chunks → more and larger battlefields → live conquest zones in the open world.
+
+## Weapons and loadouts
+
+Galaxies has hundreds of weapons and dozens of armor sets. Battlefront has about five weapons per class. The goal is Galaxies' variety without stat gaps that decide fights before they start.
+
+- **Archetypes:** each weapon maps to a Battlefront handling type (automatic blaster, burst rifle, sniper, scatter, launcher, etc.). The archetype decides how it feels: fire mode, projectile, overheating.
+- **Sidegrades:** weapons within an archetype trade off rate of fire, damage, heat, accuracy, and range within a narrow band. Different, not strictly better.
+- **Quality:** crafted quality (later) moves stats slightly within the band. This is where Galaxies-style experimentation lives.
+- **Two queue types:**
+  - **Standard:** quality is flattened. Only the sidegrade choice matters.
+  - **Gear:** quality counts. The Galactic Civil War, and eventually open-world conquest.
+- **Overheating** from Battlefront stays.
+- **Damage types** are simplified to 2–3, matched against armor classes.
+- **Classes become loadout templates:** a class defines slots and allowed archetypes, and the player fills them from their inventory.
+- **Getting gear before crafting exists:** faction quartermasters sell standard-issue gear for faction points earned in battle. Crafted gear supplements it later.
+- **Shooting range:** every hub has one for trying weapons before committing to them.
 
 ## Professions and skills
 
@@ -62,7 +85,7 @@ Battlefront's combat never had a persistent world behind it. Galaxies' world nev
 
 - Galaxies planets at full scale (16 × 16 km each), starting with Tatooine.
 - Day/night cycle, weather, creatures, NPC settlements.
-- Battlefront maps and props become landmarks and battle sites on the planets where they make sense.
+- Battlefront props, vehicles, and structures appear across the planets as battle sites and landmarks where they make sense.
 
 ## Open questions
 

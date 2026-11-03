@@ -1,0 +1,118 @@
+# Roadmap
+
+Battles come first, the world after. A match has clear boundaries and can be tested. The persistent world is the hardest part, so it comes last and grows out of working battles.
+
+| Stage | Focus | Outcome |
+|---|---|---|
+| [Phase 0](PHASE0.md) | Feasibility spikes | The tech works |
+| 1 | Battlefront match queued from a Galaxies city | The core loop is fun |
+| 2 | Galaxies weapons and equipment | Loadouts give players something to chase |
+| 3+ | World systems | The planets fill up |
+
+The battlefield evolves alongside: **instanced match on a chunk of Galaxies terrain → more and larger battlefields → live conquest zones in the open world.**
+
+---
+
+## Stage 1: A Battlefront match from a Galaxies city
+
+### Goal
+
+Walk around Mos Eisley, queue at a recruiter, load into a 32v32 conquest match on Tatooine terrain (bots filling empty slots), play to the end, and return to the city with the results.
+
+### Decisions
+
+- **Battle maps are built on Galaxies terrain**, not imported Battlefront levels. A battlefield is a bounded chunk of a planet with command posts, Galaxies structures, and Battlefront props. That way we never need an importer for Battlefront's level/world format, only for its characters, weapons, vehicles, props, effects, and sounds.
+- **Bots are part of Stage 1.** They make solo testing possible and fill matches when few players are online. They use the same input/command path as players.
+- **The match server is the first real server.** It's the "instance server" from the [architecture](ARCHITECTURE.md#networking). The hub can run locally with one player for now.
+
+### Tasks
+
+**Hub**
+- [ ] Mos Eisley region loaded as a walkable hub
+- [ ] Recruiter / war terminal interaction that opens the queue
+- [ ] Queue → match handoff (hub sends player and faction to the match server)
+- [ ] Return from match to hub with results
+
+**Match server**
+- [ ] Match lifecycle: warmup → live → end → results
+- [ ] Battlefield definition format (terrain bounds, command posts, spawns, vehicle spawns, out-of-bounds)
+- [ ] First battlefield: a chunk of Tatooine terrain with 5–7 command posts
+- [ ] Conquest rules: command-post capture, reinforcement tickets, win conditions
+- [ ] Class selection and spawning at owned command posts
+
+**Combat**
+- [ ] Third-person shooter controller with Battlefront feel: sprint, roll, crouch, zoom
+- [ ] Hitscan and projectile weapons with overheating
+- [ ] Grenades
+- [ ] Health, damage, death, respawn
+- [ ] Lag-compensated hit detection
+- [ ] 4–5 classes with fixed kits (loadouts come in Stage 2)
+
+**Vehicles**
+- [ ] One ground vehicle (e.g. speeder bike)
+- [ ] One armored vehicle (walker or tank)
+- [ ] Vehicle spawns tied to command posts
+
+**Bots**
+- [ ] Navigation on Galaxies terrain
+- [ ] Objective selection: attack and defend command posts
+- [ ] Combat behaviors: engage, take cover, retreat
+- [ ] Vehicle use (basic)
+- [ ] Difficulty settings
+
+**Presentation**
+- [ ] HUD: health, ammo/heat, command-post status, tickets, minimap
+- [ ] Scoreboard and end-of-match screen
+- [ ] Battlefront audio: weapons, voice-overs, music
+
+### Exit criteria
+
+A full 32v32 conquest match with bots on Tatooine terrain, launched from and returning to Mos Eisley, that is fun to play solo.
+
+---
+
+## Stage 2: Weapons and equipment
+
+### Goal
+
+Galaxies' weapon and armor library becomes loadouts you choose in the hub and take into matches, balanced for a shooter. See [Design: Weapons and loadouts](DESIGN.md#weapons-and-loadouts).
+
+### Tasks
+
+**Data and items**
+- [ ] Weapon archetype definitions (handling, fire mode, projectile, heat)
+- [ ] Map Galaxies weapons to archetypes, with sidegrade stat profiles
+- [ ] Armor classes and a simplified damage type model (2–3 types)
+- [ ] Item definitions (data files) separate from item instances (persistent ID + stat values)
+- [ ] Persistence for inventory and loadouts (SQLite via the persistence interface)
+
+**Hub infrastructure**
+- [ ] Inventory UI
+- [ ] Equipment / paperdoll UI (appearance separate from stats)
+- [ ] Loadout editor with per-class slots
+- [ ] Shooting range in the city for testing weapons
+- [ ] Faction quartermaster: standard-issue gear for faction points
+- [ ] Squads / groups and squad queueing
+
+**Match integration**
+- [ ] Match server receives authoritative loadouts from the hub (never trusts the client)
+- [ ] Standard queue (quality flattened) and gear queue (quality matters)
+- [ ] Rewards: experience, faction points, currency
+
+### Exit criteria
+
+Choose a weapon at the quartermaster, try it at the range, put it in a loadout, take it into a match, and earn faction points to buy the next one.
+
+---
+
+## Stage 3+: World systems
+
+Added in order of how directly they feed the battles. Each is a streamlined, transparent version of its Galaxies counterpart.
+
+1. **Weaponsmith crafting:** supplies the loadouts. Crafted items are just item instances with other stat values, so nothing in Stage 2 has to change.
+2. **Resources and harvesting:** supply the crafters. Spawning resources with visible stats. Readable surveying.
+3. **Housing and player cities:** structures placed on the terrain. Player cities can host their own war terminals and become hubs.
+4. **Open-world player-vs-AI content, missions, and more professions.**
+5. **Open-world Galactic Civil War:** battles move out of instances into live conquest zones in the world.
+
+Each of these gets a staged breakdown like Stage 1 once the stage before it is finished.
