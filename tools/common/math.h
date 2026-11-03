@@ -3,7 +3,7 @@
 #include <array>
 #include <cmath>
 
-namespace swm::swg {
+namespace swm {
 
 struct Vec3 {
     float x = 0, y = 0, z = 0;
@@ -11,6 +11,25 @@ struct Vec3 {
 
 inline Vec3 operator+(Vec3 a, Vec3 b) {
     return {a.x + b.x, a.y + b.y, a.z + b.z};
+}
+inline Vec3 operator-(Vec3 a, Vec3 b) {
+    return {a.x - b.x, a.y - b.y, a.z - b.z};
+}
+inline Vec3 operator*(Vec3 a, float s) {
+    return {a.x * s, a.y * s, a.z * s};
+}
+inline float dot(Vec3 a, Vec3 b) {
+    return a.x * b.x + a.y * b.y + a.z * b.z;
+}
+inline Vec3 cross(Vec3 a, Vec3 b) {
+    return {a.y * b.z - a.z * b.y, a.z * b.x - a.x * b.z, a.x * b.y - a.y * b.x};
+}
+inline float length(Vec3 v) {
+    return std::sqrt(dot(v, v));
+}
+inline Vec3 normalized(Vec3 v) {
+    const float l = length(v);
+    return l > 0 ? v * (1.0f / l) : Vec3{};
 }
 
 // Unit quaternion, w first (as stored in SWG files).
@@ -26,6 +45,31 @@ inline Quat operator*(Quat a, Quat b) {
 inline Quat normalized(Quat q) {
     const float length = std::sqrt(q.w * q.w + q.x * q.x + q.y * q.y + q.z * q.z);
     return length > 0 ? Quat{q.w / length, q.x / length, q.y / length, q.z / length} : Quat{};
+}
+
+// Inverse of a unit quaternion.
+inline Quat conjugate(Quat q) {
+    return {q.w, -q.x, -q.y, -q.z};
+}
+
+inline Vec3 rotate(Quat q, Vec3 v) {
+    const Quat p = q * Quat{0, v.x, v.y, v.z} * conjugate(q);
+    return {p.x, p.y, p.z};
+}
+
+// Shortest rotation taking unit vector `from` onto unit vector `to`.
+inline Quat rotation_between(Vec3 from, Vec3 to) {
+    const float d = dot(from, to);
+    if (d < -0.999999f) {  // opposite: rotate 180 degrees about any perpendicular axis
+        Vec3 axis = cross({1, 0, 0}, from);
+        if (length(axis) < 1e-6f) {
+            axis = cross({0, 1, 0}, from);
+        }
+        axis = normalized(axis);
+        return {0, axis.x, axis.y, axis.z};
+    }
+    const Vec3 c = cross(from, to);
+    return normalized(Quat{1 + d, c.x, c.y, c.z});
 }
 
 // 4x4 matrix, column-major (glTF order): element (row r, column c) is m[c * 4 + r].
@@ -90,8 +134,8 @@ inline Vec3 transform_point(const Mat4& m, Vec3 p) {
             m.at(2, 0) * p.x + m.at(2, 1) * p.y + m.at(2, 2) * p.z + m.at(2, 3)};
 }
 
-// SWG is left-handed; glTF is right-handed. Mirroring X converts between them
-// and keeps the model facing +Z (glTF's front).
+// SWG and Battlefront II are left-handed; glTF is right-handed. Mirroring X
+// converts between them and keeps the model facing +Z (glTF's front).
 inline Vec3 to_gltf(Vec3 v) {
     return {-v.x, v.y, v.z};
 }
@@ -107,4 +151,4 @@ inline Mat4 to_gltf(const Mat4& m) {
     return r;
 }
 
-} // namespace swm::swg
+} // namespace swm

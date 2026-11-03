@@ -81,7 +81,7 @@ JSON sidecars carry the data glTF can't: ODF stats, Galaxies customization varia
 
 Known hard problems:
 - **Terrain:** bake `.trn` planets to heightmaps and splat maps for Terrain3D first. Port the procedural evaluator later only if needed.
-- **Skeletons:** the two games use different rigs. Retarget both onto one shared humanoid skeleton so Battlefront's shooter animations drive Galaxies' customizable bodies.
+- **Skeletons:** the two games use different rigs. Battlefront's shooter animations are retargeted onto the Galaxies skeleton (`all_b.skt`) offline, in `tools/retarget/`, not with Godot's import-time humanoid retargeting. That keeps the mapping, rest-pose alignment, and weapon-hardpoint handling in our own tested code. For each mapped joint, the Battlefront bone's world rotation away from its rest pose is applied to the Galaxies rest pose after aligning bone directions. Battlefront's data is mirrored in X relative to Galaxies.
 - **Customization:** rebuild Galaxies' `.mgn` blend-shape and palette-hue system in Godot.
 
 ## Supported game versions

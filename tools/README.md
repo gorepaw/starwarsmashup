@@ -22,6 +22,7 @@ swgtool groups <manifest.tsv> [--list <group>]
 swgtool iff <archive.tre> <path>
 swgtool iff-check <dir>
 swgtool export-character <dir> <out_dir> --name <name> --sat <path.sat>... [--weapon <path.lod>]
+                         [--bf2-lvl <ingame.lvl> --bf2-bank <bank> --anim <name>...]
 ```
 
 - **list**: print every file in a TRE archive (uncompressed size, stored size, compressed flag, path).
@@ -40,6 +41,8 @@ swgtool export-character <dir> <out_dir> --name <name> --sat <path.sat>... [--we
     --weapon appearance/lod/wp_carbine_e11.lod
   ```
 
+  With `--bf2-lvl`, `--bf2-bank`, and one or more `--anim`, Battlefront II animations are retargeted onto the character and written as glTF animations, e.g. `--bf2-lvl <Battlefront>\GameData\Data\_lvl_pc\ingame.lvl --bf2-bank human_0 --anim human_rifle_stand_idle_emote_full --anim human_rifle_stand_runforward`. Clips play in place.
+
   Not handled yet: occlusion zones (hiding body triangles under armor), customization (skin palettes, blend shapes), and LOD levels below the most detailed.
 
 Supported archives: TRE `0005` (retail discs) and plain `0006`. SWG Restoration's `0006` archives encrypt their file data and are reported as unsupported. We don't decrypt them.
@@ -50,6 +53,8 @@ Supported archives: TRE `0005` (retail discs) and plain `0006`. SWG Restoration'
 bf2tool tree <file.lvl> [--depth <n>]
 bf2tool list <file.lvl> <tag>
 bf2tool check <dir>
+bf2tool skeleton <file.lvl> <bank>
+bf2tool anims <file.lvl> <bank> [name...]
 ```
 
 Battlefront II munged files (`.lvl`) are `ucfb` chunk trees: `lvl_` sub-levels holding models (`modl`), textures (`tex_`), skeletons (`skel`), animations (`zaa_`/`zaf_`), entity classes (`entc`/`ordc`/`wpnc`/`expc`), and more.
@@ -57,6 +62,10 @@ Battlefront II munged files (`.lvl`) are `ucfb` chunk trees: `lvl_` sub-levels h
 - **tree**: print the chunk tree with sizes and `NAME`s, to `--depth` levels (default 3).
 - **list**: print the size and name of every chunk with a given tag, e.g. `bf2tool list side\rep.lvl modl`.
 - **check**: parse every `.lvl` under `<dir>` and count content chunk types. On the Steam install, all 191 files (4.7 GB) parse with no failures.
+- **skeleton**: print an animation bank's skeleton (`zaf_`) with rest world positions, e.g. `bf2tool skeleton ingame.lvl human_0`.
+- **anims**: list an animation bank's clips (`zaa_`): name hash, frames, bones. Names given on the command line are matched by hash, e.g. `bf2tool anims ingame.lvl human_0 human_rifle_stand_runforward`.
+
+Animation data uses its own block format inside `BIN_` (byte-reversed tags) and identifies bones and clips by name hash (`bf2/hash.h`). See `bf2/animation.h` for the stream encoding.
 
 ## Manifests
 

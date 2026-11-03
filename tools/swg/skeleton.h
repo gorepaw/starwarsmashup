@@ -6,7 +6,7 @@
 #include <string_view>
 #include <vector>
 
-#include "swg/math.h"
+#include "common/math.h"
 
 namespace swm::swg {
 

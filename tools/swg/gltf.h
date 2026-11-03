@@ -8,7 +8,7 @@
 #include <string>
 #include <vector>
 
-#include "swg/math.h"
+#include "common/math.h"
 
 namespace swm::swg {
 
@@ -42,17 +42,31 @@ public:
         std::string name;
         int texture = -1;  // index into images (one texture per image)
     };
+    struct AnimationChannel {
+        int node = -1;
+        std::string path;  // "rotation" or "translation"
+        int input = -1;    // accessor: key times (seconds)
+        int output = -1;   // accessor: values
+    };
+    struct Animation {
+        std::string name;
+        std::vector<AnimationChannel> channels;  // each gets its own linear sampler
+    };
 
     std::vector<Node> nodes;
     std::vector<Mesh> meshes;
     std::vector<Skin> skins;
     std::vector<Material> materials;
     std::vector<std::string> images;  // URIs
+    std::vector<Animation> animations;
     std::vector<int> scene_nodes;
 
+    // `vertex_data` marks the buffer view as vertex attributes; animation
+    // inputs and outputs pass false.
+    int add_scalars(const std::vector<float>& values);  // with min/max (animation inputs)
     int add_vec2(const std::vector<std::array<float, 2>>& values);
-    int add_vec3(const std::vector<Vec3>& values, bool with_bounds);
-    int add_vec4(const std::vector<std::array<float, 4>>& values);
+    int add_vec3(const std::vector<Vec3>& values, bool with_bounds, bool vertex_data = true);
+    int add_vec4(const std::vector<std::array<float, 4>>& values, bool vertex_data = true);
     int add_joints(const std::vector<std::array<uint16_t, 4>>& values);
     int add_indices(const std::vector<uint32_t>& values);
     int add_matrices(const std::vector<Mat4>& values);

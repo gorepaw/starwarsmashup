@@ -39,7 +39,7 @@ public:
             appearances.push_back(parse_skeletal_appearance(library_.read(path)));
         }
 
-        build_skeleton(appearances.front());
+        build_skeleton(load_appearance_skeleton(library_, request.appearances.front()));
         const int root = add_node({.name = request.name});
         for (size_t i = 0; i < skeleton_.joints.size(); ++i) {
             if (skeleton_.joints[i].parent < 0) {
@@ -59,18 +59,18 @@ public:
         if (!request.weapon_lod.empty()) {
             attach_weapon(request.weapon_lod);
         }
+        for (const AnimationClip& clip : request.clips) {
+            add_animation(clip);
+        }
 
         gltf_.scene_nodes = {root};
         gltf_.write(out_dir_ / (request.name + ".gltf"));
     }
 
 private:
-    void build_skeleton(const SkeletalAppearance& appearance) {
-        for (const auto& reference : appearance.skeletons) {
-            skeleton_.attach(parse_skeleton(library_.read(reference.path)), reference.attach_to);
-            log_ << "  skeleton " << reference.path
-                 << (reference.attach_to.empty() ? "" : " at " + reference.attach_to) << "\n";
-        }
+    void build_skeleton(Skeleton skeleton) {
+        skeleton_ = std::move(skeleton);
+        log_ << "  skeleton: " << skeleton_.joints.size() << " joints\n";
 
         // Joint nodes come first, so joint i is node i.
         for (const Joint& joint : skeleton_.joints) {
@@ -212,6 +212,34 @@ private:
         gltf_.nodes[size_t(hand)].children.push_back(weapon_node);
     }
 
+    void add_animation(const AnimationClip& clip) {
+        if (clip.rotations.empty()) {
+            return;
+        }
+        std::vector<float> times;
+        for (size_t f = 0; f < clip.rotations.size(); ++f) {
+            times.push_back(float(f) / clip.fps);
+        }
+        const int input = gltf_.add_scalars(times);
+
+        Gltf::Animation animation{.name = clip.name};
+        for (size_t j = 0; j < skeleton_.joints.size(); ++j) {
+            std::vector<std::array<float, 4>> rotations;
+            for (const auto& frame : clip.rotations) {
+                const Quat q = to_gltf(frame.at(j));
+                rotations.push_back({q.x, q.y, q.z, q.w});
+            }
+            animation.channels.push_back({int(j), "rotation", input, gltf_.add_vec4(rotations, false)});
+        }
+        std::vector<Vec3> translations;
+        for (const Vec3& t : clip.root_translations) {
+            translations.push_back(to_gltf(t));
+        }
+        animation.channels.push_back({0, "translation", input, gltf_.add_vec3(translations, false, false)});
+        gltf_.animations.push_back(std::move(animation));
+        log_ << "  animation " << clip.name << ": " << clip.rotations.size() << " frames\n";
+    }
+
     int material_for(const std::string& shader_path) {
         if (const auto it = materials_.find(shader_path); it != materials_.end()) {
             return it->second;
@@ -256,6 +284,14 @@ private:
 };
 
 } // namespace
+
+Skeleton load_appearance_skeleton(TreLibrary& library, const std::string& sat_path) {
+    Skeleton skeleton;
+    for (const auto& reference : parse_skeletal_appearance(library.read(sat_path)).skeletons) {
+        skeleton.attach(parse_skeleton(library.read(reference.path)), reference.attach_to);
+    }
+    return skeleton;
+}
 
 void export_character(TreLibrary& library, const CharacterExport& request, const std::filesystem::path& out_dir,
                       std::ostream& log) {

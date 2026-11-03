@@ -8,6 +8,7 @@
 
 #include "swg/skeleton.h"
 
+using namespace swm;
 using namespace swm::swg;
 
 namespace {

@@ -13,6 +13,10 @@
 #include <unordered_set>
 #include <vector>
 
+#include "bf2/animation.h"
+#include "bf2/hash.h"
+#include "bf2/ucfb.h"
+#include "retarget/retarget.h"
 #include "swg/character_export.h"
 #include "swg/iff.h"
 #include "swg/manifest.h"
@@ -21,6 +25,7 @@
 
 namespace {
 
+using namespace swm;
 using namespace swm::swg;
 
 constexpr const char* usage = R"(usage:
@@ -31,6 +36,7 @@ constexpr const char* usage = R"(usage:
   swgtool iff <archive.tre> <path>
   swgtool iff-check <dir>
   swgtool export-character <dir> <out_dir> --name <name> --sat <path.sat>... [--weapon <path.lod>]
+                           [--bf2-lvl <ingame.lvl> --bf2-bank <bank> --anim <name>...]
 )";
 
 // Returns the value following `flag` in args, or an empty string.
@@ -428,6 +434,39 @@ int cmd_export_character(const std::vector<std::string>& args) {
         return 2;
     }
     TreLibrary library(args[0]);
+
+    const std::string bf2_lvl = option(args, "--bf2-lvl");
+    const std::vector<std::string> anim_names = options(args, "--anim");
+    if (!bf2_lvl.empty() && !anim_names.empty()) {
+        const std::string bank = option(args, "--bf2-bank");
+        std::ifstream lvl_file(bf2_lvl, std::ios::binary);
+        if (!lvl_file || bank.empty()) {
+            std::cerr << "cannot open " << bf2_lvl << " (or no --bf2-bank)\n";
+            return 1;
+        }
+        const std::vector<uint8_t> lvl(std::istreambuf_iterator<char>(lvl_file), {});
+        const bf2::UcfbNode root = bf2::parse_ucfb(lvl);
+        const bf2::UcfbNode* zaf = bf2::find_named_chunk(root, "zaf_", bank);
+        const bf2::UcfbNode* zaa = bf2::find_named_chunk(root, "zaa_", bank);
+        if (!zaf || !zaa || !zaf->child("BIN_") || !zaa->child("BIN_")) {
+            std::cerr << "no animation bank '" << bank << "' in " << bf2_lvl << "\n";
+            return 1;
+        }
+        const bf2::AnimationSkeleton bf2_skeleton = bf2::parse_animation_skeleton(zaf->child("BIN_")->data);
+        const std::vector<bf2::Animation> bank_animations = bf2::parse_animation_bank(zaa->child("BIN_")->data);
+        const Skeleton skeleton = load_appearance_skeleton(library, request.appearances.front());
+        for (const std::string& anim_name : anim_names) {
+            const auto it = std::find_if(bank_animations.begin(), bank_animations.end(),
+                                         [&](const bf2::Animation& a) { return a.name_hash == bf2::name_hash(anim_name); });
+            if (it == bank_animations.end()) {
+                std::cerr << "no animation '" << anim_name << "' in bank " << bank << "\n";
+                return 1;
+            }
+            request.clips.push_back(
+                retarget::retarget_animation(skeleton, bf2_skeleton, *it, retarget::humanoid_mapping(), anim_name));
+        }
+    }
+
     export_character(library, request, args[1], std::cerr);
     std::cerr << "wrote " << (std::filesystem::path(args[1]) / (request.name + ".gltf")).string() << "\n";
     return 0;

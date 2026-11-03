@@ -18,15 +18,17 @@ Characters and equipment are Galaxies models (for the full Galaxies character cr
 
 - [x] Battlefront `ucfb` (`.lvl`) container reader: `bf2tool`; all 191 `.lvl` files in the Steam install parse
 - [x] Galaxies skinned character → glTF (`swgtool export-character`): skeleton (`.skt`), skinned meshes (`.mgn`), appearance (`.sat`/`.lmg`). A human male in the full stormtrooper armor set renders correctly in Godot.
-- [ ] Battlefront skeleton (`skel`) and animation (`zaa_`/`zaf_`) decoding: idle and run
-- [ ] Retarget Battlefront animations onto the Galaxies skeleton (Godot humanoid retargeting)
+- [x] Battlefront animation skeleton (`zaf_`) and animation bank (`zaa_`) decoding: all 15,016 streams in the `human_0`–`human_4` banks decode exactly; bone and clip names hash with an MSB-first CRC-32
+- [x] Retarget Battlefront animations onto the Galaxies skeleton (offline, `tools/retarget/`): rifle idle and run play correctly on the stormtrooper, with the E-11 following Battlefront's weapon hardpoint
 - [x] Galaxies weapon model → glTF, attached to the `hold_r` joint (E-11 carbine)
 - [ ] Generated materials with modern lighting, source files untouched (base color only so far; normal and specular maps not yet used)
 - [ ] Occlusion zones: hide body triangles under worn items (not visibly needed for full armor, but needed for partial outfits)
 
-Provisional decisions to confirm once an animation plays:
-- Skeleton joint rotation order (`post * bind * pre`): best fit to the vertex weights, but its conjugate fits almost as well.
+Provisional decisions:
+- Galaxies joint rotation order (`post * bind * pre`): best fit to the vertex weights, and retargeted animations look right with it. Its conjugate fits the weights almost as well and hasn't been tried with animation. A native Galaxies animation (`.ans`) would settle it.
 - Archive priority (patch archives over data archives, by patch level): the client's real search order is still unknown.
+- Retargeting aligns bone directions only, so twist can drift (wrists, feet). Fine for the spike; revisit for final quality.
+- Battlefront animations are assumed to run at 30 fps.
 
 ## 3. Galaxies world
 

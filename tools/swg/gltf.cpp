@@ -54,13 +54,23 @@ int Gltf::add_accessor(const void* data, size_t bytes, int target, int component
     return int(accessors_.size() - 1);
 }
 
+int Gltf::add_scalars(const std::vector<float>& values) {
+    const int index = add_accessor(values.data(), values.size() * 4, 0, component_float, values.size(), "SCALAR");
+    if (!values.empty()) {
+        const auto [lo, hi] = std::minmax_element(values.begin(), values.end());
+        accessors_[size_t(index)].min = std::format("[{}]", *lo);
+        accessors_[size_t(index)].max = std::format("[{}]", *hi);
+    }
+    return index;
+}
+
 int Gltf::add_vec2(const std::vector<std::array<float, 2>>& values) {
     return add_accessor(values.data(), values.size() * 8, target_vertices, component_float, values.size(), "VEC2");
 }
 
-int Gltf::add_vec3(const std::vector<Vec3>& values, bool with_bounds) {
-    const int index =
-        add_accessor(values.data(), values.size() * 12, target_vertices, component_float, values.size(), "VEC3");
+int Gltf::add_vec3(const std::vector<Vec3>& values, bool with_bounds, bool vertex_data) {
+    const int index = add_accessor(values.data(), values.size() * 12, vertex_data ? target_vertices : 0,
+                                   component_float, values.size(), "VEC3");
     if (with_bounds && !values.empty()) {
         Vec3 lo{std::numeric_limits<float>::max(), std::numeric_limits<float>::max(), std::numeric_limits<float>::max()};
         Vec3 hi{-lo.x, -lo.y, -lo.z};
@@ -74,8 +84,9 @@ int Gltf::add_vec3(const std::vector<Vec3>& values, bool with_bounds) {
     return index;
 }
 
-int Gltf::add_vec4(const std::vector<std::array<float, 4>>& values) {
-    return add_accessor(values.data(), values.size() * 16, target_vertices, component_float, values.size(), "VEC4");
+int Gltf::add_vec4(const std::vector<std::array<float, 4>>& values, bool vertex_data) {
+    return add_accessor(values.data(), values.size() * 16, vertex_data ? target_vertices : 0, component_float,
+                        values.size(), "VEC4");
 }
 
 int Gltf::add_joints(const std::vector<std::array<uint16_t, 4>>& values) {
@@ -175,6 +186,25 @@ void Gltf::write(const std::filesystem::path& path) const {
         json += (i ? "," : "") + std::format(R"({{"source":{}}})", i);
     }
     json += "],";
+
+    if (!animations.empty()) {
+        json += R"("animations":[)";
+        for (size_t i = 0; i < animations.size(); ++i) {
+            const Animation& animation = animations[i];
+            json += (i ? "," : "") + std::format(R"({{"name":{},"samplers":[)", json_string(animation.name));
+            for (size_t c = 0; c < animation.channels.size(); ++c) {
+                json += (c ? "," : "") + std::format(R"({{"input":{},"output":{},"interpolation":"LINEAR"}})",
+                                                     animation.channels[c].input, animation.channels[c].output);
+            }
+            json += R"(],"channels":[)";
+            for (size_t c = 0; c < animation.channels.size(); ++c) {
+                json += (c ? "," : "") + std::format(R"({{"sampler":{},"target":{{"node":{},"path":"{}"}}}})", c,
+                                                     animation.channels[c].node, animation.channels[c].path);
+            }
+            json += "]}";
+        }
+        json += "],";
+    }
 
     json += R"("accessors":[)";
     for (size_t i = 0; i < accessors_.size(); ++i) {
