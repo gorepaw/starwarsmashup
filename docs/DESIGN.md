@@ -78,6 +78,7 @@ Galaxies has hundreds of weapons and dozens of armor sets. Battlefront has about
 
 ## Character customization
 
+- **Every character is a Galaxies model.** Players and AI soldiers alike use Galaxies species bodies and armor, animated with Battlefront II's shooter animations.
 - Galaxies-style character creation: species, body shape sliders (blend shapes), hue/palette choices for skin, hair, and markings.
 - Armor and clothing appearance as a separate layer from stats (wear what you like).
 

@@ -19,3 +19,18 @@ foreach(test iff_test manifest_test sha256_test tre_archive_test)
   swm_target_warnings(${test})
   add_test(NAME ${test} COMMAND ${test})
 endforeach()
+
+# Battlefront II asset library: munged ucfb files.
+add_library(swm_bf2 STATIC
+  bf2/ucfb.cpp)
+target_include_directories(swm_bf2 PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+swm_target_warnings(swm_bf2)
+
+add_executable(bf2tool bf2tool/main.cpp)
+target_link_libraries(bf2tool PRIVATE swm_bf2)
+swm_target_warnings(bf2tool)
+
+add_executable(ucfb_test bf2/tests/ucfb_test.cpp)
+target_link_libraries(ucfb_test PRIVATE swm_bf2)
+swm_target_warnings(ucfb_test)
+add_test(NAME ucfb_test COMMAND ucfb_test)

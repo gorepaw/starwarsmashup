@@ -33,6 +33,20 @@ swgtool iff-check <dir>
 
 Supported archives: TRE `0005` (retail discs) and plain `0006`. SWG Restoration's `0006` archives encrypt their file data and are reported as unsupported. We don't decrypt them.
 
+## bf2tool
+
+```
+bf2tool tree <file.lvl> [--depth <n>]
+bf2tool list <file.lvl> <tag>
+bf2tool check <dir>
+```
+
+Battlefront II munged files (`.lvl`) are `ucfb` chunk trees: `lvl_` sub-levels holding models (`modl`), textures (`tex_`), skeletons (`skel`), animations (`zaa_`/`zaf_`), entity classes (`entc`/`ordc`/`wpnc`/`expc`), and more.
+
+- **tree**: print the chunk tree with sizes and `NAME`s, to `--depth` levels (default 3).
+- **list**: print the size and name of every chunk with a given tag, e.g. `bf2tool list side\rep.lvl modl`.
+- **check**: parse every `.lvl` under `<dir>` and count content chunk types. On the Steam install, all 191 files (4.7 GB) parse with no failures.
+
 ## Manifests
 
 `manifests/` holds reference manifests: one line per file with `sha256 size archive path`. See [Supported game versions](../docs/ARCHITECTURE.md#supported-game-versions).
