@@ -20,6 +20,7 @@ Goal: prove the project is technically viable. If all five spikes work, everythi
 
 ## 3. Galaxies world
 
+- [x] Extract the Total Experience reference from the disc cabinets (unshield)
 - [ ] TRE archive reader (disc-era and final-client formats, including TOC indexes)
 - [ ] IFF chunk parser
 - [ ] Build the Total Experience reference manifest (path + SHA-256 of uncompressed contents), commit to `tools/manifests/`

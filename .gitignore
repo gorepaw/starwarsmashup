@@ -63,6 +63,9 @@ compile_commands.json
 *.sqlite
 *.db
 
+# ===== Claude Code (personal, machine-specific) =====
+.claude/settings.local.json
+
 # ===== Editors / OS =====
 .vs/
 .vscode/
