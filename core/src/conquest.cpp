@@ -130,7 +130,7 @@ Battlefield load_battlefield(const std::filesystem::path& path) {
     return field;
 }
 
-Conquest::Conquest(const Battlefield& battlefield) : battlefield_(battlefield) {
+Conquest::Conquest(const Battlefield& battlefield, bool repeat) : battlefield_(battlefield), repeat_(repeat) {
     reset();
     state_.time_left = battlefield_.warmup;
 }
@@ -212,8 +212,8 @@ std::vector<MatchEvent> Conquest::step(double dt, std::span<const Unit> units, s
         break;
     }
     case Phase::ended:
-        state_.time_left -= dt;
-        if (state_.time_left <= 0) {
+        state_.time_left = std::max(0.0, state_.time_left - dt);
+        if (state_.time_left <= 0 && repeat_) {
             reset();
             state_.phase = Phase::warmup;
             state_.time_left = battlefield_.warmup;

@@ -2,7 +2,7 @@
 //
 //   swm_server --bake <prefix> [--db <file>] [--port 7777] [--spawn <swg_x> <swg_z>] [--seconds <n>]
 //              [--building <file.collision> <swg_x> <swg_y> <swg_z> <yaw_degrees>]... [--soldier <file.ini>]
-//              [--battlefield <file.ini>] [--bots <n>]
+//              [--battlefield <file.ini>] [--bots <n>] [--hub <file.ini>]
 //
 // <prefix> names a terrain bake (swgtool bake-terrain). --db is the SQLite
 // file characters are saved in (created if missing; default: none, nothing is
@@ -19,6 +19,11 @@
 // reinforcements, warmup, live, results, and again. Clients must load the
 // same file. Characters aren't saved in a match. --bots adds that many bots,
 // connected like players (over UDP, from this process), to fill the teams.
+//
+// --hub makes this an open-world hub (see game/hubs/): players queue for
+// battles at its war terminals, and it launches battle servers in this
+// process (on free UDP ports), fills them with bots, sends the players there
+// and takes them back afterwards. Use it with --db to keep characters.
 
 #include <atomic>
 #include <chrono>
@@ -47,6 +52,7 @@
 #include "swm/core/combat.h"
 #include "swm/core/conquest.h"
 #include "swm/core/heightfield.h"
+#include "swm/core/hub.h"
 #include "swm/core/net/udp.h"
 #include "swm/core/server.h"
 #include "swm/core/sqlite_store.h"
@@ -59,7 +65,7 @@ std::atomic<bool> stop_requested = false;
 int usage() {
     std::cerr << "usage: swm_server --bake <prefix> [--db <file>] [--port 7777] [--spawn <swg_x> <swg_z>] "
                  "[--seconds <n>] [--building <file.collision> <swg_x> <swg_y> <swg_z> <yaw_degrees>]... "
-                 "[--soldier <file.ini>] [--battlefield <file.ini>] [--bots <n>]\n";
+                 "[--soldier <file.ini>] [--battlefield <file.ini>] [--bots <n>] [--hub <file.ini>]\n";
     return 2;
 }
 
@@ -74,6 +80,7 @@ int main(int argc, char** argv) {
     std::string db;
     std::string soldier;
     std::string battlefield;
+    std::string hub_file;
     int bot_count = 0;
     int port = 7777;
     bool has_spawn = false;
@@ -91,6 +98,8 @@ int main(int argc, char** argv) {
             soldier = argv[++i];
         } else if (arg == "--battlefield" && i + 1 < argc) {
             battlefield = argv[++i];
+        } else if (arg == "--hub" && i + 1 < argc) {
+            hub_file = argv[++i];
         } else if (arg == "--bots" && i + 1 < argc) {
             bot_count = std::atoi(argv[++i]);
         } else if (arg == "--db" && i + 1 < argc) {
@@ -112,7 +121,8 @@ int main(int argc, char** argv) {
             return usage();
         }
     }
-    if (bake.empty() || port <= 0 || port > 65535 || bot_count < 0 || bot_count > 64) {
+    if (bake.empty() || port <= 0 || port > 65535 || bot_count < 0 || bot_count > 64 ||
+        (!hub_file.empty() && !battlefield.empty())) {
         return usage();
     }
 
@@ -166,6 +176,15 @@ int main(int argc, char** argv) {
         bot_config.soldier = config.soldier;
         bot_config.battlefield = config.battlefield;
         swm::core::BotPlayers bots(bot_count, world, bot_config);
+        swm::core::UdpHubNetwork hub_network;
+        std::unique_ptr<swm::core::Hub> hub;
+        if (!hub_file.empty()) {
+            swm::core::HubConfig hub_config = swm::core::load_hub(hub_file);
+            std::cout << std::format("hub {}: {} war terminal(s), battles on {}, {} per team\n", hub_config.name,
+                                     hub_config.recruiters.size(), hub_config.battlefield.name, hub_config.team_size);
+            hub = std::make_unique<swm::core::Hub>(server, link.port(), world, std::move(hub_config), hub_network);
+            hub->log = server.log;
+        }
         std::cout << std::format("swm_server {}: UDP port {}, {} Hz, spawn ({:.1f}, {:.1f}) in Galaxies coordinates, {}\n",
                                  swm::core::version(), link.port(), config.tick_rate, -config.spawn.x, config.spawn.z,
                                  db.empty() ? std::string("not saving") : "saving to " + db)
@@ -193,6 +212,9 @@ int main(int argc, char** argv) {
             }
             server.update(now);
             bots.update(now);
+            if (hub) {
+                hub->update(now);
+            }
             if (now >= next_status) {
                 next_status += 10;
                 server.log(std::format("tick {}, {} client(s){}", server.tick(), server.client_count(), positions()));
@@ -203,6 +225,7 @@ int main(int argc, char** argv) {
         timeEndPeriod(1);
 #endif
         bots.disconnect();
+        hub.reset();
         server.save_all();
         server.log(std::format("stopped; saved {} connected character(s){}", store ? server.client_count() : 0,
                                store ? positions() : ""));

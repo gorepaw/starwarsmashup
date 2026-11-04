@@ -97,7 +97,9 @@ struct MatchEvent {
 // (the results), then the next warmup.
 class Conquest {
 public:
-    explicit Conquest(const Battlefield& battlefield);
+    // With `repeat` false there's one match: after the results it stays
+    // ended (time_left 0).
+    explicit Conquest(const Battlefield& battlefield, bool repeat = true);
 
     struct Unit {
         int team = 0;
@@ -119,6 +121,7 @@ private:
     void finish(int winner, std::vector<MatchEvent>& events);
 
     Battlefield battlefield_;
+    bool repeat_ = true;
     MatchState state_;
 };
 

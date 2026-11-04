@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <vector>
 
@@ -21,9 +22,10 @@ struct BotSkill {
 // A simple soldier that plays through a GameClient, with the same controls
 // and the same view of the world a player has. In a match it spawns at the
 // post nearest the fighting, runs to the nearest post its team doesn't hold
-// (or guards one), and shoots enemies it can see, leading them. Outside a
-// match it hunts the nearest other character. No pathfinding yet: it runs
-// straight, and jumps when stuck.
+// (or guards one), and shoots enemies it can see, leading them. In a hub it
+// walks to the nearest war terminal and queues for a battle. Elsewhere it
+// hunts the nearest other character. No pathfinding yet: it runs straight,
+// and jumps when stuck.
 class Bot {
 public:
     explicit Bot(uint64_t seed, BotSkill skill = {});
@@ -34,9 +36,12 @@ public:
 
     // The command post it's heading for, or -1.
     int objective() const { return objective_; }
+    // The side it queues for in a hub (default: picked from the seed).
+    void set_queue_team(int team) { queue_team_ = team; }
 
 private:
     double random();  // 0..1
+    void go_to_recruiter(GameClient& client, double now);
     void choose_spawn(GameClient& client);
     void choose_objective(const GameClient& client, double now);
 
@@ -53,26 +58,30 @@ private:
     double aim_phase_ = 0;
     double slow_since_ = -1;  // moving too slowly since
     double unstick_until_ = 0;
+    int queue_team_ = 0;
 };
 
 // Bots connected to a server like players, each with its own UDP socket,
 // e.g. to fill the teams of a match. They're named "Bot 1", "Bot 2", ...
 class BotPlayers {
 public:
+    using LinkFactory = std::function<std::unique_ptr<net::Link>()>;
+
     // `base` is each bot's client config: the server, and the soldier or
-    // battlefield the server uses. Throws if a socket can't be opened.
-    BotPlayers(int count, const World& world, const ClientConfig& base);
+    // battlefield the server uses. Each bot gets a link from `open_link`
+    // (default: a UDP socket on a free port). Throws if one can't be opened.
+    BotPlayers(int count, const World& world, const ClientConfig& base, LinkFactory open_link = {});
     void update(double now);
     void disconnect();
     size_t size() const { return players_.size(); }
 
 private:
     struct Player {
-        net::UdpLink link;  // any free port
+        std::unique_ptr<net::Link> link;
         GameClient client;
         Bot bot;
-        Player(const World& world, ClientConfig config, uint64_t seed)
-            : client(link, world, std::move(config)), bot(seed) {}
+        Player(std::unique_ptr<net::Link> l, const World& world, ClientConfig config, uint64_t seed)
+            : link(std::move(l)), client(*link, world, std::move(config)), bot(seed) {}
     };
     const World& world_;
     std::vector<std::unique_ptr<Player>> players_;

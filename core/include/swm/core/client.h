@@ -1,8 +1,11 @@
 #pragma once
 
+#include <array>
 #include <cstdint>
 #include <deque>
+#include <functional>
 #include <map>
+#include <memory>
 #include <optional>
 #include <string>
 #include <vector>
@@ -27,6 +30,7 @@ struct ClientConfig {
     SoldierDef soldier;                // outside a match; must match the server's
     std::optional<Battlefield> battlefield;  // in a match: the server's, for its classes
     double spawn_request_interval = 0.25;
+    uint64_t ticket = 0;               // from a hub, for the match it sent us to
 };
 
 // Game client. Predicts its own character by running each input locally as
@@ -39,7 +43,8 @@ struct ClientConfig {
 // and a command post, and the server spawns it there when it can.
 class GameClient {
 public:
-    enum class Status { connecting, connected, refused, timed_out, disconnected };
+    // transferring: the server sent us elsewhere (see transfer(); ClientSession follows it).
+    enum class Status { connecting, connected, refused, timed_out, disconnected, transferring };
 
     // Another character as the newest snapshots describe it, its state
     // interpolated.
@@ -104,6 +109,17 @@ public:
     void request_spawn(int soldier_class, int post);
     // The match as of the newest snapshot, if there is one.
     const std::optional<MatchState>& match() const { return match_; }
+
+    // A hub's war terminals and the sides its battles are between.
+    const std::vector<net::Recruiter>& recruiters() const { return recruiters_; }
+    const std::array<std::string, 2>& factions() const { return factions_; }
+    // Queue for a battle on a side (0 or 1) while at a war terminal, or
+    // leave the queue (-1). Repeated until the server's status shows it.
+    void queue(int team);
+    // What the server says about us: queue, notices.
+    const net::PlayerStatus& player_status() const { return player_status_; }
+    // Where the server sent us (status transferring).
+    const std::optional<net::Transfer>& transfer() const { return transfer_; }
     // Other characters' bolts in flight, moved on from the newest snapshot.
     // (Own bolts come from take_shots(), the moment they're fired.)
     std::vector<net::BoltState> bolts(double now) const;
@@ -160,10 +176,46 @@ private:
     std::optional<MatchState> match_;
     std::optional<net::SpawnRequest> spawn_request_;
     double last_spawn_request_ = -1e9;
+    // Hubs
+    std::vector<net::Recruiter> recruiters_;
+    std::array<std::string, 2> factions_;
+    net::PlayerStatus player_status_;
+    int wanted_queue_ = -2;  // -2: no request
+    double last_queue_request_ = -1e9;
+    std::optional<net::Transfer> transfer_;
     std::vector<net::BoltState> bolts_;  // others', from the newest snapshot
     double bolts_time_ = 0;
     std::vector<Shot> shots_;
     std::vector<net::CombatEvent> events_;
+};
+
+// A client that follows the server's transfers, from a hub to a match and
+// back. Each server gets a new GameClient: entity ids and everything else
+// start over, and generation() counts them. `battlefields` finds a match's
+// battlefield by name, for its classes. Every server must use the same world
+// for now.
+class ClientSession {
+public:
+    using BattlefieldFinder = std::function<std::optional<Battlefield>(const std::string& name)>;
+
+    ClientSession(net::Link& link, const World& world, ClientConfig config, BattlefieldFinder battlefields);
+
+    // Follows a pending transfer, then updates the client.
+    void update(double now);
+    GameClient& client() { return *client_; }
+    const GameClient& client() const { return *client_; }
+    int generation() const { return generation_; }
+    // Why the last transfer couldn't be followed, if it couldn't.
+    const std::string& error() const { return error_; }
+
+private:
+    net::Link& link_;
+    const World& world_;
+    ClientConfig config_;
+    BattlefieldFinder battlefields_;
+    std::unique_ptr<GameClient> client_;
+    int generation_ = 0;
+    std::string error_;
 };
 
 } // namespace swm::core

@@ -46,6 +46,11 @@ const SoldierDef& GameClient::soldier() const {
     return config_.soldier;
 }
 
+void GameClient::queue(int team) {
+    wanted_queue_ = std::clamp(team, -1, 1);
+    last_queue_request_ = -1e9;
+}
+
 void GameClient::request_spawn(int soldier_class, int post) {
     spawn_request_ = net::SpawnRequest{uint8_t(std::clamp(soldier_class, 0, 255)), uint8_t(std::clamp(post, 0, 255))};
     last_spawn_request_ = -1e9;  // send at once
@@ -84,7 +89,8 @@ void GameClient::update(double now) {
         last_heard_ = now;
     }
     receive(now);  // also lets a delayed link deliver a Goodbye after disconnect()
-    if (status_ == Status::timed_out || status_ == Status::disconnected || status_ == Status::refused) {
+    if (status_ == Status::timed_out || status_ == Status::disconnected || status_ == Status::refused ||
+        status_ == Status::transferring) {
         return;
     }
     if (now - last_heard_ > config_.timeout) {
@@ -92,13 +98,24 @@ void GameClient::update(double now) {
         return;
     }
     if (status_ == Status::connecting && now - last_hello_ >= config_.hello_interval) {
-        link_.send(config_.server, net::encode(net::Hello{config_.name}));
+        link_.send(config_.server, net::encode(net::Hello{config_.name, config_.ticket}));
         last_hello_ = now;
     }
     if (status_ == Status::connected && spawn_request_ && self_.life == Life::waiting &&
         now - last_spawn_request_ >= config_.spawn_request_interval) {
         link_.send(config_.server, net::encode(*spawn_request_));
         last_spawn_request_ = now;
+    }
+    if (status_ == Status::connected && wanted_queue_ != -2 && now - last_queue_request_ >= 0.5) {
+        const bool done = wanted_queue_ < 0 ? player_status_.queue == net::PlayerStatus::none
+                                            : player_status_.queue == net::PlayerStatus::queued &&
+                                                  player_status_.team == wanted_queue_;
+        if (done) {
+            wanted_queue_ = -2;
+        } else {
+            link_.send(config_.server, net::encode(net::QueueRequest{int8_t(wanted_queue_)}));
+            last_queue_request_ = now;
+        }
     }
     if (spawned_) {
         const double dt = 1 / tick_rate_;
@@ -114,7 +131,7 @@ void GameClient::update(double now) {
 }
 
 void GameClient::disconnect() {
-    if (status_ == Status::connected) {
+    if (status_ == Status::connected || status_ == Status::transferring) {
         // Best effort: if every copy is lost, the server times the client out.
         for (int i = 0; i < 3; ++i) {
             link_.send(config_.server, net::encode(net::Goodbye{}));
@@ -145,6 +162,8 @@ void GameClient::handle(const net::Datagram& datagram, double now) {
             entity_ = welcome->entity_id;
             character_ = welcome->character_id;
             tick_rate_ = welcome->tick_rate;
+            recruiters_ = welcome->recruiters;
+            factions_ = welcome->factions;
         }
         return;
     }
@@ -152,6 +171,13 @@ void GameClient::handle(const net::Datagram& datagram, double now) {
         if (status_ == Status::connecting) {
             status_ = Status::refused;
             refusal_ = refused->reason;
+        }
+        return;
+    }
+    if (const auto* transfer = std::get_if<net::Transfer>(&message)) {
+        if (status_ == Status::connected) {
+            status_ = Status::transferring;
+            transfer_ = *transfer;
         }
         return;
     }
@@ -175,6 +201,7 @@ void GameClient::handle(const net::Datagram& datagram, double now) {
     bolts_time_ = now;
     events_.insert(events_.end(), snapshot->events.begin(), snapshot->events.end());
     match_ = snapshot->match;
+    player_status_ = snapshot->you;
 
     std::map<uint32_t, std::deque<Sample>> seen;
     for (const net::EntityState& entity : snapshot->entities) {
@@ -321,6 +348,33 @@ std::vector<GameClient::Remote> GameClient::remotes() const {
         out.push_back(remote);
     }
     return out;
+}
+
+ClientSession::ClientSession(net::Link& link, const World& world, ClientConfig config, BattlefieldFinder battlefields)
+    : link_(link), world_(world), config_(std::move(config)), battlefields_(std::move(battlefields)),
+      client_(std::make_unique<GameClient>(link_, world_, config_)) {}
+
+void ClientSession::update(double now) {
+    if (client_->status() == GameClient::Status::transferring) {
+        const net::Transfer transfer = *client_->transfer();
+        client_->disconnect();
+        ClientConfig next = config_;
+        next.server = {transfer.address != 0 ? transfer.address : client_->config().server.address, transfer.port};
+        next.ticket = transfer.ticket;
+        next.battlefield.reset();
+        error_.clear();
+        if (!transfer.battlefield.empty()) {
+            next.battlefield = battlefields_ ? battlefields_(transfer.battlefield) : std::nullopt;
+            if (!next.battlefield) {
+                error_ = "no battlefield file named " + transfer.battlefield;
+            }
+        }
+        if (error_.empty()) {
+            client_ = std::make_unique<GameClient>(link_, world_, next);
+            ++generation_;
+        }
+    }
+    client_->update(now);
 }
 
 } // namespace swm::core

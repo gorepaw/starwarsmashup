@@ -28,10 +28,14 @@ Walk around Mos Eisley, queue at a recruiter, load into a 32v32 conquest match o
 ### Tasks
 
 **Hub**
-- [ ] Mos Eisley region loaded as a walkable hub
-- [ ] Recruiter / war terminal interaction that opens the queue
-- [ ] Queue → match handoff (hub sends player and faction to the match server)
-- [ ] Return from match to hub with results
+- [ ] Mos Eisley region loaded as a walkable hub. It's walkable terrain with the cantina; the rest of the city's buildings aren't placed yet.
+- [x] Recruiter / war terminal interaction that opens the queue (`game/hubs/mos_eisley.ini`). Stand at the terminal and choose a side. It's drawn as a placeholder pillar for now.
+- [x] Queue → match handoff (hub sends player and faction to the match server): when the first player has waited 10 s, the hub (`core::Hub`) launches a battle server with bots filling both teams and transfers the queued players to it, each with a ticket the battle server checks. Later players join a battle that's still on.
+- [x] Return from match to hub with results: after the results screen everyone is sent back, to where they stood, and greeted with how it went ("Victory at Mos Eisley Outskirts: 3 kills, 1 deaths, 2 captures"). Rewards come in Stage 2.
+
+Hub notes:
+- Battle servers run in the hub's process, each on its own UDP port. Moving them to their own processes or machines keeps the same messages: tickets in, results out.
+- Hub and battles must use the same terrain for now (clients keep one world). Battlefield files will name their terrain when battles move elsewhere on the planet.
 
 **Match server**
 - [x] Match lifecycle: warmup → live → end → results, then the next match. Warmup is practice: deaths are free and posts can't change hands. Results show in the game; sending them back to the hub comes with the handoff.

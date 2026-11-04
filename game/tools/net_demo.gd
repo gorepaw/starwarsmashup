@@ -6,7 +6,7 @@
 #   godot --path game --script res://tools/net_demo.gd -- <bake_prefix> <character.gltf>
 #         [--server a.b.c.d:port] [--host <port>] [--db <file>] [--spawn <x> <z>] [--name <name>]
 #         [--building <building.gltf> <x> <y> <z> <yaw>] [--bot circle|chase|route] [--route <x,z;x,z;...>]
-#         [--soldier <file.ini>] [--battlefield <file.ini>] [--bots <n>] [--lag <ms>] [--jitter <ms>]
+#         [--soldier <file.ini>] [--battlefield <file.ini>] [--bots <n>] [--hub <file.ini>] [--lag <ms>] [--jitter <ms>]
 #         [--loss <0..1>] [--seconds <n>] [--shots <output_prefix>] [--solo] [--terrain3d]
 #
 # Connects to a running server (default 127.0.0.1:7777; see server/ for
@@ -30,6 +30,12 @@
 # --bots adds bots to a hosted server. In a match you choose a class (1-9)
 # and a command post your team holds (Q/E), and spawn with Space or a click.
 # Posts show as beams: blue yours, red the enemy's, white neutral.
+#
+# --hub hosts a hub (game/hubs/) instead: walk to the war terminal (the
+# yellow pillar) and press F or G to queue for a side, X to leave the queue.
+# When the battle starts you're sent to it, and back to the hub after the
+# results. Joining a hub server (swm_server --hub) works the same. Battles'
+# battlefield files are looked up in game/battlefields/.
 #
 # Controls: WASD to move, mouse to aim, Shift to sprint, Space to jump, left
 # mouse to fire, R to reload, 1 and 2 for weapons, Esc to free the mouse (Esc
@@ -107,6 +113,11 @@ var _spawn_requested := false
 var _center: Label                # spawn menu, results, warnings
 var _match_label: RichTextLabel
 var _outside := 0.0               # seconds out of bounds
+var _generation := 0              # transfers followed: hub -> battle -> hub
+var _recruiter_nodes: Array = []
+var _notice_id := 0
+var _notice := ""
+var _notice_time := 0.0           # seconds left showing it
 var _own_bolts: Array = []        # [{node, velocity, life, gravity}] drawn from predicted shots
 var _remote_bolt_nodes: Array[MeshInstance3D] = []
 var _kills := 0
@@ -121,7 +132,7 @@ func _init() -> void:
 	if args.size() < 2 or not ClassDB.class_exists("SwmClient"):
 		printerr("usage: -- <bake_prefix> <character.gltf> [--server addr:port] [--host port] [--spawn x z] ",
 				"[--name n] [--building gltf x y z yaw] [--bot circle|chase|route|conquest] [--route x,z;...] ",
-				"[--soldier ini] [--battlefield ini] [--bots n] [--lag ms] ",
+				"[--soldier ini] [--battlefield ini] [--bots n] [--hub ini] [--lag ms] ",
 				"[--jitter ms] [--loss 0..1] [--seconds n] [--shots prefix] [--solo] [--terrain3d]",
 				"   (needs the swm GDExtension)")
 		quit(2)
@@ -171,6 +182,9 @@ func _init() -> void:
 			quit(1)
 			return
 		_server.set_bots(int(_option(args, "--bots", "0")))
+		if _option(args, "--hub", "") != "" and _server.set_hub(_os_path(_option(args, "--hub", ""))) != OK:
+			quit(1)
+			return
 		var spawn := _spawn(args, meta)
 		if _server.start(int(host), bake_path, spawn) != OK:
 			quit(1)
@@ -191,6 +205,7 @@ func _init() -> void:
 		quit(1)
 		return
 	_client.set_bot(_bot == "conquest")
+	_client.set_battlefield_dir(_os_path("battlefields"))
 	_weapons = _client.get_weapons()
 	if _client.start(server, bake_path, _option(args, "--name", "player")) != OK:
 		quit(1)
@@ -220,8 +235,17 @@ func _process(delta: float) -> bool:
 	if _bot != "conquest":
 		_client.set_input(_controls())
 	_client.update()
+	if _client.get_generation() != _generation:
+		_generation = _client.get_generation()
+		_arrive()
+	if _client.get_session_error() != "":
+		printerr(_client.get_session_error())
+		return _finish()
 
 	if _client.is_spawned():
+		if _recruiter_nodes.is_empty() and not _client.get_recruiters().is_empty():
+			_add_recruiters()
+		_update_notice()
 		var own: Dictionary = _client.get_presented()
 		if not _announced:
 			_announced = true
@@ -361,6 +385,12 @@ func _on_input(event: InputEvent) -> void:
 			_cycle_post(1)
 		elif key in [KEY_SPACE, KEY_ENTER]:
 			_request_spawn()
+	elif event is InputEventKey and event.pressed and event.physical_keycode in [KEY_F, KEY_G, KEY_X] \
+			and not _client.get_recruiters().is_empty():
+		if event.physical_keycode == KEY_X:
+			_client.queue(-1)
+		elif not _at_recruiter().is_empty():
+			_client.queue(0 if event.physical_keycode == KEY_F else 1)
 	elif event is InputEventKey and event.pressed and event.physical_keycode in [KEY_1, KEY_2]:
 		_weapon = mini(int(event.physical_keycode - KEY_1), _weapons.size() - 1)
 	elif event is InputEventKey and event.pressed and event.physical_keycode == KEY_ESCAPE:
@@ -798,7 +828,104 @@ func _add_posts() -> void:
 		label.no_depth_test = true
 		label.position = position + Vector3.UP * 6
 		root.add_child(label)
-		_posts.append({"material": material, "label": label})
+		_posts.append({"material": material, "label": label, "nodes": [beam, ring, label]})
+
+
+# Arrived on another server (a battle, or back at the hub): everything about
+# the last one goes.
+func _arrive() -> void:
+	for character: Dictionary in _remotes.values():
+		(character["model"] as Node).queue_free()
+	_remotes.clear()
+	for post: Dictionary in _posts:
+		for node: Node in post["nodes"]:
+			node.queue_free()
+	_posts.clear()
+	for node: Node in _recruiter_nodes:
+		node.queue_free()
+	_recruiter_nodes.clear()
+	for node: Node in _remote_bolt_nodes:
+		node.queue_free()
+	_remote_bolt_nodes.clear()
+	for bolt: Dictionary in _own_bolts:
+		(bolt["node"] as Node).queue_free()
+	_own_bolts.clear()
+	_battlefield = _client.get_battlefield()
+	_add_posts()
+	_spawn_requested = false
+	_notice_id = 0
+	print("transferred to ", "the battle on " + str(_battlefield["name"]) if not _battlefield.is_empty() else "the hub")
+
+
+# War terminals: a yellow pillar, its name, and a ring where you can queue.
+func _add_recruiters() -> void:
+	var material := StandardMaterial3D.new()
+	material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	material.albedo_color = Color(1.0, 0.8, 0.25)
+	for recruiter: Dictionary in _client.get_recruiters():
+		var position: Vector3 = recruiter["position"]
+		var pillar := MeshInstance3D.new()
+		var box := BoxMesh.new()
+		box.size = Vector3(0.6, 2.2, 0.6)
+		pillar.mesh = box
+		pillar.material_override = material
+		pillar.position = position + Vector3.UP * 1.1
+		var ring := MeshInstance3D.new()
+		var torus := TorusMesh.new()
+		torus.outer_radius = float(recruiter["radius"])
+		torus.inner_radius = float(recruiter["radius"]) - 0.15
+		ring.mesh = torus
+		ring.material_override = material
+		ring.position = position + Vector3.UP * 0.1
+		var label := Label3D.new()
+		label.text = recruiter["name"]
+		label.billboard = BaseMaterial3D.BILLBOARD_ENABLED
+		label.fixed_size = true
+		label.pixel_size = 0.0015
+		label.font_size = 28
+		label.outline_size = 8
+		label.modulate = material.albedo_color
+		label.position = position + Vector3.UP * 3.2
+		for node: Node3D in [pillar, ring, label]:
+			root.add_child(node)
+			_recruiter_nodes.append(node)
+
+
+# The war terminal we're standing at, if any.
+func _at_recruiter() -> Dictionary:
+	var position: Vector3 = _client.get_presented()["position"]
+	for recruiter: Dictionary in _client.get_recruiters():
+		var at: Vector3 = recruiter["position"]
+		if Vector2(position.x - at.x, position.z - at.z).length() <= float(recruiter["radius"]):
+			return recruiter
+	return {}
+
+
+# A message from the server, e.g. how the last battle went.
+func _update_notice() -> void:
+	var status: Dictionary = _client.get_player_status()
+	if int(status.get("notice_id", 0)) == _notice_id:
+		return
+	_notice_id = int(status["notice_id"])
+	_notice = status["notice"]
+	_notice_time = 10.0
+	if _notice != "":
+		print("notice: ", _notice)
+		_feed_lines.append(_notice)
+
+
+# In a hub: the war terminal's prompt, or the queue.
+func _update_hub_hud() -> void:
+	var factions: PackedStringArray = _client.get_factions()
+	var status: Dictionary = _client.get_player_status()
+	if status.get("queue", "none") == "queued" and factions.size() == 2:
+		_match_label.text = "[center]Queued for the %s: %d in the queue, the battle starts in %d s\n[X] leave the queue[/center]" % [
+				factions[int(status["team"])], status["in_queue"], ceili(status["starts_in"])]
+		return
+	_match_label.text = ""
+	var terminal := _at_recruiter()
+	if not terminal.is_empty() and factions.size() == 2 and _center.text == "":
+		_center.text = "%s\n[F] fight for the %s     [G] fight for the %s" % [terminal["name"], factions[0], factions[1]]
 
 
 func _post_color(owner: int, own_team: int) -> Color:
@@ -874,12 +1001,19 @@ func _choose_spawn(game: Dictionary, own: Dictionary) -> void:
 
 func _update_match_hud(delta: float) -> void:
 	_center.text = ""
+	_notice_time = maxf(0.0, _notice_time - delta)
 	var game: Dictionary = _client.get_match()
 	if game.is_empty() or not _client.is_spawned():
 		_match_label.text = ""
 		var own_state: Dictionary = _client.get_presented() if _client.is_spawned() else {}
-		if not own_state.is_empty() and not own_state["alive"]:
+		if _client.get_status() in ["transferring", "connecting"] and _generation > 0:
+			_center.text = "Traveling..."
+		elif not own_state.is_empty() and not own_state["alive"]:
 			_center.text = "Eliminated. Respawning..."
+		elif _notice_time > 0 and _notice != "":
+			_center.text = _notice
+		if _client.is_spawned() and not _client.get_recruiters().is_empty():
+			_update_hub_hud()
 		return
 	var own: Dictionary = _client.get_presented()
 	var team := int(own["team"])

@@ -25,6 +25,34 @@ double yaw_toward(Vec3 d) {
 
 Bot::Bot(uint64_t seed, BotSkill skill) : rng_(seed * 0x9E3779B97F4A7C15ull + 1), skill_(skill) {
     aim_phase_ = random() * 100;
+    queue_team_ = random() < 0.5 ? 0 : 1;
+}
+
+// Walks to the nearest war terminal and queues there.
+void Bot::go_to_recruiter(GameClient& client, double now) {
+    GameClient::Controls controls;
+    const MoveState& me = client.predicted();
+    controls.yaw = me.yaw;
+    const net::Recruiter* nearest = nullptr;
+    for (const net::Recruiter& r : client.recruiters()) {
+        if (nearest == nullptr ||
+            horizontal_distance(me.position, r.position) < horizontal_distance(me.position, nearest->position)) {
+            nearest = &r;
+        }
+    }
+    const double distance = horizontal_distance(me.position, nearest->position);
+    if (client.player_status().queue == net::PlayerStatus::none) {
+        if (distance > std::max(0.5, nearest->radius - 1)) {
+            const Vec3 d{nearest->position.x - me.position.x, 0, nearest->position.z - me.position.z};
+            controls.yaw = yaw_toward(d);
+            controls.forward = 1;
+            controls.sprint = distance > 20;
+        } else if (now >= next_objective_) {
+            client.queue(queue_team_);
+            next_objective_ = now + 2;
+        }
+    }
+    client.set_input(controls);
 }
 
 double Bot::random() {
@@ -120,6 +148,10 @@ void Bot::update(GameClient& client, const World& world, double now) {
         return;
     }
     requested_ = false;
+    if (!in_match && !client.recruiters().empty()) {
+        go_to_recruiter(client, now);
+        return;
+    }
 
     const MoveState& me = client.predicted();
     const Vec3 eye = me.position + Vec3{0, eye_height, 0};
@@ -228,11 +260,13 @@ void Bot::update(GameClient& client, const World& world, double now) {
     client.set_input(controls);
 }
 
-BotPlayers::BotPlayers(int count, const World& world, const ClientConfig& base) : world_(world) {
+BotPlayers::BotPlayers(int count, const World& world, const ClientConfig& base, LinkFactory open_link)
+    : world_(world) {
     for (int i = 0; i < count; ++i) {
         ClientConfig config = base;
         config.name = std::format("Bot {}", i + 1);
-        players_.push_back(std::make_unique<Player>(world, std::move(config), uint64_t(i + 1)));
+        auto link = open_link ? open_link() : std::make_unique<net::UdpLink>();
+        players_.push_back(std::make_unique<Player>(std::move(link), world, std::move(config), uint64_t(i + 1)));
     }
 }
 

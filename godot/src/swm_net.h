@@ -18,6 +18,7 @@
 #include "swm/core/client.h"
 #include "swm/core/conquest.h"
 #include "swm/core/heightfield.h"
+#include "swm/core/hub.h"
 #include "swm/core/net/link.h"
 #include "swm/core/net/udp.h"
 #include "swm/core/server.h"
@@ -27,7 +28,9 @@
 namespace swm::godot_bindings {
 
 // A game client (core::GameClient) over UDP. Call update() every frame.
-// Positions are in game space (Godot's axes).
+// Positions are in game space (Godot's axes). It follows the server's
+// transfers (from a hub to a battle and back): each one starts over with new
+// entity ids, and get_generation() counts them.
 class SwmClient : public godot::RefCounted {
     GDCLASS(SwmClient, godot::RefCounted)
 
@@ -45,6 +48,9 @@ public:
     // A battlefield file (an OS path; see game/battlefields/), for a server
     // running a match on it. Must match the server's. Call before start().
     godot::Error set_battlefield(const godot::String& path);
+    // Where battlefield files are (an OS path), for battles a hub sends us to:
+    // <dir>/<name>.ini. Call before start().
+    void set_battlefield_dir(const godot::String& path);
     // Lets a bot (core::Bot) drive the character instead of set_input.
     void set_bot(bool enabled);
     // `server` is "a.b.c.d:port". `bake_prefix` is an OS path to the terrain
@@ -95,6 +101,18 @@ public:
     // Asks to spawn as a class of our team at a command post (indexes into
     // get_battlefield()), until the character spawns.
     void request_spawn(int64_t soldier_class, int64_t post);
+    // How many times the server has sent us to another server.
+    int64_t get_generation() const;
+    // Why the last transfer couldn't be followed (e.g. a missing battlefield).
+    godot::String get_session_error() const;
+    // A hub's war terminals: [{name, position, radius}]; empty elsewhere.
+    godot::Array get_recruiters() const;
+    // The two sides a hub's battles are between.
+    godot::PackedStringArray get_factions() const;
+    // Queue for a battle on a side (0 or 1) at a war terminal; -1 leaves the queue.
+    void queue(int64_t team);
+    // {queue ("none" or "queued"), team, in_queue, starts_in, notice_id, notice}.
+    godot::Dictionary get_player_status() const;
     // {ticks, snapshots, corrections, max_correction, rtt_ms}
     godot::Dictionary get_stats() const;
     double get_ground_height(double x, double z) const;
@@ -104,6 +122,8 @@ protected:
 
 private:
     double now() const;
+    core::GameClient* client() const { return session_ ? &session_->client() : nullptr; }
+    const std::optional<core::Battlefield>& battlefield() const;
     const core::SoldierDef& soldier() const;
     // The class an entity plays, by team and class index.
     const core::SoldierDef& soldier_of(int team, int soldier_class) const;
@@ -114,11 +134,13 @@ private:
     std::vector<std::pair<core::BuildingCollision, core::Placement>> buildings_;
     core::SoldierDef soldier_;
     std::optional<core::Battlefield> battlefield_;
+    std::string battlefield_dir_;
     std::unique_ptr<core::Bot> bot_;
+    int bot_generation_ = 0;
     std::unique_ptr<core::World> world_;
     std::unique_ptr<core::net::UdpLink> udp_;
     std::unique_ptr<core::net::ImpairedLink> impaired_;
-    std::unique_ptr<core::GameClient> client_;
+    std::unique_ptr<core::ClientSession> session_;
 };
 
 // A game server (core::GameServer) over UDP, hosted inside Godot. The
@@ -140,6 +162,9 @@ public:
     godot::Error set_battlefield(const godot::String& path);
     // Adds bots, connected like players, when the server starts.
     void set_bots(int64_t count);
+    // Makes the server a hub (a hub file, an OS path; see game/hubs/): its
+    // war terminals queue players for battles it launches. Call before start().
+    godot::Error set_hub(const godot::String& path);
     // `spawn` is where new characters start, in Galaxies coordinates (x, z).
     godot::Error start(int64_t port, const godot::String& bake_prefix, const godot::Vector2& spawn);
     void update();
@@ -164,6 +189,9 @@ private:
     std::unique_ptr<core::net::UdpLink> udp_;
     std::unique_ptr<core::GameServer> server_;
     std::unique_ptr<core::BotPlayers> bots_;
+    std::optional<core::HubConfig> hub_config_;
+    core::UdpHubNetwork hub_network_;
+    std::unique_ptr<core::Hub> hub_;
 };
 
 } // namespace swm::godot_bindings

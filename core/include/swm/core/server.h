@@ -1,5 +1,6 @@
 #pragma once
 
+#include <array>
 #include <cstdint>
 #include <deque>
 #include <functional>
@@ -35,6 +36,19 @@ struct ServerConfig {
     // Characters aren't saved in a match.
     std::optional<Battlefield> battlefield;
     bool friendly_fire = false;  // in a match
+    bool single_match = false;   // one match, no next one (a hub's match: see match_over())
+};
+
+struct PlayerResult {
+    std::string name;
+    int team = -1;
+    uint16_t kills = 0, deaths = 0, captures = 0;
+};
+
+struct MatchResult {
+    std::string battlefield;  // its name
+    int winner = -1;          // -1: a draw
+    std::vector<PlayerResult> players;
 };
 
 // Authoritative game server. Clients send inputs; the server simulates every
@@ -56,6 +70,10 @@ struct ServerConfig {
 // character: it spawns where it was last saved. Characters are saved when
 // they leave or time out, every `save_interval`, and on save_all() (call it
 // at shutdown).
+//
+// Hubs and the matches they launch (see Hub) use the hooks below: war
+// terminals and queue requests, admission by ticket, transfers to another
+// server, and the match's result.
 class GameServer {
 public:
     GameServer(net::Link& link, const World& world, ServerConfig config, CharacterStore* store = nullptr);
@@ -77,10 +95,33 @@ public:
     size_t bolt_count() const { return bolts_.size(); }
     // The match, if there is one.
     const Conquest* match() const { return conquest_ ? &*conquest_ : nullptr; }
+    // A single match is over once its results have shown.
+    bool match_over() const;
     // Saves every connected character now. Storage errors are logged.
     void save_all();
 
+    // The war terminals players can queue at and the sides they queue for,
+    // told to clients as they join.
+    void set_recruiters(std::vector<net::Recruiter> recruiters, std::array<std::string, 2> factions);
+    // What this client's snapshots say about it; nullptr if not connected.
+    net::PlayerStatus* status(uint32_t entity);
+    // Shows a client a message.
+    void notify(uint32_t entity, const std::string& text);
+    // Sends a client (or everyone) to another server. It's dropped, and
+    // saved, when it says goodbye or after a few seconds.
+    void transfer(uint32_t entity, const net::Transfer& transfer);
+    void transfer_all(const net::Transfer& transfer);
+    std::string name_of(uint32_t entity) const;
+
     std::function<void(const std::string&)> log;
+    // Decides who may join: their team (-1: the smaller one), or nullopt to
+    // refuse. Unset: anyone, on the smaller team.
+    std::function<std::optional<int>(const std::string& name, uint64_t ticket)> admit;
+    std::function<void(uint32_t entity, const std::string& name)> on_join;
+    // A player standing at a war terminal asked to queue for a side (-1: leave).
+    std::function<void(uint32_t entity, int team)> on_queue;
+    // A match just ended.
+    std::function<void(const MatchResult&)> on_match_ended;
 
 private:
     struct Client {
@@ -102,6 +143,9 @@ private:
         uint32_t last_input = 0;  // newest simulated input
         std::deque<MoveInput> queue;
         double last_heard = 0;
+        net::PlayerStatus status;
+        std::optional<net::Transfer> transfer;  // sent every tick until it leaves
+        uint32_t transfer_tick = 0;            // dropped then if it hasn't left
     };
     struct Bolt {
         uint32_t id = 0;
@@ -118,7 +162,7 @@ private:
 
     void receive(double now);
     void handle(const net::Endpoint& from, const net::Datagram& datagram, double now);
-    Client* join(const net::Endpoint& from, const std::string& name);
+    Client* join(const net::Endpoint& from, const std::string& name, uint64_t ticket);
     void save(std::span<const Client> clients);
     void step();
     void run_match();
@@ -147,6 +191,8 @@ private:
     std::vector<Client> clients_;
     std::vector<Bolt> bolts_;
     std::vector<net::CombatEvent> events_;  // this tick's
+    std::vector<net::Recruiter> recruiters_;
+    std::array<std::string, 2> factions_;
     uint32_t tick_ = 0;
     uint32_t next_entity_ = 1;
     uint32_t next_bolt_ = 1;

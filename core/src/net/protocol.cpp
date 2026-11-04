@@ -9,7 +9,9 @@ namespace swm::core::net {
 
 namespace {
 
-enum class Type : uint8_t { hello = 1, welcome, input_batch, snapshot, goodbye, refused, spawn_request };
+enum class Type : uint8_t {
+    hello = 1, welcome, input_batch, snapshot, goodbye, refused, spawn_request, queue_request, transfer
+};
 
 void put_vec3(ByteWriter& out, Vec3 v) {
     out.put(v.x);
@@ -151,6 +153,7 @@ struct Encoder {
     void operator()(const Hello& m) {
         out.put(uint8_t(Type::hello));
         out.put_string(m.name);
+        out.put(m.ticket);
     }
     void operator()(const Welcome& m) {
         out.put(uint8_t(Type::welcome));
@@ -158,6 +161,14 @@ struct Encoder {
         out.put(m.tick_rate);
         out.put(m.server_tick);
         out.put(m.character_id);
+        out.put(uint8_t(m.recruiters.size()));
+        for (const Recruiter& r : m.recruiters) {
+            out.put_string(r.name);
+            put_vec3(out, r.position);
+            out.put(r.radius);
+        }
+        out.put_string(m.factions[0]);
+        out.put_string(m.factions[1]);
     }
     void operator()(const Refused& m) {
         out.put(uint8_t(Type::refused));
@@ -207,12 +218,29 @@ struct Encoder {
         if (m.match) {
             put_match(out, *m.match);
         }
+        out.put(uint8_t(m.you.queue));
+        out.put(m.you.team);
+        out.put(m.you.in_queue);
+        out.put(m.you.starts_in);
+        out.put(m.you.notice_id);
+        out.put_string(m.you.notice);
     }
     void operator()(const Goodbye&) { out.put(uint8_t(Type::goodbye)); }
     void operator()(const SpawnRequest& m) {
         out.put(uint8_t(Type::spawn_request));
         out.put(m.soldier_class);
         out.put(m.post);
+    }
+    void operator()(const QueueRequest& m) {
+        out.put(uint8_t(Type::queue_request));
+        out.put(m.team);
+    }
+    void operator()(const Transfer& m) {
+        out.put(uint8_t(Type::transfer));
+        out.put(m.address);
+        out.put(m.port);
+        out.put(m.ticket);
+        out.put_string(m.battlefield);
     }
 };
 
@@ -236,9 +264,13 @@ Message decode(std::span<const uint8_t> packet) {
     }
     Message message;
     switch (Type(in.get<uint8_t>())) {
-    case Type::hello:
-        message = Hello{in.get_string()};
+    case Type::hello: {
+        Hello m;
+        m.name = in.get_string();
+        m.ticket = in.get<uint64_t>();
+        message = m;
         break;
+    }
     case Type::welcome: {
         Welcome m;
         m.entity_id = in.get<uint32_t>();
@@ -248,6 +280,16 @@ Message decode(std::span<const uint8_t> packet) {
         if (!(m.tick_rate >= 1 && m.tick_rate <= 240)) {
             throw PacketError("bad tick rate");
         }
+        const size_t recruiters = in.get<uint8_t>();
+        for (size_t i = 0; i < recruiters; ++i) {
+            Recruiter r;
+            r.name = in.get_string();
+            r.position = get_vec3(in);
+            r.radius = in.get<double>();
+            m.recruiters.push_back(r);
+        }
+        m.factions[0] = in.get_string();
+        m.factions[1] = in.get_string();
         message = m;
         break;
     }
@@ -312,6 +354,16 @@ Message decode(std::span<const uint8_t> packet) {
         if (in.get<uint8_t>() != 0) {
             m.match = get_match(in);
         }
+        const uint8_t queue = in.get<uint8_t>();
+        if (queue > PlayerStatus::queued) {
+            throw PacketError("bad queue state");
+        }
+        m.you.queue = PlayerStatus::Queue(queue);
+        m.you.team = get_team(in);
+        m.you.in_queue = in.get<uint16_t>();
+        m.you.starts_in = in.get<float>();
+        m.you.notice_id = in.get<uint16_t>();
+        m.you.notice = in.get_string();
         message = std::move(m);
         break;
     }
@@ -325,6 +377,18 @@ Message decode(std::span<const uint8_t> packet) {
         SpawnRequest m;
         m.soldier_class = in.get<uint8_t>();
         m.post = in.get<uint8_t>();
+        message = m;
+        break;
+    }
+    case Type::queue_request:
+        message = QueueRequest{get_team(in)};
+        break;
+    case Type::transfer: {
+        Transfer m;
+        m.address = in.get<uint32_t>();
+        m.port = in.get<uint16_t>();
+        m.ticket = in.get<uint64_t>();
+        m.battlefield = in.get_string();
         message = m;
         break;
     }

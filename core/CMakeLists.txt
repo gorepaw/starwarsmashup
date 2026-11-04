@@ -6,6 +6,7 @@ add_library(swm_core STATIC
   src/combat.cpp
   src/conquest.cpp
   src/heightfield.cpp
+  src/hub.cpp
   src/ini.cpp
   src/movement.cpp
   src/net/link.cpp
@@ -26,7 +27,7 @@ add_library(swm_sqlite_store STATIC src/sqlite_store.cpp)
 target_link_libraries(swm_sqlite_store PUBLIC swm_core PRIVATE swm::sqlite3)
 swm_target_warnings(swm_sqlite_store)
 
-foreach(test core_test movement_test net_test persistence_test combat_test match_test)
+foreach(test core_test movement_test net_test persistence_test combat_test match_test hub_test)
   add_executable(${test} tests/${test}.cpp)
   target_link_libraries(${test} PRIVATE swm_core swm_sqlite_store)
   swm_target_warnings(${test})

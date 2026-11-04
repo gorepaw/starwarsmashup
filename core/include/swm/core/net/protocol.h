@@ -1,5 +1,6 @@
 #pragma once
 
+#include <array>
 #include <cstdint>
 #include <optional>
 #include <span>
@@ -16,12 +17,24 @@ namespace swm::core::net {
 // Every packet starts with a magic number, the protocol version and a message
 // type. Peers drop packets with another version. Bump it on any wire change.
 inline constexpr uint16_t protocol_magic = 0x4D53;  // "SM"
-inline constexpr uint16_t protocol_version = 4;
+inline constexpr uint16_t protocol_version = 5;
 
 // Client -> server, repeated until a Welcome or Refused arrives. The name
-// picks the saved character (there are no accounts yet).
+// picks the saved character (there are no accounts yet). A match server
+// launched by a hub only admits players with the ticket the hub gave them.
 struct Hello {
     std::string name;
+    uint64_t ticket = 0;
+};
+
+// A hub's war terminal: standing within `radius` of it, a player can queue
+// for a battle.
+struct Recruiter {
+    std::string name;
+    Vec3 position;  // game space
+    double radius = 4;
+
+    friend bool operator==(const Recruiter&, const Recruiter&) = default;
 };
 
 // Server -> client: the handshake answer.
@@ -30,6 +43,39 @@ struct Welcome {
     double tick_rate = 30;   // simulation ticks per second
     uint32_t server_tick = 0;
     PersistentId character_id = 0;  // the saved character; 0 if the server doesn't save
+    // A hub's war terminals, and the sides its battles are fought between.
+    std::vector<Recruiter> recruiters;
+    std::array<std::string, 2> factions;
+};
+
+// Client -> hub, repeated until the hub's PlayerStatus shows it: queue for a
+// battle on a side (0 or 1), near a war terminal; -1 leaves the queue.
+struct QueueRequest {
+    int8_t team = -1;
+};
+
+// Server -> client, repeated until the client leaves: go to another server
+// (a hub sends players to a match, a match sends them back).
+struct Transfer {
+    uint32_t address = 0;  // IPv4; 0: the same address as this server
+    uint16_t port = 0;
+    uint64_t ticket = 0;      // to show the next server
+    std::string battlefield;  // the match's battlefield (a file name without .ini); empty for a hub
+
+    friend bool operator==(const Transfer&, const Transfer&) = default;
+};
+
+// What a server tells one client about itself (in every snapshot).
+struct PlayerStatus {
+    enum Queue : uint8_t { none, queued };
+    Queue queue = none;
+    int8_t team = -1;          // queued for
+    uint16_t in_queue = 0;     // players queued for the next battle
+    float starts_in = 0;       // seconds until it starts
+    uint16_t notice_id = 0;    // changes with each new notice
+    std::string notice;        // e.g. how the last battle went
+
+    friend bool operator==(const PlayerStatus&, const PlayerStatus&) = default;
 };
 
 // Server -> client: the handshake failed.
@@ -97,12 +143,14 @@ struct Snapshot {
     // snapshots stays right.
     std::vector<CombatEvent> events;
     std::optional<MatchState> match;  // in a conquest match
+    PlayerStatus you;                 // differs per client
 };
 
 // Either direction: leaving.
 struct Goodbye {};
 
-using Message = std::variant<Hello, Welcome, Refused, InputBatch, Snapshot, Goodbye, SpawnRequest>;
+using Message =
+    std::variant<Hello, Welcome, Refused, InputBatch, Snapshot, Goodbye, SpawnRequest, QueueRequest, Transfer>;
 
 std::vector<uint8_t> encode(const Message& message);
 // Throws PacketError on malformed packets or another protocol version.

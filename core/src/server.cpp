@@ -12,8 +12,48 @@ namespace swm::core {
 GameServer::GameServer(net::Link& link, const World& world, ServerConfig config, CharacterStore* store)
     : link_(link), world_(world), config_(std::move(config)), store_(config_.battlefield ? nullptr : store) {
     if (config_.battlefield) {
-        conquest_.emplace(*config_.battlefield);
+        conquest_.emplace(*config_.battlefield, !config_.single_match);
     }
+}
+
+bool GameServer::match_over() const {
+    return conquest_ && config_.single_match && conquest_->state().phase == Phase::ended &&
+           conquest_->state().time_left <= 0;
+}
+
+void GameServer::set_recruiters(std::vector<net::Recruiter> recruiters, std::array<std::string, 2> factions) {
+    recruiters_ = std::move(recruiters);
+    factions_ = std::move(factions);
+}
+
+net::PlayerStatus* GameServer::status(uint32_t entity) {
+    Client* client = find(entity);
+    return client ? &client->status : nullptr;
+}
+
+void GameServer::notify(uint32_t entity, const std::string& text) {
+    if (Client* client = find(entity)) {
+        client->status.notice = text.substr(0, 255);
+        ++client->status.notice_id;
+    }
+}
+
+void GameServer::transfer(uint32_t entity, const net::Transfer& transfer) {
+    if (Client* client = find(entity)) {
+        client->transfer = transfer;
+        client->transfer_tick = tick_ + uint32_t(3 * config_.tick_rate);
+    }
+}
+
+void GameServer::transfer_all(const net::Transfer& transfer) {
+    for (const Client& client : clients_) {
+        this->transfer(client.entity, transfer);
+    }
+}
+
+std::string GameServer::name_of(uint32_t entity) const {
+    const Client* client = find(entity);
+    return client ? client->name : std::string();
 }
 
 void GameServer::say(const std::string& text) const {
@@ -125,13 +165,18 @@ void GameServer::handle(const net::Endpoint& from, const net::Datagram& datagram
     Client* client = find(from);
     if (const auto* hello = std::get_if<net::Hello>(&message)) {
         if (client == nullptr) {
-            client = join(from, hello->name);
+            client = join(from, hello->name, hello->ticket);
             if (client == nullptr) {
                 return;
             }
+            if (on_join) {
+                const uint32_t entity = client->entity;
+                on_join(entity, client->name);
+                client = find(entity);
+            }
         }
         // Also answers a repeated Hello whose Welcome was lost.
-        send(from, net::Welcome{client->entity, config_.tick_rate, tick_, client->character});
+        send(from, net::Welcome{client->entity, config_.tick_rate, tick_, client->character, recruiters_, factions_});
     }
     if (client == nullptr) {
         return;  // not connected: ignore everything but Hello
@@ -152,6 +197,15 @@ void GameServer::handle(const net::Endpoint& from, const net::Datagram& datagram
         }
     } else if (const auto* request = std::get_if<net::SpawnRequest>(&message)) {
         client->wants_spawn = *request;
+    } else if (const auto* queue = std::get_if<net::QueueRequest>(&message)) {
+        // Joining a queue takes standing at a war terminal; leaving doesn't.
+        const bool at_terminal = std::any_of(recruiters_.begin(), recruiters_.end(), [&](const net::Recruiter& r) {
+            const Vec3 d = client->state.position - r.position;
+            return std::hypot(d.x, d.z) <= r.radius + 1;
+        });
+        if (on_queue && !client->transfer && (queue->team < 0 || (client->life == Life::alive && at_terminal))) {
+            on_queue(client->entity, queue->team);
+        }
     } else if (std::holds_alternative<net::Goodbye>(message)) {
         say(std::format("{} (entity {}) left", client->name, client->entity));
         save({client, 1});
@@ -159,7 +213,7 @@ void GameServer::handle(const net::Endpoint& from, const net::Datagram& datagram
     }
 }
 
-GameServer::Client* GameServer::join(const net::Endpoint& from, const std::string& name) {
+GameServer::Client* GameServer::join(const net::Endpoint& from, const std::string& name, uint64_t ticket) {
     const auto refuse = [&](const std::string& reason) {
         say(std::format("refused {} from {}: {}", name, from.to_string(), reason));
         send(from, net::Refused{reason});
@@ -170,6 +224,13 @@ GameServer::Client* GameServer::join(const net::Endpoint& from, const std::strin
     }
     if (std::any_of(clients_.begin(), clients_.end(), [&](const Client& c) { return c.name == name; })) {
         return refuse(name + " is already playing");
+    }
+    std::optional<int> admitted_team = -1;
+    if (admit) {
+        admitted_team = admit(name, ticket);
+        if (!admitted_team) {
+            return refuse("this match only admits players sent by its hub");
+        }
     }
     Client joined;
     joined.endpoint = from;
@@ -182,7 +243,7 @@ GameServer::Client* GameServer::join(const net::Endpoint& from, const std::strin
         for (const Client& c : clients_) {
             ++sizes[size_t(c.team)];
         }
-        joined.team = sizes[1] < sizes[0] ? 1 : 0;
+        joined.team = *admitted_team >= 0 ? std::min(*admitted_team, 1) : sizes[1] < sizes[0] ? 1 : 0;
         joined.life = Life::waiting;
         const Battlefield& field = conquest_->battlefield();
         Vec3 view = field.center();
@@ -303,8 +364,21 @@ void GameServer::step() {
     }
     for (const Client& client : clients_) {
         snapshot.last_input = client.last_input;
+        snapshot.you = client.status;
         send(client.endpoint, snapshot);
+        if (client.transfer) {
+            send(client.endpoint, *client.transfer);
+        }
     }
+    // Transferred clients that never said goodbye.
+    std::erase_if(clients_, [&](const Client& client) {
+        const bool gone = client.transfer && tick_ >= client.transfer_tick;
+        if (gone) {
+            say(std::format("{} (entity {}) transferred", client.name, client.entity));
+            save({&client, 1});
+        }
+        return gone;
+    });
 }
 
 void GameServer::run_match() {
@@ -350,9 +424,14 @@ void GameServer::run_match() {
         case MatchEvent::ended: {
             say(event.team >= 0 ? std::format("{} won", field.teams[size_t(event.team)].name)
                                 : std::string("the match is a draw"));
+            MatchResult result{field.name, event.team, {}};
             for (const Client& client : clients_) {
                 say(std::format("  {:<16} {:<12} {} kills, {} deaths, {} captures", client.name,
                                 field.teams[size_t(client.team)].name, client.kills, client.deaths, client.captures));
+                result.players.push_back({client.name, client.team, client.kills, client.deaths, client.captures});
+            }
+            if (on_match_ended) {
+                on_match_ended(result);
             }
             break;
         }

@@ -59,6 +59,8 @@ Combat (Stage 1): weapon state (clip, heat, cooldown, spread) and sprint energy 
 
 Matches (Stage 1): `core::Conquest` is the conquest rules with no networking (posts, tickets, warmup/live/ended); it's stepped by the server with the positions of living soldiers. With a battlefield (`ServerConfig::battlefield`), the server puts joining players on the smaller team; they wait until their client sends a `SpawnRequest` for a class and a post their team holds. Snapshots carry each character's team, class, life (waiting, alive, dead) and score, plus the match state. Clients load the same battlefield file for its classes, so they predict with the right movement and weapons. Bots (`core::Bot`) are ordinary clients driven by code instead of keys.
 
+Hubs (Stage 1): a hub is an open-world `GameServer` plus `core::Hub`. Clients learn the war terminals from the `Welcome` and send a `QueueRequest` at one. The hub launches battle servers (single-match `GameServer`s, in its process for now), sends players there with a `Transfer` carrying a ticket and the battlefield's name, and transfers them back when the results have shown, with a notice in their `PlayerStatus`. The battle server admits only ticket holders (`GameServer::admit`) and reports its result (`on_match_ended`). Clients follow transfers with `core::ClientSession`, which starts a fresh `GameClient` for each server.
+
 ## Persistence
 
 - **64-bit persistent entity IDs** for everything that can be saved (characters, items, structures, resource spawns).
