@@ -1,7 +1,8 @@
 # GDExtension: thin binding layer that presents core/ to Godot.
 add_library(swm_godot SHARED
   src/register_types.cpp
-  src/swm_info.cpp)
+  src/swm_info.cpp
+  src/swm_net.cpp)
 target_link_libraries(swm_godot PRIVATE swm_core godot::cpp)
 swm_target_warnings(swm_godot)
 

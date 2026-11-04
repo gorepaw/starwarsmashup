@@ -37,8 +37,8 @@ ctest --preset msvc-release
   <godot> --headless --dump-extension-api
   move extension_api.json extension_api-<version>-double.json
   ```
-- The GDExtension is written to `game/bin/swm.windows.template_debug.double.x86_64.dll`.
-- To build only `core/` and `tools/`, configure with `-DSWM_BUILD_GODOT=OFF`.
+- The GDExtension is written to `game/bin/swm.windows.template_debug.double.x86_64.dll`, and the standalone server to `build\msvc\server\Release\swm_server.exe`.
+- To build only `core/`, `server/` and `tools/`, configure with `-DSWM_BUILD_GODOT=OFF`.
 
 ## 3. Godot project
 

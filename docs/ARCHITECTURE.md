@@ -28,6 +28,7 @@ core/      Pure C++. No Godot headers.
            resources, networking protocol, serialization, persistence interfaces.
 godot/     GDExtension binding layer.
            Nodes that present core state: rendering, input, audio, UI hookup.
+server/    Standalone game server executable: core/ without Godot.
 tools/     Offline asset converters and the extractor.
 game/      Godot project (scenes, UI, generated import data).
 docs/      Design and architecture.
@@ -51,6 +52,8 @@ Built in now, even with one player:
 - **Zones/cells:** planets split into cells with handoff boundaries. One process can own every cell for now.
 - **Lag compensation:** server-side rewind for hit detection.
 - **Shared protocol** defined in `core/`, versioned.
+
+Built so far (Phase 0 spike 4): `core::GameServer` and `core::GameClient` over UDP (`core/net/`). Clients send inputs; the server simulates characters from them and sends snapshots every tick. Clients predict their own character with the same movement code and reconcile against snapshots, and interpolate everyone else. The server runs standalone (`swm_server`) or inside Godot (`SwmServer`), and tests run it with simulated latency and loss (`net::ImpairedLink`).
 
 ## Persistence
 

@@ -23,6 +23,7 @@ enable_testing()
 
 add_subdirectory(third_party)
 add_subdirectory(core)
+add_subdirectory(server)
 add_subdirectory(tools)
 if(SWM_BUILD_GODOT)
   add_subdirectory(godot)

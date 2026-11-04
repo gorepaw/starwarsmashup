@@ -31,5 +31,10 @@ func _init() -> void:
 			printerr("FAIL: extension is not built with double precision")
 			failures += 1
 
+	for class_name_ in ["SwmClient", "SwmServer"]:
+		if not ClassDB.class_exists(class_name_):
+			printerr("FAIL: ", class_name_, " not registered")
+			failures += 1
+
 	print("smoke_test: ", "all passed" if failures == 0 else "%d failed" % failures)
 	quit(failures)

@@ -5,6 +5,7 @@
 #include <godot_cpp/godot.hpp>
 
 #include "swm_info.h"
+#include "swm_net.h"
 
 namespace {
 
@@ -13,6 +14,8 @@ void initialize_swm(godot::ModuleInitializationLevel level) {
         return;
     }
     GDREGISTER_CLASS(swm::godot_bindings::SwmInfo);
+    GDREGISTER_CLASS(swm::godot_bindings::SwmClient);
+    GDREGISTER_CLASS(swm::godot_bindings::SwmServer);
 }
 
 void uninitialize_swm(godot::ModuleInitializationLevel) {}

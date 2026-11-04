@@ -60,9 +60,24 @@ Provisional decisions:
 
 ## 4. Networked controller
 
-- [ ] Third-person controller in C++ (`core/` movement sim, `godot/` presentation)
-- [ ] Server-authoritative movement with client prediction and reconciliation
-- [ ] Two local clients that see each other on the Tatooine terrain
+- [x] Third-person controller in C++: movement in `core/` (`simulate_move`: run, sprint, strafe, jump, slope limit, ledges) on the baked terrain heights (`core::Heightfield`, the same triangles the terrain mesh draws). `godot/` exposes it as `SwmClient`/`SwmServer`; drawing, camera and key input are a GDScript dev tool for now (`game/tools/net_demo.gd`).
+- [x] Server-authoritative movement with client prediction and reconciliation (`core::GameServer`, `core::GameClient`, protocol version 1 over UDP):
+  - Clients send inputs only, each tick, repeating the ones not yet acknowledged, so lost packets cost nothing. The server simulates every character from its inputs and sends a snapshot every tick (30 Hz).
+  - The client predicts its own character with the same code and replays unacknowledged inputs on each snapshot. Because the server only advances a character when its input arrives, predictions match exactly: no corrections at 200 ms round trip with jitter and 10% loss. Server-side moves (e.g. a teleport) are corrected and eased in.
+  - Other characters are drawn 100 ms in the past, interpolated between snapshots.
+  - `core/tests/net_test.cpp` runs a server and two clients over a simulated laggy, lossy network.
+- [x] Two local clients that see each other on the Tatooine terrain: the standalone `swm_server` (core only, no Godot) plus two `net_demo.gd` windows, or one window hosting with `--host`. Playable with WASD, mouse, Shift and Space; `--bot circle|chase` drives a client for automated runs.
+
+  ```powershell
+  build\msvc\server\Release\swm_server.exe --bake game\imported_assets\terrain\tatooine_mos_eisley
+  godot --path game --script res://tools/net_demo.gd -- imported_assets/terrain/tatooine_mos_eisley imported_assets/characters/stormtrooper/stormtrooper.gltf
+  ```
+
+Provisional decisions:
+- Movement tuning (run 5.5 m/s, sprint 8, jump 4.6 m/s) is a guess at Battlefront's feel, until it comes from data.
+- Snapshots carry full-precision state for every character. Quantizing and interest management come with larger player counts.
+- Movement only collides with terrain so far. Building floors and walls (spike 3) need to move into `core/` for the server to use them.
+- Server and clients must use the same bake and movement settings; the handshake doesn't check that yet.
 
 ## 5. Persistence
 
