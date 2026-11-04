@@ -33,6 +33,18 @@ void put_state(ByteWriter& out, const MoveState& state) {
     put_vec3(out, state.velocity);
     out.put(state.yaw);
     out.put(uint8_t(state.grounded));
+    out.put(state.energy);
+    out.put(uint8_t(state.sprinting));
+    const CombatState& c = state.combat;
+    out.put(c.weapon);
+    out.put(c.cooldown);
+    out.put(c.reload);
+    out.put(c.spread);
+    for (const WeaponState& w : c.weapons) {
+        out.put(w.rounds);
+        out.put(w.heat);
+        out.put(uint8_t(w.overheated));
+    }
 }
 
 MoveState get_state(ByteReader& in) {
@@ -41,6 +53,21 @@ MoveState get_state(ByteReader& in) {
     state.velocity = get_vec3(in);
     state.yaw = in.get<float>();
     state.grounded = in.get<uint8_t>() != 0;
+    state.energy = in.get<double>();
+    state.sprinting = in.get<uint8_t>() != 0;
+    CombatState& c = state.combat;
+    c.weapon = in.get<uint8_t>();
+    c.cooldown = in.get<double>();
+    c.reload = in.get<double>();
+    c.spread = in.get<double>();
+    for (WeaponState& w : c.weapons) {
+        w.rounds = in.get<int16_t>();
+        w.heat = in.get<float>();
+        w.overheated = in.get<uint8_t>() != 0;
+    }
+    if (c.weapon >= c.weapons.size()) {
+        throw PacketError("bad weapon slot");
+    }
     return state;
 }
 
@@ -49,7 +76,10 @@ void put_input(ByteWriter& out, const MoveInput& input) {
     out.put(input.forward);
     out.put(input.right);
     out.put(input.yaw);
+    out.put(input.pitch);
     out.put(input.buttons);
+    out.put(input.weapon);
+    out.put(input.view_tick);
 }
 
 MoveInput get_input(ByteReader& in) {
@@ -58,7 +88,10 @@ MoveInput get_input(ByteReader& in) {
     input.forward = in.get<int8_t>();
     input.right = in.get<int8_t>();
     input.yaw = in.get<float>();
+    input.pitch = in.get<float>();
     input.buttons = in.get<uint8_t>();
+    input.weapon = in.get<uint8_t>();
+    input.view_tick = in.get<double>();
     return input;
 }
 
@@ -96,6 +129,24 @@ struct Encoder {
         for (const EntityState& entity : m.entities) {
             out.put(entity.id);
             put_state(out, entity.state);
+            out.put(entity.health);
+            out.put(uint8_t(entity.alive));
+            out.put(entity.spawn_count);
+        }
+        out.put(uint16_t(m.bolts.size()));
+        for (const BoltState& bolt : m.bolts) {
+            out.put(bolt.id);
+            out.put(bolt.owner);
+            out.put(bolt.weapon);
+            put_vec3(out, bolt.position);
+            put_vec3(out, bolt.velocity);
+        }
+        out.put(uint16_t(m.events.size()));
+        for (const CombatEvent& event : m.events) {
+            out.put(uint8_t(event.kind));
+            out.put(event.attacker);
+            out.put(event.victim);
+            out.put(event.damage);
         }
     }
     void operator()(const Goodbye&) { out.put(uint8_t(Type::goodbye)); }
@@ -157,7 +208,33 @@ Message decode(std::span<const uint8_t> packet) {
             EntityState entity;
             entity.id = in.get<uint32_t>();
             entity.state = get_state(in);
+            entity.health = in.get<float>();
+            entity.alive = in.get<uint8_t>() != 0;
+            entity.spawn_count = in.get<uint8_t>();
             m.entities.push_back(entity);
+        }
+        const size_t bolts = in.get<uint16_t>();
+        for (size_t i = 0; i < bolts; ++i) {
+            BoltState bolt;
+            bolt.id = in.get<uint32_t>();
+            bolt.owner = in.get<uint32_t>();
+            bolt.weapon = in.get<uint8_t>();
+            bolt.position = get_vec3(in);
+            bolt.velocity = get_vec3(in);
+            m.bolts.push_back(bolt);
+        }
+        const size_t events = in.get<uint16_t>();
+        for (size_t i = 0; i < events; ++i) {
+            CombatEvent event;
+            const uint8_t kind = in.get<uint8_t>();
+            if (kind != CombatEvent::hit && kind != CombatEvent::kill) {
+                throw PacketError("unknown combat event");
+            }
+            event.kind = CombatEvent::Kind(kind);
+            event.attacker = in.get<uint32_t>();
+            event.victim = in.get<uint32_t>();
+            event.damage = in.get<float>();
+            m.events.push_back(event);
         }
         message = std::move(m);
         break;

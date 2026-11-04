@@ -136,10 +136,11 @@ void test_session() {
     int frame = 0;
     s.run(8.0, [&] {
         ++frame;
-        s.a.set_input(1, 0.3, s.now * 0.6, frame % 400 < 200, frame % 150 == 0);
+        s.a.set_input({.forward = 1, .right = 0.3, .yaw = s.now * 0.6, .sprint = frame % 400 < 200,
+                       .jump = frame % 150 == 0});
         if (const auto seen = find_remote(s.b.remotes(), s.a.entity_id())) {
             const Vec3 to = seen->state.position - s.b.predicted().position;
-            s.b.set_input(1, 0, std::atan2(-to.x, -to.z), false, false);
+            s.b.set_input({.forward = 1, .yaw = std::atan2(-to.x, -to.z)});
             // B sees A in the past: about the interpolation delay plus
             // latency behind, at up to sprint speed.
             const MoveState* truth = s.server.state_of(s.a.entity_id());
@@ -149,15 +150,15 @@ void test_session() {
     CHECK(s.a.stats().ticks > 230 && s.b.stats().ticks > 230);
     // Prediction is exact: the server ran the same inputs through the same code.
     CHECK(s.a.stats().corrections == 0 && s.b.stats().corrections == 0);
-    CHECK(worst_view_error > 0.1 && worst_view_error < 3.0);
+    CHECK(worst_view_error > 0.1 && worst_view_error < 4.0);
     // Round trips: twice the one-way latency, plus up to a tick of server queuing.
     CHECK(s.a.stats().rtt > 0.09 && s.a.stats().rtt < 0.2);
     CHECK(s.b.stats().rtt > 0.15 && s.b.stats().rtt < 0.26);
 
     // Everyone stops; once things settle, all views agree exactly.
     s.run(1.5, [&] {
-        s.a.set_input(0, 0, 0, false, false);
-        s.b.set_input(0, 0, 0, false, false);
+        s.a.set_input({});
+        s.b.set_input({});
     });
     const MoveState* a_server = s.server.state_of(s.a.entity_id());
     const MoveState* b_server = s.server.state_of(s.b.entity_id());

@@ -14,7 +14,7 @@ namespace swm::core::net {
 // Every packet starts with a magic number, the protocol version and a message
 // type. Peers drop packets with another version. Bump it on any wire change.
 inline constexpr uint16_t protocol_magic = 0x4D53;  // "SM"
-inline constexpr uint16_t protocol_version = 2;
+inline constexpr uint16_t protocol_version = 3;
 
 // Client -> server, repeated until a Welcome or Refused arrives. The name
 // picks the saved character (there are no accounts yet).
@@ -44,6 +44,29 @@ struct InputBatch {
 struct EntityState {
     uint32_t id = 0;
     MoveState state;
+    float health = 0;
+    bool alive = true;
+    uint8_t spawn_count = 0;  // changes on every respawn: clients jump there instead of easing
+};
+
+// A blaster bolt in flight.
+struct BoltState {
+    uint32_t id = 0;
+    uint32_t owner = 0;  // entity that fired it
+    uint8_t weapon = 0;  // the owner's weapon slot, for drawing it
+    Vec3 position;
+    Vec3 velocity;
+};
+
+// Something that happened this tick.
+struct CombatEvent {
+    enum Kind : uint8_t { hit = 1, kill = 2 };
+    Kind kind = hit;
+    uint32_t attacker = 0;
+    uint32_t victim = 0;
+    float damage = 0;
+
+    friend bool operator==(const CombatEvent&, const CombatEvent&) = default;
 };
 
 // Server -> client, every tick: the world as the server sees it.
@@ -51,6 +74,10 @@ struct Snapshot {
     uint32_t server_tick = 0;
     uint32_t last_input = 0;  // newest input of this client's that the server has simulated
     std::vector<EntityState> entities;
+    std::vector<BoltState> bolts;
+    // This tick's events. A lost snapshot loses them; the health in later
+    // snapshots stays right.
+    std::vector<CombatEvent> events;
 };
 
 // Either direction: leaving.

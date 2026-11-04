@@ -76,13 +76,14 @@ void test_running() {
     sprint.yaw = float(-std::numbers::pi / 2);
     sprint.buttons = MoveInput::sprint;
     const MoveState sprinted = run(start, sprint, flat, 30);
-    CHECK(near(sprinted.velocity.x, params.sprint_speed, 1e-6) && sprinted.position.x > -50 + 7);
+    CHECK(near(sprinted.velocity.x, params.run_speed * params.sprint_factor, 1e-6) && sprinted.position.x > -50 + 7);
+    CHECK(sprinted.sprinting && sprinted.energy < params.max_energy);
 
-    // Strafing right while facing -Z moves toward +X at run speed.
+    // Strafing right while facing -Z moves toward +X at strafe speed.
     MoveInput strafe;
     strafe.right = 127;
     const MoveState strafed = run(start, strafe, flat, 30);
-    CHECK(near(strafed.velocity.x, params.run_speed) && near(strafed.velocity.z, 0));
+    CHECK(near(strafed.velocity.x, params.strafe_speed) && near(strafed.velocity.z, 0));
 
     // Letting go stops quickly.
     const MoveState stopped = run(after, MoveInput{}, flat, 10);
@@ -125,7 +126,7 @@ void test_slopes_and_jumps() {
     CHECK(state.grounded && near(state.position.y, 0));
     // v^2 / 2g, plus the first tick's rise before gravity applies (about v dt / 2).
     CHECK(near(peak, params.jump_speed * params.jump_speed / (2 * params.gravity), 0.12));
-    CHECK(ticks > 20 && ticks < 35);  // about 0.94 s in the air
+    CHECK(ticks > 30 && ticks < 40);  // about 1.2 s in the air
 
     // Running off a ledge falls instead of snapping down.
     const Heightfield ledge = make_ground([](double, double gz) { return gz < 50 ? 5.0 : 0.0; });
@@ -193,15 +194,15 @@ void test_buildings() {
 
     // Jumping up onto a 1 m platform.
     BuildingCollision high;
-    add_floor(high, -42, 50, 4, 1.0);  // x -46..-38
+    add_floor(high, -40, 50, 6, 1.0);  // x -46..-34
     World high_world(flat);
     high_world.add_building(high, {});
-    state = run(start, east, high_world, 20);  // to x ~ -46.6, just short of it: too high to step up
+    state = run(start, east, high_world, 20);  // to x ~ -45.6: under its edge, too high to step up
     CHECK(near(state.position.y, 0));
     MoveInput jump = east;
     jump.buttons = MoveInput::jump;
     state = run(state, jump, high_world, 1);
-    state = run(state, east, high_world, 25);
+    state = run(state, east, high_world, 35);
     CHECK(state.grounded && near(state.position.y, 1.0) && state.position.x > -46);
 
     // Placement: Galaxies position and yaw, as in the world snapshot. A floor

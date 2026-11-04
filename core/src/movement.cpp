@@ -36,13 +36,31 @@ MoveState simulate_move(const MoveState& state, const MoveInput& input, const Wo
     const double c = std::cos(double(input.yaw));
     const Vec3 forward{-s, 0, -c};
     const Vec3 right{c, 0, -s};
-    Vec3 wish = forward * (input.forward / 127.0) + right * (input.right / 127.0);
-    const double wish_length = wish.length();
-    if (wish_length > 1) {
-        wish = wish * (1 / wish_length);
+    double f = input.forward / 127.0;
+    double r = input.right / 127.0;
+    if (const double stick = std::hypot(f, r); stick > 1) {
+        f /= stick;
+        r /= stick;
     }
-    const bool sprinting = input.held(MoveInput::sprint) && input.forward > 0;
-    const Vec3 target = wish * (sprinting ? params.sprint_speed : params.run_speed);
+
+    // Sprinting (forward only) drains energy; it takes some energy to start,
+    // and stops when it runs out. Otherwise energy comes back, faster at rest.
+    const bool wants_sprint = input.held(MoveInput::sprint) && f > 0;
+    next.sprinting = wants_sprint && state.energy > 0 &&
+                     (state.sprinting || state.energy >= params.energy_min_sprint);
+    if (next.sprinting) {
+        next.energy = std::max(0.0, state.energy - params.energy_drain_sprint * dt);
+    } else {
+        const double restore = (f == 0 && r == 0) ? params.energy_restore_idle : params.energy_restore;
+        next.energy = std::min(params.max_energy, state.energy + restore * dt);
+    }
+    double forward_speed = f > 0 ? params.run_speed : params.strafe_speed;
+    double side_speed = params.strafe_speed;
+    if (next.sprinting) {
+        forward_speed *= params.sprint_factor;
+        side_speed *= params.sprint_strafe;
+    }
+    const Vec3 target = forward * (f * forward_speed) + right * (r * side_speed);
 
     if (state.grounded) {
         next.velocity = approach(state.velocity, target, params.ground_accel * dt);

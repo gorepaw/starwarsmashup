@@ -124,7 +124,7 @@ struct Player {
 void run(double& now, double seconds, GameServer& server, std::initializer_list<Player*> players, bool forward) {
     for (const double end = now + seconds; now < end; now += 1.0 / 60) {
         for (Player* player : players) {
-            player->client.set_input(forward ? 1 : 0, 0, 0, false, false);
+            player->client.set_input({.forward = forward ? 1.0 : 0.0});
             player->client.update(now);
         }
         server.update(now);

@@ -36,6 +36,7 @@ endforeach()
 # Battlefront II asset library: munged ucfb files.
 add_library(swm_bf2 STATIC
   bf2/animation.cpp
+  bf2/odf.cpp
   bf2/ucfb.cpp)
 target_include_directories(swm_bf2 PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 swm_target_warnings(swm_bf2)

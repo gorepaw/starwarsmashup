@@ -1,5 +1,6 @@
 #pragma once
 
+#include <array>
 #include <cstdint>
 
 #include "swm/core/vec3.h"
@@ -15,13 +16,21 @@ struct MoveInput {
     enum Button : uint8_t {
         sprint = 1 << 0,
         jump = 1 << 1,
+        fire = 1 << 2,
+        reload = 1 << 3,
     };
 
     uint32_t sequence = 0;  // increases by one per tick
     int8_t forward = 0;     // -127..127, scaled to -1..1
     int8_t right = 0;
     float yaw = 0;          // radians; 0 faces -Z, positive turns left (Godot's rotation.y)
+    float pitch = 0;        // radians; aim up is positive
     uint8_t buttons = 0;
+    uint8_t weapon = 0;     // the weapon slot wanted
+    // The server tick the client was showing other characters at when it
+    // made this input (they're drawn in the past). The server rewinds them to
+    // it to judge this input's shots: what the shooter saw is what it hits.
+    double view_tick = 0;
 
     bool held(Button button) const { return (buttons & button) != 0; }
     friend bool operator==(const MoveInput&, const MoveInput&) = default;
@@ -30,28 +39,59 @@ struct MoveInput {
 // Quantizes stick axes (-1..1) for MoveInput.
 int8_t quantize_axis(double value);
 
+struct WeaponState {
+    int16_t rounds = 0;  // left in the clip
+    float heat = 0;      // 0..1
+    bool overheated = false;
+
+    friend bool operator==(const WeaponState&, const WeaponState&) = default;
+};
+
+struct CombatState {
+    uint8_t weapon = 0;   // slot in hand
+    double cooldown = 0;  // seconds until it can fire
+    double reload = 0;    // seconds of reloading left
+    double spread = 0;    // degrees of bloom from recent shots
+    std::array<WeaponState, 2> weapons{};
+
+    friend bool operator==(const CombatState&, const CombatState&) = default;
+};
+
+// Everything about a character that its own inputs decide, so the client
+// can predict all of it.
 struct MoveState {
     Vec3 position;
     Vec3 velocity;
     float yaw = 0;
     bool grounded = true;
+    double energy = 100;  // spent by sprinting
+    bool sprinting = false;
+    CombatState combat;
 
     friend bool operator==(const MoveState&, const MoveState&) = default;
 };
 
-// Provisional Battlefront-style tuning. Will come from data files.
+// Movement tuning. Defaults are Battlefront II's com_inf_default soldier;
+// load_soldier() reads them from the player's own files.
 struct MoveParams {
-    double run_speed = 5.5;        // m/s
-    double sprint_speed = 8.0;     // m/s, forward only
-    double ground_accel = 40.0;    // m/s^2 toward the wished velocity
+    double run_speed = 7.0;         // MaxSpeed, m/s forward
+    double strafe_speed = 5.25;     // MaxStrafeSpeed, m/s sideways and back
+    double sprint_factor = 1.5;     // ControlSpeed sprint: forward speed times this
+    double sprint_strafe = 0.5;     // ...and sideways speed times this
+    double ground_accel = 70.0;     // Acceleration, m/s^2 toward the wished velocity
     double air_accel = 4.0;
     double gravity = 9.8;
-    double jump_speed = 4.6;       // m/s upward, about a 1.1 m jump
-    double max_slope_degrees = 50; // steeper ground can't be walked up
-    double snap_down = 0.6;        // m: grounded characters follow ground this far down per tick
-    double step_up = 0.5;          // m: highest ledge walked up without jumping
-    double radius = 0.3;           // m: body, for walls
-    double height = 1.8;           // m
+    double jump_speed = 5.9;        // m/s upward: sqrt(2 g JumpHeight) for JumpHeight 1.78
+    double max_energy = 100;
+    double energy_restore = 10;     // EnergyRestore, per second while moving
+    double energy_restore_idle = 15; // EnergyRestoreIdle, per second standing still
+    double energy_drain_sprint = 20; // EnergyDrainSprint, per second
+    double energy_min_sprint = 20;  // EnergyMinSprint: needed to start sprinting
+    double max_slope_degrees = 50;  // steeper ground can't be walked up
+    double snap_down = 0.6;         // m: grounded characters follow ground this far down per tick
+    double step_up = 0.5;           // m: highest ledge walked up without jumping
+    double radius = 0.3;            // m: body, for walls
+    double height = 1.8;            // m
 };
 
 // Advances a character by one tick of `dt` seconds through the world

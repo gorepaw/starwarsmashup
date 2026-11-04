@@ -36,10 +36,14 @@ public:
     // from swgtool export-building), at a Galaxies position and yaw in
     // degrees. Must match the server's buildings. Call before start().
     godot::Error add_building(const godot::String& collision_path, const godot::Vector3& position, double yaw_degrees);
+    // The soldier class (an OS path to a file from bf2tool export-soldier).
+    // Must match the server's. Call before start().
+    godot::Error set_soldier(const godot::String& path);
     // `server` is "a.b.c.d:port". `bake_prefix` is an OS path to the terrain
     // bake the server uses (swgtool bake-terrain).
     godot::Error start(const godot::String& server, const godot::String& bake_prefix, const godot::String& name);
-    void set_input(double forward, double right, double yaw, bool sprint, bool jump);
+    // {forward, right, yaw, pitch, sprint, jump, fire, reload, weapon}; missing keys are 0/false.
+    void set_input(const godot::Dictionary& controls);
     void update();
     void leave();
 
@@ -50,10 +54,21 @@ public:
     int64_t get_character_id() const;
     // Why the server refused the connection (status "refused").
     godot::String get_refusal() const;
-    // Own character as drawn: {position, velocity, yaw, grounded}.
+    // Own character as drawn: {position, velocity, yaw, grounded, energy,
+    // sprinting, weapon, rounds, heat, overheated, reloading, health, alive}.
     godot::Dictionary get_presented() const;
-    // Other characters: [{id, position, velocity, yaw, grounded}].
+    // Other characters: [{id, position, velocity, yaw, grounded, ..., health, alive}].
     godot::Array get_remotes() const;
+    // Others' bolts in flight: [{owner, weapon, position, velocity}].
+    godot::Array get_bolts() const;
+    // Own shots since the last call, to draw at once: [{origin, direction, weapon}].
+    godot::Array take_shots();
+    // Hits and kills since the last call: [{kind ("hit" or "kill"), attacker, victim, damage}].
+    godot::Array take_events();
+    // The soldier's weapons: [{name, rounds_per_clip, heat_per_shot, bolt_speed,
+    // bolt_life, bolt_color, bolt_length, bolt_width}].
+    godot::Array get_weapons() const;
+    double get_max_health() const;
     // {ticks, snapshots, corrections, max_correction, rtt_ms}
     godot::Dictionary get_stats() const;
     double get_ground_height(double x, double z) const;
@@ -68,6 +83,7 @@ private:
     core::net::ImpairedLink::Settings impairment_;
     core::Heightfield ground_;
     std::vector<std::pair<core::BuildingCollision, core::Placement>> buildings_;
+    core::SoldierDef soldier_;
     std::unique_ptr<core::World> world_;
     std::unique_ptr<core::net::UdpLink> udp_;
     std::unique_ptr<core::net::ImpairedLink> impaired_;
@@ -86,6 +102,8 @@ public:
     void set_database(const godot::String& path);
     // As SwmClient.add_building. Call before start().
     godot::Error add_building(const godot::String& collision_path, const godot::Vector3& position, double yaw_degrees);
+    // As SwmClient.set_soldier. Call before start().
+    godot::Error set_soldier(const godot::String& path);
     // `spawn` is where new characters start, in Galaxies coordinates (x, z).
     godot::Error start(int64_t port, const godot::String& bake_prefix, const godot::Vector2& spawn);
     void update();
@@ -102,6 +120,7 @@ private:
     std::string database_;
     core::Heightfield ground_;
     std::vector<std::pair<core::BuildingCollision, core::Placement>> buildings_;
+    core::SoldierDef soldier_;
     std::unique_ptr<core::World> world_;
     std::unique_ptr<core::SqliteCharacterStore> store_;
     std::unique_ptr<core::net::UdpLink> udp_;

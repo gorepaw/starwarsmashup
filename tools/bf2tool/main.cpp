@@ -12,6 +12,7 @@
 
 #include "bf2/animation.h"
 #include "bf2/hash.h"
+#include "bf2/odf.h"
 #include "bf2/ucfb.h"
 
 namespace {
@@ -25,6 +26,8 @@ constexpr const char* usage = R"(usage:
   bf2tool check <dir>
   bf2tool skeleton <file.lvl> <bank>
   bf2tool anims <file.lvl> <bank> [name...]
+  bf2tool odf <file.lvl> [class]
+  bf2tool export-soldier <_lvl_pc dir> <side> <soldier class> -o <out.ini>
 )";
 
 std::vector<uint8_t> read_file(const std::filesystem::path& path);
@@ -135,6 +138,103 @@ int cmd_list(const std::vector<std::string>& args) {
     return 0;
 }
 
+// Lists a file's ODF classes, or prints one class's properties.
+int cmd_odf(const std::vector<std::string>& args) {
+    if (args.empty()) {
+        std::cerr << usage;
+        return 2;
+    }
+    const std::vector<uint8_t> bytes = read_file(args[0]);
+    const std::vector<OdfClass> classes = read_odf_classes(parse_ucfb(bytes));
+    for (const OdfClass& odf : classes) {
+        if (args.size() < 2) {
+            std::cout << std::format("{}  {:<40} base {:<32} {} properties\n", odf.kind, odf.type, odf.base,
+                                     odf.properties.size());
+            continue;
+        }
+        if (odf.type != args[1]) {
+            continue;
+        }
+        std::cout << std::format("{} {} (base {})\n", odf.kind, odf.type, odf.base);
+        for (const auto& [hash, value] : odf.properties) {
+            const std::string_view name = odf_property_name(hash);
+            std::cout << std::format("  {:<28} = {}\n", name.empty() ? std::format("{:08x}", hash) : std::string(name),
+                                     value);
+        }
+    }
+    return 0;
+}
+
+// Writes a soldier class, its first two blaster weapons and their bolts as a
+// data file for core::load_soldier, inheritance resolved.
+int cmd_export_soldier(const std::vector<std::string>& args) {
+    if (args.size() < 5 || args[3] != "-o") {
+        std::cerr << usage;
+        return 2;
+    }
+    const std::filesystem::path dir = args[0];
+    std::vector<std::vector<uint8_t>> files;  // the parsed trees view these bytes
+    OdfLibrary library;
+    for (const std::filesystem::path& path : {dir / "side" / (args[1] + ".lvl"), dir / "ingame.lvl"}) {
+        files.push_back(read_file(path));
+        library.add(parse_ucfb(files.back()));
+    }
+    const OdfClass soldier = library.resolve(args[2]);
+    if (soldier.base != "soldier") {
+        throw std::runtime_error(args[2] + " is not a soldier class");
+    }
+
+    std::ofstream out(args[4], std::ios::binary);
+    out << "; " << args[2] << " from Battlefront II (" << args[1] << ".lvl, ingame.lvl), written by bf2tool export-soldier.\n";
+    out << "; Game data from your own install: don't commit or share it.\n\n[soldier]\nName = " << args[2] << "\n";
+    for (const char* key : {"MaxHealth", "MaxSpeed", "MaxStrafeSpeed", "JumpHeight", "Acceleration", "EnergyRestore",
+                            "EnergyRestoreIdle", "EnergyDrainSprint", "EnergyMinSprint"}) {
+        if (const auto value = soldier.get(key)) {
+            out << key << " = " << *value << "\n";
+        }
+    }
+    for (const auto& [hash, value] : soldier.properties) {
+        if (hash == odf_hash("ControlSpeed")) {
+            out << "ControlSpeed = " << value << "\n";
+        }
+    }
+
+    // Blasters only (base "cannon"): no grenades, and no award weapons, which are unlocks.
+    int written = 0;
+    for (const auto& [hash, name] : soldier.properties) {
+        if (hash != odf_hash("WeaponName") || written == 2 || name.find("award") != std::string::npos) {
+            continue;
+        }
+        const OdfClass weapon = library.resolve(name);
+        if (weapon.base != "cannon") {
+            continue;
+        }
+        out << "\n[weapon]\nName = " << name << "\n";
+        for (const char* key : {"ShotDelay", "RoundsPerClip", "ReloadTime", "HeatPerShot", "HeatRecoverRate",
+                                "HeatThreshold", "YawSpread", "PitchSpread", "SpreadPerShot", "SpreadRecoverRate",
+                                "SpreadLimit", "MaxRange"}) {
+            if (const auto value = weapon.get(key)) {
+                out << key << " = " << *value << "\n";
+            }
+        }
+        const OdfClass ordnance = library.resolve(weapon.get("OrdnanceName").value_or(""));
+        out << "; bolt: " << ordnance.type << "\n";
+        for (const char* key : {"MaxDamage", "PersonScale", "Velocity", "Gravity", "LifeSpan", "LaserGlowColor",
+                                "LaserLength", "LaserWidth", "LightColor", "LightRadius"}) {
+            if (const auto value = ordnance.get(key)) {
+                out << key << " = " << *value << "\n";
+            }
+        }
+        ++written;
+        std::cerr << std::format("  weapon {} (bolt {})\n", name, ordnance.type);
+    }
+    if (!out) {
+        throw std::runtime_error("cannot write " + args[4]);
+    }
+    std::cerr << "wrote " << args[4] << "\n";
+    return 0;
+}
+
 int cmd_check(const std::vector<std::string>& args) {
     if (args.empty()) {
         std::cerr << usage;
@@ -207,6 +307,12 @@ int main(int argc, char** argv) {
         }
         if (command == "anims") {
             return cmd_anims(args);
+        }
+        if (command == "odf") {
+            return cmd_odf(args);
+        }
+        if (command == "export-soldier") {
+            return cmd_export_soldier(args);
         }
     } catch (const std::exception& e) {
         std::cerr << "error: " << e.what() << "\n";

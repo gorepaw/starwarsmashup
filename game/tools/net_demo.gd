@@ -6,7 +6,7 @@
 #   godot --path game --script res://tools/net_demo.gd -- <bake_prefix> <character.gltf>
 #         [--server a.b.c.d:port] [--host <port>] [--db <file>] [--spawn <x> <z>] [--name <name>]
 #         [--building <building.gltf> <x> <y> <z> <yaw>] [--bot circle|chase|route] [--route <x,z;x,z;...>]
-#         [--lag <ms>] [--jitter <ms>] [--loss <0..1>]
+#         [--soldier <file.ini>] [--lag <ms>] [--jitter <ms>] [--loss <0..1>]
 #         [--seconds <n>] [--shots <output_prefix>] [--solo] [--terrain3d]
 #
 # Connects to a running server (default 127.0.0.1:7777; see server/ for
@@ -22,9 +22,15 @@
 # with its cells' own lights, and its floors and walls (<name>.collision) used
 # by the movement. The server must place the same building.
 #
-# Controls: WASD to move, mouse to turn, Shift to sprint, Space to jump, Esc
-# to free the mouse (Esc again quits). --bot drives the character instead:
-# "circle" runs in circles, "chase" runs after the nearest other player,
+# --soldier is the soldier class (bf2tool export-soldier: health, movement,
+# weapons); the server must use the same file.
+#
+# Controls: WASD to move, mouse to aim, Shift to sprint, Space to jump, left
+# mouse to fire, R to reload, 1 and 2 for weapons, Esc to free the mouse (Esc
+# again quits). Shots fly as bolts; the server decides what they hit. --bot
+# drives the character instead:
+# "circle" runs in circles, "chase" runs after the nearest other player and
+# shoots at it,
 # "route" runs through --route's points (Galaxies x,z, as walk_building.gd
 # prints them) from the nearest one, then stands.
 # --lag/--jitter/--loss simulate a bad connection on this client.
@@ -47,6 +53,11 @@ const CAMERA_HEIGHT := 2.0
 const CAMERA_SHOULDER := 0.7  # meters right of the character
 const SHOT_COUNT := 4
 const CAMERA_MIN_DISTANCE := 0.6
+const EYE_HEIGHT := 1.6       # matches core: shots start here
+const AIM_DISTANCE := 40.0    # the crosshair's ray converges with the shot here
+const BOT_FIRE_RANGE := 40.0
+const BOLT_GLOW := 6.0        # emission strength; a graphics setting, like everything about bolt looks
+const BOLT_STRETCH := 3.0     # drawn length times LaserLength (Battlefront adds a longer glow), and width times half that
 
 var _client: Object
 var _server: Object
@@ -70,6 +81,19 @@ var _camera_distance := CAMERA_DISTANCE  # pulled in when a wall is behind the c
 var _route: Array[Vector2] = []  # game x, z
 var _route_index := -1
 var _hud: Label
+var _crosshair: Label
+var _feed: Label
+var _feed_lines: PackedStringArray = []
+var _hit_flash := 0.0
+var _weapons: Array = []          # from SwmClient.get_weapons
+var _weapon := 0                  # slot wanted
+var _bolt_materials: Array = []   # per weapon slot
+var _bolt_mesh: BoxMesh
+var _own_bolts: Array = []        # [{node, velocity, life, gravity}] drawn from predicted shots
+var _remote_bolt_nodes: Array[MeshInstance3D] = []
+var _kills := 0
+var _deaths := 0
+var _hits := 0
 var _pending_shot := ""
 var _shot_delay := 0
 
@@ -120,6 +144,9 @@ func _init() -> void:
 		if collision != "" and _server.add_building(collision, building_position, building_yaw) != OK:
 			quit(1)
 			return
+		if _option(args, "--soldier", "") != "" and _server.set_soldier(_os_path(_option(args, "--soldier", ""))) != OK:
+			quit(1)
+			return
 		var spawn := _spawn(args, meta)
 		if _server.start(int(host), bake_path, spawn) != OK:
 			quit(1)
@@ -133,6 +160,10 @@ func _init() -> void:
 	if collision != "" and _client.add_building(collision, building_position, building_yaw) != OK:
 		quit(1)
 		return
+	if _option(args, "--soldier", "") != "" and _client.set_soldier(_os_path(_option(args, "--soldier", ""))) != OK:
+		quit(1)
+		return
+	_weapons = _client.get_weapons()
 	if _client.start(server, bake_path, _option(args, "--name", "player")) != OK:
 		quit(1)
 		return
@@ -156,7 +187,7 @@ func _process(delta: float) -> bool:
 	_elapsed += delta
 	if _server != null:
 		_server.update()
-	_client.set_input.callv(_controls())
+	_client.set_input(_controls())
 	_client.update()
 
 	if _client.is_spawned():
@@ -168,7 +199,9 @@ func _process(delta: float) -> bool:
 		_pose(_own, own)
 		_update_remotes()
 		_update_camera(own["position"], delta)
-	_update_hud()
+		_update_bolts(delta)
+		_update_events()
+	_update_hud(delta)
 
 	if _pending_shot != "":
 		_shot_delay -= 1
@@ -197,6 +230,7 @@ func _finish() -> bool:
 	var stats: Dictionary = _client.get_stats()
 	var at: Vector3 = _client.get_presented().get("position", Vector3.ZERO)
 	print("left at Galaxies (%.2f, %.2f, %.2f)" % [-at.x, at.y, at.z])
+	print("combat: %d hits, %d kills, %d deaths" % [_hits, _kills, _deaths])
 	print("status %s, entity %d, %d ticks, %d snapshots, %d corrections (max %.3f m), rtt %.0f ms, saw other players: %s" % [
 			_client.get_status(), _client.get_entity_id(), stats.get("ticks", 0), stats.get("snapshots", 0),
 			stats.get("corrections", 0), stats.get("max_correction", 0.0), stats.get("rtt_ms", 0.0), _saw_remote])
@@ -218,27 +252,48 @@ func _leave() -> void:
 		_server.stop()  # saves everyone still connected
 
 
-# [forward, right, yaw, sprint, jump] for SwmClient.set_input.
-func _controls() -> Array:
+# Controls for SwmClient.set_input: {forward, right, yaw, pitch, sprint, jump,
+# fire, reload, weapon}.
+func _controls() -> Dictionary:
 	match _bot:
 		"circle":
 			_yaw = _elapsed * 0.5
-			return [1.0, 0.0, _yaw, fmod(_elapsed, 8.0) < 4.0, fmod(_elapsed, 5.0) < 0.05]
+			return {"forward": 1.0, "yaw": _yaw, "sprint": fmod(_elapsed, 8.0) < 4.0,
+					"jump": fmod(_elapsed, 5.0) < 0.05}
 		"route":
 			return _follow_route()
 		"chase":
 			var target := _nearest_remote()
-			if target.is_empty():
-				return [0.0, 0.0, _yaw, false, false]
-			var to: Vector3 = target["position"] - _client.get_presented()["position"]
+			if target.is_empty() or not _client.is_spawned():
+				return {"yaw": _yaw}
+			var eye: Vector3 = _client.get_presented()["position"] + Vector3.UP * EYE_HEIGHT
+			var to: Vector3 = target["position"] + Vector3.UP * 1.0 - eye
 			_yaw = atan2(-to.x, -to.z)
-			var far := Vector2(to.x, to.z).length() > 6.0
-			return [1.0 if far else 0.0, 0.0, _yaw, Vector2(to.x, to.z).length() > 20.0, false]
+			var distance := Vector2(to.x, to.z).length()
+			return {"forward": 1.0 if distance > 8.0 else 0.0, "yaw": _yaw,
+					"pitch": atan2(to.y, distance), "sprint": distance > 25.0,
+					"fire": distance < BOT_FIRE_RANGE and bool(target["alive"])}
 	if not _mouse_captured:
-		return [0.0, 0.0, _yaw, false, false]
+		return {"yaw": _yaw, "weapon": _weapon}
 	var forward := float(Input.is_physical_key_pressed(KEY_W)) - float(Input.is_physical_key_pressed(KEY_S))
 	var right := float(Input.is_physical_key_pressed(KEY_D)) - float(Input.is_physical_key_pressed(KEY_A))
-	return [forward, right, _yaw, Input.is_physical_key_pressed(KEY_SHIFT), Input.is_physical_key_pressed(KEY_SPACE)]
+	var aim := _aim()
+	return {"forward": forward, "right": right, "yaw": aim.x, "pitch": aim.y,
+			"sprint": Input.is_physical_key_pressed(KEY_SHIFT), "jump": Input.is_physical_key_pressed(KEY_SPACE),
+			"fire": Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT), "reload": Input.is_physical_key_pressed(KEY_R),
+			"weapon": _weapon}
+
+
+# Yaw and pitch from the character's eyes to where the crosshair (the
+# screen's center) points, AIM_DISTANCE away: shots start at the eyes, the
+# camera sits over the shoulder.
+func _aim() -> Vector2:
+	if not _client.is_spawned():
+		return Vector2(_yaw, 0)
+	var eye: Vector3 = _client.get_presented()["position"] + Vector3.UP * EYE_HEIGHT
+	var target := _camera.global_position - _camera.global_basis.z * AIM_DISTANCE
+	var to := target - eye
+	return Vector2(atan2(-to.x, -to.z), atan2(to.y, Vector2(to.x, to.z).length()))
 
 
 func _on_input(event: InputEvent) -> void:
@@ -250,6 +305,8 @@ func _on_input(event: InputEvent) -> void:
 		_pitch = clampf(_pitch - motion.relative.y * MOUSE_SENSITIVITY, -1.2, 0.6)
 	elif event is InputEventMouseButton and event.pressed and not _mouse_captured:
 		_capture_mouse(true)
+	elif event is InputEventKey and event.pressed and event.physical_keycode in [KEY_1, KEY_2]:
+		_weapon = mini(int(event.physical_keycode - KEY_1), _weapons.size() - 1)
 	elif event is InputEventKey and event.pressed and event.physical_keycode == KEY_ESCAPE:
 		if _mouse_captured:
 			_capture_mouse(false)
@@ -292,6 +349,7 @@ func _update_remotes() -> void:
 
 func _pose(character: Dictionary, state: Dictionary) -> void:
 	var model: Node3D = character["model"]
+	model.visible = bool(state.get("alive", true))
 	model.position = state["position"]
 	model.rotation.y = float(state["yaw"]) + PI  # the model faces +Z; yaw 0 faces -Z
 	var player: AnimationPlayer = character["player"]
@@ -307,9 +365,9 @@ func _pose(character: Dictionary, state: Dictionary) -> void:
 
 # Steers through the route's points; starts at the nearest, so a character
 # that already finished (e.g. after a server restart) just stands.
-func _follow_route() -> Array:
+func _follow_route() -> Dictionary:
 	if not _client.is_spawned():
-		return [0.0, 0.0, _yaw, false, false]
+		return {"yaw": _yaw}
 	var position: Vector3 = _client.get_presented()["position"]
 	var here := Vector2(position.x, position.z)
 	if _route_index < 0 and not _route.is_empty():
@@ -325,10 +383,10 @@ func _follow_route() -> Array:
 		if not other.is_empty():
 			var to_other: Vector3 = other["position"] - position
 			_yaw = atan2(-to_other.x, -to_other.z)
-		return [0.0, 0.0, _yaw, false, false]
+		return {"yaw": _yaw}
 	var to := _route[_route_index] - here
 	_yaw = atan2(-to.x, -to.y)
-	return [1.0, 0.0, _yaw, false, false]
+	return {"forward": 1.0, "yaw": _yaw}
 
 
 # Camera collision against the building: how far behind the character the
@@ -370,11 +428,100 @@ func _update_camera(target: Vector3, delta: float) -> void:
 	_camera.look_at(pivot + basis * Vector3(CAMERA_SHOULDER, 0, -10), Vector3.UP)
 
 
-func _update_hud() -> void:
+func _update_hud(delta: float) -> void:
 	var stats: Dictionary = _client.get_stats()
-	_hud.text = "%s | character %d | %d other player(s) | rtt %.0f ms | corrections %d (max %.2f m)" % [
+	var lines := PackedStringArray()
+	lines.append("%s | character %d | %d other player(s) | rtt %.0f ms | corrections %d (max %.2f m)" % [
 			_client.get_status(), _client.get_character_id(), _remotes.size(), stats.get("rtt_ms", 0.0),
-			stats.get("corrections", 0), stats.get("max_correction", 0.0)]
+			stats.get("corrections", 0), stats.get("max_correction", 0.0)])
+	if _client.is_spawned():
+		var own: Dictionary = _client.get_presented()
+		var slot: int = own["weapon"]
+		var weapon: Dictionary = _weapons[slot] if slot < _weapons.size() else {}
+		var ammo := ""
+		if int(weapon.get("rounds_per_clip", 0)) > 0:
+			ammo = "%d / %d%s" % [own["rounds"], weapon["rounds_per_clip"], "  reloading" if own["reloading"] else ""]
+		else:
+			ammo = "heat %d%%%s" % [roundi(float(own["heat"]) * 100), "  OVERHEATED" if own["overheated"] else ""]
+		lines.append("health %d / %d | %s: %s | energy %d" % [roundi(own["health"]), roundi(_client.get_max_health()),
+				weapon.get("name", "?"), ammo, roundi(own["energy"])])
+		if not own["alive"]:
+			lines.append("Eliminated. Respawning...")
+	_hud.text = "\n".join(lines)
+	_hit_flash = maxf(0.0, _hit_flash - delta)
+	_crosshair.text = "x" if _hit_flash > 0 else "+"
+	_crosshair.modulate = Color(1, 0.3, 0.3) if _hit_flash > 0 else Color.WHITE
+	_feed.text = "\n".join(_feed_lines)
+
+
+# Hit markers and the kill feed.
+func _update_events() -> void:
+	var me: int = _client.get_entity_id()
+	for event: Dictionary in _client.take_events():
+		var mine := int(event["attacker"]) == me
+		if event["kind"] == "hit" and mine:
+			_hits += 1
+			_hit_flash = 0.15
+		elif event["kind"] == "kill":
+			_kills += 1 if mine else 0
+			_deaths += 1 if int(event["victim"]) == me else 0
+			_feed_lines.append("%s eliminated %s" % [_who(event["attacker"]), _who(event["victim"])])
+			if _feed_lines.size() > 5:
+				_feed_lines.remove_at(0)
+
+
+func _who(id: int) -> String:
+	return "you" if id == _client.get_entity_id() else "player %d" % id
+
+
+# Bolts: own shots fly from the moment they're fired (predicted), others'
+# come from the server. Only looks: what they hit is the server's call.
+func _update_bolts(delta: float) -> void:
+	for shot: Dictionary in _client.take_shots():
+		var weapon: Dictionary = _weapons[int(shot["weapon"])]
+		var node := _bolt_node(int(shot["weapon"]))
+		var velocity: Vector3 = shot["direction"] * float(weapon["bolt_speed"])
+		_place_bolt(node, shot["origin"], velocity)
+		_own_bolts.append({"node": node, "velocity": velocity, "life": float(weapon["bolt_life"])})
+	for i in range(_own_bolts.size() - 1, -1, -1):
+		var bolt: Dictionary = _own_bolts[i]
+		bolt["life"] = float(bolt["life"]) - delta
+		bolt["velocity"] = bolt["velocity"] + Vector3.DOWN * 9.8 * delta
+		var node: MeshInstance3D = bolt["node"]
+		if float(bolt["life"]) <= 0:
+			node.queue_free()
+			_own_bolts.remove_at(i)
+			continue
+		_place_bolt(node, node.position + bolt["velocity"] * delta, bolt["velocity"])
+
+	var remote: Array = _client.get_bolts()
+	while _remote_bolt_nodes.size() < remote.size():
+		_remote_bolt_nodes.append(_bolt_node(0))
+	for i in _remote_bolt_nodes.size():
+		var node := _remote_bolt_nodes[i]
+		node.visible = i < remote.size()
+		if node.visible:
+			var bolt: Dictionary = remote[i]
+			node.material_override = _bolt_materials[mini(int(bolt["weapon"]), _bolt_materials.size() - 1)]
+			_place_bolt(node, bolt["position"], bolt["velocity"])
+
+
+func _bolt_node(weapon: int) -> MeshInstance3D:
+	var node := MeshInstance3D.new()
+	node.mesh = _bolt_mesh
+	node.material_override = _bolt_materials[mini(weapon, _bolt_materials.size() - 1)]
+	node.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	root.add_child(node)
+	return node
+
+
+# A bolt is a thin glowing box along its velocity, LaserLength by LaserWidth.
+func _place_bolt(node: MeshInstance3D, position: Vector3, velocity: Vector3) -> void:
+	node.position = position
+	if velocity.length_squared() > 0.0001:
+		var forward := velocity.normalized()
+		var up := Vector3.UP if absf(forward.y) < 0.99 else Vector3.RIGHT
+		node.basis = Basis.looking_at(forward, up)
 
 
 func _add_character() -> Dictionary:
@@ -434,6 +581,7 @@ func _setup_scene() -> void:
 	environment.fog_enabled = true
 	environment.fog_light_color = Color(0.75, 0.72, 0.68)
 	environment.fog_density = 0.0004
+	environment.glow_enabled = true  # blaster bolts bloom
 	var world := WorldEnvironment.new()
 	world.environment = environment
 	root.add_child(world)
@@ -456,7 +604,46 @@ func _setup_scene() -> void:
 	_hud.add_theme_color_override("font_outline_color", Color.BLACK)
 	_hud.add_theme_constant_override("outline_size", 4)
 	layer.add_child(_hud)
+	_crosshair = Label.new()
+	_crosshair.text = "+"
+	_crosshair.add_theme_font_size_override("font_size", 28)
+	_crosshair.add_theme_color_override("font_outline_color", Color.BLACK)
+	_crosshair.add_theme_constant_override("outline_size", 4)
+	_crosshair.set_anchors_and_offsets_preset(Control.PRESET_CENTER)
+	_crosshair.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_crosshair.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	layer.add_child(_crosshair)
+	_feed = Label.new()
+	_feed.set_anchors_and_offsets_preset(Control.PRESET_TOP_RIGHT)
+	_feed.position = Vector2(-320, 8)
+	_feed.size = Vector2(310, 140)
+	_feed.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	_feed.add_theme_color_override("font_outline_color", Color.BLACK)
+	_feed.add_theme_constant_override("outline_size", 4)
+	layer.add_child(_feed)
 	root.add_child(layer)
+
+	# One look per weapon: Battlefront's bolt color, length and width.
+	_bolt_mesh = BoxMesh.new()
+	_bolt_mesh.size = Vector3(1, 1, 1)
+	for weapon: Dictionary in _weapons:
+		var material := StandardMaterial3D.new()
+		var color: Color = weapon["bolt_color"]
+		material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+		material.albedo_color = Color(color.r, color.g, color.b)
+		material.emission_enabled = true
+		material.emission = Color(color.r, color.g, color.b)
+		material.emission_energy_multiplier = BOLT_GLOW
+		_bolt_materials.append(material)
+	if _bolt_materials.is_empty():
+		var fallback := StandardMaterial3D.new()
+		fallback.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+		fallback.albedo_color = Color.RED
+		_bolt_materials.append(fallback)
+	if not _weapons.is_empty():
+		var first: Dictionary = _weapons[0]
+		var width := float(first["bolt_width"]) * BOLT_STRETCH / 2
+		_bolt_mesh.size = Vector3(width, width, float(first["bolt_length"]) * BOLT_STRETCH)
 
 
 # The server's spawn point (Galaxies x, z): --spawn, or the bake's center.

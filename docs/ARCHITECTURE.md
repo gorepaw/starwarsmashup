@@ -55,12 +55,14 @@ Built in now, even with one player:
 
 Built so far (Phase 0 spike 4): `core::GameServer` and `core::GameClient` over UDP (`core/net/`). Clients send inputs; the server simulates characters from them and sends snapshots every tick. Clients predict their own character with the same movement code and reconcile against snapshots, and interpolate everyone else. The server runs standalone (`swm_server`) or inside Godot (`SwmServer`), and tests run it with simulated latency and loss (`net::ImpairedLink`).
 
+Combat (Stage 1): weapon state (clip, heat, cooldown, spread) and sprint energy are predicted like movement, from the same inputs. Shots become server-side bolts: plain position-and-velocity records advanced each tick and tested as segments against the world (`World::raycast`) and against characters rewound to the tick the shooter's client was showing (`MoveInput::view_tick`), so what a player hits is what they saw. Snapshots carry health, bolts in flight, and hit and kill events. Clients draw their own bolts the moment they fire and others' from snapshots; bolt looks are presentation only.
+
 ## Persistence
 
 - **64-bit persistent entity IDs** for everything that can be saved (characters, items, structures, resource spawns).
 - **Persistence interface** in `core/`, with a SQLite implementation now and Postgres later. Gameplay code never talks to a database directly.
 - Built so far (Phase 0 spike 5): `core::CharacterStore` with in-memory and SQLite implementations (`swm_sqlite_store`). The game server loads characters when players join and saves them when they leave, periodically, and at shutdown.
-- **Data-driven definitions:** items, skills, professions, resource types, and weapons live in data files, not code. Battlefront ODFs and Galaxies datatables convert into this format.
+- **Data-driven definitions:** items, skills, professions, resource types, and weapons live in data files, not code. Battlefront ODFs and Galaxies datatables convert into this format. First case: `bf2tool export-soldier` reads a soldier class from the player's munged `.lvl` files (ODF classes are `entc`/`wpnc`/`ordc` chunks of FNV-1a-hashed properties), resolves inheritance, and writes an INI that `core::load_soldier` reads.
 
 ## Asset pipeline
 

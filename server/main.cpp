@@ -1,7 +1,7 @@
 // Standalone game server: core/ only, no Godot.
 //
 //   swm_server --bake <prefix> [--db <file>] [--port 7777] [--spawn <swg_x> <swg_z>] [--seconds <n>]
-//              [--building <file.collision> <swg_x> <swg_y> <swg_z> <yaw_degrees>]...
+//              [--building <file.collision> <swg_x> <swg_y> <swg_z> <yaw_degrees>]... [--soldier <file.ini>]
 //
 // <prefix> names a terrain bake (swgtool bake-terrain). --db is the SQLite
 // file characters are saved in (created if missing; default: none, nothing is
@@ -10,6 +10,8 @@
 // places a building's floors and walls (from swgtool export-building) where
 // the world snapshot has it; clients must place the same buildings. Runs
 // until Ctrl+C or for --seconds, then saves every connected character.
+// --soldier is everyone's class (from bf2tool export-soldier; default: built-in
+// Battlefront rifleman values); clients must use the same file.
 
 #include <atomic>
 #include <chrono>
@@ -33,6 +35,7 @@
 #endif
 
 #include "swm/core/build_info.h"
+#include "swm/core/combat.h"
 #include "swm/core/heightfield.h"
 #include "swm/core/net/udp.h"
 #include "swm/core/server.h"
@@ -45,7 +48,8 @@ std::atomic<bool> stop_requested = false;
 
 int usage() {
     std::cerr << "usage: swm_server --bake <prefix> [--db <file>] [--port 7777] [--spawn <swg_x> <swg_z>] "
-                 "[--seconds <n>] [--building <file.collision> <swg_x> <swg_y> <swg_z> <yaw_degrees>]...\n";
+                 "[--seconds <n>] [--building <file.collision> <swg_x> <swg_y> <swg_z> <yaw_degrees>]... "
+                 "[--soldier <file.ini>]\n";
     return 2;
 }
 
@@ -58,6 +62,7 @@ double seconds_since(std::chrono::steady_clock::time_point start) {
 int main(int argc, char** argv) {
     std::string bake;
     std::string db;
+    std::string soldier;
     int port = 7777;
     bool has_spawn = false;
     double spawn_x = 0, spawn_z = 0, run_for = 0;
@@ -70,6 +75,8 @@ int main(int argc, char** argv) {
         const std::string arg = argv[i];
         if (arg == "--bake" && i + 1 < argc) {
             bake = argv[++i];
+        } else if (arg == "--soldier" && i + 1 < argc) {
+            soldier = argv[++i];
         } else if (arg == "--db" && i + 1 < argc) {
             db = argv[++i];
         } else if (arg == "--port" && i + 1 < argc) {
@@ -96,6 +103,11 @@ int main(int argc, char** argv) {
     try {
         const swm::core::Heightfield ground = swm::core::load_bake(bake);
         swm::core::ServerConfig config;
+        if (!soldier.empty()) {
+            config.soldier = swm::core::load_soldier(soldier);
+            std::cout << std::format("soldier {}: {} health, {} weapon(s)\n", config.soldier.name,
+                                     config.soldier.max_health, config.soldier.weapons.size());
+        }
         if (has_spawn) {
             config.spawn = {-spawn_x, 0, spawn_z};  // Galaxies to game coordinates
         } else {

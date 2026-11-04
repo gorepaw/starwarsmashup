@@ -1,6 +1,7 @@
 #pragma once
 
 #include <filesystem>
+#include <optional>
 #include <vector>
 
 #include "swm/core/heightfield.h"
@@ -65,6 +66,10 @@ public:
     // Only x and z change.
     Vec3 resolve_walls(Vec3 from, Vec3 position, double radius, double height, double step_up,
                        Vec3& velocity) const;
+
+    // Where along the segment a..b (0..1) it first hits the terrain, a
+    // building floor, or a wall, if it does. For shots.
+    std::optional<double> raycast(Vec3 a, Vec3 b) const;
 
     Vec3 clamp(Vec3 position) const { return terrain_.clamp(position); }
     const Heightfield& terrain() const { return terrain_; }

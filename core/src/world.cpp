@@ -187,6 +187,84 @@ World::Ground World::ground_at(double x, double z, double y, double step_up) con
     return best;
 }
 
+std::optional<double> World::raycast(Vec3 a, Vec3 b) const {
+    std::optional<double> best;
+    const auto consider = [&](double t) {
+        if (t >= 0 && t <= 1 && (!best || t < *best)) {
+            best = t;
+        }
+    };
+    const Vec3 d = b - a;
+
+    // Terrain: march in steps of at most a meter, then bisect the crossing.
+    const auto below = [&](double t) {
+        const Vec3 p = a + d * t;
+        return p.y < terrain_.height_at(p.x, p.z);
+    };
+    if (!below(0)) {
+        const int steps = std::max(1, int(std::ceil(d.length())));
+        for (int i = 1; i <= steps; ++i) {
+            const double t = double(i) / steps;
+            if (below(t)) {
+                double lo = double(i - 1) / steps, hi = t;
+                for (int k = 0; k < 12; ++k) {
+                    const double mid = (lo + hi) / 2;
+                    (below(mid) ? hi : lo) = mid;
+                }
+                consider(hi);
+                break;
+            }
+        }
+    }
+
+    const double min_x = std::min(a.x, b.x), max_x = std::max(a.x, b.x);
+    const double min_z = std::min(a.z, b.z), max_z = std::max(a.z, b.z);
+    for (const Building& building : buildings_) {
+        if (max_x < building.min_x || min_x > building.max_x || max_z < building.min_z || min_z > building.max_z) {
+            continue;
+        }
+        // Floors (Moller-Trumbore, both sides).
+        for (const Floor& f : building.floors) {
+            const Vec3 e1 = f.b - f.a, e2 = f.c - f.a;
+            const Vec3 p{d.y * e2.z - d.z * e2.y, d.z * e2.x - d.x * e2.z, d.x * e2.y - d.y * e2.x};
+            const double det = e1.x * p.x + e1.y * p.y + e1.z * p.z;
+            if (std::abs(det) < 1e-12) {
+                continue;
+            }
+            const Vec3 s = a - f.a;
+            const double u = (s.x * p.x + s.y * p.y + s.z * p.z) / det;
+            if (u < 0 || u > 1) {
+                continue;
+            }
+            const Vec3 q{s.y * e1.z - s.z * e1.y, s.z * e1.x - s.x * e1.z, s.x * e1.y - s.y * e1.x};
+            const double v = (d.x * q.x + d.y * q.y + d.z * q.z) / det;
+            if (v < 0 || u + v > 1) {
+                continue;
+            }
+            consider((e2.x * q.x + e2.y * q.y + e2.z * q.z) / det);
+        }
+        // Walls: vertical quads above their floor edge.
+        for (const Wall& w : building.walls) {
+            const double ex = w.b.x - w.a.x, ez = w.b.z - w.a.z;
+            const double denom = d.x * ez - d.z * ex;
+            if (std::abs(denom) < 1e-12) {
+                continue;
+            }
+            const double t = ((w.a.x - a.x) * ez - (w.a.z - a.z) * ex) / denom;
+            const double u = ((w.a.x - a.x) * d.z - (w.a.z - a.z) * d.x) / denom;
+            if (t < 0 || t > 1 || u < 0 || u > 1) {
+                continue;
+            }
+            const double y = a.y + d.y * t;
+            const double floor = w.a.y + (w.b.y - w.a.y) * u;
+            if (y >= floor && y <= floor + (w.top - std::max(w.a.y, w.b.y))) {
+                consider(t);
+            }
+        }
+    }
+    return best;
+}
+
 Vec3 World::resolve_walls(Vec3 from, Vec3 position, double radius, double height, double step_up,
                           Vec3& velocity) const {
     // A few passes settle corners where two walls push at once.

@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cmath>
 #include <numbers>
+#include <utility>
 
 #include "swm/core/net/bytes.h"
 #include "swm/core/net/protocol.h"
@@ -37,11 +38,31 @@ MoveState lerp_state(const MoveState& a, const MoveState& b, double t) {
 GameClient::GameClient(net::Link& link, const World& world, ClientConfig config)
     : link_(link), world_(world), config_(std::move(config)) {}
 
-void GameClient::set_input(double forward, double right, double yaw, bool sprint, bool jump) {
-    next_input_.forward = quantize_axis(forward);
-    next_input_.right = quantize_axis(right);
-    next_input_.yaw = float(std::remainder(yaw, 2 * std::numbers::pi));
-    next_input_.buttons = uint8_t((sprint ? MoveInput::sprint : 0) | (jump ? MoveInput::jump : 0));
+void GameClient::set_input(const Controls& c) {
+    next_input_.forward = quantize_axis(c.forward);
+    next_input_.right = quantize_axis(c.right);
+    next_input_.yaw = float(std::remainder(c.yaw, 2 * std::numbers::pi));
+    next_input_.pitch = float(std::clamp(c.pitch, -1.5, 1.5));
+    next_input_.buttons = uint8_t((c.sprint ? MoveInput::sprint : 0) | (c.jump ? MoveInput::jump : 0) |
+                                  (c.fire ? MoveInput::fire : 0) | (c.reload ? MoveInput::reload : 0));
+    next_input_.weapon = uint8_t(std::clamp(c.weapon, 0, max_weapons - 1));
+}
+
+std::vector<net::BoltState> GameClient::bolts(double now) const {
+    std::vector<net::BoltState> out = bolts_;
+    const double elapsed = std::max(0.0, now - bolts_time_);
+    for (net::BoltState& bolt : out) {
+        bolt.position += bolt.velocity * elapsed;
+    }
+    return out;
+}
+
+std::vector<Shot> GameClient::take_shots() {
+    return std::exchange(shots_, {});
+}
+
+std::vector<net::CombatEvent> GameClient::take_events() {
+    return std::exchange(events_, {});
 }
 
 void GameClient::update(double now) {
@@ -127,10 +148,19 @@ void GameClient::handle(const net::Datagram& datagram, double now) {
     latest_tick_ = snapshot->server_tick;
     latest_tick_time_ = now;
 
+    bolts_.clear();
+    for (const net::BoltState& bolt : snapshot->bolts) {
+        if (bolt.owner != entity_) {
+            bolts_.push_back(bolt);
+        }
+    }
+    bolts_time_ = now;
+    events_.insert(events_.end(), snapshot->events.begin(), snapshot->events.end());
+
     std::map<uint32_t, std::deque<Sample>> seen;
     for (const net::EntityState& entity : snapshot->entities) {
         if (entity.id == entity_) {
-            reconcile(snapshot->last_input, entity.state, now);
+            reconcile(snapshot->last_input, entity, now);
             continue;
         }
         // Characters missing from the snapshot have left.
@@ -138,7 +168,7 @@ void GameClient::handle(const net::Datagram& datagram, double now) {
         if (auto it = history_.find(entity.id); it != history_.end()) {
             samples = std::move(it->second);
         }
-        samples.push_back({snapshot->server_tick, entity.state});
+        samples.push_back({snapshot->server_tick, entity.state, entity.health, entity.alive, entity.spawn_count});
         while (samples.size() > 2 && samples[1].tick + 1 < render_tick_) {
             samples.pop_front();
         }
@@ -146,9 +176,13 @@ void GameClient::handle(const net::Datagram& datagram, double now) {
     history_ = std::move(seen);
 }
 
-void GameClient::reconcile(uint32_t last_input, const MoveState& server_state, double now) {
+void GameClient::reconcile(uint32_t last_input, const net::EntityState& server, double now) {
+    const MoveState& server_state = server.state;
+    health_ = server.health;
+    alive_ = server.alive;
     if (!spawned_) {
         spawned_ = true;
+        spawn_count_ = server.spawn_count;
         current_ = previous_ = server_state;
         next_tick_time_ = now;
         return;
@@ -158,7 +192,8 @@ void GameClient::reconcile(uint32_t last_input, const MoveState& server_state, d
         const Pending& acked = pending_.front();
         if (acked.input.sequence == last_input) {
             const double error = (acked.result.position - server_state.position).length();
-            if (!(acked.result == server_state)) {
+            // A respawn moves the character on purpose: not a misprediction.
+            if (!(acked.result == server_state) && server.spawn_count == spawn_count_) {
                 ++stats_.corrections;
                 stats_.max_correction = std::max(stats_.max_correction, error);
             }
@@ -171,8 +206,15 @@ void GameClient::reconcile(uint32_t last_input, const MoveState& server_state, d
     const double dt = 1 / tick_rate_;
     MoveState state = server_state;
     for (Pending& p : pending_) {
-        state = simulate_move(state, p.input, world_, config_.move, dt);
+        simulate_character(state, p.input, alive_, world_, config_.soldier, dt);  // shots were drawn already
         p.result = state;
+    }
+    if (server.spawn_count != spawn_count_) {
+        // Respawned: appear at the spawn point at once.
+        spawn_count_ = server.spawn_count;
+        correction_ = {};
+        previous_ = current_ = state;
+        return;
     }
     // Any jump this causes is eased in rather than shown at once.
     correction_ += current_.position - state.position;
@@ -182,8 +224,11 @@ void GameClient::reconcile(uint32_t last_input, const MoveState& server_state, d
 void GameClient::tick(double now) {
     MoveInput input = next_input_;
     input.sequence = ++sequence_;
+    input.view_tick = render_tick_;
     previous_ = current_;
-    current_ = simulate_move(current_, input, world_, config_.move, 1 / tick_rate_);
+    if (auto shot = simulate_character(current_, input, alive_, world_, config_.soldier, 1 / tick_rate_)) {
+        shots_.push_back(*shot);
+    }
     pending_.push_back({input, current_, now});
     while (pending_.size() > max_pending) {
         pending_.pop_front();
@@ -229,19 +274,25 @@ std::vector<GameClient::Remote> GameClient::remotes() const {
             continue;
         }
         // Between the two samples around the render time; held at the ends.
-        MoveState state = samples.back().state;
+        // Across a respawn, jump rather than glide.
+        const Sample* shown = &samples.back();
+        MoveState state = shown->state;
         if (render_tick_ <= samples.front().tick) {
-            state = samples.front().state;
+            shown = &samples.front();
+            state = shown->state;
         }
         for (size_t i = 0; i + 1 < samples.size(); ++i) {
             const Sample& a = samples[i];
             const Sample& b = samples[i + 1];
             if (render_tick_ >= a.tick && render_tick_ <= b.tick) {
-                state = lerp_state(a.state, b.state, (render_tick_ - a.tick) / double(b.tick - a.tick));
+                shown = &a;
+                state = a.spawn_count == b.spawn_count
+                            ? lerp_state(a.state, b.state, (render_tick_ - a.tick) / double(b.tick - a.tick))
+                            : a.state;
                 break;
             }
         }
-        out.push_back({id, state});
+        out.push_back({id, state, shown->health, shown->alive});
     }
     return out;
 }
