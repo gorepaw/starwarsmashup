@@ -1,12 +1,17 @@
 ; Engine configuration file.
-; Requires the custom double-precision editor build (see docs/ARCHITECTURE.md).
+; It's best edited using the editor UI and not directly,
+; since the parameters that go here are not all obvious.
+;
+; Format:
+;   [section] ; section goes between []
+;   param=value ; assign values to parameters
 
 config_version=5
 
 [application]
 
 config/name="Star Wars Mashup"
-config/features=PackedStringArray("4.7")
+config/features=PackedStringArray("4.7", "Double Precision")
 
 [physics]
 
