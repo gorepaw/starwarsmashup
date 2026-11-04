@@ -19,7 +19,7 @@ add_library(swm_swg STATIC
   swg/tre_scan.cpp
   swg/world_snapshot.cpp)
 target_include_directories(swm_swg PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
-target_link_libraries(swm_swg PRIVATE swm::zlib)
+target_link_libraries(swm_swg PUBLIC swm_core PRIVATE swm::zlib)
 swm_target_warnings(swm_swg)
 
 add_executable(swgtool swgtool/main.cpp)

@@ -4,7 +4,7 @@
 #include <cmath>
 #include <numbers>
 
-#include "swm/core/heightfield.h"
+#include "swm/core/world.h"
 
 namespace swm::core {
 
@@ -26,8 +26,8 @@ Vec3 approach(Vec3 velocity, Vec3 target, double step) {
 
 } // namespace
 
-MoveState simulate_move(const MoveState& state, const MoveInput& input, const Heightfield& ground,
-                        const MoveParams& params, double dt) {
+MoveState simulate_move(const MoveState& state, const MoveInput& input, const World& world, const MoveParams& params,
+                        double dt) {
     MoveState next = state;
     next.yaw = input.yaw;
 
@@ -56,17 +56,21 @@ MoveState simulate_move(const MoveState& state, const MoveInput& input, const He
         next.velocity.y -= params.gravity * dt;
     }
 
-    Vec3 position = ground.clamp(state.position + next.velocity * dt);
-    double floor = ground.height_at(position.x, position.z);
+    Vec3 position = world.clamp(state.position + next.velocity * dt);
+    position = world.resolve_walls(state.position, position, params.radius, params.height, params.step_up,
+                                   next.velocity);
+    World::Ground ground = world.ground_at(position.x, position.z, state.position.y, params.step_up);
 
-    // Too steep to walk up: stay put horizontally.
+    // Terrain too steep to walk up: stay put horizontally. (Building floors
+    // are walkable by definition; their stairs are ramps.)
     const double min_normal_y = std::cos(params.max_slope_degrees * std::numbers::pi / 180);
-    if (next.grounded && floor > state.position.y && ground.normal_at(position.x, position.z).y < min_normal_y) {
+    if (next.grounded && !ground.on_floor && ground.height > state.position.y && ground.normal.y < min_normal_y) {
         position.x = state.position.x;
         position.z = state.position.z;
         next.velocity.x = next.velocity.z = 0;
-        floor = ground.height_at(position.x, position.z);
+        ground = world.ground_at(position.x, position.z, state.position.y, params.step_up);
     }
+    const double floor = ground.height;
 
     if (next.grounded) {
         if (position.y - floor <= params.snap_down) {

@@ -6,7 +6,7 @@
 
 namespace swm::core {
 
-class Heightfield;
+class World;
 
 // One fixed tick of player input, exactly as sent over the network. The
 // client predicts with these same quantized values, so the server's result
@@ -49,11 +49,15 @@ struct MoveParams {
     double jump_speed = 4.6;       // m/s upward, about a 1.1 m jump
     double max_slope_degrees = 50; // steeper ground can't be walked up
     double snap_down = 0.6;        // m: grounded characters follow ground this far down per tick
+    double step_up = 0.5;          // m: highest ledge walked up without jumping
+    double radius = 0.3;           // m: body, for walls
+    double height = 1.8;           // m
 };
 
-// Advances a character by one tick of `dt` seconds on the terrain. Pure and
-// deterministic: the server and every client run this same function.
-MoveState simulate_move(const MoveState& state, const MoveInput& input, const Heightfield& ground,
-                        const MoveParams& params, double dt);
+// Advances a character by one tick of `dt` seconds through the world
+// (terrain, building floors and walls). Pure and deterministic: the server
+// and every client run this same function.
+MoveState simulate_move(const MoveState& state, const MoveInput& input, const World& world, const MoveParams& params,
+                        double dt);
 
 } // namespace swm::core

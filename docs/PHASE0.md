@@ -76,7 +76,7 @@ Provisional decisions:
 Provisional decisions:
 - Movement tuning (run 5.5 m/s, sprint 8, jump 4.6 m/s) is a guess at Battlefront's feel, until it comes from data.
 - Snapshots carry full-precision state for every character. Quantizing and interest management come with larger player counts.
-- Movement only collides with terrain so far. Building floors and walls (spike 3) need to move into `core/` for the server to use them.
+- Movement collides with terrain and with building floors and walls (`core::World`, from the `.collision` file `swgtool export-building` writes). Characters are upright cylinders (0.3 m radius, 1.8 m tall) that step up 0.5 m and slide along walls. Characters don't collide with each other yet, and only walls from floor edges exist, so a building's outer shell can be walked into up to its inner walls (as in spike 3).
 - Server and clients must use the same bake and movement settings; the handshake doesn't check that yet.
 
 ## 5. Persistence
@@ -96,4 +96,14 @@ Provisional decisions:
 
 A Galaxies character, lit and holding a Galaxies blaster, runs with Battlefront animations across Galaxies' Tatooine next to a second networked player, walks into a Galaxies building, and is still there after restarting the server.
 
-Status: every part works, but not yet all in one run. The networked, saved character runs on Tatooine next to a second player (spikes 4 and 5), and the single-player walk-through enters the cantina (spike 3). What's left is moving building floors and walls into `core/` movement, so the server lets a networked character walk inside.
+**Met.** Two networked stormtroopers (E-11 in hand, Battlefront run and idle animations) run across Mos Eisley from the street, through the cantina's door and both foyers, into the main room, with the server authoritative over building floors and walls and no prediction corrections. The server is stopped while they're inside; after a restart both come back inside the cantina, at their saved spots, with the same character ids.
+
+```powershell
+# Server: terrain, the cantina where the world snapshot places it, saved characters.
+build\msvc\server\Release\swm_server.exe --bake game\imported_assets\terrain\tatooine_mos_eisley --db world.sqlite `
+  --spawn 3468.37 -4856.27 --building game\imported_assets\buildings\thm_tato_cantina\thm_tato_cantina.collision 3432.35 5.00 -4818.13 38.09
+# Each client (WASD and mouse; or --bot route --route <points printed by walk_building.gd>):
+godot --path game --script res://tools/net_demo.gd -- imported_assets/terrain/tatooine_mos_eisley `
+  imported_assets/characters/stormtrooper/stormtrooper.gltf --name trooper `
+  --building imported_assets/buildings/thm_tato_cantina/thm_tato_cantina.gltf 3432.35 5.00 -4818.13 38.09
+```

@@ -6,7 +6,7 @@
 #include <string>
 #include <vector>
 
-#include "swm/core/heightfield.h"
+#include "swm/core/world.h"
 #include "swm/core/movement.h"
 #include "swm/core/net/link.h"
 #include "swm/core/persistence.h"
@@ -45,7 +45,7 @@ public:
         double rtt = 0;              // seconds, smoothed
     };
 
-    GameClient(net::Link& link, const Heightfield& ground, ClientConfig config);
+    GameClient(net::Link& link, const World& world, ClientConfig config);
 
     // Input for the next ticks: axes -1..1, yaw in radians (see MoveInput).
     void set_input(double forward, double right, double yaw, bool sprint, bool jump);
@@ -88,7 +88,7 @@ private:
     void advance_clocks(double now);
 
     net::Link& link_;
-    const Heightfield& ground_;
+    const World& world_;
     ClientConfig config_;
     Status status_ = Status::connecting;
     bool spawned_ = false;

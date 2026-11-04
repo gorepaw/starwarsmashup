@@ -28,7 +28,7 @@ extends SceneTree
 
 const TerrainTool = preload("res://tools/render_terrain.gd")
 const Terrain3DBake = preload("res://tools/terrain3d_bake.gd")
-const CELL_SHADER = preload("res://rendering/swg_cell.gdshader")
+const SwgBuilding = preload("res://rendering/swg_building.gd")
 
 const WORLD_LAYERS := 1      # visual layers: terrain and buildings
 const CHARACTER_LAYERS := 2  # visual layers: the character
@@ -221,7 +221,7 @@ func _setup_cells() -> void:
 		var cell: Dictionary = cells[i]
 		var mesh := _building.find_child(cell["name"] + "_mesh", true, false) as MeshInstance3D
 		if mesh != null and i > 0:
-			_apply_cell_lighting(mesh, cell)
+			SwgBuilding.apply_cell_lighting(mesh, cell)
 		var floor_mesh := _building.find_child(cell["name"] + "_floor", true, false) as MeshInstance3D
 		if floor_mesh != null:
 			_add_collision(floor_mesh, SOLID | CELL_FLOOR, i)
@@ -234,53 +234,6 @@ func _setup_cells() -> void:
 			if light["kind"] == "ambient":
 				ambient += _vec3(light["color"])
 		_cell_ambient[i] = Color(ambient.x, ambient.y, ambient.z)
-
-
-# Replaces each surface's material with the cell shader and the cell's lights.
-func _apply_cell_lighting(mesh: MeshInstance3D, cell: Dictionary) -> void:
-	var ambient := Vector3.ZERO
-	var parallel_direction := PackedVector3Array()
-	var parallel_color := PackedVector3Array()
-	var point_position := PackedVector3Array()
-	var point_color := PackedVector3Array()
-	var point_attenuation := PackedVector3Array()
-	for light: Dictionary in cell["lights"]:
-		var color := _vec3(light["color"])
-		match light["kind"]:
-			"ambient":
-				ambient += color
-			"parallel":
-				if parallel_direction.size() < MAX_CELL_LIGHTS:
-					parallel_direction.append(_vec3(light["direction"]))
-					parallel_color.append(color)
-			"point":
-				if point_position.size() < MAX_CELL_LIGHTS:
-					point_position.append(_vec3(light["position"]))
-					point_color.append(color)
-					point_attenuation.append(_vec3(light["attenuation"]))
-	var parallel_count := parallel_direction.size()
-	var point_count := point_position.size()
-	parallel_direction.resize(MAX_CELL_LIGHTS)
-	parallel_color.resize(MAX_CELL_LIGHTS)
-	point_position.resize(MAX_CELL_LIGHTS)
-	point_color.resize(MAX_CELL_LIGHTS)
-	point_attenuation.resize(MAX_CELL_LIGHTS)
-
-	for surface in mesh.mesh.get_surface_count():
-		var material := ShaderMaterial.new()
-		material.shader = CELL_SHADER
-		var original := mesh.get_active_material(surface) as BaseMaterial3D
-		if original != null and original.albedo_texture != null:
-			material.set_shader_parameter("albedo_texture", original.albedo_texture)
-		material.set_shader_parameter("ambient", ambient)
-		material.set_shader_parameter("parallel_count", parallel_count)
-		material.set_shader_parameter("parallel_direction", parallel_direction)
-		material.set_shader_parameter("parallel_color", parallel_color)
-		material.set_shader_parameter("point_count", point_count)
-		material.set_shader_parameter("point_position", point_position)
-		material.set_shader_parameter("point_color", point_color)
-		material.set_shader_parameter("point_attenuation", point_attenuation)
-		mesh.set_surface_override_material(surface, material)
 
 
 # One navigation region per floor. Each triangle becomes a polygon, wound
@@ -528,6 +481,11 @@ func _build_route() -> bool:
 	for cell in path:
 		names.append(cells[cell]["name"])
 	print("route: ", " -> ".join(names), " (", _waypoints.size(), " waypoints)")
+	# The same route in Galaxies x,z, for net_demo.gd --route.
+	var galaxies := PackedStringArray()
+	for point in _waypoints:
+		galaxies.append("%.2f,%.2f" % [-point.x, point.z])
+	print("route in Galaxies coordinates: ", ";".join(galaxies))
 
 	var ground := _ray(_waypoints[0] + Vector3.UP * 20.0, _waypoints[0] + Vector3.DOWN * 40.0, SOLID)
 	_body.global_position = (ground["position"] if not ground.is_empty() else _waypoints[0]) + Vector3.UP * 0.05

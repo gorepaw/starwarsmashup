@@ -13,6 +13,7 @@
 #include "swm/core/persistence.h"
 #include "swm/core/server.h"
 #include "swm/core/sqlite_store.h"
+#include "swm/core/world.h"
 #include "test.h"
 
 using namespace swm::core;
@@ -103,12 +104,12 @@ struct ServerProcess {
     std::unique_ptr<net::LoopbackLink> link;
     std::unique_ptr<GameServer> server;
 
-    ServerProcess(const std::filesystem::path& db, net::LoopbackHub& hub, const Heightfield& ground) {
+    ServerProcess(const std::filesystem::path& db, net::LoopbackHub& hub, const World& world) {
         store = std::make_unique<SqliteCharacterStore>(db);
         link = std::make_unique<net::LoopbackLink>(hub, net::Endpoint{1, 1});
         ServerConfig config;
         config.save_interval = 1;
-        server = std::make_unique<GameServer>(*link, ground, config, store.get());
+        server = std::make_unique<GameServer>(*link, world, config, store.get());
     }
 };
 
@@ -116,8 +117,8 @@ struct ServerProcess {
 struct Player {
     net::LoopbackLink link;
     GameClient client;
-    Player(net::LoopbackHub& hub, uint16_t port, const Heightfield& ground, const std::string& name)
-        : link(hub, {2, port}), client(link, ground, ClientConfig{.server = {1, 1}, .name = name}) {}
+    Player(net::LoopbackHub& hub, uint16_t port, const World& world, const std::string& name)
+        : link(hub, {2, port}), client(link, world, ClientConfig{.server = {1, 1}, .name = name}) {}
 };
 
 void run(double& now, double seconds, GameServer& server, std::initializer_list<Player*> players, bool forward) {
@@ -133,6 +134,13 @@ void run(double& now, double seconds, GameServer& server, std::initializer_list<
 void test_restart() {
     TempDatabase database;
     const Heightfield ground(101, 1.0, -50, -50, flat_heights());
+    // A low platform (0.3 m up a step) from z = -10 to -30, open toward the
+    // spawn: running forward ends up standing on it.
+    BuildingCollision platform;
+    platform.floors.push_back({{-5, 2.3, -10}, {5, 2.3, -10}, {5, 2.3, -30}});
+    platform.floors.push_back({{-5, 2.3, -10}, {5, 2.3, -30}, {-5, 2.3, -30}});
+    World world(ground);
+    world.add_building(platform, {});
     net::LoopbackHub hub;
     double now = 0;
 
@@ -140,19 +148,19 @@ void test_restart() {
     PersistentId id = 0;
     Vec3 left_at;
     {
-        ServerProcess process(database.path, hub, ground);
-        Player trooper(hub, 1, ground, "trooper");
+        ServerProcess process(database.path, hub, world);
+        Player trooper(hub, 1, world, "trooper");
         run(now, 0.5, *process.server, {&trooper}, false);
         CHECK(trooper.client.spawned() && trooper.client.character_id() != 0);
         id = trooper.client.character_id();
         const Vec3 spawn = trooper.client.predicted().position;
-        run(now, 2.0, *process.server, {&trooper}, true);
+        run(now, 3.0, *process.server, {&trooper}, true);
         run(now, 0.5, *process.server, {&trooper}, false);
         left_at = trooper.client.predicted().position;
-        CHECK(spawn.z - left_at.z > 9);
+        CHECK(spawn.z - left_at.z > 12 && near(left_at.y, 2.3, 1e-5));  // up on the platform
 
         // The same name can't join twice.
-        Player impostor(hub, 9, ground, "trooper");
+        Player impostor(hub, 9, world, "trooper");
         run(now, 0.5, *process.server, {&trooper, &impostor}, false);
         CHECK(impostor.client.status() == GameClient::Status::refused && !impostor.client.refusal().empty());
 
@@ -161,11 +169,12 @@ void test_restart() {
         CHECK(process.server->client_count() == 0);
     }
 
-    // Restart: the character comes back where it left, with the same id.
+    // Restart: the character comes back where it left, on the platform, with
+    // the same id.
     {
-        ServerProcess process(database.path, hub, ground);
-        Player trooper(hub, 2, ground, "trooper");
-        Player rookie(hub, 3, ground, "rookie");
+        ServerProcess process(database.path, hub, world);
+        Player trooper(hub, 2, world, "trooper");
+        Player rookie(hub, 3, world, "rookie");
         run(now, 0.5, *process.server, {&trooper, &rookie}, false);
         CHECK(trooper.client.spawned() && trooper.client.character_id() == id);
         CHECK(trooper.client.predicted().position == left_at);

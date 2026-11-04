@@ -9,8 +9,8 @@
 
 namespace swm::core {
 
-GameServer::GameServer(net::Link& link, const Heightfield& ground, ServerConfig config, CharacterStore* store)
-    : link_(link), ground_(ground), config_(config), store_(store) {}
+GameServer::GameServer(net::Link& link, const World& world, ServerConfig config, CharacterStore* store)
+    : link_(link), world_(world), config_(config), store_(store) {}
 
 void GameServer::say(const std::string& text) const {
     if (log) {
@@ -139,15 +139,15 @@ GameServer::Client* GameServer::join(const net::Endpoint& from, const std::strin
     joined.endpoint = from;
     joined.name = name;
     joined.entity = next_entity_++;
-    Vec3 spawn = config_.spawn;
-    spawn.x += config_.spawn_spacing * spawned_++;
+    Vec3 spawn = world_.clamp(config_.spawn + Vec3{config_.spawn_spacing * spawned_++, 0, 0});
+    spawn.y = world_.terrain().height_at(spawn.x, spawn.z);
     std::string where = "new";
     if (store_ != nullptr) {
         try {
             if (auto saved = store_->find_by_name(name)) {
                 joined.character = saved->id;
                 joined.state.yaw = saved->yaw;
-                spawn = saved->position;
+                spawn = world_.clamp(saved->position);
                 where = "returning";
             } else {
                 joined.character = store_->create(name, spawn, 0).id;
@@ -157,10 +157,9 @@ GameServer::Client* GameServer::join(const net::Endpoint& from, const std::strin
             return refuse("the server can't load characters right now");
         }
     }
-    // Stand on the ground: a saved position may have been mid-jump, or the
-    // terrain may have changed.
-    spawn = ground_.clamp(spawn);
-    spawn.y = ground_.height_at(spawn.x, spawn.z);
+    // Stand on whatever is under the spawn point, near its height: a building
+    // floor, or the terrain. A saved position may have been mid-jump.
+    spawn.y = world_.ground_at(spawn.x, spawn.z, spawn.y, config_.move.step_up).height;
     joined.state.position = spawn;
     clients_.push_back(joined);
     say(std::format("{} joined from {} as entity {} ({} character {}) at ({:.2f}, {:.2f}, {:.2f})", name,
@@ -193,7 +192,7 @@ void GameServer::step() {
         for (size_t i = 0; i < config_.max_inputs_per_tick && !client.queue.empty(); ++i) {
             const MoveInput input = client.queue.front();
             client.queue.pop_front();
-            client.state = simulate_move(client.state, input, ground_, config_.move, dt);
+            client.state = simulate_move(client.state, input, world_, config_.move, dt);
             client.last_input = input.sequence;
         }
     }

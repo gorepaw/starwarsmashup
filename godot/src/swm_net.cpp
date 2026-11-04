@@ -28,6 +28,28 @@ godot::Dictionary to_dictionary(const core::MoveState& state) {
     return out;
 }
 
+// Loads a building for SwmClient/SwmServer.add_building.
+godot::Error load_building(std::vector<std::pair<core::BuildingCollision, core::Placement>>& buildings,
+                           const godot::String& path, const godot::Vector3& position, double yaw_degrees) {
+    try {
+        buildings.emplace_back(core::load_building_collision(to_std(path)),
+                               core::placement_from_galaxies(position.x, position.y, position.z, yaw_degrees));
+    } catch (const std::exception& error) {
+        godot::UtilityFunctions::push_error("add_building: ", error.what());
+        return godot::ERR_CANT_OPEN;
+    }
+    return godot::OK;
+}
+
+std::unique_ptr<core::World> make_world(const core::Heightfield& ground,
+                                        const std::vector<std::pair<core::BuildingCollision, core::Placement>>& buildings) {
+    auto world = std::make_unique<core::World>(ground);
+    for (const auto& [collision, placement] : buildings) {
+        world->add_building(collision, placement);
+    }
+    return world;
+}
+
 double seconds_since(std::chrono::steady_clock::time_point start) {
     return std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
 }
@@ -44,6 +66,11 @@ void SwmClient::set_simulated_network(double latency_ms, double jitter_ms, doubl
     impairment_.loss = loss;
 }
 
+godot::Error SwmClient::add_building(const godot::String& collision_path, const godot::Vector3& position,
+                                     double yaw_degrees) {
+    return load_building(buildings_, collision_path, position, yaw_degrees);
+}
+
 godot::Error SwmClient::start(const godot::String& server, const godot::String& bake_prefix,
                               const godot::String& name) {
     const auto endpoint = core::net::parse_endpoint(to_std(server));
@@ -55,6 +82,7 @@ godot::Error SwmClient::start(const godot::String& server, const godot::String& 
     impaired_.reset();
     try {
         ground_ = core::load_bake(to_std(bake_prefix));
+        world_ = make_world(ground_, buildings_);
         udp_ = std::make_unique<core::net::UdpLink>();
     } catch (const std::exception& error) {
         godot::UtilityFunctions::push_error("SwmClient: ", error.what());
@@ -65,7 +93,7 @@ godot::Error SwmClient::start(const godot::String& server, const godot::String& 
         impaired_ = std::make_unique<core::net::ImpairedLink>(*udp_, impairment_, [this] { return now(); });
         link = impaired_.get();
     }
-    client_ = std::make_unique<core::GameClient>(*link, ground_,
+    client_ = std::make_unique<core::GameClient>(*link, *world_,
                                                  core::ClientConfig{.server = *endpoint, .name = to_std(name)});
     return godot::OK;
 }
@@ -153,7 +181,7 @@ godot::Dictionary SwmClient::get_stats() const {
 }
 
 double SwmClient::get_ground_height(double x, double z) const {
-    return ground_.height_at(x, z);
+    return ground_.height_at(x, z);  // terrain only, for keeping a camera above it
 }
 
 void SwmClient::_bind_methods() {
@@ -161,6 +189,8 @@ void SwmClient::_bind_methods() {
     using godot::D_METHOD;
     ClassDB::bind_method(D_METHOD("set_simulated_network", "latency_ms", "jitter_ms", "loss"),
                          &SwmClient::set_simulated_network);
+    ClassDB::bind_method(D_METHOD("add_building", "collision_path", "position", "yaw_degrees"),
+                         &SwmClient::add_building);
     ClassDB::bind_method(D_METHOD("start", "server", "bake_prefix", "name"), &SwmClient::start);
     ClassDB::bind_method(D_METHOD("set_input", "forward", "right", "yaw", "sprint", "jump"), &SwmClient::set_input);
     ClassDB::bind_method(D_METHOD("update"), &SwmClient::update);
@@ -184,10 +214,16 @@ void SwmServer::set_database(const godot::String& path) {
     database_ = to_std(path);
 }
 
+godot::Error SwmServer::add_building(const godot::String& collision_path, const godot::Vector3& position,
+                                     double yaw_degrees) {
+    return load_building(buildings_, collision_path, position, yaw_degrees);
+}
+
 godot::Error SwmServer::start(int64_t port, const godot::String& bake_prefix, const godot::Vector2& spawn) {
     stop();  // the server refers to the ground, store and link replaced below
     try {
         ground_ = core::load_bake(to_std(bake_prefix));
+        world_ = make_world(ground_, buildings_);
         if (!database_.empty()) {
             store_ = std::make_unique<core::SqliteCharacterStore>(database_);
         }
@@ -198,7 +234,7 @@ godot::Error SwmServer::start(int64_t port, const godot::String& bake_prefix, co
     }
     core::ServerConfig config;
     config.spawn = {-spawn.x, 0, spawn.y};  // Galaxies to game coordinates
-    server_ = std::make_unique<core::GameServer>(*udp_, ground_, config, store_.get());
+    server_ = std::make_unique<core::GameServer>(*udp_, *world_, config, store_.get());
     server_->log = [](const std::string& line) { godot::UtilityFunctions::print("server: ", line.c_str()); };
     return godot::OK;
 }
@@ -230,6 +266,8 @@ void SwmServer::_bind_methods() {
     using godot::ClassDB;
     using godot::D_METHOD;
     ClassDB::bind_method(D_METHOD("set_database", "path"), &SwmServer::set_database);
+    ClassDB::bind_method(D_METHOD("add_building", "collision_path", "position", "yaw_degrees"),
+                         &SwmServer::add_building);
     ClassDB::bind_method(D_METHOD("start", "port", "bake_prefix", "spawn"), &SwmServer::start);
     ClassDB::bind_method(D_METHOD("update"), &SwmServer::update);
     ClassDB::bind_method(D_METHOD("stop"), &SwmServer::stop);

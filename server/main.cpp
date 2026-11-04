@@ -1,12 +1,15 @@
 // Standalone game server: core/ only, no Godot.
 //
 //   swm_server --bake <prefix> [--db <file>] [--port 7777] [--spawn <swg_x> <swg_z>] [--seconds <n>]
+//              [--building <file.collision> <swg_x> <swg_y> <swg_z> <yaw_degrees>]...
 //
 // <prefix> names a terrain bake (swgtool bake-terrain). --db is the SQLite
 // file characters are saved in (created if missing; default: none, nothing is
 // saved). --spawn is where new characters start, in Galaxies coordinates as
-// the snapshot tools print them (default: the bake's center). Runs until
-// Ctrl+C or for --seconds, then saves every connected character.
+// the snapshot tools print them (default: the bake's center). --building
+// places a building's floors and walls (from swgtool export-building) where
+// the world snapshot has it; clients must place the same buildings. Runs
+// until Ctrl+C or for --seconds, then saves every connected character.
 
 #include <atomic>
 #include <chrono>
@@ -20,6 +23,7 @@
 #include <iostream>
 #include <string>
 #include <thread>
+#include <vector>
 
 #ifdef _WIN32
 #define WIN32_LEAN_AND_MEAN
@@ -33,6 +37,7 @@
 #include "swm/core/net/udp.h"
 #include "swm/core/server.h"
 #include "swm/core/sqlite_store.h"
+#include "swm/core/world.h"
 
 namespace {
 
@@ -40,7 +45,7 @@ std::atomic<bool> stop_requested = false;
 
 int usage() {
     std::cerr << "usage: swm_server --bake <prefix> [--db <file>] [--port 7777] [--spawn <swg_x> <swg_z>] "
-                 "[--seconds <n>]\n";
+                 "[--seconds <n>] [--building <file.collision> <swg_x> <swg_y> <swg_z> <yaw_degrees>]...\n";
     return 2;
 }
 
@@ -56,6 +61,11 @@ int main(int argc, char** argv) {
     int port = 7777;
     bool has_spawn = false;
     double spawn_x = 0, spawn_z = 0, run_for = 0;
+    struct BuildingArg {
+        std::string path;
+        double x, y, z, yaw;
+    };
+    std::vector<BuildingArg> buildings;
     for (int i = 1; i < argc; ++i) {
         const std::string arg = argv[i];
         if (arg == "--bake" && i + 1 < argc) {
@@ -68,6 +78,11 @@ int main(int argc, char** argv) {
             has_spawn = true;
             spawn_x = std::atof(argv[++i]);
             spawn_z = std::atof(argv[++i]);
+        } else if (arg == "--building" && i + 5 < argc) {
+            BuildingArg building{argv[i + 1], std::atof(argv[i + 2]), std::atof(argv[i + 3]), std::atof(argv[i + 4]),
+                                 std::atof(argv[i + 5])};
+            buildings.push_back(building);
+            i += 5;
         } else if (arg == "--seconds" && i + 1 < argc) {
             run_for = std::atof(argv[++i]);
         } else {
@@ -93,7 +108,15 @@ int main(int argc, char** argv) {
             store = std::make_unique<swm::core::SqliteCharacterStore>(db);
         }
         swm::core::net::UdpLink link{uint16_t(port)};
-        swm::core::GameServer server(link, ground, config, store.get());
+        swm::core::World world(ground);
+        for (const BuildingArg& building : buildings) {
+            const auto collision = swm::core::load_building_collision(building.path);
+            world.add_building(collision,
+                               swm::core::placement_from_galaxies(building.x, building.y, building.z, building.yaw));
+            std::cout << std::format("building {}: {} floor triangles, {} walls\n", building.path,
+                                     collision.floors.size(), collision.walls.size());
+        }
+        swm::core::GameServer server(link, world, config, store.get());
         const auto start = std::chrono::steady_clock::now();
         server.log = [&](const std::string& line) {
             std::cout << std::format("[{:8.2f}] {}\n", seconds_since(start), line) << std::flush;

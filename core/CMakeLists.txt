@@ -8,7 +8,8 @@ add_library(swm_core STATIC
   src/net/protocol.cpp
   src/net/udp.cpp
   src/persistence.cpp
-  src/server.cpp)
+  src/server.cpp
+  src/world.cpp)
 target_include_directories(swm_core PUBLIC include)
 target_compile_definitions(swm_core PRIVATE SWM_VERSION="${PROJECT_VERSION}")
 if(WIN32)

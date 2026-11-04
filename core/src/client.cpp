@@ -34,8 +34,8 @@ MoveState lerp_state(const MoveState& a, const MoveState& b, double t) {
 
 } // namespace
 
-GameClient::GameClient(net::Link& link, const Heightfield& ground, ClientConfig config)
-    : link_(link), ground_(ground), config_(std::move(config)) {}
+GameClient::GameClient(net::Link& link, const World& world, ClientConfig config)
+    : link_(link), world_(world), config_(std::move(config)) {}
 
 void GameClient::set_input(double forward, double right, double yaw, bool sprint, bool jump) {
     next_input_.forward = quantize_axis(forward);
@@ -171,7 +171,7 @@ void GameClient::reconcile(uint32_t last_input, const MoveState& server_state, d
     const double dt = 1 / tick_rate_;
     MoveState state = server_state;
     for (Pending& p : pending_) {
-        state = simulate_move(state, p.input, ground_, config_.move, dt);
+        state = simulate_move(state, p.input, world_, config_.move, dt);
         p.result = state;
     }
     // Any jump this causes is eased in rather than shown at once.
@@ -183,7 +183,7 @@ void GameClient::tick(double now) {
     MoveInput input = next_input_;
     input.sequence = ++sequence_;
     previous_ = current_;
-    current_ = simulate_move(current_, input, ground_, config_.move, 1 / tick_rate_);
+    current_ = simulate_move(current_, input, world_, config_.move, 1 / tick_rate_);
     pending_.push_back({input, current_, now});
     while (pending_.size() > max_pending) {
         pending_.pop_front();

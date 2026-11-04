@@ -1,9 +1,11 @@
 // Heightfield sampling and character movement on synthetic terrain.
 
+#include <filesystem>
 #include <numbers>
 
 #include "swm/core/heightfield.h"
 #include "swm/core/movement.h"
+#include "swm/core/world.h"
 #include "test.h"
 
 using namespace swm::core;
@@ -26,12 +28,16 @@ Heightfield make_ground(F height) {
 
 constexpr double dt = 1.0 / 30;
 
-MoveState run(MoveState state, MoveInput input, const Heightfield& ground, int ticks) {
+MoveState run(MoveState state, MoveInput input, const World& world, int ticks) {
     for (int i = 0; i < ticks; ++i) {
         input.sequence++;
-        state = simulate_move(state, input, ground, MoveParams{}, dt);
+        state = simulate_move(state, input, world, MoveParams{}, dt);
     }
     return state;
+}
+
+MoveState run(MoveState state, MoveInput input, const Heightfield& ground, int ticks) {
+    return run(state, input, World(ground), ticks);
 }
 
 void test_heightfield() {
@@ -133,6 +139,94 @@ void test_slopes_and_jumps() {
     CHECK(state.grounded && near(state.position.y, 0));
 }
 
+// A square floor of half-size `half` centered at (cx, cz), at `height`.
+void add_floor(BuildingCollision& b, double cx, double cz, double half, double height) {
+    const Vec3 p0{cx - half, height, cz - half}, p1{cx + half, height, cz - half};
+    const Vec3 p2{cx + half, height, cz + half}, p3{cx - half, height, cz + half};
+    b.floors.push_back({p0, p1, p2, 0});
+    b.floors.push_back({p0, p2, p3, 0});
+}
+
+void test_buildings() {
+    const Heightfield flat = make_ground([](double, double) { return 0.0; });
+    const MoveParams params;
+    MoveInput east;  // facing +X
+    east.forward = 127;
+    east.yaw = float(-std::numbers::pi / 2);
+
+    // A low platform is stepped onto.
+    BuildingCollision low;
+    add_floor(low, -40, 50, 5, 0.4);
+    World low_world(flat);
+    low_world.add_building(low, {});
+    MoveState start;
+    start.position = {-50, 0, 50};
+    MoveState state = run(start, east, low_world, 30);  // ~5 m east
+    CHECK(state.position.x > -46 && near(state.position.y, 0.4) && state.grounded);
+    // Running off its far side drops back to the terrain.
+    state = run(state, east, low_world, 60);
+    CHECK(state.position.x > -34 && near(state.position.y, 0) && state.grounded);
+
+    // A wall stops the body `radius` short of it, and running at it at an
+    // angle slides along it.
+    BuildingCollision walled;
+    walled.walls.push_back({{-45, 0, 40}, {-45, 0, 60}, 3});
+    World walled_world(flat);
+    walled_world.add_building(walled, {});
+    state = run(start, east, walled_world, 60);
+    CHECK(near(state.position.x, -45 - params.radius, 1e-6) && near(state.position.z, 50));
+    MoveInput northeast = east;
+    northeast.yaw = float(-std::numbers::pi / 4);  // between +X and -Z
+    state = run(start, northeast, walled_world, 60);
+    CHECK(state.position.x <= -45 - params.radius + 1e-9 && state.position.z < 50 - 5);
+    // Sprinting at it for a long time never tunnels through.
+    MoveInput sprint = east;
+    sprint.buttons = MoveInput::sprint;
+    state = run(start, sprint, walled_world, 120);
+    CHECK(state.position.x < -45);
+    // A wall rising from a floor higher than the body can reach doesn't block.
+    BuildingCollision overhead;
+    overhead.walls.push_back({{-45, 1.5, 40}, {-45, 1.5, 60}, 3});
+    World overhead_world(flat);
+    overhead_world.add_building(overhead, {});
+    CHECK(run(start, east, overhead_world, 60).position.x > -45);
+
+    // Jumping up onto a 1 m platform.
+    BuildingCollision high;
+    add_floor(high, -42, 50, 4, 1.0);  // x -46..-38
+    World high_world(flat);
+    high_world.add_building(high, {});
+    state = run(start, east, high_world, 20);  // to x ~ -46.6, just short of it: too high to step up
+    CHECK(near(state.position.y, 0));
+    MoveInput jump = east;
+    jump.buttons = MoveInput::jump;
+    state = run(state, jump, high_world, 1);
+    state = run(state, east, high_world, 25);
+    CHECK(state.grounded && near(state.position.y, 1.0) && state.position.x > -46);
+
+    // Placement: Galaxies position and yaw, as in the world snapshot. A floor
+    // 1 m along building +X, turned 90 degrees, lands 1 m toward game +Z.
+    const Placement placed = placement_from_galaxies(10, 5, 20, 90);
+    CHECK(placed.position == (Vec3{-10, 5, 20}) && near(placed.yaw, -std::numbers::pi / 2));
+    BuildingCollision pad;
+    add_floor(pad, 1, 0, 0.25, 0);
+    const Heightfield deep = make_ground([](double, double) { return -100.0; });
+    World placed_world(deep);
+    placed_world.add_building(pad, placed);
+    const World::Ground on = placed_world.ground_at(-10, 21, 5, 0.5);
+    CHECK(on.on_floor && near(on.height, 5));
+    CHECK(!placed_world.ground_at(-9, 20, 5, 0.5).on_floor);
+
+    // The collision file round-trips.
+    walled.floors = high.floors;
+    const auto path = std::filesystem::temp_directory_path() / "swm_movement_test.collision";
+    save_building_collision(walled, path);
+    const BuildingCollision loaded = load_building_collision(path);
+    std::filesystem::remove(path);
+    CHECK(loaded.floors.size() == 2 && loaded.walls.size() == 1 && loaded.floors[1].c == walled.floors[1].c &&
+          loaded.walls[0].b == walled.walls[0].b && near(loaded.walls[0].height, 3));
+}
+
 void test_determinism() {
     const Heightfield hills = make_ground([](double gx, double gz) { return 3 * std::sin(gx * 0.2) * std::cos(gz * 0.15); });
     MoveState a, b;
@@ -144,8 +238,8 @@ void test_determinism() {
         input.right = int8_t(i * 91 % 255 - 127);
         input.yaw = float(i * 0.05);
         input.buttons = uint8_t(i % 23 == 0 ? MoveInput::jump : 0);
-        a = simulate_move(a, input, hills, MoveParams{}, dt);
-        b = simulate_move(b, input, hills, MoveParams{}, dt);
+        a = simulate_move(a, input, World(hills), MoveParams{}, dt);
+        b = simulate_move(b, input, World(hills), MoveParams{}, dt);
     }
     CHECK(a == b);
 }
@@ -156,6 +250,7 @@ int main() {
     test_heightfield();
     test_running();
     test_slopes_and_jumps();
+    test_buildings();
     test_determinism();
     return swm::test::finish("movement_test");
 }

@@ -7,6 +7,7 @@
 
 #include "swg/gltf_assets.h"
 #include "swg/portal_layout.h"
+#include "swm/core/world.h"
 
 namespace swm::swg {
 namespace {
@@ -51,10 +52,11 @@ int add_floor_mesh(Gltf& gltf, const FloorMesh& floor, const std::string& name) 
     return int(gltf.meshes.size() - 1);
 }
 
+constexpr float wall_height = 3.0f;
+
 // Collision walls: a vertical quad rising from each uncrossable floor edge.
 // Each quad is emitted with both windings so it blocks from either side.
 int add_wall_mesh(Gltf& gltf, const FloorMesh& floor, const std::string& name) {
-    constexpr float wall_height = 3.0f;
     std::vector<Vec3> positions;
     std::vector<uint32_t> indices;
     for (const auto& [a, b] : floor_walls(floor)) {
@@ -72,6 +74,23 @@ int add_wall_mesh(Gltf& gltf, const FloorMesh& floor, const std::string& name) {
     primitive.indices = gltf.add_indices(indices);
     gltf.meshes.push_back({.name = name, .primitives = {primitive}});
     return int(gltf.meshes.size() - 1);
+}
+
+core::Vec3 to_core(Vec3 v) {
+    const Vec3 g = to_gltf(v);
+    return {g.x, g.y, g.z};
+}
+
+// The floors and walls for core/ movement, in the same building space.
+void add_collision(core::BuildingCollision& collision, const FloorMesh& floor, int cell) {
+    for (const FloorMesh::Triangle& t : floor.triangles) {
+        collision.floors.push_back({to_core(floor.vertices[size_t(t.corners[0])]),
+                                    to_core(floor.vertices[size_t(t.corners[1])]),
+                                    to_core(floor.vertices[size_t(t.corners[2])]), cell});
+    }
+    for (const auto& [a, b] : floor_walls(floor)) {
+        collision.walls.push_back({to_core(a), to_core(b), wall_height});
+    }
 }
 
 std::string sidecar_json(const PortalLayout& layout, const std::string& pob_path) {
@@ -125,8 +144,10 @@ void export_building(TreLibrary& library, const std::string& pob_path, const std
 
     Gltf gltf;
     GltfAssets assets(library, gltf, out_dir, log);
+    core::BuildingCollision collision;
     gltf.nodes.push_back({.name = name});
-    for (const PortalLayout::Cell& cell : layout.cells) {
+    for (size_t c = 0; c < layout.cells.size(); ++c) {
+        const PortalLayout::Cell& cell = layout.cells[c];
         const int cell_node = int(gltf.nodes.size());
         gltf.nodes.push_back({.name = cell.name});
         gltf.nodes[0].children.push_back(cell_node);
@@ -137,6 +158,7 @@ void export_building(TreLibrary& library, const std::string& pob_path, const std
 
         if (!cell.floor.empty()) {
             const FloorMesh floor = parse_floor(library.read(cell.floor));
+            add_collision(collision, floor, int(c));
             gltf.nodes.push_back({.name = cell.name + "_floor", .mesh = add_floor_mesh(gltf, floor, cell.name + "_floor")});
             gltf.nodes[size_t(cell_node)].children.push_back(int(gltf.nodes.size() - 1));
             if (const int walls = add_wall_mesh(gltf, floor, cell.name + "_walls"); walls >= 0) {
@@ -149,6 +171,8 @@ void export_building(TreLibrary& library, const std::string& pob_path, const std
     }
     gltf.scene_nodes = {0};
     gltf.write(out_dir / (name + ".gltf"));
+    core::save_building_collision(collision, out_dir / (name + ".collision"));
+    log << std::format("  collision: {} floor triangles, {} walls\n", collision.floors.size(), collision.walls.size());
 
     std::ofstream sidecar(out_dir / (name + ".json"), std::ios::binary);
     sidecar << sidecar_json(layout, pob_path);

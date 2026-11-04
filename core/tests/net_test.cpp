@@ -90,6 +90,7 @@ double horizontal_distance(Vec3 a, Vec3 b) {
 struct Session {
     double now = 0;
     Heightfield ground = rolling_ground();
+    World world{ground};
     LoopbackHub hub;
     Endpoint server_at{1, 1}, a_at{2, 1}, b_at{3, 1};
     LoopbackLink server_link{hub, server_at};
@@ -97,9 +98,9 @@ struct Session {
     LoopbackLink b_raw{hub, b_at};
     ImpairedLink a_link{a_raw, {.latency = 0.05, .jitter = 0.01, .loss = 0.05, .seed = 11}, [this] { return now; }};
     ImpairedLink b_link{b_raw, {.latency = 0.08, .jitter = 0.0, .loss = 0.10, .seed = 22}, [this] { return now; }};
-    GameServer server{server_link, ground, ServerConfig{}};
-    GameClient a{a_link, ground, ClientConfig{.server = server_at, .name = "a"}};
-    GameClient b{b_link, ground, ClientConfig{.server = server_at, .name = "b"}};
+    GameServer server{server_link, world, ServerConfig{}};
+    GameClient a{a_link, world, ClientConfig{.server = server_at, .name = "a"}};
+    GameClient b{b_link, world, ClientConfig{.server = server_at, .name = "b"}};
 
     // Advances everyone in 120 Hz frames.
     template <typename Steer>
@@ -206,11 +207,12 @@ void test_lost_welcome() {
     double now = 0;
     std::vector<float> flat(4, 0.0f);
     const Heightfield ground(2, 10.0, 0, 0, flat);
+    const World world(ground);
     LoopbackHub hub;
     LoopbackLink server_link(hub, {1, 1});
     LoopbackLink client_link(hub, {2, 1});
-    GameServer server(server_link, ground, ServerConfig{});
-    GameClient client(client_link, ground, ClientConfig{.server = {1, 1}});
+    GameServer server(server_link, world, ServerConfig{});
+    GameClient client(client_link, world, ClientConfig{.server = {1, 1}});
     for (; now < 1; now += 0.01) {
         client.update(now);
         server.update(now);

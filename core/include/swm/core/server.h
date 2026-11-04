@@ -7,7 +7,7 @@
 #include <string>
 #include <vector>
 
-#include "swm/core/heightfield.h"
+#include "swm/core/world.h"
 #include "swm/core/movement.h"
 #include "swm/core/net/link.h"
 #include "swm/core/persistence.h"
@@ -35,7 +35,7 @@ struct ServerConfig {
 // time out, every `save_interval`, and on save_all() (call it at shutdown).
 class GameServer {
 public:
-    GameServer(net::Link& link, const Heightfield& ground, ServerConfig config, CharacterStore* store = nullptr);
+    GameServer(net::Link& link, const World& world, ServerConfig config, CharacterStore* store = nullptr);
 
     // Receives packets and runs any ticks that are due. `now` is in seconds,
     // from any steady clock.
@@ -76,7 +76,7 @@ private:
     void say(const std::string& text) const;
 
     net::Link& link_;
-    const Heightfield& ground_;
+    const World& world_;
     ServerConfig config_;
     CharacterStore* store_;
     std::vector<Client> clients_;

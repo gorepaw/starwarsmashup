@@ -5,7 +5,8 @@
 #
 #   godot --path game --script res://tools/net_demo.gd -- <bake_prefix> <character.gltf>
 #         [--server a.b.c.d:port] [--host <port>] [--db <file>] [--spawn <x> <z>] [--name <name>]
-#         [--bot circle|chase] [--lag <ms>] [--jitter <ms>] [--loss <0..1>]
+#         [--building <building.gltf> <x> <y> <z> <yaw>] [--bot circle|chase|route] [--route <x,z;x,z;...>]
+#         [--lag <ms>] [--jitter <ms>] [--loss <0..1>]
 #         [--seconds <n>] [--shots <output_prefix>] [--solo] [--terrain3d]
 #
 # Connects to a running server (default 127.0.0.1:7777; see server/ for
@@ -16,9 +17,16 @@
 # Both server and client need the same bake. --name picks the saved
 # character: the same name returns to where it was last saved.
 #
+# --building places a building exported by swgtool export-building at a
+# Galaxies position and yaw in degrees (as `swgtool snapshot` lists it): drawn
+# with its cells' own lights, and its floors and walls (<name>.collision) used
+# by the movement. The server must place the same building.
+#
 # Controls: WASD to move, mouse to turn, Shift to sprint, Space to jump, Esc
 # to free the mouse (Esc again quits). --bot drives the character instead:
-# "circle" runs in circles, "chase" runs after the nearest other player.
+# "circle" runs in circles, "chase" runs after the nearest other player,
+# "route" runs through --route's points (Galaxies x,z, as walk_building.gd
+# prints them) from the nearest one, then stands.
 # --lag/--jitter/--loss simulate a bad connection on this client.
 #
 # With --seconds, quits after that long and prints network stats. Exits 1 if
@@ -28,6 +36,7 @@ extends SceneTree
 
 const TerrainTool = preload("res://tools/render_terrain.gd")
 const Terrain3DBake = preload("res://tools/terrain3d_bake.gd")
+const SwgBuilding = preload("res://rendering/swg_building.gd")
 
 const RUN_ANIMATION := "human_rifle_stand_runforward"
 const IDLE_ANIMATION := "human_rifle_stand_idle_emote_full"
@@ -37,6 +46,7 @@ const CAMERA_DISTANCE := 4.5
 const CAMERA_HEIGHT := 2.0
 const CAMERA_SHOULDER := 0.7  # meters right of the character
 const SHOT_COUNT := 4
+const CAMERA_MIN_DISTANCE := 0.6
 
 var _client: Object
 var _server: Object
@@ -55,6 +65,10 @@ var _saw_remote := false
 var _solo := false
 var _announced := false
 var _camera: Camera3D
+var _camera_yaw := 0.0
+var _camera_distance := CAMERA_DISTANCE  # pulled in when a wall is behind the character
+var _route: Array[Vector2] = []  # game x, z
+var _route_index := -1
 var _hud: Label
 var _pending_shot := ""
 var _shot_delay := 0
@@ -64,8 +78,9 @@ func _init() -> void:
 	var args := OS.get_cmdline_user_args()
 	if args.size() < 2 or not ClassDB.class_exists("SwmClient"):
 		printerr("usage: -- <bake_prefix> <character.gltf> [--server addr:port] [--host port] [--spawn x z] ",
-				"[--name n] [--bot circle|chase] [--lag ms] [--jitter ms] [--loss 0..1] [--seconds n] ",
-				"[--shots prefix] [--terrain3d]   (needs the swm GDExtension)")
+				"[--name n] [--building gltf x y z yaw] [--bot circle|chase|route] [--route x,z;...] [--lag ms] ",
+				"[--jitter ms] [--loss 0..1] [--seconds n] [--shots prefix] [--solo] [--terrain3d]",
+				"   (needs the swm GDExtension)")
 		quit(2)
 		return
 	var bake := args[0]
@@ -80,6 +95,20 @@ func _init() -> void:
 	_shots = _option(args, "--shots", "")
 	_solo = args.has("--solo")
 	var bake_path := _os_path(bake)
+	for point in _option(args, "--route", "").split(";", false):
+		var xz := point.split(",")
+		_route.append(Vector2(-float(xz[0]), float(xz[1])))
+	var building := PackedStringArray()
+	var at := args.find("--building")
+	if at >= 0 and at + 5 < args.size():
+		building = args.slice(at + 1, at + 6)
+	var collision := ""
+	var building_position := Vector3.ZERO
+	var building_yaw := 0.0
+	if not building.is_empty():
+		collision = _os_path(building[0]).get_basename() + ".collision"
+		building_position = Vector3(float(building[1]), float(building[2]), float(building[3]))
+		building_yaw = float(building[4])
 
 	var server := _option(args, "--server", "127.0.0.1:7777")
 	var host := _option(args, "--host", "")
@@ -88,6 +117,9 @@ func _init() -> void:
 		var database := _option(args, "--db", "")
 		if database != "":
 			_server.set_database(_os_path(database))
+		if collision != "" and _server.add_building(collision, building_position, building_yaw) != OK:
+			quit(1)
+			return
 		var spawn := _spawn(args, meta)
 		if _server.start(int(host), bake_path, spawn) != OK:
 			quit(1)
@@ -98,11 +130,17 @@ func _init() -> void:
 	_client = ClassDB.instantiate("SwmClient")
 	_client.set_simulated_network(float(_option(args, "--lag", "0")), float(_option(args, "--jitter", "0")),
 			float(_option(args, "--loss", "0")))
+	if collision != "" and _client.add_building(collision, building_position, building_yaw) != OK:
+		quit(1)
+		return
 	if _client.start(server, bake_path, _option(args, "--name", "player")) != OK:
 		quit(1)
 		return
 
 	_add_terrain(bake, meta, args.has("--terrain3d"))
+	if not building.is_empty() and not _add_building(building[0], building_position, building_yaw):
+		quit(1)
+		return
 	_own = _add_character()
 	if _own.is_empty():
 		quit(1)
@@ -129,7 +167,7 @@ func _process(delta: float) -> bool:
 			print("spawned as character %d at Galaxies (%.2f, %.2f, %.2f)" % [_client.get_character_id(), -at.x, at.y, at.z])
 		_pose(_own, own)
 		_update_remotes()
-		_update_camera(own["position"])
+		_update_camera(own["position"], delta)
 	_update_hud()
 
 	if _pending_shot != "":
@@ -186,6 +224,8 @@ func _controls() -> Array:
 		"circle":
 			_yaw = _elapsed * 0.5
 			return [1.0, 0.0, _yaw, fmod(_elapsed, 8.0) < 4.0, fmod(_elapsed, 5.0) < 0.05]
+		"route":
+			return _follow_route()
 		"chase":
 			var target := _nearest_remote()
 			if target.is_empty():
@@ -265,12 +305,65 @@ func _pose(character: Dictionary, state: Dictionary) -> void:
 	player.speed_scale = clampf(speed / ANIMATION_RUN_SPEED, 0.6, 1.9) if speed > 0.5 else 1.0
 
 
-func _update_camera(target: Vector3) -> void:
+# Steers through the route's points; starts at the nearest, so a character
+# that already finished (e.g. after a server restart) just stands.
+func _follow_route() -> Array:
+	if not _client.is_spawned():
+		return [0.0, 0.0, _yaw, false, false]
+	var position: Vector3 = _client.get_presented()["position"]
+	var here := Vector2(position.x, position.z)
+	if _route_index < 0 and not _route.is_empty():
+		_route_index = 0
+		for i in _route.size():
+			if here.distance_to(_route[i]) < here.distance_to(_route[_route_index]):
+				_route_index = i
+	while _route_index >= 0 and _route_index < _route.size() and here.distance_to(_route[_route_index]) < 0.4:
+		_route_index += 1
+	if _route_index < 0 or _route_index >= _route.size():
+		# Done: stand and face the nearest other player, if any.
+		var other := _nearest_remote()
+		if not other.is_empty():
+			var to_other: Vector3 = other["position"] - position
+			_yaw = atan2(-to_other.x, -to_other.z)
+		return [0.0, 0.0, _yaw, false, false]
+	var to := _route[_route_index] - here
+	_yaw = atan2(-to.x, -to.y)
+	return [1.0, 0.0, _yaw, false, false]
+
+
+# Camera collision against the building: how far behind the character the
+# camera fits. Physics queries belong in the physics step.
+func _physics_process(_delta: float) -> bool:
+	if _client == null or not _client.is_spawned():
+		return false
+	var pivot := _camera_pivot(_client.get_presented()["position"])
+	var wanted := pivot + _camera_basis() * Vector3(CAMERA_SHOULDER, 0.3, CAMERA_DISTANCE)
+	var query := PhysicsRayQueryParameters3D.create(pivot, wanted)
+	var hit := root.get_world_3d().direct_space_state.intersect_ray(query)
+	if hit.is_empty():
+		_camera_distance = CAMERA_DISTANCE
+	else:
+		_camera_distance = maxf(CAMERA_MIN_DISTANCE, pivot.distance_to(hit["position"]) - 0.25)
+	return false
+
+
+func _camera_basis() -> Basis:
+	return Basis(Vector3.UP, _camera_yaw) * Basis(Vector3.RIGHT, _pitch)
+
+
+func _camera_pivot(target: Vector3) -> Vector3:
+	return target + Vector3.UP * CAMERA_HEIGHT * 0.8
+
+
+func _update_camera(target: Vector3, delta: float) -> void:
 	# Over the shoulder, facing where the character aims (as in Battlefront,
-	# the character always faces the camera's direction).
-	var basis := Basis(Vector3.UP, _yaw) * Basis(Vector3.RIGHT, _pitch)
-	var pivot := target + Vector3.UP * CAMERA_HEIGHT * 0.8
-	var position := pivot + basis * Vector3(CAMERA_SHOULDER, 0.3, CAMERA_DISTANCE)
+	# the character always faces the camera's direction). Bots turn sharply,
+	# so their camera follows smoothly.
+	_camera_yaw = _yaw if _bot == "" else lerp_angle(_camera_yaw, _yaw, minf(1.0, 4.0 * delta))
+	var basis := _camera_basis()
+	var pivot := _camera_pivot(target)
+	var offset := Vector3(CAMERA_SHOULDER, 0.3, CAMERA_DISTANCE) * (_camera_distance / CAMERA_DISTANCE)
+	var position := pivot + basis * offset
 	# Keep the camera above the ground.
 	position.y = maxf(position.y, _client.get_ground_height(position.x, position.z) + 0.4)
 	_camera.global_position = position
@@ -298,6 +391,22 @@ func _add_character() -> Dictionary:
 			if player.has_animation(animation_name):
 				player.get_animation(animation_name).loop_mode = Animation.LOOP_LINEAR
 	return {"model": model, "player": player}
+
+
+# Draws a building where the world snapshot places it. Its cell meshes also
+# get physics collision, for the camera only: movement is in core/.
+func _add_building(path: String, galaxies_position: Vector3, yaw_degrees: float) -> bool:
+	var building := SwgBuilding.load_lit(path)
+	if building == null:
+		printerr("cannot load ", path, " and its .json sidecar")
+		return false
+	# SWG is left-handed: mirror X, which also reverses the yaw.
+	building.position = Vector3(-galaxies_position.x, galaxies_position.y, galaxies_position.z)
+	building.rotation.y = deg_to_rad(-yaw_degrees)
+	root.add_child(building)
+	for mesh in building.find_children("*_mesh", "MeshInstance3D", true, false):
+		(mesh as MeshInstance3D).create_trimesh_collision()
+	return true
 
 
 func _add_terrain(bake: String, meta: Dictionary, use_terrain3d: bool) -> void:
