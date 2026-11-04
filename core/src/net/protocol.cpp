@@ -9,7 +9,7 @@ namespace swm::core::net {
 
 namespace {
 
-enum class Type : uint8_t { hello = 1, welcome, input_batch, snapshot, goodbye };
+enum class Type : uint8_t { hello = 1, welcome, input_batch, snapshot, goodbye, refused };
 
 void put_vec3(ByteWriter& out, Vec3 v) {
     out.put(v.x);
@@ -74,6 +74,11 @@ struct Encoder {
         out.put(m.entity_id);
         out.put(m.tick_rate);
         out.put(m.server_tick);
+        out.put(m.character_id);
+    }
+    void operator()(const Refused& m) {
+        out.put(uint8_t(Type::refused));
+        out.put_string(m.reason);
     }
     void operator()(const InputBatch& m) {
         out.put(uint8_t(Type::input_batch));
@@ -124,6 +129,7 @@ Message decode(std::span<const uint8_t> packet) {
         m.entity_id = in.get<uint32_t>();
         m.tick_rate = in.get<double>();
         m.server_tick = in.get<uint32_t>();
+        m.character_id = in.get<uint64_t>();
         if (!(m.tick_rate >= 1 && m.tick_rate <= 240)) {
             throw PacketError("bad tick rate");
         }
@@ -158,6 +164,9 @@ Message decode(std::span<const uint8_t> packet) {
     }
     case Type::goodbye:
         message = Goodbye{};
+        break;
+    case Type::refused:
+        message = Refused{in.get_string()};
         break;
     default:
         throw PacketError("unknown message type");

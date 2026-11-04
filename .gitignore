@@ -66,6 +66,8 @@ compile_commands.json
 
 # ===== Local data =====
 *.sqlite
+*.sqlite-wal
+*.sqlite-shm
 *.db
 
 # ===== Claude Code (personal, machine-specific) =====

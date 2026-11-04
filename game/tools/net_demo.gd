@@ -4,14 +4,17 @@
 # and turns keys or a bot into input.
 #
 #   godot --path game --script res://tools/net_demo.gd -- <bake_prefix> <character.gltf>
-#         [--server a.b.c.d:port] [--host <port>] [--spawn <x> <z>] [--name <name>]
+#         [--server a.b.c.d:port] [--host <port>] [--db <file>] [--spawn <x> <z>] [--name <name>]
 #         [--bot circle|chase] [--lag <ms>] [--jitter <ms>] [--loss <0..1>]
-#         [--seconds <n>] [--shots <output_prefix>] [--terrain3d]
+#         [--seconds <n>] [--shots <output_prefix>] [--solo] [--terrain3d]
 #
 # Connects to a running server (default 127.0.0.1:7777; see server/ for
-# swm_server), or with --host runs one in this process and joins it. --spawn
-# is the server's spawn point in Galaxies coordinates (default: the bake's
-# center). Both server and client need the same bake.
+# swm_server), or with --host runs one in this process and joins it; --db
+# makes that server save characters in a SQLite file (relative paths are
+# relative to game/, like the bake's). --spawn is where new
+# characters start, in Galaxies coordinates (default: the bake's center).
+# Both server and client need the same bake. --name picks the saved
+# character: the same name returns to where it was last saved.
 #
 # Controls: WASD to move, mouse to turn, Shift to sprint, Space to jump, Esc
 # to free the mouse (Esc again quits). --bot drives the character instead:
@@ -19,8 +22,8 @@
 # --lag/--jitter/--loss simulate a bad connection on this client.
 #
 # With --seconds, quits after that long and prints network stats. Exits 1 if
-# it never spawned or never saw another player. --shots saves four evenly
-# spaced screenshots. Needs a real window.
+# it never spawned, or never saw another player (unless --solo). --shots saves
+# four evenly spaced screenshots. Needs a real window.
 extends SceneTree
 
 const TerrainTool = preload("res://tools/render_terrain.gd")
@@ -49,6 +52,8 @@ var _mouse_captured := false
 var _own: Dictionary = {}       # {model, player}
 var _remotes: Dictionary = {}   # entity id -> {model, player}
 var _saw_remote := false
+var _solo := false
+var _announced := false
 var _camera: Camera3D
 var _hud: Label
 var _pending_shot := ""
@@ -73,12 +78,16 @@ func _init() -> void:
 	_bot = _option(args, "--bot", "")
 	_seconds = float(_option(args, "--seconds", "0"))
 	_shots = _option(args, "--shots", "")
-	var bake_path := ProjectSettings.globalize_path("res://" + bake) if not bake.is_absolute_path() else bake
+	_solo = args.has("--solo")
+	var bake_path := _os_path(bake)
 
 	var server := _option(args, "--server", "127.0.0.1:7777")
 	var host := _option(args, "--host", "")
 	if host != "":
 		_server = ClassDB.instantiate("SwmServer")
+		var database := _option(args, "--db", "")
+		if database != "":
+			_server.set_database(_os_path(database))
 		var spawn := _spawn(args, meta)
 		if _server.start(int(host), bake_path, spawn) != OK:
 			quit(1)
@@ -114,6 +123,10 @@ func _process(delta: float) -> bool:
 
 	if _client.is_spawned():
 		var own: Dictionary = _client.get_presented()
+		if not _announced:
+			_announced = true
+			var at: Vector3 = own["position"]
+			print("spawned as character %d at Galaxies (%.2f, %.2f, %.2f)" % [_client.get_character_id(), -at.x, at.y, at.z])
 		_pose(_own, own)
 		_update_remotes()
 		_update_camera(own["position"])
@@ -136,17 +149,22 @@ func _process(delta: float) -> bool:
 	if _client.get_status() == "timed_out":
 		printerr("connection timed out")
 		return _finish()
+	if _client.get_status() == "refused":
+		printerr("refused: ", _client.get_refusal())
+		return _finish()
 	return false
 
 
 func _finish() -> bool:
 	var stats: Dictionary = _client.get_stats()
+	var at: Vector3 = _client.get_presented().get("position", Vector3.ZERO)
+	print("left at Galaxies (%.2f, %.2f, %.2f)" % [-at.x, at.y, at.z])
 	print("status %s, entity %d, %d ticks, %d snapshots, %d corrections (max %.3f m), rtt %.0f ms, saw other players: %s" % [
 			_client.get_status(), _client.get_entity_id(), stats.get("ticks", 0), stats.get("snapshots", 0),
 			stats.get("corrections", 0), stats.get("max_correction", 0.0), stats.get("rtt_ms", 0.0), _saw_remote])
 	var spawned: bool = _client.is_spawned()
 	_leave()
-	quit(0 if spawned and _saw_remote else 1)
+	quit(0 if spawned and (_saw_remote or _solo) else 1)
 	return true
 
 
@@ -158,6 +176,8 @@ func _leave() -> void:
 		if _server != null:
 			_server.update()
 		OS.delay_msec(10)
+	if _server != null:
+		_server.stop()  # saves everyone still connected
 
 
 # [forward, right, yaw, sprint, jump] for SwmClient.set_input.
@@ -259,8 +279,8 @@ func _update_camera(target: Vector3) -> void:
 
 func _update_hud() -> void:
 	var stats: Dictionary = _client.get_stats()
-	_hud.text = "%s | entity %d | %d other player(s) | rtt %.0f ms | corrections %d (max %.2f m)" % [
-			_client.get_status(), _client.get_entity_id(), _remotes.size(), stats.get("rtt_ms", 0.0),
+	_hud.text = "%s | character %d | %d other player(s) | rtt %.0f ms | corrections %d (max %.2f m)" % [
+			_client.get_status(), _client.get_character_id(), _remotes.size(), stats.get("rtt_ms", 0.0),
 			stats.get("corrections", 0), stats.get("max_correction", 0.0)]
 
 
@@ -337,6 +357,11 @@ func _spawn(args: PackedStringArray, meta: Dictionary) -> Vector2:
 		return Vector2(float(args[at + 1]), float(args[at + 2]))
 	var half: float = (int(meta["samples"]) - 1) * float(meta["spacing"]) / 2
 	return Vector2(float(meta["origin_x"]) + half, float(meta["origin_z"]) + half)
+
+
+# Relative paths are relative to the project folder.
+func _os_path(path: String) -> String:
+	return path if path.is_absolute_path() else ProjectSettings.globalize_path("res://" + path)
 
 
 func _option(args: PackedStringArray, flag: String, fallback: String) -> String:

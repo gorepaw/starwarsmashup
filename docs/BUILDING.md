@@ -29,7 +29,7 @@ cmake --build --preset msvc-release
 ctest --preset msvc-release
 ```
 
-- zlib and godot-cpp (10.0.0-stable, double precision) are fetched at configure time.
+- zlib, SQLite (3.54.1, hash-checked) and godot-cpp (10.0.0-stable, double precision) are fetched at configure time.
 - godot-cpp generates its bindings from [`third_party/godot-api/extension_api-4.7.2-double.json`](../third_party/godot-api/), dumped from the double-precision editor. godot-cpp's bundled API files come from single-precision engines and can't be used. After an engine upgrade, regenerate it:
 
   ```powershell

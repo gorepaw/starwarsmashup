@@ -7,15 +7,17 @@
 #include <vector>
 
 #include "swm/core/movement.h"
+#include "swm/core/persistence.h"
 
 namespace swm::core::net {
 
 // Every packet starts with a magic number, the protocol version and a message
 // type. Peers drop packets with another version. Bump it on any wire change.
 inline constexpr uint16_t protocol_magic = 0x4D53;  // "SM"
-inline constexpr uint16_t protocol_version = 1;
+inline constexpr uint16_t protocol_version = 2;
 
-// Client -> server, repeated until a Welcome arrives.
+// Client -> server, repeated until a Welcome or Refused arrives. The name
+// picks the saved character (there are no accounts yet).
 struct Hello {
     std::string name;
 };
@@ -25,6 +27,12 @@ struct Welcome {
     uint32_t entity_id = 0;  // the client's own character
     double tick_rate = 30;   // simulation ticks per second
     uint32_t server_tick = 0;
+    PersistentId character_id = 0;  // the saved character; 0 if the server doesn't save
+};
+
+// Server -> client: the handshake failed.
+struct Refused {
+    std::string reason;
 };
 
 // Client -> server: the newest inputs, oldest first. Each packet repeats the
@@ -48,7 +56,7 @@ struct Snapshot {
 // Either direction: leaving.
 struct Goodbye {};
 
-using Message = std::variant<Hello, Welcome, InputBatch, Snapshot, Goodbye>;
+using Message = std::variant<Hello, Welcome, Refused, InputBatch, Snapshot, Goodbye>;
 
 std::vector<uint8_t> encode(const Message& message);
 // Throws PacketError on malformed packets or another protocol version.

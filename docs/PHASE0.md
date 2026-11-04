@@ -81,10 +81,19 @@ Provisional decisions:
 
 ## 5. Persistence
 
-- [ ] Persistence interface in `core/`
-- [ ] SQLite implementation
-- [ ] Save and load a character's position across restarts using a persistent 64-bit ID
+- [x] Persistence interface in `core/` (`CharacterStore`, `swm/core/persistence.h`), with an in-memory implementation for tests. Game code never touches a database.
+- [x] SQLite implementation (`SqliteCharacterStore`, in its own `swm_sqlite_store` library so `core/` doesn't depend on SQLite). SQLite 3.54.1 is fetched at configure time and checked against its published SHA3-256. WAL mode, a versioned schema (`PRAGMA user_version`; a database from a newer build is refused), and atomic batch saves.
+- [x] Save and load a character's position across restarts using a persistent 64-bit ID:
+  - The server loads a joining player's character by name (the stand-in for an account until there are accounts), or creates it with a new id. The id is never reused and travels to the client in the handshake (protocol version 2).
+  - Characters are saved when they leave or time out, every 10 s, and when the server stops (`--seconds` or Ctrl+C). A second login with a name already playing is refused.
+  - Checked with real processes: `swm_server --db world.sqlite` stopped while a client was running, saving it at (3527.85, -4797.21). After a restart the same name came back as character 1 at exactly (3527.85, -4797.21). `core/tests/persistence_test.cpp` covers the same restart in-process, plus a crash (no shutdown save) recovered from the periodic save.
+
+Provisional decisions:
+- Saves are synchronous on the server thread. Fine for a handful of characters; a save queue on its own thread comes with more state to save.
+- A saved character respawns on the ground at its saved x and z.
 
 ## Exit criteria
 
 A Galaxies character, lit and holding a Galaxies blaster, runs with Battlefront animations across Galaxies' Tatooine next to a second networked player, walks into a Galaxies building, and is still there after restarting the server.
+
+Status: every part works, but not yet all in one run. The networked, saved character runs on Tatooine next to a second player (spikes 4 and 5), and the single-player walk-through enters the cantina (spike 3). What's left is moving building floors and walls into `core/` movement, so the server lets a networked character walk inside.

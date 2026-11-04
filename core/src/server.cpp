@@ -9,8 +9,8 @@
 
 namespace swm::core {
 
-GameServer::GameServer(net::Link& link, const Heightfield& ground, ServerConfig config)
-    : link_(link), ground_(ground), config_(config) {}
+GameServer::GameServer(net::Link& link, const Heightfield& ground, ServerConfig config, CharacterStore* store)
+    : link_(link), ground_(ground), config_(config), store_(store) {}
 
 void GameServer::say(const std::string& text) const {
     if (log) {
@@ -59,6 +59,7 @@ void GameServer::update(double now) {
     if (!started_) {
         started_ = true;
         next_tick_time_ = now;
+        next_save_time_ = now + config_.save_interval;
     }
     receive(now);
     const double dt = 1 / config_.tick_rate;
@@ -70,6 +71,10 @@ void GameServer::update(double now) {
         next_tick_time_ += dt;
     }
     drop_silent(now);
+    if (now >= next_save_time_) {
+        save_all();
+        next_save_time_ = now + config_.save_interval;
+    }
 }
 
 void GameServer::receive(double now) {
@@ -87,21 +92,13 @@ void GameServer::handle(const net::Endpoint& from, const net::Datagram& datagram
     Client* client = find(from);
     if (const auto* hello = std::get_if<net::Hello>(&message)) {
         if (client == nullptr) {
-            Client joined;
-            joined.endpoint = from;
-            joined.name = hello->name;
-            joined.entity = next_entity_++;
-            Vec3 spawn = config_.spawn;
-            spawn.x += config_.spawn_spacing * spawned_++;
-            spawn = ground_.clamp(spawn);
-            spawn.y = ground_.height_at(spawn.x, spawn.z);
-            joined.state.position = spawn;
-            clients_.push_back(joined);
-            client = &clients_.back();
-            say(std::format("{} joined from {} as entity {}", client->name, from.to_string(), client->entity));
+            client = join(from, hello->name);
+            if (client == nullptr) {
+                return;
+            }
         }
         // Also answers a repeated Hello whose Welcome was lost.
-        send(from, net::Welcome{client->entity, config_.tick_rate, tick_});
+        send(from, net::Welcome{client->entity, config_.tick_rate, tick_, client->character});
     }
     if (client == nullptr) {
         return;  // not connected: ignore everything but Hello
@@ -121,7 +118,72 @@ void GameServer::handle(const net::Endpoint& from, const net::Datagram& datagram
         }
     } else if (std::holds_alternative<net::Goodbye>(message)) {
         say(std::format("{} (entity {}) left", client->name, client->entity));
+        save({client, 1});
         clients_.erase(clients_.begin() + (client - clients_.data()));
+    }
+}
+
+GameServer::Client* GameServer::join(const net::Endpoint& from, const std::string& name) {
+    const auto refuse = [&](const std::string& reason) {
+        say(std::format("refused {} from {}: {}", name, from.to_string(), reason));
+        send(from, net::Refused{reason});
+        return nullptr;
+    };
+    if (name.empty() || name.size() > 32) {
+        return refuse("names are 1 to 32 characters");
+    }
+    if (std::any_of(clients_.begin(), clients_.end(), [&](const Client& c) { return c.name == name; })) {
+        return refuse(name + " is already playing");
+    }
+    Client joined;
+    joined.endpoint = from;
+    joined.name = name;
+    joined.entity = next_entity_++;
+    Vec3 spawn = config_.spawn;
+    spawn.x += config_.spawn_spacing * spawned_++;
+    std::string where = "new";
+    if (store_ != nullptr) {
+        try {
+            if (auto saved = store_->find_by_name(name)) {
+                joined.character = saved->id;
+                joined.state.yaw = saved->yaw;
+                spawn = saved->position;
+                where = "returning";
+            } else {
+                joined.character = store_->create(name, spawn, 0).id;
+            }
+        } catch (const std::exception& error) {
+            say(std::format("storage error: {}", error.what()));
+            return refuse("the server can't load characters right now");
+        }
+    }
+    // Stand on the ground: a saved position may have been mid-jump, or the
+    // terrain may have changed.
+    spawn = ground_.clamp(spawn);
+    spawn.y = ground_.height_at(spawn.x, spawn.z);
+    joined.state.position = spawn;
+    clients_.push_back(joined);
+    say(std::format("{} joined from {} as entity {} ({} character {}) at ({:.2f}, {:.2f}, {:.2f})", name,
+                    from.to_string(), joined.entity, where, joined.character, spawn.x, spawn.y, spawn.z));
+    return &clients_.back();
+}
+
+void GameServer::save_all() {
+    save(clients_);
+}
+
+void GameServer::save(std::span<const Client> clients) {
+    if (store_ == nullptr || clients.empty()) {
+        return;
+    }
+    std::vector<CharacterRecord> records;
+    for (const Client& client : clients) {
+        records.push_back({client.character, client.name, client.state.position, client.state.yaw});
+    }
+    try {
+        store_->save(records);
+    } catch (const std::exception& error) {
+        say(std::format("storage error, {} character(s) not saved: {}", records.size(), error.what()));
     }
 }
 
@@ -153,6 +215,7 @@ void GameServer::drop_silent(double now) {
         const bool silent = now - client.last_heard > config_.client_timeout;
         if (silent) {
             say(std::format("{} (entity {}) timed out", client.name, client.entity));
+            save({&client, 1});
         }
         return silent;
     });

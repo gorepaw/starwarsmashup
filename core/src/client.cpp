@@ -50,7 +50,7 @@ void GameClient::update(double now) {
         last_heard_ = now;
     }
     receive(now);  // also lets a delayed link deliver a Goodbye after disconnect()
-    if (status_ == Status::timed_out || status_ == Status::disconnected) {
+    if (status_ == Status::timed_out || status_ == Status::disconnected || status_ == Status::refused) {
         return;
     }
     if (now - last_heard_ > config_.timeout) {
@@ -104,7 +104,15 @@ void GameClient::handle(const net::Datagram& datagram, double now) {
         if (status_ == Status::connecting) {
             status_ = Status::connected;
             entity_ = welcome->entity_id;
+            character_ = welcome->character_id;
             tick_rate_ = welcome->tick_rate;
+        }
+        return;
+    }
+    if (const auto* refused = std::get_if<net::Refused>(&message)) {
+        if (status_ == Status::connecting) {
+            status_ = Status::refused;
+            refusal_ = refused->reason;
         }
         return;
     }

@@ -2,6 +2,7 @@
 
 #include <chrono>
 #include <memory>
+#include <string>
 
 #include <godot_cpp/classes/ref_counted.hpp>
 #include <godot_cpp/variant/array.hpp>
@@ -14,6 +15,7 @@
 #include "swm/core/net/link.h"
 #include "swm/core/net/udp.h"
 #include "swm/core/server.h"
+#include "swm/core/sqlite_store.h"
 
 namespace swm::godot_bindings {
 
@@ -36,6 +38,10 @@ public:
     godot::String get_status() const;
     bool is_spawned() const;
     int64_t get_entity_id() const;
+    // The saved character's persistent id (0 if the server doesn't save).
+    int64_t get_character_id() const;
+    // Why the server refused the connection (status "refused").
+    godot::String get_refusal() const;
     // Own character as drawn: {position, velocity, yaw, grounded}.
     godot::Dictionary get_presented() const;
     // Other characters: [{id, position, velocity, yaw, grounded}].
@@ -64,9 +70,15 @@ class SwmServer : public godot::RefCounted {
     GDCLASS(SwmServer, godot::RefCounted)
 
 public:
-    // `spawn` is in Galaxies coordinates (x, z).
+    ~SwmServer() override;
+
+    // Saves characters in this SQLite file (an OS path). Call before start().
+    void set_database(const godot::String& path);
+    // `spawn` is where new characters start, in Galaxies coordinates (x, z).
     godot::Error start(int64_t port, const godot::String& bake_prefix, const godot::Vector2& spawn);
     void update();
+    // Saves every connected character and shuts the server down.
+    void stop();
     int64_t get_client_count() const;
     int64_t get_port() const;
 
@@ -75,7 +87,9 @@ protected:
 
 private:
     std::chrono::steady_clock::time_point start_time_ = std::chrono::steady_clock::now();
+    std::string database_;
     core::Heightfield ground_;
+    std::unique_ptr<core::SqliteCharacterStore> store_;
     std::unique_ptr<core::net::UdpLink> udp_;
     std::unique_ptr<core::GameServer> server_;
 };

@@ -59,6 +59,7 @@ Built so far (Phase 0 spike 4): `core::GameServer` and `core::GameClient` over U
 
 - **64-bit persistent entity IDs** for everything that can be saved (characters, items, structures, resource spawns).
 - **Persistence interface** in `core/`, with a SQLite implementation now and Postgres later. Gameplay code never talks to a database directly.
+- Built so far (Phase 0 spike 5): `core::CharacterStore` with in-memory and SQLite implementations (`swm_sqlite_store`). The game server loads characters when players join and saves them when they leave, periodically, and at shutdown.
 - **Data-driven definitions:** items, skills, professions, resource types, and weapons live in data files, not code. Battlefront ODFs and Galaxies datatables convert into this format.
 
 ## Asset pipeline

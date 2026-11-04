@@ -9,6 +9,7 @@
 #include "swm/core/heightfield.h"
 #include "swm/core/movement.h"
 #include "swm/core/net/link.h"
+#include "swm/core/persistence.h"
 
 namespace swm::core {
 
@@ -29,7 +30,7 @@ struct ClientConfig {
 // in the past, interpolated between snapshots.
 class GameClient {
 public:
-    enum class Status { connecting, connected, timed_out, disconnected };
+    enum class Status { connecting, connected, refused, timed_out, disconnected };
 
     struct Remote {
         uint32_t id = 0;
@@ -56,6 +57,10 @@ public:
     // True once the server has placed the character.
     bool spawned() const { return spawned_; }
     uint32_t entity_id() const { return entity_; }
+    // The saved character this client plays (0 if the server doesn't save).
+    PersistentId character_id() const { return character_; }
+    // Why the server refused the connection, if it did.
+    const std::string& refusal() const { return refusal_; }
     double tick_rate() const { return tick_rate_; }
     // The newest predicted state.
     const MoveState& predicted() const { return current_; }
@@ -88,6 +93,8 @@ private:
     Status status_ = Status::connecting;
     bool spawned_ = false;
     uint32_t entity_ = 0;
+    PersistentId character_ = 0;
+    std::string refusal_;
     double tick_rate_ = 30;
     MoveInput next_input_;
     uint32_t sequence_ = 0;
