@@ -44,6 +44,7 @@ void put_state(ByteWriter& out, const MoveState& state) {
     out.put(c.spread);
     for (const WeaponState& w : c.weapons) {
         out.put(w.rounds);
+        out.put(w.reserve);
         out.put(w.heat);
         out.put(uint8_t(w.overheated));
     }
@@ -64,10 +65,11 @@ MoveState get_state(ByteReader& in) {
     c.spread = in.get<double>();
     for (WeaponState& w : c.weapons) {
         w.rounds = in.get<int16_t>();
+        w.reserve = in.get<int16_t>();
         w.heat = in.get<float>();
         w.overheated = in.get<uint8_t>() != 0;
     }
-    if (c.weapon >= c.weapons.size()) {
+    if (c.weapon >= max_weapons) {
         throw PacketError("bad weapon slot");
     }
     return state;
@@ -204,6 +206,7 @@ struct Encoder {
             out.put(bolt.id);
             out.put(bolt.owner);
             out.put(bolt.weapon);
+            out.put(uint8_t(bolt.kind));
             put_vec3(out, bolt.position);
             put_vec3(out, bolt.velocity);
         }
@@ -213,6 +216,13 @@ struct Encoder {
             out.put(event.attacker);
             out.put(event.victim);
             out.put(event.damage);
+        }
+        out.put(uint16_t(m.explosions.size()));
+        for (const Explosion& e : m.explosions) {
+            out.put(e.owner);
+            out.put(e.weapon);
+            put_vec3(out, e.position);
+            out.put(e.radius);
         }
         out.put(uint8_t(m.match.has_value()));
         if (m.match) {
@@ -334,6 +344,11 @@ Message decode(std::span<const uint8_t> packet) {
             bolt.id = in.get<uint32_t>();
             bolt.owner = in.get<uint32_t>();
             bolt.weapon = in.get<uint8_t>();
+            const uint8_t kind = in.get<uint8_t>();
+            if (kind > uint8_t(Projectile::grenade)) {
+                throw PacketError("bad projectile");
+            }
+            bolt.kind = Projectile(kind);
             bolt.position = get_vec3(in);
             bolt.velocity = get_vec3(in);
             m.bolts.push_back(bolt);
@@ -350,6 +365,15 @@ Message decode(std::span<const uint8_t> packet) {
             event.victim = in.get<uint32_t>();
             event.damage = in.get<float>();
             m.events.push_back(event);
+        }
+        const size_t explosions = in.get<uint16_t>();
+        for (size_t i = 0; i < explosions; ++i) {
+            Explosion e;
+            e.owner = in.get<uint32_t>();
+            e.weapon = in.get<uint8_t>();
+            e.position = get_vec3(in);
+            e.radius = in.get<float>();
+            m.explosions.push_back(e);
         }
         if (in.get<uint8_t>() != 0) {
             m.match = get_match(in);

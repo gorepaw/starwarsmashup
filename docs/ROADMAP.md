@@ -47,14 +47,14 @@ Hub notes:
 **Combat**
 - [ ] Third-person shooter controller with Battlefront feel: sprint, roll, crouch, zoom. Sprint (with energy), jump and over-the-shoulder aiming are done; roll, crouch and zoom aren't.
 - [x] Projectile weapons with clips and overheating: blaster bolts fly at their real speed with gravity. Stats come from the player's own Battlefront II files (`bf2tool export-soldier`): the Imperial rifleman's E-11 (60 damage, a shot every 0.166 s, 50-round clips) and pistol (overheats).
-- [ ] Grenades
+- [x] Grenades and explosives: thermal detonators (right mouse) bounce and explode on a fuse. Rockets accelerate and explode on impact, and mortar shells lob and burst on contact. Explosions do full damage within an inner radius, falling to nothing at the outer one (the thermal detonator: 450 within 4.5 m, nothing past 6.5 m). Soldiers carry the ammo Battlefront gives them: spare clips, 2–4 grenades, 7 rockets.
 - [x] Health, damage, death, respawn (400 health, respawn after 5 s at a spawn point)
 - [x] Lag-compensated hit detection: the server rewinds targets to where the shooter saw them (up to 0.5 s). In tests, a shooter 100 ms from the server lands 7 of its shots on a strafing target with rewinding and none without.
-- [ ] 4–5 classes with fixed kits (loadouts come in Stage 2). Three per side so far: rifleman, engineer (shotgun: 8 pellets a shot) and sniper. The rocketeer and the officer need explosions.
+- [x] 4–5 classes with fixed kits (loadouts come in Stage 2): rifleman, rocketeer, sniper, engineer (shotgun: 8 pellets a shot) and, for the Empire, the officer (sonic blaster and mortar). The Rebel officer's incinerator and buffs, and every class's mines, detpacks, turrets and droids, aren't supported yet.
 
 Combat notes:
 - In a match, teammates can't hurt each other (`ServerConfig::friendly_fire`). Outside one, everyone is hostile.
-- Spread uses the weapon's documented values, but how Battlefront combines `SpreadPerShot`, `SpreadThreshold` and `SpreadLimit` is a guess (marked ASSUMPTION in `swm/core/combat.h`). Ammo beyond the clip, damage falloff, headshots and firing animations aren't in yet.
+- Spread uses the weapon's documented values, but how Battlefront combines `SpreadPerShot`, `SpreadThreshold` and `SpreadLimit` is a guess (marked ASSUMPTION in `swm/core/combat.h`). So are a grenade's fuse (an unnamed ordnance property), explosions hurting the thrower, and the linear falloff. Grenades bounce as if off the ground even from walls, explosions aren't blocked by walls, and they don't push. Ammo pickups, headshots and firing animations aren't in yet.
 - Bolts are cheap on the server (a position and velocity, tested as a line segment each tick). How they look is up to each client: color, length and width come from the weapon's ordnance, scaled by graphics settings.
 
 **Vehicles**

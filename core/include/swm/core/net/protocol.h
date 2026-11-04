@@ -17,7 +17,7 @@ namespace swm::core::net {
 // Every packet starts with a magic number, the protocol version and a message
 // type. Peers drop packets with another version. Bump it on any wire change.
 inline constexpr uint16_t protocol_magic = 0x4D53;  // "SM"
-inline constexpr uint16_t protocol_version = 5;
+inline constexpr uint16_t protocol_version = 6;
 
 // Client -> server, repeated until a Welcome or Refused arrives. The name
 // picks the saved character (there are no accounts yet). A match server
@@ -111,13 +111,22 @@ struct EntityState {
     bool alive() const { return life == Life::alive; }
 };
 
-// A blaster bolt in flight.
+// A projectile in flight: a blaster bolt, a missile or a grenade.
 struct BoltState {
     uint32_t id = 0;
     uint32_t owner = 0;  // entity that fired it
     uint8_t weapon = 0;  // the owner's weapon slot, for drawing it
+    Projectile kind = Projectile::bolt;
     Vec3 position;
     Vec3 velocity;
+};
+
+// An explosion this tick, for drawing.
+struct Explosion {
+    uint32_t owner = 0;
+    uint8_t weapon = 0;
+    Vec3 position;
+    float radius = 0;  // the outer damage radius
 };
 
 // Something that happened this tick. Hits and kills are between entities
@@ -142,6 +151,7 @@ struct Snapshot {
     // This tick's events. A lost snapshot loses them; the health in later
     // snapshots stays right.
     std::vector<CombatEvent> events;
+    std::vector<Explosion> explosions;  // this tick's
     std::optional<MatchState> match;  // in a conquest match
     PlayerStatus you;                 // differs per client
 };

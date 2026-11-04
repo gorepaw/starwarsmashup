@@ -56,7 +56,8 @@ public:
     // `server` is "a.b.c.d:port". `bake_prefix` is an OS path to the terrain
     // bake the server uses (swgtool bake-terrain).
     godot::Error start(const godot::String& server, const godot::String& bake_prefix, const godot::String& name);
-    // {forward, right, yaw, pitch, sprint, jump, fire, reload, weapon}; missing keys are 0/false.
+    // {forward, right, yaw, pitch, sprint, jump, fire, reload, secondary, weapon};
+    // missing keys are 0/false. `secondary` throws a grenade.
     void set_input(const godot::Dictionary& controls);
     void update();
     void leave();
@@ -69,29 +70,37 @@ public:
     // Why the server refused the connection (status "refused").
     godot::String get_refusal() const;
     // Own character as drawn: {position, velocity, yaw, grounded, energy,
-    // sprinting, weapon, rounds, heat, overheated, reloading, health, alive,
+    // sprinting, weapon, rounds, reserve (-1: unlimited), heat, overheated,
+    // reloading, grenades, health, alive,
     // life ("waiting", "alive" or "dead"), team (-1 outside a match),
     // soldier_class, kills, deaths, captures}.
     godot::Dictionary get_presented() const;
     // Other characters: [{id, position, velocity, yaw, ..., health, alive, life, team, ...}].
     godot::Array get_remotes() const;
-    // Others' bolts in flight: [{owner, weapon, position, velocity, color, length, width}]
-    // (the looks come from the firing soldier's weapon).
+    // Projectiles in flight: others' bolts, and everyone's missiles and grenades:
+    // [{owner, weapon, kind ("bolt", "missile" or "grenade"), position, velocity,
+    // color, length, width}] (the looks come from the firing soldier's weapon).
+    // Own bolts come from take_shots.
     godot::Array get_bolts() const;
-    // Own shots since the last call, to draw at once:
+    // Own bolts since the last call, to draw at once:
     // [{origin, directions (one per pellet), weapon, color, length, width}].
+    // (Own missiles and grenades are drawn from get_bolts.)
     godot::Array take_shots();
     // Events since the last call: [{kind, attacker, victim, damage}]. Kinds
     // "hit" and "kill" are between entities (attacker 0: the world);
     // "captured" and "neutralized" have the team as attacker and the command
     // post as victim.
     godot::Array take_events();
+    // Explosions since the last call: [{position, radius, owner}].
+    godot::Array take_explosions();
+    // The current class's secondary (grenade): {name}, or empty.
+    godot::Dictionary get_secondary() const;
     // The current class's weapons: [{name, rounds_per_clip, heat_per_shot,
     // bolt_speed, bolt_life, bolt_color, bolt_length, bolt_width}].
     godot::Array get_weapons() const;
     double get_max_health() const;
     // The battlefield: {name, min_x, min_z, max_x, max_z (game space), teams:
-    // [{name, classes: [{name, max_health, weapons: [names]}]}], posts: [{name,
+    // [{name, classes: [{name, max_health, weapons: [names], secondary}]}], posts: [{name,
     // position, radius, capturable}]}; empty outside a match.
     godot::Dictionary get_battlefield() const;
     // The match: {phase ("warmup", "live" or "ended"), time_left, tickets: [a, b],

@@ -22,7 +22,8 @@ struct BotSkill {
 // A simple soldier that plays through a GameClient, with the same controls
 // and the same view of the world a player has. In a match it spawns at the
 // post nearest the fighting, runs to the nearest post its team doesn't hold
-// (or guards one), and shoots enemies it can see, leading them. In a hub it
+// (or guards one), and shoots enemies it can see, leading them (and lobbing
+// grenades and mortar shells on a ballistic arc). In a hub it
 // walks to the nearest war terminal and queues for a battle. Elsewhere it
 // hunts the nearest other character. No pathfinding yet: it runs straight,
 // and jumps when stuck.
@@ -58,6 +59,9 @@ private:
     double aim_phase_ = 0;
     double slow_since_ = -1;  // moving too slowly since
     double unstick_until_ = 0;
+    double next_grenade_ = 0;
+    double throw_until_ = 0;
+    double grenade_pitch_ = 0;
     int queue_team_ = 0;
 };
 

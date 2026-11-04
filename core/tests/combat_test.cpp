@@ -174,18 +174,21 @@ struct Arena {
     net::LoopbackLink a_raw{hub, {2, 1}};
     net::LoopbackLink b_link{hub, {3, 1}};
     net::ImpairedLink a_link;
+    SoldierDef soldier;
     GameServer server;
-    GameClient a{a_link, world, ClientConfig{.server = {1, 1}, .name = "a"}};
-    GameClient b{b_link, world, ClientConfig{.server = {1, 1}, .name = "b"}};
+    GameClient a{a_link, world, ClientConfig{.server = {1, 1}, .name = "a", .soldier = soldier}};
+    GameClient b{b_link, world, ClientConfig{.server = {1, 1}, .name = "b", .soldier = soldier}};
 
-    Arena(double latency, double max_rewind, BuildingCollision building = {})
+    Arena(double latency, double max_rewind, BuildingCollision building = {}, SoldierDef soldier_def = {})
         : a_link(a_raw, {.latency = latency, .seed = 5}, [this] { return now; }),
-          server(server_link, world, config(max_rewind)) {
+          soldier(std::move(soldier_def)),
+          server(server_link, world, config(max_rewind, soldier)) {
         world.add_building(building, {});
     }
 
-    static ServerConfig config(double max_rewind) {
+    static ServerConfig config(double max_rewind, const SoldierDef& soldier) {
         ServerConfig c;
+        c.soldier = soldier;
         c.spawn = {0, 0, 0};
         c.spawn_spacing = 12;
         c.max_rewind = max_rewind;
@@ -281,6 +284,140 @@ void test_wall_blocks() {
     CHECK(arena.a.take_shots().size() >= 10 && arena.server.health_of(arena.b.entity_id()) == 400);
 }
 
+// Battlefront's thermal detonator and rocket launcher, as export-soldier writes them.
+SoldierDef rocketeer() {
+    const auto path = std::filesystem::temp_directory_path() / "swm_combat_test_rocketeer.ini";
+    std::ofstream(path) << "[soldier]\nName = rocketeer\n\n"
+                           "[weapon]\nName = launcher\nProjectile = missile\nWeaponAmmo = 3\nRoundsPerClip = 1\n"
+                           "ReloadTime = 4.0\nShotDelay = 0.0\nYawSpread = 0.0\nPitchSpread = 0.0\n"
+                           "MaxDamage = 500.0\nVelocity = 100.0\nAcceleration = 80.0\nGravity = 0.0\nLifeSpan = 10.0\n"
+                           "ExplosionDamage = 400.0\nExplosionRadiusInner = 1.0\nExplosionRadiusOuter = 3.0\n\n"
+                           "[secondary]\nName = thermal\nProjectile = grenade\nWeaponAmmo = 4\nRoundsPerClip = 1\n"
+                           "ReloadTime = 0.0\nShotDelay = 1.3\nShotElevate = 0.21\nVelocity = 25.0\nGravity = 1.25\n"
+                           "Rebound = 0.2\nLifeSpan = 0.6\nFuse = 2.0\nExplosionImpact = 0\n"
+                           "ExplosionDamage = 450.0\nExplosionRadiusInner = 4.5\nExplosionRadiusOuter = 6.5\n";
+    SoldierDef soldier = load_soldier(path);
+    std::filesystem::remove(path);
+    return soldier;
+}
+
+void test_explosives_file() {
+    const SoldierDef soldier = rocketeer();
+    CHECK(soldier.weapons.size() == 1 && soldier.secondary.has_value());
+    const WeaponDef& launcher = soldier.weapons[0];
+    CHECK(launcher.projectile == Projectile::missile && launcher.bolt_acceleration == 80 && launcher.ammo == 3);
+    CHECK(launcher.explode_on_impact && launcher.explosion_damage == 400 && launcher.explosion_outer == 3);
+    const WeaponDef& thermal = *soldier.secondary;
+    CHECK(thermal.projectile == Projectile::grenade && !thermal.explode_on_impact && thermal.fuse == 2.0);
+    CHECK(thermal.yaw_spread == 0 && thermal.shot_elevate == 0.21 && weapon_in_slot(soldier, secondary_slot) == &thermal);
+    // Clips carried: the launcher holds one rocket and carries two more.
+    MoveState state;
+    reset_loadout(state, soldier);
+    CHECK(state.combat.weapons[0].rounds == 1 && state.combat.weapons[0].reserve == 2);
+    CHECK(state.combat.weapons[secondary_slot].rounds == 1 && state.combat.weapons[secondary_slot].reserve == 3);
+}
+
+void test_grenades_and_ammo() {
+    const SoldierDef soldier = rocketeer();
+    MoveState state;
+    reset_loadout(state, soldier);
+    uint32_t sequence = 0;
+    // Four grenades, one every 1.3 s (39 ticks), thrown above the crosshair.
+    int thrown = 0;
+    for (int i = 0; i < 300; ++i) {
+        MoveInput input;
+        input.sequence = ++sequence;
+        input.buttons = MoveInput::secondary;
+        if (auto shot = simulate_weapons(state, input, soldier, dt)) {
+            CHECK(shot->weapon == secondary_slot && shot->directions.size() == 1);
+            CHECK(near(std::asin(shot->directions[0].y), 0.21, 1e-6));
+            ++thrown;
+        }
+    }
+    CHECK(thrown == 4 && state.combat.weapons[secondary_slot].rounds == 0);
+    // Three rockets, then the launcher is empty for good.
+    int fired = 0;
+    for (int i = 0; i < 30 * 20; ++i) {
+        MoveInput input;
+        input.sequence = ++sequence;
+        input.buttons = MoveInput::fire;
+        fired += simulate_weapons(state, input, soldier, dt) ? 1 : 0;
+    }
+    CHECK(fired == 3 && state.combat.weapons[0].rounds == 0 && state.combat.weapons[0].reserve == 0);
+    CHECK(state.combat.reload == 0);
+}
+
+void test_explosion_falloff() {
+    WeaponDef thermal;
+    thermal.explosion_damage = 450;
+    thermal.explosion_inner = 4.5;
+    thermal.explosion_outer = 6.5;
+    // Distances are to the body (radius 0.35), at chest height.
+    CHECK(explosion_damage(thermal, {0, 1, 0}, {3, 0, 0}) == 450);
+    CHECK(near(explosion_damage(thermal, {0, 1, 0}, {5.85, 0, 0}), 225));
+    CHECK(explosion_damage(thermal, {0, 1, 0}, {7, 0, 0}) == 0);
+    WeaponDef blaster;
+    CHECK(explosion_damage(blaster, {0, 0, 0}, {0, 0, 0}) == 0);
+    // On flat ground, 45 degrees reaches farthest: v^2 / g.
+    CHECK(near(*ballistic_pitch(10, 10, 10, 0), std::numbers::pi / 4, 1e-6));
+    CHECK(!ballistic_pitch(10, 10, 10.5, 0));
+}
+
+void test_grenade_and_rocket_kills() {
+    // A throws a thermal detonator at B, 12 m away: it lands, rests, and
+    // explodes after its 2 s fuse. A, out of its reach, is unhurt.
+    Arena arena(0, 0.5, {}, rocketeer());
+    arena.run(0.5, [] {});
+    const uint32_t b_id = arena.b.entity_id();
+    const Vec3 b_spawn = arena.b.predicted().position;
+    const double pitch = *ballistic_pitch(25, 1.25 * 9.8, 12.0, -eye_height) - 0.21;
+    bool thrown = false;
+    std::vector<net::Explosion> explosions;
+    arena.run(3.0, [&] {
+        GameClient::Controls controls;
+        controls.yaw = -std::numbers::pi / 2;  // facing +X, toward B
+        controls.pitch = pitch;
+        controls.secondary = !thrown;
+        thrown = true;
+        arena.a.set_input(controls);
+        for (const auto& e : arena.a.take_explosions()) {
+            explosions.push_back(e);
+        }
+    });
+    CHECK(explosions.size() == 1 && !arena.server.alive(b_id) && arena.server.health_of(arena.a.entity_id()) == 400);
+    if (!explosions.empty()) {
+        std::printf("grenade: exploded %.1f m from B\n", (explosions[0].position - b_spawn).length());
+        CHECK(explosions[0].owner == arena.a.entity_id() && explosions[0].radius == 6.5f);
+    }
+    CHECK(arena.a.predicted().combat.weapons[secondary_slot].reserve == 2);
+
+    // A rocket straight at B, after B respawns: 500 on impact.
+    arena.run(5.0, [&] { arena.a.set_input({.yaw = -std::numbers::pi / 2}); });
+    CHECK(arena.server.alive(b_id));
+    arena.run(1.0, [&] { arena.a.set_input(arena.a_aims_at_b(true)); });
+    CHECK(!arena.server.alive(b_id));
+}
+
+void test_rocket_splash() {
+    // A rocket into the ground 2 m short of B: only the explosion reaches it.
+    Arena arena(0, 0.5, {}, rocketeer());
+    arena.run(0.5, [] {});
+    const uint32_t b_id = arena.b.entity_id();
+    const Vec3 eye = arena.a.predicted().position + Vec3{0, eye_height, 0};
+    const Vec3 ground = arena.b.predicted().position - Vec3{2, 0, 0};
+    const Vec3 to = ground - eye;
+    bool fired = false;
+    arena.run(1.0, [&] {
+        arena.a.set_input({.yaw = std::atan2(-to.x, -to.z), .pitch = std::atan2(to.y, std::hypot(to.x, to.z)),
+                           .fire = !fired});
+        fired = true;
+    });
+    // 2 m from the impact: 1.65 m from the body, between 1 m and 3 m.
+    const double expected = 400 - 400 * (3 - 1.65) / (3 - 1);
+    std::printf("rocket splash: B at %.0f health (expected about %.0f)\n", arena.server.health_of(b_id), expected);
+    CHECK(near(arena.server.health_of(b_id), expected, 25));
+}
+
 } // namespace
 
 int main() {
@@ -293,5 +430,10 @@ int main() {
     test_kill_and_respawn();
     test_lag_compensation();
     test_wall_blocks();
+    test_explosives_file();
+    test_grenades_and_ammo();
+    test_explosion_falloff();
+    test_grenade_and_rocket_kills();
+    test_rocket_splash();
     return swm::test::finish("combat_test");
 }

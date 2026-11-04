@@ -38,8 +38,8 @@
 # battlefield files are looked up in game/battlefields/.
 #
 # Controls: WASD to move, mouse to aim, Shift to sprint, Space to jump, left
-# mouse to fire, R to reload, 1 and 2 for weapons, Esc to free the mouse (Esc
-# again quits). Shots fly as bolts; the server decides what they hit. --bot
+# mouse to fire, right mouse to throw a grenade, R to reload, 1 and 2 for
+# weapons, Esc to free the mouse (Esc again quits). Shots fly as bolts; the server decides what they hit. --bot
 # drives the character instead:
 # "circle" runs in circles, "chase" runs after the nearest enemy and
 # shoots at it, "conquest" is the C++ bot (core::Bot) playing the match,
@@ -74,6 +74,7 @@ const FRIEND_COLOR := Color(0.35, 0.6, 1.0)
 const ENEMY_COLOR := Color(1.0, 0.3, 0.25)
 const NEUTRAL_COLOR := Color(0.9, 0.9, 0.9)
 const POST_BEAM_HEIGHT := 30.0
+const EXPLOSION_TIME := 0.6   # seconds an explosion's flash lasts
 
 var _client: Object
 var _server: Object
@@ -118,6 +119,8 @@ var _recruiter_nodes: Array = []
 var _notice_id := 0
 var _notice := ""
 var _notice_time := 0.0           # seconds left showing it
+var _explosions: Array = []       # [{node, light, age, radius}]
+var _explosions_seen := 0
 var _own_bolts: Array = []        # [{node, velocity, life, gravity}] drawn from predicted shots
 var _remote_bolt_nodes: Array[MeshInstance3D] = []
 var _kills := 0
@@ -292,7 +295,7 @@ func _finish() -> bool:
 	var stats: Dictionary = _client.get_stats()
 	var at: Vector3 = _client.get_presented().get("position", Vector3.ZERO)
 	print("left at Galaxies (%.2f, %.2f, %.2f)" % [-at.x, at.y, at.z])
-	print("combat: %d hits, %d kills, %d deaths" % [_hits, _kills, _deaths])
+	print("combat: %d hits, %d kills, %d deaths, %d explosions seen" % [_hits, _kills, _deaths, _explosions_seen])
 	var game: Dictionary = _client.get_match()
 	if not game.is_empty():
 		var own: Dictionary = _client.get_presented()
@@ -348,7 +351,7 @@ func _controls() -> Dictionary:
 	return {"forward": forward, "right": right, "yaw": aim.x, "pitch": aim.y,
 			"sprint": Input.is_physical_key_pressed(KEY_SHIFT), "jump": Input.is_physical_key_pressed(KEY_SPACE),
 			"fire": Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT), "reload": Input.is_physical_key_pressed(KEY_R),
-			"weapon": _weapon}
+			"secondary": Input.is_mouse_button_pressed(MOUSE_BUTTON_RIGHT), "weapon": _weapon}
 
 
 # Yaw and pitch from the character's eyes to where the crosshair (the
@@ -554,11 +557,14 @@ func _update_hud(delta: float) -> void:
 		var weapon: Dictionary = _weapons[slot] if slot < _weapons.size() else {}
 		var ammo := ""
 		if int(weapon.get("rounds_per_clip", 0)) > 0:
-			ammo = "%d / %d%s" % [own["rounds"], weapon["rounds_per_clip"], "  reloading" if own["reloading"] else ""]
+			var carried := "" if int(own["reserve"]) < 0 else " (+%d)" % own["reserve"]
+			ammo = "%d / %d%s%s" % [own["rounds"], weapon["rounds_per_clip"], carried, "  reloading" if own["reloading"] else ""]
 		else:
 			ammo = "heat %d%%%s" % [roundi(float(own["heat"]) * 100), "  OVERHEATED" if own["overheated"] else ""]
-		lines.append("health %d / %d | %s: %s | energy %d" % [roundi(own["health"]), roundi(_client.get_max_health()),
-				weapon.get("name", "?"), ammo, roundi(own["energy"])])
+		var secondary: Dictionary = _client.get_secondary()
+		var grenades := "" if secondary.is_empty() else " | %s x%d" % [secondary["name"], own["grenades"]]
+		lines.append("health %d / %d | %s: %s%s | energy %d" % [roundi(own["health"]), roundi(_client.get_max_health()),
+				weapon.get("name", "?"), ammo, grenades, roundi(own["energy"])])
 	_hud.text = "\n".join(lines)
 	_update_match_hud(delta)
 	_hit_flash = maxf(0.0, _hit_flash - delta)
@@ -614,6 +620,7 @@ func _update_bolts(delta: float) -> void:
 			continue
 		_place_bolt(node, node.position + bolt["velocity"] * delta, bolt["velocity"])
 
+	_update_explosions(delta)
 	var remote: Array = _client.get_bolts()
 	while _remote_bolt_nodes.size() < remote.size():
 		_remote_bolt_nodes.append(_bolt_node(remote[_remote_bolt_nodes.size()]))
@@ -651,7 +658,56 @@ func _style_bolt(node: MeshInstance3D, look: Dictionary) -> void:
 		_bolt_materials[key] = material
 	node.material_override = _bolt_materials[key]
 	var width := float(look["width"]) * BOLT_STRETCH / 2
-	node.set_meta("size", Vector3(width, width, float(look["length"]) * BOLT_STRETCH))
+	var length := float(look["length"]) * BOLT_STRETCH
+	if look.get("kind", "bolt") == "grenade":
+		width = 0.22
+		length = 0.22
+	elif length <= 0 or width <= 0:
+		width = 0.15  # an invisible bolt (the sonic blaster's): draw something
+		length = 1.0
+	node.set_meta("size", Vector3(width, width, length))
+
+
+# Explosions: a flash that swells to the damage radius and fades.
+func _update_explosions(delta: float) -> void:
+	for explosion: Dictionary in _client.take_explosions():
+		var material := StandardMaterial3D.new()
+		material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+		material.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+		material.albedo_color = Color(1.0, 0.6, 0.2, 0.8)
+		material.emission_enabled = true
+		material.emission = Color(1.0, 0.5, 0.15)
+		material.emission_energy_multiplier = 4.0
+		var node := MeshInstance3D.new()
+		var sphere := SphereMesh.new()
+		sphere.radius = 1.0
+		sphere.height = 2.0
+		node.mesh = sphere
+		node.material_override = material
+		node.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		node.position = explosion["position"]
+		var light := OmniLight3D.new()
+		light.light_color = Color(1.0, 0.6, 0.3)
+		light.omni_range = float(explosion["radius"]) * 4
+		light.position = explosion["position"] + Vector3.UP
+		root.add_child(node)
+		root.add_child(light)
+		_explosions.append({"node": node, "light": light, "age": 0.0, "radius": float(explosion["radius"])})
+		_explosions_seen += 1
+	for i in range(_explosions.size() - 1, -1, -1):
+		var e: Dictionary = _explosions[i]
+		e["age"] = float(e["age"]) + delta
+		var t := float(e["age"]) / EXPLOSION_TIME
+		var node: MeshInstance3D = e["node"]
+		var light: OmniLight3D = e["light"]
+		if t >= 1.0:
+			node.queue_free()
+			light.queue_free()
+			_explosions.remove_at(i)
+			continue
+		node.scale = Vector3.ONE * float(e["radius"]) * (0.3 + 0.7 * sqrt(t))
+		(node.material_override as StandardMaterial3D).albedo_color.a = 0.8 * (1.0 - t)
+		light.light_energy = 6.0 * (1.0 - t)
 
 
 # A bolt is a thin glowing box along its velocity.
@@ -1059,7 +1115,8 @@ func _spawn_menu(game: Dictionary, team: int) -> String:
 	for i in classes.size():
 		var soldier: Dictionary = classes[i]
 		lines.append("%s %d  %s  (%s, %d health)" % [">" if i == _spawn_class else "  ", i + 1, soldier["name"],
-				", ".join(soldier["weapons"]), roundi(soldier["max_health"])])
+				", ".join(soldier["weapons"] + ([soldier["secondary"]] if soldier["secondary"] != "" else [])),
+				roundi(soldier["max_health"])])
 	lines.append("")
 	if _spawn_post < 0:
 		lines.append("Your team holds no command posts")

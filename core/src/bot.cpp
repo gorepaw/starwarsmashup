@@ -211,15 +211,35 @@ void Bot::update(GameClient& client, const World& world, double now) {
     }
 
     if (target != nullptr) {
-        // Lead the target by the bolt's flight time; aim wanders a little.
-        const Vec3 chest = target->state.position + Vec3{0, 1.2, 0};
+        // Lead the target by the flight time, on the projectile's arc; aim
+        // wanders a little. Grenades and shells go at the feet.
+        const bool lobbed = weapon.projectile == Projectile::grenade;
+        const Vec3 point = target->state.position + Vec3{0, lobbed ? 0.2 : 1.2, 0};
         const double flight = target_distance / std::max(1.0, weapon.bolt_speed);
-        const Vec3 aim_at = chest + target->state.velocity * flight;
-        const Vec3 d = aim_at - eye;
+        const Vec3 d = point + target->state.velocity * flight - eye;
         const double wobble = skill_.aim_error * std::numbers::pi / 180;
+        const auto arc = ballistic_pitch(weapon.bolt_speed, weapon.bolt_gravity * soldier.move.gravity,
+                                         std::hypot(d.x, d.z), d.y);
         controls.yaw = yaw_toward(d) + wobble * std::sin(now * 2.3 + aim_phase_);
-        controls.pitch = std::atan2(d.y, std::hypot(d.x, d.z)) + wobble * std::sin(now * 3.1 + aim_phase_ * 2);
-        controls.fire = now - target_since_ >= skill_.reaction;
+        controls.pitch = arc.value_or(0) - weapon.shot_elevate + wobble * std::sin(now * 3.1 + aim_phase_ * 2);
+        controls.fire = arc.has_value() && now - target_since_ >= skill_.reaction;
+        // Now and then a grenade at someone close.
+        const WeaponDef* thrown = weapon_in_slot(soldier, secondary_slot);
+        if (thrown != nullptr && me.combat.weapons[secondary_slot].rounds > 0 && target_distance > 8 &&
+            target_distance < 25 && now >= next_grenade_ && now - target_since_ >= skill_.reaction) {
+            const Vec3 feet = target->state.position - eye;
+            if (const auto lob = ballistic_pitch(thrown->bolt_speed, thrown->bolt_gravity * soldier.move.gravity,
+                                                 std::hypot(feet.x, feet.z), feet.y)) {
+                throw_until_ = now + 0.15;
+                next_grenade_ = now + 6 + random() * 8;
+                grenade_pitch_ = *lob - thrown->shot_elevate;
+            }
+        }
+        if (now < throw_until_) {
+            controls.secondary = true;
+            controls.fire = false;
+            controls.pitch = grenade_pitch_;
+        }
         // Keep moving toward the objective while sidestepping.
         const double s = std::sin(controls.yaw), c = std::cos(controls.yaw);
         move = move * 0.6 + Vec3{c, 0, -s} * (strafe_ * 0.7);

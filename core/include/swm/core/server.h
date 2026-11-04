@@ -152,12 +152,13 @@ private:
         uint32_t owner = 0;
         int team = -1;
         uint8_t weapon = 0;
+        const WeaponDef* def = nullptr;  // the weapon's projectile and explosion (in config_)
         Vec3 position;
         Vec3 velocity;
-        double life = 0;
-        double damage = 0;
+        double life = 0;     // seconds left (a grenade's fuse)
         double gravity = 0;  // m/s^2
         double rewind = 0;   // ticks: targets are tested this far in the past
+        bool resting = false;  // a grenade that stopped bouncing
     };
 
     void receive(double now);
@@ -168,6 +169,8 @@ private:
     void run_match();
     void fire(const Client& shooter, const Shot& shot, double view_tick);
     void advance_bolts();
+    void damage(Client& victim, double amount, uint32_t attacker);
+    void explode(const Bolt& bolt, Vec3 at);
     void kill(Client& victim, uint32_t attacker);
     void respawn(Client& client);
     void spawn_at_post(Client& client, size_t soldier_class, size_t post);
@@ -191,6 +194,7 @@ private:
     std::vector<Client> clients_;
     std::vector<Bolt> bolts_;
     std::vector<net::CombatEvent> events_;  // this tick's
+    std::vector<net::Explosion> explosions_;  // this tick's
     std::vector<net::Recruiter> recruiters_;
     std::array<std::string, 2> factions_;
     uint32_t tick_ = 0;

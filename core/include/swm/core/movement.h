@@ -18,6 +18,7 @@ struct MoveInput {
         jump = 1 << 1,
         fire = 1 << 2,
         reload = 1 << 3,
+        secondary = 1 << 4,  // the secondary weapon: grenades
     };
 
     uint32_t sequence = 0;  // increases by one per tick
@@ -40,19 +41,20 @@ struct MoveInput {
 int8_t quantize_axis(double value);
 
 struct WeaponState {
-    int16_t rounds = 0;  // left in the clip
-    float heat = 0;      // 0..1
+    int16_t rounds = 0;    // left in the clip
+    int16_t reserve = -1;  // rounds carried beyond the clip; -1: unlimited
+    float heat = 0;        // 0..1
     bool overheated = false;
 
     friend bool operator==(const WeaponState&, const WeaponState&) = default;
 };
 
 struct CombatState {
-    uint8_t weapon = 0;   // slot in hand
+    uint8_t weapon = 0;   // primary slot in hand
     double cooldown = 0;  // seconds until it can fire
     double reload = 0;    // seconds of reloading left
     double spread = 0;    // degrees of bloom from recent shots
-    std::array<WeaponState, 2> weapons{};
+    std::array<WeaponState, 3> weapons{};  // two primary slots, then the secondary
 
     friend bool operator==(const CombatState&, const CombatState&) = default;
 };

@@ -60,27 +60,43 @@ SoldierDef load_soldier(const std::filesystem::path& path) {
         }
     }
     for (const Ini::Section& s : ini.sections()) {
-        if (s.name != "weapon" || int(soldier.weapons.size()) >= max_weapons) {
+        const bool primary = s.name == "weapon" && int(soldier.weapons.size()) < max_weapons;
+        const bool secondary = s.name == "secondary" && !soldier.secondary;
+        if (!primary && !secondary) {
             continue;
         }
         WeaponDef w;
         w.name = s.get("Name").value_or(w.name);
+        const std::string projectile = s.get("Projectile").value_or("bolt");
+        w.projectile = projectile == "missile" ? Projectile::missile
+                       : projectile == "grenade" ? Projectile::grenade
+                                                 : Projectile::bolt;
+        w.ammo = std::max(0, int(s.number("WeaponAmmo", 0)));
         w.shot_delay = s.number("ShotDelay", w.shot_delay);
         w.rounds_per_clip = int(s.number("RoundsPerClip", w.rounds_per_clip));
         w.reload_time = s.number("ReloadTime", w.reload_time);
         w.heat_per_shot = s.number("HeatPerShot", w.heat_per_shot);
         w.heat_recover_rate = s.number("HeatRecoverRate", w.heat_recover_rate);
         w.heat_threshold = s.number("HeatThreshold", w.heat_threshold);
-        w.yaw_spread = s.number("YawSpread", w.yaw_spread);
-        w.pitch_spread = s.number("PitchSpread", w.pitch_spread);
-        w.spread_per_shot = s.number("SpreadPerShot", w.spread_per_shot);
+        // A weapon without spread values (grenades) has none.
+        w.yaw_spread = s.number("YawSpread", 0);
+        w.pitch_spread = s.number("PitchSpread", 0);
+        w.spread_per_shot = s.number("SpreadPerShot", 0);
         w.spread_recover_rate = s.number("SpreadRecoverRate", w.spread_recover_rate);
-        w.spread_limit = s.number("SpreadLimit", w.spread_limit);
+        w.spread_limit = s.number("SpreadLimit", 0);
         w.shots_per_salvo = std::max(1, int(s.number("ShotsPerSalvo", w.shots_per_salvo)));
         w.damage = s.number("MaxDamage", w.damage) * s.number("PersonScale", 1.0);
         w.bolt_speed = s.number("Velocity", w.bolt_speed);
         w.bolt_gravity = s.number("Gravity", w.bolt_gravity);
         w.bolt_life = s.number("LifeSpan", w.bolt_life);
+        w.bolt_acceleration = s.number("Acceleration", 0);
+        w.rebound = s.number("Rebound", 0);
+        w.explode_on_impact = s.number("ExplosionImpact", w.projectile == Projectile::grenade ? 0 : 1) != 0;
+        w.fuse = s.number("Fuse", w.bolt_life);
+        w.shot_elevate = s.number("ShotElevate", 0);
+        w.explosion_damage = s.number("ExplosionDamage", 0) * s.number("ExplosionPersonScale", 1.0);
+        w.explosion_inner = s.number("ExplosionRadiusInner", 0);
+        w.explosion_outer = std::max(w.explosion_inner, s.number("ExplosionRadiusOuter", 0));
         if (const auto color = s.get("LaserGlowColor")) {
             std::istringstream fields(*color);
             for (double& channel : w.bolt_color) {
@@ -91,7 +107,11 @@ SoldierDef load_soldier(const std::filesystem::path& path) {
         }
         w.bolt_length = s.number("LaserLength", w.bolt_length);
         w.bolt_width = s.number("LaserWidth", w.bolt_width);
-        soldier.weapons.push_back(w);
+        if (primary) {
+            soldier.weapons.push_back(w);
+        } else {
+            soldier.secondary = w;
+        }
     }
     if (soldier.weapons.empty()) {
         soldier.weapons.push_back(WeaponDef{});
@@ -104,14 +124,51 @@ Vec3 aim_direction(double yaw, double pitch) {
     return {-std::sin(yaw) * cp, std::sin(pitch), -std::cos(yaw) * cp};
 }
 
+std::optional<double> ballistic_pitch(double speed, double gravity, double dx, double dy) {
+    if (gravity <= 0 || dx <= 0) {
+        return std::atan2(dy, std::max(dx, 1e-9));
+    }
+    const double v2 = speed * speed;
+    const double root = v2 * v2 - gravity * (gravity * dx * dx + 2 * dy * v2);
+    if (root < 0) {
+        return std::nullopt;
+    }
+    return std::atan((v2 - std::sqrt(root)) / (gravity * dx));
+}
+
+const WeaponDef* weapon_in_slot(const SoldierDef& soldier, int slot) {
+    if (slot == secondary_slot) {
+        return soldier.secondary ? &*soldier.secondary : nullptr;
+    }
+    return slot >= 0 && slot < int(soldier.weapons.size()) ? &soldier.weapons[size_t(slot)] : nullptr;
+}
+
 void reset_loadout(MoveState& state, const SoldierDef& soldier) {
     state.combat = {};
-    for (size_t i = 0; i < soldier.weapons.size() && i < state.combat.weapons.size(); ++i) {
-        state.combat.weapons[i].rounds = int16_t(soldier.weapons[i].rounds_per_clip);
+    for (int slot = 0; slot < int(state.combat.weapons.size()); ++slot) {
+        if (const WeaponDef* def = weapon_in_slot(soldier, slot)) {
+            WeaponState& w = state.combat.weapons[size_t(slot)];
+            w.rounds = int16_t(def->rounds_per_clip);
+            w.reserve = def->ammo > 0 ? int16_t((def->ammo - 1) * def->rounds_per_clip) : int16_t(-1);
+        }
     }
     state.energy = soldier.move.max_energy;
     state.sprinting = false;
 }
+
+namespace {
+
+// Refills a clip from what's carried.
+void refill(WeaponState& w, const WeaponDef& def) {
+    const int wanted = def.rounds_per_clip - w.rounds;
+    const int taken = w.reserve < 0 ? wanted : std::min(wanted, int(w.reserve));
+    w.rounds = int16_t(w.rounds + taken);
+    if (w.reserve >= 0) {
+        w.reserve = int16_t(w.reserve - taken);
+    }
+}
+
+} // namespace
 
 std::optional<Shot> simulate_weapons(MoveState& state, const MoveInput& input, const SoldierDef& soldier, double dt) {
     CombatState& c = state.combat;
@@ -120,11 +177,14 @@ std::optional<Shot> simulate_weapons(MoveState& state, const MoveInput& input, c
         return std::nullopt;
     }
     c.cooldown = std::max(0.0, c.cooldown - dt);
-    for (int i = 0; i < count; ++i) {
-        const WeaponDef& def = soldier.weapons[size_t(i)];
+    for (int i = 0; i < int(c.weapons.size()); ++i) {
+        const WeaponDef* def = weapon_in_slot(soldier, i);
         WeaponState& w = c.weapons[size_t(i)];
-        w.heat = float(std::max(0.0, w.heat - def.heat_recover_rate * dt));
-        if (w.overheated && w.heat <= def.heat_threshold) {
+        if (def == nullptr) {
+            continue;
+        }
+        w.heat = float(std::max(0.0, w.heat - def->heat_recover_rate * dt));
+        if (w.overheated && w.heat <= def->heat_threshold) {
             w.overheated = false;
         }
     }
@@ -144,19 +204,37 @@ std::optional<Shot> simulate_weapons(MoveState& state, const MoveInput& input, c
         c.reload -= dt;
         if (c.reload <= 0) {
             c.reload = 0;
-            weapon.rounds = int16_t(def.rounds_per_clip);
+            refill(weapon, def);
         }
     }
     const bool uses_clip = def.rounds_per_clip > 0;
-    const bool clip_full = weapon.rounds >= def.rounds_per_clip;
-    if (uses_clip && c.reload == 0 && input.held(MoveInput::reload) && !clip_full) {
+    const bool can_reload = uses_clip && weapon.rounds < def.rounds_per_clip && weapon.reserve != 0;
+    if (can_reload && c.reload == 0 && input.held(MoveInput::reload)) {
         c.reload = def.reload_time;
     }
+
+    // The secondary (a grenade) is thrown instead of firing, when ready.
+    if (soldier.secondary && input.held(MoveInput::secondary) && c.cooldown <= 0 && c.reload <= 0) {
+        const WeaponDef& thrown = *soldier.secondary;
+        WeaponState& grenades = c.weapons[secondary_slot];
+        if (grenades.rounds > 0) {
+            c.cooldown += thrown.shot_delay;
+            grenades.rounds = int16_t(grenades.rounds - 1);
+            if (grenades.rounds == 0) {
+                refill(grenades, thrown);  // the next grenade comes out of the pouch
+            }
+            const double pitch = std::min(1.5, double(input.pitch) + thrown.shot_elevate);
+            return Shot{state.position + Vec3{0, eye_height, 0}, {aim_direction(input.yaw, pitch)}, secondary_slot};
+        }
+    }
+
     if (!input.held(MoveInput::fire) || c.cooldown > 0 || c.reload > 0) {
         return std::nullopt;
     }
     if (uses_clip && weapon.rounds <= 0) {
-        c.reload = def.reload_time;  // pulling the trigger on an empty clip reloads
+        if (can_reload) {
+            c.reload = def.reload_time;  // pulling the trigger on an empty clip reloads
+        }
         return std::nullopt;
     }
     if (weapon.overheated) {
@@ -178,7 +256,7 @@ std::optional<Shot> simulate_weapons(MoveState& state, const MoveInput& input, c
     for (int i = 0; i < pellets; ++i) {
         const auto [u, v] = random_pair(input.sequence ^ (uint64_t(i) << 32));
         const double yaw = input.yaw + u * (def.yaw_spread + c.spread) * degrees;
-        const double pitch = input.pitch + v * (def.pitch_spread + c.spread) * degrees;
+        const double pitch = input.pitch + def.shot_elevate + v * (def.pitch_spread + c.spread) * degrees;
         shot.directions.push_back(aim_direction(yaw, pitch));
     }
     c.spread = std::min(def.spread_limit, c.spread + def.spread_per_shot);
@@ -196,6 +274,26 @@ std::optional<Shot> simulate_character(MoveState& state, const MoveInput& input,
     }
     state = simulate_move(state, input, world, soldier.move, dt);
     return simulate_weapons(state, input, soldier, dt);
+}
+
+double explosion_damage(const WeaponDef& weapon, Vec3 center, Vec3 feet) {
+    if (weapon.explosion_damage <= 0 || weapon.explosion_outer <= 0) {
+        return 0;
+    }
+    // Distance to the body: its axis, less its radius.
+    const double y = std::clamp(center.y, feet.y, feet.y + hit_height);
+    const double distance =
+        std::max(0.0, std::sqrt((center.x - feet.x) * (center.x - feet.x) + (center.y - y) * (center.y - y) +
+                                (center.z - feet.z) * (center.z - feet.z)) -
+                          hit_radius);
+    if (distance <= weapon.explosion_inner) {
+        return weapon.explosion_damage;
+    }
+    if (distance >= weapon.explosion_outer) {
+        return 0;
+    }
+    return weapon.explosion_damage * (weapon.explosion_outer - distance) /
+           (weapon.explosion_outer - weapon.explosion_inner);
 }
 
 std::optional<double> segment_hits_cylinder(Vec3 a, Vec3 b, Vec3 feet, double radius, double height) {

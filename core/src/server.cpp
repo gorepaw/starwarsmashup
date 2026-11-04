@@ -355,10 +355,12 @@ void GameServer::step() {
         snapshot.entities.push_back(describe(client));
     }
     for (const Bolt& bolt : bolts_) {
-        snapshot.bolts.push_back({bolt.id, bolt.owner, bolt.weapon, bolt.position, bolt.velocity});
+        snapshot.bolts.push_back({bolt.id, bolt.owner, bolt.weapon, bolt.def->projectile, bolt.position, bolt.velocity});
     }
     snapshot.events = std::move(events_);
     events_.clear();
+    snapshot.explosions = std::move(explosions_);
+    explosions_.clear();
     if (conquest_) {
         snapshot.match = conquest_->state();
     }
@@ -503,7 +505,11 @@ void GameServer::spawn_at_post(Client& client, size_t soldier_class, size_t post
 
 void GameServer::fire(const Client& shooter, const Shot& shot, double view_tick) {
     const SoldierDef& soldier = soldier_of(shooter);
-    const WeaponDef& weapon = soldier.weapons[size_t(shot.weapon)];
+    const WeaponDef* def = weapon_in_slot(soldier, shot.weapon);
+    if (def == nullptr) {
+        return;
+    }
+    const WeaponDef& weapon = *def;
     // The tick being simulated is tick_ + 1; the shooter saw others at view_tick.
     const double rewind = std::clamp(double(tick_ + 1) - view_tick, 0.0, config_.max_rewind * config_.tick_rate);
     for (const Vec3& direction : shot.directions) {
@@ -513,9 +519,9 @@ void GameServer::fire(const Client& shooter, const Shot& shot, double view_tick)
         bolt.team = shooter.team;
         bolt.weapon = uint8_t(shot.weapon);
         bolt.position = shot.origin;
+        bolt.def = def;
         bolt.velocity = direction * weapon.bolt_speed;
-        bolt.life = weapon.bolt_life;
-        bolt.damage = weapon.damage;
+        bolt.life = weapon.projectile == Projectile::grenade && !weapon.explode_on_impact ? weapon.fuse : weapon.bolt_life;
         bolt.gravity = weapon.bolt_gravity * soldier.move.gravity;
         bolt.rewind = rewind;
         bolts_.push_back(bolt);
@@ -545,17 +551,35 @@ void GameServer::advance_bolts() {
     const double dt = 1 / config_.tick_rate;
     // After a match ends, bolts fly on but harm nobody.
     const bool harmless = conquest_ && conquest_->state().phase == Phase::ended;
+    // Explosions damage the bolt list's owners, so collect them first.
+    std::vector<std::pair<Bolt, Vec3>> blasts;
     std::erase_if(bolts_, [&](Bolt& bolt) {
+        const WeaponDef& def = *bolt.def;
+        bolt.life -= dt;
+        if (bolt.resting) {
+            if (bolt.life <= 0) {
+                blasts.emplace_back(bolt, bolt.position);
+                return true;
+            }
+            return false;
+        }
         const Vec3 from = bolt.position;
         bolt.velocity.y -= bolt.gravity * dt;
+        if (def.projectile == Projectile::missile && def.bolt_acceleration > 0) {
+            const double speed = bolt.velocity.length();
+            if (speed > 0) {
+                bolt.velocity += bolt.velocity * (def.bolt_acceleration * dt / speed);
+            }
+        }
         const Vec3 to = from + bolt.velocity * dt;
         // The first thing along the way: the world, or someone where the
-        // shooter saw them.
+        // shooter saw them. Bouncing grenades pass people by.
         std::optional<double> nearest = world_.raycast(from, to);
         Client* victim = nullptr;
+        const bool bounces = def.projectile == Projectile::grenade && !def.explode_on_impact;
         for (Client& target : clients_) {
             const bool teammate = bolt.team >= 0 && target.team == bolt.team && !config_.friendly_fire;
-            if (harmless || target.entity == bolt.owner || target.life != Life::alive || teammate) {
+            if (bounces || harmless || target.entity == bolt.owner || target.life != Life::alive || teammate) {
                 continue;
             }
             const Vec3 feet = position_at(target, double(tick_) - bolt.rewind);
@@ -566,20 +590,72 @@ void GameServer::advance_bolts() {
             }
         }
         if (victim != nullptr) {
-            victim->health = std::max(0.0, victim->health - bolt.damage);
-            events_.push_back({net::CombatEvent::hit, bolt.owner, victim->entity, float(bolt.damage)});
-            if (victim->health <= 0) {
-                kill(*victim, bolt.owner);
-            }
+            damage(*victim, def.damage, bolt.owner);
+            blasts.emplace_back(bolt, from + (to - from) * *nearest);
             return true;
         }
         if (nearest) {
-            return true;  // hit the world
+            const Vec3 at = from + (to - from) * *nearest;
+            if (!bounces) {
+                blasts.emplace_back(bolt, at);
+                return true;
+            }
+            // A bounce, as off the ground (ASSUMPTION: walls bounce the same;
+            // we don't have surface normals here).
+            bolt.position = from + (to - from) * std::max(0.0, *nearest - 0.05);
+            bolt.velocity = {bolt.velocity.x * def.rebound, -bolt.velocity.y * def.rebound, bolt.velocity.z * def.rebound};
+            if (bolt.velocity.length() < 1.5) {
+                bolt.resting = true;
+                bolt.velocity = {};
+            }
+        } else {
+            bolt.position = to;
         }
-        bolt.position = to;
-        bolt.life -= dt;
-        return bolt.life <= 0;
+        if (bolt.life <= 0) {
+            if (bounces) {
+                blasts.emplace_back(bolt, bolt.position);  // the fuse ran out
+            }
+            return true;
+        }
+        return false;
     });
+    if (!harmless) {
+        for (const auto& [bolt, at] : blasts) {
+            explode(bolt, at);
+        }
+    }
+}
+
+// Damage to everyone near: teammates are spared (unless friendly fire is
+// on), the thrower isn't (ASSUMPTION: Battlefront hurts the thrower too).
+void GameServer::explode(const Bolt& bolt, Vec3 at) {
+    const WeaponDef& def = *bolt.def;
+    if (def.explosion_damage <= 0 || def.explosion_outer <= 0) {
+        return;
+    }
+    explosions_.push_back({bolt.owner, bolt.weapon, at, float(def.explosion_outer)});
+    for (Client& target : clients_) {
+        const bool teammate = bolt.team >= 0 && target.team == bolt.team && target.entity != bolt.owner &&
+                              !config_.friendly_fire;
+        if (target.life != Life::alive || teammate) {
+            continue;
+        }
+        const double amount = explosion_damage(def, at, position_at(target, double(tick_) - bolt.rewind));
+        if (amount > 0) {
+            damage(target, amount, bolt.owner);
+        }
+    }
+}
+
+void GameServer::damage(Client& victim, double amount, uint32_t attacker) {
+    if (victim.life != Life::alive || amount <= 0) {
+        return;
+    }
+    victim.health = std::max(0.0, victim.health - amount);
+    events_.push_back({net::CombatEvent::hit, attacker, victim.entity, float(amount)});
+    if (victim.health <= 0) {
+        kill(victim, attacker);
+    }
 }
 
 void GameServer::kill(Client& victim, uint32_t attacker) {

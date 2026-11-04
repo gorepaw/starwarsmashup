@@ -62,7 +62,8 @@ void GameClient::set_input(const Controls& c) {
     next_input_.yaw = float(std::remainder(c.yaw, 2 * std::numbers::pi));
     next_input_.pitch = float(std::clamp(c.pitch, -1.5, 1.5));
     next_input_.buttons = uint8_t((c.sprint ? MoveInput::sprint : 0) | (c.jump ? MoveInput::jump : 0) |
-                                  (c.fire ? MoveInput::fire : 0) | (c.reload ? MoveInput::reload : 0));
+                                  (c.fire ? MoveInput::fire : 0) | (c.reload ? MoveInput::reload : 0) |
+                                  (c.secondary ? MoveInput::secondary : 0));
     next_input_.weapon = uint8_t(std::clamp(c.weapon, 0, max_weapons - 1));
 }
 
@@ -81,6 +82,10 @@ std::vector<Shot> GameClient::take_shots() {
 
 std::vector<net::CombatEvent> GameClient::take_events() {
     return std::exchange(events_, {});
+}
+
+std::vector<net::Explosion> GameClient::take_explosions() {
+    return std::exchange(explosions_, {});
 }
 
 void GameClient::update(double now) {
@@ -194,12 +199,14 @@ void GameClient::handle(const net::Datagram& datagram, double now) {
 
     bolts_.clear();
     for (const net::BoltState& bolt : snapshot->bolts) {
-        if (bolt.owner != entity_) {
+        // Own bolts were drawn when fired; own missiles and grenades come from here.
+        if (bolt.owner != entity_ || bolt.kind != Projectile::bolt) {
             bolts_.push_back(bolt);
         }
     }
     bolts_time_ = now;
     events_.insert(events_.end(), snapshot->events.begin(), snapshot->events.end());
+    explosions_.insert(explosions_.end(), snapshot->explosions.begin(), snapshot->explosions.end());
     match_ = snapshot->match;
     player_status_ = snapshot->you;
 

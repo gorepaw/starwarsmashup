@@ -31,6 +31,9 @@ godot::Dictionary to_dictionary(const core::MoveState& state) {
     const core::CombatState& c = state.combat;
     out["weapon"] = int64_t(c.weapon);
     out["rounds"] = int64_t(c.weapons[c.weapon].rounds);
+    out["reserve"] = int64_t(c.weapons[c.weapon].reserve);
+    const core::WeaponState& grenades = c.weapons[core::secondary_slot];
+    out["grenades"] = int64_t(grenades.rounds + std::max<int>(0, grenades.reserve));
     out["heat"] = double(c.weapons[c.weapon].heat);
     out["overheated"] = c.weapons[c.weapon].overheated;
     out["reloading"] = c.reload > 0;
@@ -233,6 +236,7 @@ godot::Dictionary SwmClient::get_battlefield() const {
             entry["name"] = godot::String::utf8(soldier.name.c_str());
             entry["max_health"] = soldier.max_health;
             entry["weapons"] = weapons;
+            entry["secondary"] = soldier.secondary ? godot::String::utf8(soldier.secondary->name.c_str()) : godot::String();
             classes.push_back(entry);
         }
         godot::Dictionary entry;
@@ -354,6 +358,7 @@ void SwmClient::set_input(const godot::Dictionary& c) {
     controls.jump = bool(c.get("jump", false));
     controls.fire = bool(c.get("fire", false));
     controls.reload = bool(c.get("reload", false));
+    controls.secondary = bool(c.get("secondary", false));
     controls.weapon = int(int64_t(c.get("weapon", 0)));
     client()->set_input(controls);
 }
@@ -440,8 +445,16 @@ godot::Array SwmClient::get_bolts() const {
                     soldier_class = remote.soldier_class;
                 }
             }
-            const core::SoldierDef& owner = soldier_of(team, soldier_class);
-            add_bolt_look(entry, owner.weapons[std::min<size_t>(bolt.weapon, owner.weapons.size() - 1)]);
+            const core::SoldierDef* owner_def = &soldier_of(team, soldier_class);
+            if (bolt.owner == uint32_t(client()->entity_id())) {
+                owner_def = &soldier();  // own missiles and grenades
+            }
+            const core::SoldierDef& owner = *owner_def;
+            entry["kind"] = bolt.kind == core::Projectile::bolt      ? "bolt"
+                            : bolt.kind == core::Projectile::missile ? "missile"
+                                                                     : "grenade";
+            const core::WeaponDef* weapon = core::weapon_in_slot(*owner_def, bolt.weapon);
+            add_bolt_look(entry, weapon != nullptr ? *weapon : owner.weapons[0]);
             out.push_back(entry);
         }
     }
@@ -453,6 +466,10 @@ godot::Array SwmClient::take_shots() {
     if (client()) {
         const core::SoldierDef& own = soldier();
         for (const core::Shot& shot : client()->take_shots()) {
+            const core::WeaponDef* weapon = core::weapon_in_slot(own, shot.weapon);
+            if (weapon == nullptr || weapon->projectile != core::Projectile::bolt) {
+                continue;  // drawn from the server's snapshots
+            }
             godot::Dictionary entry;
             entry["origin"] = to_godot(shot.origin);
             godot::Array directions;
@@ -461,7 +478,7 @@ godot::Array SwmClient::take_shots() {
             }
             entry["directions"] = directions;
             entry["weapon"] = int64_t(shot.weapon);
-            add_bolt_look(entry, own.weapons[std::min<size_t>(size_t(shot.weapon), own.weapons.size() - 1)]);
+            add_bolt_look(entry, *weapon);
             out.push_back(entry);
         }
     }
@@ -496,12 +513,37 @@ godot::Array SwmClient::take_events() {
     return out;
 }
 
+godot::Array SwmClient::take_explosions() {
+    godot::Array out;
+    if (client()) {
+        for (const core::net::Explosion& e : client()->take_explosions()) {
+            godot::Dictionary entry;
+            entry["position"] = to_godot(e.position);
+            entry["radius"] = double(e.radius);
+            entry["owner"] = int64_t(e.owner);
+            out.push_back(entry);
+        }
+    }
+    return out;
+}
+
+godot::Dictionary SwmClient::get_secondary() const {
+    godot::Dictionary out;
+    if (soldier().secondary) {
+        out["name"] = godot::String::utf8(soldier().secondary->name.c_str());
+    }
+    return out;
+}
+
 godot::Array SwmClient::get_weapons() const {
     godot::Array out;
     for (const core::WeaponDef& w : soldier().weapons) {
         godot::Dictionary entry;
         entry["name"] = godot::String::utf8(w.name.c_str());
         entry["rounds_per_clip"] = int64_t(w.rounds_per_clip);
+        entry["projectile"] = w.projectile == core::Projectile::bolt      ? "bolt"
+                              : w.projectile == core::Projectile::missile ? "missile"
+                                                                          : "grenade";
         entry["heat_per_shot"] = w.heat_per_shot;
         entry["bolt_speed"] = w.bolt_speed;
         entry["bolt_life"] = w.bolt_life;
@@ -573,6 +615,8 @@ void SwmClient::_bind_methods() {
     ClassDB::bind_method(D_METHOD("get_bolts"), &SwmClient::get_bolts);
     ClassDB::bind_method(D_METHOD("take_shots"), &SwmClient::take_shots);
     ClassDB::bind_method(D_METHOD("take_events"), &SwmClient::take_events);
+    ClassDB::bind_method(D_METHOD("take_explosions"), &SwmClient::take_explosions);
+    ClassDB::bind_method(D_METHOD("get_secondary"), &SwmClient::get_secondary);
     ClassDB::bind_method(D_METHOD("get_weapons"), &SwmClient::get_weapons);
     ClassDB::bind_method(D_METHOD("get_max_health"), &SwmClient::get_max_health);
     ClassDB::bind_method(D_METHOD("update"), &SwmClient::update);

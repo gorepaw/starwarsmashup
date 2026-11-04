@@ -71,6 +71,7 @@ public:
         bool jump = false;
         bool fire = false;
         bool reload = false;
+        bool secondary = false;  // throw a grenade
         int weapon = 0;
     };
     void set_input(const Controls& controls);
@@ -127,6 +128,8 @@ public:
     std::vector<Shot> take_shots();
     // Hits and kills since the last call.
     std::vector<net::CombatEvent> take_events();
+    // Explosions since the last call.
+    std::vector<net::Explosion> take_explosions();
 
 private:
     struct Pending {
@@ -187,6 +190,7 @@ private:
     double bolts_time_ = 0;
     std::vector<Shot> shots_;
     std::vector<net::CombatEvent> events_;
+    std::vector<net::Explosion> explosions_;
 };
 
 // A client that follows the server's transfers, from a hub to a match and

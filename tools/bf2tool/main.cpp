@@ -165,8 +165,100 @@ int cmd_odf(const std::vector<std::string>& args) {
     return 0;
 }
 
-// Writes a soldier class, its first two blaster weapons and their bolts as a
-// data file for core::load_soldier, inheritance resolved.
+// A weapon a soldier carries, in its class's order: WeaponAmmo and
+// WeaponChannel follow the WeaponName they belong to.
+struct CarriedWeapon {
+    std::string name;
+    std::string ammo;
+    int channel = 0;  // 0: primary, 1: secondary (grenades, mines, ...)
+};
+
+// A weapon's ordnance: its first OrdnanceName (a mortar's second is for a
+// charged shot).
+OdfClass ordnance_of(const OdfClass& weapon, const OdfLibrary& library) {
+    for (const auto& [hash, value] : weapon.properties) {
+        if (hash == odf_hash("OrdnanceName")) {
+            return library.resolve(value);
+        }
+    }
+    return library.resolve("");
+}
+
+// What a weapon fires, if the game supports it: "bolt" (a cannon firing
+// bolts or bullets), "missile" (a launcher) or "grenade" (thrown or lobbed).
+std::string projectile_of(const OdfClass& weapon, const OdfClass& ordnance) {
+    if (weapon.base == "cannon" && (ordnance.base == "bolt" || ordnance.base == "bullet")) {
+        return "bolt";
+    }
+    if (weapon.base == "launcher" && ordnance.base == "missile") {
+        return "missile";
+    }
+    if (weapon.base == "grenade" && (ordnance.base == "sticky" || ordnance.base == "shell" || ordnance.base == "grenade")) {
+        return "grenade";
+    }
+    return "";
+}
+
+// Writes one weapon section: the weapon, its ordnance and its explosion.
+void write_weapon(std::ostream& out, const char* section, const CarriedWeapon& carried, const OdfLibrary& library,
+                  const std::string& projectile) {
+    const OdfClass weapon = library.resolve(carried.name);
+    const OdfClass ordnance = ordnance_of(weapon, library);
+    out << "\n[" << section << "]\nName = " << carried.name << "\nProjectile = " << projectile << "\n";
+    if (!carried.ammo.empty()) {
+        out << "WeaponAmmo = " << carried.ammo << "\n";
+    }
+    for (const char* key : {"ShotDelay", "RoundsPerClip", "ReloadTime", "HeatPerShot", "HeatRecoverRate",
+                            "HeatThreshold", "YawSpread", "PitchSpread", "SpreadPerShot", "SpreadRecoverRate",
+                            "SpreadLimit", "ShotsPerSalvo", "ShotElevate", "MaxRange"}) {
+        if (const auto value = weapon.get(key)) {
+            out << key << " = " << *value << "\n";
+        }
+    }
+    out << "; ordnance: " << ordnance.type << " (" << ordnance.base << ")\n";
+    for (const char* key : {"MaxDamage", "PersonScale", "Velocity", "Acceleration", "Gravity", "Rebound", "LifeSpan",
+                            "LaserGlowColor", "LaserLength", "LaserWidth", "LightColor", "LightRadius"}) {
+        if (const auto value = ordnance.get(key)) {
+            out << key << " = " << *value << "\n";
+        }
+    }
+    if (projectile == "grenade") {
+        // A grenade's fuse: an unnamed ordnance property (hash a51be2bb: 2.0
+        // on the thermal detonator, whose LifeSpan is 0.6), else LifeSpan.
+        // ASSUMPTION: that property is the time from the throw to exploding.
+        for (const auto& [hash, value] : ordnance.properties) {
+            if (hash == 0xa51be2bbu) {
+                out << "Fuse = " << value << "\n";
+            }
+        }
+        out << "ExplosionImpact = " << (ordnance.get("ExplosionImpact") ? 1 : 0) << "\n";
+    }
+    std::string explosion_name = ordnance.get("ExplosionName").value_or("");
+    for (const char* key : {"ExplosionImpact", "ExplosionExpire"}) {
+        if (explosion_name.empty()) {
+            explosion_name = ordnance.get(key).value_or("");
+        }
+    }
+    if (explosion_name.empty()) {
+        return;
+    }
+    const OdfClass explosion = library.resolve(explosion_name);
+    out << "; explosion: " << explosion.type << "\n";
+    if (const auto damage = explosion.get("Damage").value_or(ordnance.get("Damage").value_or("")); !damage.empty()) {
+        out << "ExplosionDamage = " << damage << "\n";
+    }
+    for (const auto& [key, ours] : {std::pair{"DamageRadiusInner", "ExplosionRadiusInner"},
+                                    std::pair{"DamageRadiusOuter", "ExplosionRadiusOuter"},
+                                    std::pair{"PersonScale", "ExplosionPersonScale"}}) {
+        if (const auto value = explosion.get(key)) {
+            out << ours << " = " << *value << "\n";
+        }
+    }
+}
+
+// Writes a soldier class as a data file for core::load_soldier, inheritance
+// resolved: its first two primary weapons the game supports, and its first
+// grenade as the secondary.
 int cmd_export_soldier(const std::vector<std::string>& args) {
     if (args.size() < 5 || args[3] != "-o") {
         std::cerr << usage;
@@ -199,35 +291,40 @@ int cmd_export_soldier(const std::vector<std::string>& args) {
         }
     }
 
-    // Blasters only (base "cannon" firing bolts or bullets): no grenades,
-    // launchers or buffs, and no award weapons, which are unlocks.
-    int written = 0;
-    for (const auto& [hash, name] : soldier.properties) {
-        if (hash != odf_hash("WeaponName") || written == 2 || name.find("award") != std::string::npos) {
+    // No award weapons: they're unlocks.
+    std::vector<CarriedWeapon> carried;
+    for (const auto& [hash, value] : soldier.properties) {
+        if (hash == odf_hash("WeaponName")) {
+            carried.push_back({value});
+        } else if (!carried.empty() && hash == odf_hash("WeaponAmmo")) {
+            carried.back().ammo = value;
+        } else if (!carried.empty() && hash == odf_hash("WeaponChannel")) {
+            carried.back().channel = std::atoi(value.c_str());
+        }
+    }
+    int primaries = 0;
+    bool secondary = false;
+    for (const CarriedWeapon& weapon : carried) {
+        if (weapon.name.find("award") != std::string::npos) {
             continue;
         }
-        const OdfClass weapon = library.resolve(name);
-        const OdfClass ordnance = library.resolve(weapon.get("OrdnanceName").value_or(""));
-        if (weapon.base != "cannon" || (ordnance.base != "bolt" && ordnance.base != "bullet")) {
+        const OdfClass def = library.resolve(weapon.name);
+        const OdfClass ordnance = ordnance_of(def, library);
+        const std::string projectile = projectile_of(def, ordnance);
+        const bool as_primary = weapon.channel == 0 && primaries < 2 && !projectile.empty();
+        const bool as_secondary = weapon.channel == 1 && !secondary && projectile == "grenade";
+        if (!as_primary && !as_secondary) {
+            std::cerr << std::format("  skipped {} ({}, ordnance {})\n", weapon.name, def.base, ordnance.base);
             continue;
         }
-        out << "\n[weapon]\nName = " << name << "\n";
-        for (const char* key : {"ShotDelay", "RoundsPerClip", "ReloadTime", "HeatPerShot", "HeatRecoverRate",
-                                "HeatThreshold", "YawSpread", "PitchSpread", "SpreadPerShot", "SpreadRecoverRate",
-                                "SpreadLimit", "ShotsPerSalvo", "MaxRange"}) {
-            if (const auto value = weapon.get(key)) {
-                out << key << " = " << *value << "\n";
-            }
+        write_weapon(out, as_primary ? "weapon" : "secondary", weapon, library, projectile);
+        if (as_primary) {
+            ++primaries;
+        } else {
+            secondary = true;
         }
-        out << "; bolt: " << ordnance.type << "\n";
-        for (const char* key : {"MaxDamage", "PersonScale", "Velocity", "Gravity", "LifeSpan", "LaserGlowColor",
-                                "LaserLength", "LaserWidth", "LightColor", "LightRadius"}) {
-            if (const auto value = ordnance.get(key)) {
-                out << key << " = " << *value << "\n";
-            }
-        }
-        ++written;
-        std::cerr << std::format("  weapon {} (bolt {})\n", name, ordnance.type);
+        std::cerr << std::format("  {} {} ({}, {})\n", as_primary ? "weapon" : "secondary", weapon.name, projectile,
+                                 ordnance.type);
     }
     if (!out) {
         throw std::runtime_error("cannot write " + args[4]);
