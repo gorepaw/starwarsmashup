@@ -199,25 +199,26 @@ int cmd_export_soldier(const std::vector<std::string>& args) {
         }
     }
 
-    // Blasters only (base "cannon"): no grenades, and no award weapons, which are unlocks.
+    // Blasters only (base "cannon" firing bolts or bullets): no grenades,
+    // launchers or buffs, and no award weapons, which are unlocks.
     int written = 0;
     for (const auto& [hash, name] : soldier.properties) {
         if (hash != odf_hash("WeaponName") || written == 2 || name.find("award") != std::string::npos) {
             continue;
         }
         const OdfClass weapon = library.resolve(name);
-        if (weapon.base != "cannon") {
+        const OdfClass ordnance = library.resolve(weapon.get("OrdnanceName").value_or(""));
+        if (weapon.base != "cannon" || (ordnance.base != "bolt" && ordnance.base != "bullet")) {
             continue;
         }
         out << "\n[weapon]\nName = " << name << "\n";
         for (const char* key : {"ShotDelay", "RoundsPerClip", "ReloadTime", "HeatPerShot", "HeatRecoverRate",
                                 "HeatThreshold", "YawSpread", "PitchSpread", "SpreadPerShot", "SpreadRecoverRate",
-                                "SpreadLimit", "MaxRange"}) {
+                                "SpreadLimit", "ShotsPerSalvo", "MaxRange"}) {
             if (const auto value = weapon.get(key)) {
                 out << key << " = " << *value << "\n";
             }
         }
-        const OdfClass ordnance = library.resolve(weapon.get("OrdnanceName").value_or(""));
         out << "; bolt: " << ordnance.type << "\n";
         for (const char* key : {"MaxDamage", "PersonScale", "Velocity", "Gravity", "LifeSpan", "LaserGlowColor",
                                 "LaserLength", "LaserWidth", "LightColor", "LightRadius"}) {

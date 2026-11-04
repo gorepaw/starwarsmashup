@@ -1,8 +1,10 @@
 # Game simulation library. Pure C++: no Godot headers (see docs/ARCHITECTURE.md).
 add_library(swm_core STATIC
+  src/bot.cpp
   src/build_info.cpp
   src/client.cpp
   src/combat.cpp
+  src/conquest.cpp
   src/heightfield.cpp
   src/ini.cpp
   src/movement.cpp
@@ -24,7 +26,7 @@ add_library(swm_sqlite_store STATIC src/sqlite_store.cpp)
 target_link_libraries(swm_sqlite_store PUBLIC swm_core PRIVATE swm::sqlite3)
 swm_target_warnings(swm_sqlite_store)
 
-foreach(test core_test movement_test net_test persistence_test combat_test)
+foreach(test core_test movement_test net_test persistence_test combat_test match_test)
   add_executable(${test} tests/${test}.cpp)
   target_link_libraries(${test} PRIVATE swm_core swm_sqlite_store)
   swm_target_warnings(${test})

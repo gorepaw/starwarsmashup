@@ -38,6 +38,19 @@ MoveState lerp_state(const MoveState& a, const MoveState& b, double t) {
 GameClient::GameClient(net::Link& link, const World& world, ClientConfig config)
     : link_(link), world_(world), config_(std::move(config)) {}
 
+const SoldierDef& GameClient::soldier() const {
+    if (config_.battlefield && self_.team >= 0) {
+        const auto& classes = config_.battlefield->teams[size_t(self_.team)].classes;
+        return classes[std::min<size_t>(self_.soldier_class, classes.size() - 1)];
+    }
+    return config_.soldier;
+}
+
+void GameClient::request_spawn(int soldier_class, int post) {
+    spawn_request_ = net::SpawnRequest{uint8_t(std::clamp(soldier_class, 0, 255)), uint8_t(std::clamp(post, 0, 255))};
+    last_spawn_request_ = -1e9;  // send at once
+}
+
 void GameClient::set_input(const Controls& c) {
     next_input_.forward = quantize_axis(c.forward);
     next_input_.right = quantize_axis(c.right);
@@ -81,6 +94,11 @@ void GameClient::update(double now) {
     if (status_ == Status::connecting && now - last_hello_ >= config_.hello_interval) {
         link_.send(config_.server, net::encode(net::Hello{config_.name}));
         last_hello_ = now;
+    }
+    if (status_ == Status::connected && spawn_request_ && self_.life == Life::waiting &&
+        now - last_spawn_request_ >= config_.spawn_request_interval) {
+        link_.send(config_.server, net::encode(*spawn_request_));
+        last_spawn_request_ = now;
     }
     if (spawned_) {
         const double dt = 1 / tick_rate_;
@@ -156,6 +174,7 @@ void GameClient::handle(const net::Datagram& datagram, double now) {
     }
     bolts_time_ = now;
     events_.insert(events_.end(), snapshot->events.begin(), snapshot->events.end());
+    match_ = snapshot->match;
 
     std::map<uint32_t, std::deque<Sample>> seen;
     for (const net::EntityState& entity : snapshot->entities) {
@@ -168,7 +187,7 @@ void GameClient::handle(const net::Datagram& datagram, double now) {
         if (auto it = history_.find(entity.id); it != history_.end()) {
             samples = std::move(it->second);
         }
-        samples.push_back({snapshot->server_tick, entity.state, entity.health, entity.alive, entity.spawn_count});
+        samples.push_back({snapshot->server_tick, entity});
         while (samples.size() > 2 && samples[1].tick + 1 < render_tick_) {
             samples.pop_front();
         }
@@ -178,11 +197,10 @@ void GameClient::handle(const net::Datagram& datagram, double now) {
 
 void GameClient::reconcile(uint32_t last_input, const net::EntityState& server, double now) {
     const MoveState& server_state = server.state;
-    health_ = server.health;
-    alive_ = server.alive;
+    const uint8_t spawn_count = self_.spawn_count;
+    self_ = server;  // also picks the class the replay below predicts with
     if (!spawned_) {
         spawned_ = true;
-        spawn_count_ = server.spawn_count;
         current_ = previous_ = server_state;
         next_tick_time_ = now;
         return;
@@ -193,7 +211,7 @@ void GameClient::reconcile(uint32_t last_input, const net::EntityState& server, 
         if (acked.input.sequence == last_input) {
             const double error = (acked.result.position - server_state.position).length();
             // A respawn moves the character on purpose: not a misprediction.
-            if (!(acked.result == server_state) && server.spawn_count == spawn_count_) {
+            if (!(acked.result == server_state) && server.spawn_count == spawn_count) {
                 ++stats_.corrections;
                 stats_.max_correction = std::max(stats_.max_correction, error);
             }
@@ -206,12 +224,14 @@ void GameClient::reconcile(uint32_t last_input, const net::EntityState& server, 
     const double dt = 1 / tick_rate_;
     MoveState state = server_state;
     for (Pending& p : pending_) {
-        simulate_character(state, p.input, alive_, world_, config_.soldier, dt);  // shots were drawn already
+        if (self_.life != Life::waiting) {
+            simulate_character(state, p.input, alive(), world_, soldier(), dt);  // shots were drawn already
+        }
         p.result = state;
     }
-    if (server.spawn_count != spawn_count_) {
+    if (server.spawn_count != spawn_count) {
         // Respawned: appear at the spawn point at once.
-        spawn_count_ = server.spawn_count;
+        spawn_request_.reset();
         correction_ = {};
         previous_ = current_ = state;
         return;
@@ -226,8 +246,10 @@ void GameClient::tick(double now) {
     input.sequence = ++sequence_;
     input.view_tick = render_tick_;
     previous_ = current_;
-    if (auto shot = simulate_character(current_, input, alive_, world_, config_.soldier, 1 / tick_rate_)) {
-        shots_.push_back(*shot);
+    if (self_.life != Life::waiting) {
+        if (auto shot = simulate_character(current_, input, alive(), world_, soldier(), 1 / tick_rate_)) {
+            shots_.push_back(*shot);
+        }
     }
     pending_.push_back({input, current_, now});
     while (pending_.size() > max_pending) {
@@ -276,23 +298,27 @@ std::vector<GameClient::Remote> GameClient::remotes() const {
         // Between the two samples around the render time; held at the ends.
         // Across a respawn, jump rather than glide.
         const Sample* shown = &samples.back();
-        MoveState state = shown->state;
+        MoveState state = shown->entity.state;
         if (render_tick_ <= samples.front().tick) {
             shown = &samples.front();
-            state = shown->state;
+            state = shown->entity.state;
         }
         for (size_t i = 0; i + 1 < samples.size(); ++i) {
             const Sample& a = samples[i];
             const Sample& b = samples[i + 1];
             if (render_tick_ >= a.tick && render_tick_ <= b.tick) {
                 shown = &a;
-                state = a.spawn_count == b.spawn_count
-                            ? lerp_state(a.state, b.state, (render_tick_ - a.tick) / double(b.tick - a.tick))
-                            : a.state;
+                state = a.entity.spawn_count == b.entity.spawn_count
+                            ? lerp_state(a.entity.state, b.entity.state,
+                                         (render_tick_ - a.tick) / double(b.tick - a.tick))
+                            : a.entity.state;
                 break;
             }
         }
-        out.push_back({id, state, shown->health, shown->alive});
+        Remote remote = shown->entity;
+        remote.id = id;
+        remote.state = state;
+        out.push_back(remote);
     }
     return out;
 }

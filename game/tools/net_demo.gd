@@ -6,8 +6,8 @@
 #   godot --path game --script res://tools/net_demo.gd -- <bake_prefix> <character.gltf>
 #         [--server a.b.c.d:port] [--host <port>] [--db <file>] [--spawn <x> <z>] [--name <name>]
 #         [--building <building.gltf> <x> <y> <z> <yaw>] [--bot circle|chase|route] [--route <x,z;x,z;...>]
-#         [--soldier <file.ini>] [--lag <ms>] [--jitter <ms>] [--loss <0..1>]
-#         [--seconds <n>] [--shots <output_prefix>] [--solo] [--terrain3d]
+#         [--soldier <file.ini>] [--battlefield <file.ini>] [--bots <n>] [--lag <ms>] [--jitter <ms>]
+#         [--loss <0..1>] [--seconds <n>] [--shots <output_prefix>] [--solo] [--terrain3d]
 #
 # Connects to a running server (default 127.0.0.1:7777; see server/ for
 # swm_server), or with --host runs one in this process and joins it; --db
@@ -25,12 +25,18 @@
 # --soldier is the soldier class (bf2tool export-soldier: health, movement,
 # weapons); the server must use the same file.
 #
+# --battlefield joins (or with --host, hosts) a conquest match on a
+# battlefield file (game/battlefields/); the server must use the same file.
+# --bots adds bots to a hosted server. In a match you choose a class (1-9)
+# and a command post your team holds (Q/E), and spawn with Space or a click.
+# Posts show as beams: blue yours, red the enemy's, white neutral.
+#
 # Controls: WASD to move, mouse to aim, Shift to sprint, Space to jump, left
 # mouse to fire, R to reload, 1 and 2 for weapons, Esc to free the mouse (Esc
 # again quits). Shots fly as bolts; the server decides what they hit. --bot
 # drives the character instead:
-# "circle" runs in circles, "chase" runs after the nearest other player and
-# shoots at it,
+# "circle" runs in circles, "chase" runs after the nearest enemy and
+# shoots at it, "conquest" is the C++ bot (core::Bot) playing the match,
 # "route" runs through --route's points (Galaxies x,z, as walk_building.gd
 # prints them) from the nearest one, then stands.
 # --lag/--jitter/--loss simulate a bad connection on this client.
@@ -58,6 +64,10 @@ const AIM_DISTANCE := 40.0    # the crosshair's ray converges with the shot here
 const BOT_FIRE_RANGE := 40.0
 const BOLT_GLOW := 6.0        # emission strength; a graphics setting, like everything about bolt looks
 const BOLT_STRETCH := 3.0     # drawn length times LaserLength (Battlefront adds a longer glow), and width times half that
+const FRIEND_COLOR := Color(0.35, 0.6, 1.0)
+const ENEMY_COLOR := Color(1.0, 0.3, 0.25)
+const NEUTRAL_COLOR := Color(0.9, 0.9, 0.9)
+const POST_BEAM_HEIGHT := 30.0
 
 var _client: Object
 var _server: Object
@@ -85,10 +95,18 @@ var _crosshair: Label
 var _feed: Label
 var _feed_lines: PackedStringArray = []
 var _hit_flash := 0.0
-var _weapons: Array = []          # from SwmClient.get_weapons
+var _weapons: Array = []          # from SwmClient.get_weapons: the class being played
 var _weapon := 0                  # slot wanted
-var _bolt_materials: Array = []   # per weapon slot
-var _bolt_mesh: BoxMesh
+var _bolt_materials := {}         # bolt color (html) -> material
+var _bolt_mesh: BoxMesh           # a unit cube, scaled per bolt
+var _battlefield: Dictionary = {} # from SwmClient.get_battlefield; empty outside a match
+var _posts: Array = []            # per command post: {beam, ring, label, material}
+var _spawn_class := 0
+var _spawn_post := -1
+var _spawn_requested := false
+var _center: Label                # spawn menu, results, warnings
+var _match_label: RichTextLabel
+var _outside := 0.0               # seconds out of bounds
 var _own_bolts: Array = []        # [{node, velocity, life, gravity}] drawn from predicted shots
 var _remote_bolt_nodes: Array[MeshInstance3D] = []
 var _kills := 0
@@ -102,7 +120,8 @@ func _init() -> void:
 	var args := OS.get_cmdline_user_args()
 	if args.size() < 2 or not ClassDB.class_exists("SwmClient"):
 		printerr("usage: -- <bake_prefix> <character.gltf> [--server addr:port] [--host port] [--spawn x z] ",
-				"[--name n] [--building gltf x y z yaw] [--bot circle|chase|route] [--route x,z;...] [--lag ms] ",
+				"[--name n] [--building gltf x y z yaw] [--bot circle|chase|route|conquest] [--route x,z;...] ",
+				"[--soldier ini] [--battlefield ini] [--bots n] [--lag ms] ",
 				"[--jitter ms] [--loss 0..1] [--seconds n] [--shots prefix] [--solo] [--terrain3d]",
 				"   (needs the swm GDExtension)")
 		quit(2)
@@ -135,6 +154,7 @@ func _init() -> void:
 		building_yaw = float(building[4])
 
 	var server := _option(args, "--server", "127.0.0.1:7777")
+	var battlefield := _option(args, "--battlefield", "")
 	var host := _option(args, "--host", "")
 	if host != "":
 		_server = ClassDB.instantiate("SwmServer")
@@ -147,6 +167,10 @@ func _init() -> void:
 		if _option(args, "--soldier", "") != "" and _server.set_soldier(_os_path(_option(args, "--soldier", ""))) != OK:
 			quit(1)
 			return
+		if battlefield != "" and _server.set_battlefield(_os_path(battlefield)) != OK:
+			quit(1)
+			return
+		_server.set_bots(int(_option(args, "--bots", "0")))
 		var spawn := _spawn(args, meta)
 		if _server.start(int(host), bake_path, spawn) != OK:
 			quit(1)
@@ -163,10 +187,15 @@ func _init() -> void:
 	if _option(args, "--soldier", "") != "" and _client.set_soldier(_os_path(_option(args, "--soldier", ""))) != OK:
 		quit(1)
 		return
+	if battlefield != "" and _client.set_battlefield(_os_path(battlefield)) != OK:
+		quit(1)
+		return
+	_client.set_bot(_bot == "conquest")
 	_weapons = _client.get_weapons()
 	if _client.start(server, bake_path, _option(args, "--name", "player")) != OK:
 		quit(1)
 		return
+	_battlefield = _client.get_battlefield()
 
 	_add_terrain(bake, meta, args.has("--terrain3d"))
 	if not building.is_empty() and not _add_building(building[0], building_position, building_yaw):
@@ -177,6 +206,7 @@ func _init() -> void:
 		quit(1)
 		return
 	_setup_scene()
+	_add_posts()
 	root.window_input.connect(_on_input)
 	DisplayServer.window_set_size(Vector2i(1280, 720))
 	if _bot == "":
@@ -187,7 +217,8 @@ func _process(delta: float) -> bool:
 	_elapsed += delta
 	if _server != null:
 		_server.update()
-	_client.set_input(_controls())
+	if _bot != "conquest":
+		_client.set_input(_controls())
 	_client.update()
 
 	if _client.is_spawned():
@@ -196,9 +227,16 @@ func _process(delta: float) -> bool:
 			_announced = true
 			var at: Vector3 = own["position"]
 			print("spawned as character %d at Galaxies (%.2f, %.2f, %.2f)" % [_client.get_character_id(), -at.x, at.y, at.z])
+		_weapons = _client.get_weapons()
 		_pose(_own, own)
-		_update_remotes()
-		_update_camera(own["position"], delta)
+		_update_remotes(int(own["team"]))
+		var game: Dictionary = _client.get_match()
+		_update_posts(game, int(own["team"]))
+		if own["life"] == "waiting" and not game.is_empty():
+			_choose_spawn(game, own)
+		else:
+			_spawn_requested = false
+			_update_camera(own["position"], delta)
 		_update_bolts(delta)
 		_update_events()
 	_update_hud(delta)
@@ -231,6 +269,11 @@ func _finish() -> bool:
 	var at: Vector3 = _client.get_presented().get("position", Vector3.ZERO)
 	print("left at Galaxies (%.2f, %.2f, %.2f)" % [-at.x, at.y, at.z])
 	print("combat: %d hits, %d kills, %d deaths" % [_hits, _kills, _deaths])
+	var game: Dictionary = _client.get_match()
+	if not game.is_empty():
+		var own: Dictionary = _client.get_presented()
+		print("match: %s, tickets %d to %d; team %s, %d captures" % [game["phase"], ceili(game["tickets"][0]),
+				ceili(game["tickets"][1]), _team_name(int(own["team"])), own["captures"]])
 	print("status %s, entity %d, %d ticks, %d snapshots, %d corrections (max %.3f m), rtt %.0f ms, saw other players: %s" % [
 			_client.get_status(), _client.get_entity_id(), stats.get("ticks", 0), stats.get("snapshots", 0),
 			stats.get("corrections", 0), stats.get("max_correction", 0.0), stats.get("rtt_ms", 0.0), _saw_remote])
@@ -263,7 +306,7 @@ func _controls() -> Dictionary:
 		"route":
 			return _follow_route()
 		"chase":
-			var target := _nearest_remote()
+			var target := _nearest_enemy()
 			if target.is_empty() or not _client.is_spawned():
 				return {"yaw": _yaw}
 			var eye: Vector3 = _client.get_presented()["position"] + Vector3.UP * EYE_HEIGHT
@@ -305,6 +348,19 @@ func _on_input(event: InputEvent) -> void:
 		_pitch = clampf(_pitch - motion.relative.y * MOUSE_SENSITIVITY, -1.2, 0.6)
 	elif event is InputEventMouseButton and event.pressed and not _mouse_captured:
 		_capture_mouse(true)
+	elif event is InputEventMouseButton and event.pressed and _choosing_spawn():
+		_request_spawn()
+	elif event is InputEventKey and event.pressed and _choosing_spawn() and event.physical_keycode != KEY_ESCAPE:
+		var key: int = event.physical_keycode
+		var classes: Array = _battlefield["teams"][int(_client.get_presented()["team"])]["classes"]
+		if key >= KEY_1 and key <= KEY_9:
+			_spawn_class = mini(key - KEY_1, classes.size() - 1)
+		elif key in [KEY_Q, KEY_LEFT]:
+			_cycle_post(-1)
+		elif key in [KEY_E, KEY_RIGHT]:
+			_cycle_post(1)
+		elif key in [KEY_SPACE, KEY_ENTER]:
+			_request_spawn()
 	elif event is InputEventKey and event.pressed and event.physical_keycode in [KEY_1, KEY_2]:
 		_weapon = mini(int(event.physical_keycode - KEY_1), _weapons.size() - 1)
 	elif event is InputEventKey and event.pressed and event.physical_keycode == KEY_ESCAPE:
@@ -329,7 +385,21 @@ func _nearest_remote() -> Dictionary:
 	return best
 
 
-func _update_remotes() -> void:
+# The nearest living character on the other team (anyone, outside a match).
+func _nearest_enemy() -> Dictionary:
+	var own: Dictionary = _client.get_presented()
+	var best: Dictionary = {}
+	for remote: Dictionary in _client.get_remotes():
+		var enemy := int(own["team"]) < 0 or int(remote["team"]) != int(own["team"])
+		if not enemy or not remote["alive"]:
+			continue
+		var position: Vector3 = remote["position"]
+		if best.is_empty() or position.distance_to(own["position"]) < (best["position"] as Vector3).distance_to(own["position"]):
+			best = remote
+	return best
+
+
+func _update_remotes(own_team: int) -> void:
 	var seen := {}
 	for remote: Dictionary in _client.get_remotes():
 		var id: int = remote["id"]
@@ -339,8 +409,22 @@ func _update_remotes() -> void:
 			var character := _add_character()
 			if character.is_empty():
 				continue
+			var tag := Label3D.new()
+			tag.billboard = BaseMaterial3D.BILLBOARD_ENABLED
+			tag.fixed_size = true
+			tag.pixel_size = 0.0012
+			tag.font_size = 24
+			tag.outline_size = 6
+			tag.no_depth_test = true
+			tag.position = Vector3.UP * 2.3
+			(character["model"] as Node3D).add_child(tag)
+			character["tag"] = tag
 			_remotes[id] = character
 		_pose(_remotes[id], remote)
+		var tag: Label3D = _remotes[id]["tag"]
+		var friend := own_team >= 0 and int(remote["team"]) == own_team
+		tag.text = "player %d" % id
+		tag.modulate = FRIEND_COLOR if friend else ENEMY_COLOR
 	for id: int in _remotes.keys():
 		if not seen.has(id):
 			(_remotes[id]["model"] as Node).queue_free()
@@ -349,7 +433,7 @@ func _update_remotes() -> void:
 
 func _pose(character: Dictionary, state: Dictionary) -> void:
 	var model: Node3D = character["model"]
-	model.visible = bool(state.get("alive", true))
+	model.visible = bool(state.get("alive", true))  # no death animations yet
 	model.position = state["position"]
 	model.rotation.y = float(state["yaw"]) + PI  # the model faces +Z; yaw 0 faces -Z
 	var player: AnimationPlayer = character["player"]
@@ -445,9 +529,8 @@ func _update_hud(delta: float) -> void:
 			ammo = "heat %d%%%s" % [roundi(float(own["heat"]) * 100), "  OVERHEATED" if own["overheated"] else ""]
 		lines.append("health %d / %d | %s: %s | energy %d" % [roundi(own["health"]), roundi(_client.get_max_health()),
 				weapon.get("name", "?"), ammo, roundi(own["energy"])])
-		if not own["alive"]:
-			lines.append("Eliminated. Respawning...")
 	_hud.text = "\n".join(lines)
+	_update_match_hud(delta)
 	_hit_flash = maxf(0.0, _hit_flash - delta)
 	_crosshair.text = "x" if _hit_flash > 0 else "+"
 	_crosshair.modulate = Color(1, 0.3, 0.3) if _hit_flash > 0 else Color.WHITE
@@ -463,11 +546,17 @@ func _update_events() -> void:
 			_hits += 1
 			_hit_flash = 0.15
 		elif event["kind"] == "kill":
-			_kills += 1 if mine else 0
+			_kills += 1 if mine and int(event["victim"]) != me else 0
 			_deaths += 1 if int(event["victim"]) == me else 0
-			_feed_lines.append("%s eliminated %s" % [_who(event["attacker"]), _who(event["victim"])])
-			if _feed_lines.size() > 5:
-				_feed_lines.remove_at(0)
+			if int(event["attacker"]) == 0:
+				_feed_lines.append("%s died" % _who(event["victim"]))
+			else:
+				_feed_lines.append("%s eliminated %s" % [_who(event["attacker"]), _who(event["victim"])])
+		elif event["kind"] in ["captured", "neutralized"] and not _battlefield.is_empty():
+			_feed_lines.append("%s %s %s" % [_team_name(int(event["attacker"])), event["kind"],
+					_battlefield["posts"][int(event["victim"])]["name"]])
+		if _feed_lines.size() > 5:
+			_feed_lines.remove_at(0)
 
 
 func _who(id: int) -> String:
@@ -478,11 +567,12 @@ func _who(id: int) -> String:
 # come from the server. Only looks: what they hit is the server's call.
 func _update_bolts(delta: float) -> void:
 	for shot: Dictionary in _client.take_shots():
-		var weapon: Dictionary = _weapons[int(shot["weapon"])]
-		var node := _bolt_node(int(shot["weapon"]))
-		var velocity: Vector3 = shot["direction"] * float(weapon["bolt_speed"])
-		_place_bolt(node, shot["origin"], velocity)
-		_own_bolts.append({"node": node, "velocity": velocity, "life": float(weapon["bolt_life"])})
+		var weapon: Dictionary = _weapons[mini(int(shot["weapon"]), _weapons.size() - 1)]
+		for direction: Vector3 in shot["directions"]:
+			var node := _bolt_node(shot)
+			var velocity: Vector3 = direction * float(weapon["bolt_speed"])
+			_place_bolt(node, shot["origin"], velocity)
+			_own_bolts.append({"node": node, "velocity": velocity, "life": float(weapon["bolt_life"])})
 	for i in range(_own_bolts.size() - 1, -1, -1):
 		var bolt: Dictionary = _own_bolts[i]
 		bolt["life"] = float(bolt["life"]) - delta
@@ -496,32 +586,51 @@ func _update_bolts(delta: float) -> void:
 
 	var remote: Array = _client.get_bolts()
 	while _remote_bolt_nodes.size() < remote.size():
-		_remote_bolt_nodes.append(_bolt_node(0))
+		_remote_bolt_nodes.append(_bolt_node(remote[_remote_bolt_nodes.size()]))
 	for i in _remote_bolt_nodes.size():
 		var node := _remote_bolt_nodes[i]
 		node.visible = i < remote.size()
 		if node.visible:
 			var bolt: Dictionary = remote[i]
-			node.material_override = _bolt_materials[mini(int(bolt["weapon"]), _bolt_materials.size() - 1)]
+			_style_bolt(node, bolt)
 			_place_bolt(node, bolt["position"], bolt["velocity"])
 
 
-func _bolt_node(weapon: int) -> MeshInstance3D:
+# `look` has the firing weapon's {color, length, width}.
+func _bolt_node(look: Dictionary) -> MeshInstance3D:
 	var node := MeshInstance3D.new()
 	node.mesh = _bolt_mesh
-	node.material_override = _bolt_materials[mini(weapon, _bolt_materials.size() - 1)]
 	node.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	_style_bolt(node, look)
 	root.add_child(node)
 	return node
 
 
-# A bolt is a thin glowing box along its velocity, LaserLength by LaserWidth.
+# Battlefront's bolt color, length and width; how they're drawn (glow,
+# stretch) is up to the graphics settings.
+func _style_bolt(node: MeshInstance3D, look: Dictionary) -> void:
+	var color: Color = look["color"]
+	var key := color.to_html()
+	if not _bolt_materials.has(key):
+		var material := StandardMaterial3D.new()
+		material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+		material.albedo_color = Color(color.r, color.g, color.b)
+		material.emission_enabled = true
+		material.emission = Color(color.r, color.g, color.b)
+		material.emission_energy_multiplier = BOLT_GLOW
+		_bolt_materials[key] = material
+	node.material_override = _bolt_materials[key]
+	var width := float(look["width"]) * BOLT_STRETCH / 2
+	node.set_meta("size", Vector3(width, width, float(look["length"]) * BOLT_STRETCH))
+
+
+# A bolt is a thin glowing box along its velocity.
 func _place_bolt(node: MeshInstance3D, position: Vector3, velocity: Vector3) -> void:
 	node.position = position
 	if velocity.length_squared() > 0.0001:
 		var forward := velocity.normalized()
 		var up := Vector3.UP if absf(forward.y) < 0.99 else Vector3.RIGHT
-		node.basis = Basis.looking_at(forward, up)
+		node.basis = Basis.looking_at(forward, up) * Basis.from_scale(node.get_meta("size", Vector3.ONE))
 
 
 func _add_character() -> Dictionary:
@@ -600,7 +709,10 @@ func _setup_scene() -> void:
 
 	var layer := CanvasLayer.new()
 	_hud = Label.new()
-	_hud.position = Vector2(12, 8)
+	_hud.set_anchors_and_offsets_preset(Control.PRESET_BOTTOM_LEFT)
+	_hud.grow_vertical = Control.GROW_DIRECTION_BEGIN
+	_hud.offset_left = 12
+	_hud.offset_bottom = -8
 	_hud.add_theme_color_override("font_outline_color", Color.BLACK)
 	_hud.add_theme_constant_override("outline_size", 4)
 	layer.add_child(_hud)
@@ -621,29 +733,229 @@ func _setup_scene() -> void:
 	_feed.add_theme_color_override("font_outline_color", Color.BLACK)
 	_feed.add_theme_constant_override("outline_size", 4)
 	layer.add_child(_feed)
+	_center = Label.new()
+	_center.set_anchors_and_offsets_preset(Control.PRESET_CENTER)
+	_center.grow_horizontal = Control.GROW_DIRECTION_BOTH
+	_center.grow_vertical = Control.GROW_DIRECTION_BOTH
+	_center.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_center.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	_center.add_theme_font_size_override("font_size", 20)
+	_center.add_theme_color_override("font_outline_color", Color.BLACK)
+	_center.add_theme_constant_override("outline_size", 6)
+	layer.add_child(_center)
+	_match_label = RichTextLabel.new()
+	_match_label.bbcode_enabled = true
+	_match_label.fit_content = true
+	_match_label.scroll_active = false
+	_match_label.set_anchors_and_offsets_preset(Control.PRESET_CENTER_TOP)
+	_match_label.position = Vector2(-300, 8)
+	_match_label.size = Vector2(600, 90)
+	_match_label.add_theme_color_override("font_outline_color", Color.BLACK)
+	_match_label.add_theme_constant_override("outline_size", 4)
+	layer.add_child(_match_label)
 	root.add_child(layer)
 
-	# One look per weapon: Battlefront's bolt color, length and width.
 	_bolt_mesh = BoxMesh.new()
 	_bolt_mesh.size = Vector3(1, 1, 1)
-	for weapon: Dictionary in _weapons:
+
+
+# Command posts: a beam, a ring around the capture region and a name, in the
+# owner's color.
+func _add_posts() -> void:
+	if _battlefield.is_empty():
+		return
+	for post: Dictionary in _battlefield["posts"]:
 		var material := StandardMaterial3D.new()
-		var color: Color = weapon["bolt_color"]
 		material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
-		material.albedo_color = Color(color.r, color.g, color.b)
-		material.emission_enabled = true
-		material.emission = Color(color.r, color.g, color.b)
-		material.emission_energy_multiplier = BOLT_GLOW
-		_bolt_materials.append(material)
-	if _bolt_materials.is_empty():
-		var fallback := StandardMaterial3D.new()
-		fallback.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
-		fallback.albedo_color = Color.RED
-		_bolt_materials.append(fallback)
-	if not _weapons.is_empty():
-		var first: Dictionary = _weapons[0]
-		var width := float(first["bolt_width"]) * BOLT_STRETCH / 2
-		_bolt_mesh.size = Vector3(width, width, float(first["bolt_length"]) * BOLT_STRETCH)
+		material.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+		material.albedo_color = NEUTRAL_COLOR
+		var position: Vector3 = post["position"]
+		var beam := MeshInstance3D.new()
+		var cylinder := CylinderMesh.new()
+		cylinder.top_radius = 0.25
+		cylinder.bottom_radius = 0.25
+		cylinder.height = POST_BEAM_HEIGHT
+		beam.mesh = cylinder
+		beam.material_override = material
+		beam.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		beam.position = position + Vector3.UP * POST_BEAM_HEIGHT / 2
+		root.add_child(beam)
+		var ring := MeshInstance3D.new()
+		var torus := TorusMesh.new()
+		torus.outer_radius = float(post["radius"])
+		torus.inner_radius = float(post["radius"]) - 0.3
+		ring.mesh = torus
+		ring.material_override = material
+		ring.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		ring.position = position + Vector3.UP * 0.15
+		root.add_child(ring)
+		var label := Label3D.new()
+		label.billboard = BaseMaterial3D.BILLBOARD_ENABLED
+		label.fixed_size = true
+		label.pixel_size = 0.0015
+		label.font_size = 28
+		label.outline_size = 8
+		label.no_depth_test = true
+		label.position = position + Vector3.UP * 6
+		root.add_child(label)
+		_posts.append({"material": material, "label": label})
+
+
+func _post_color(owner: int, own_team: int) -> Color:
+	if owner < 0:
+		return NEUTRAL_COLOR
+	return FRIEND_COLOR if owner == own_team else ENEMY_COLOR
+
+
+func _update_posts(game: Dictionary, own_team: int) -> void:
+	if game.is_empty():
+		return
+	for i in mini(_posts.size(), (game["posts"] as Array).size()):
+		var state: Dictionary = game["posts"][i]
+		var color := _post_color(int(state["owner"]), own_team)
+		var material: StandardMaterial3D = _posts[i]["material"]
+		material.albedo_color = Color(color, 0.75)
+		var label: Label3D = _posts[i]["label"]
+		var text: String = _battlefield["posts"][i]["name"]
+		if bool(state["contested"]):
+			text += " (contested)"
+		elif float(state["charge"]) < 1.0 and int(state["holder"]) >= 0:
+			text += " %d%%" % roundi(float(state["charge"]) * 100)
+		label.text = text
+		label.modulate = color
+
+
+func _team_name(team: int) -> String:
+	if _battlefield.is_empty() or team < 0 or team > 1:
+		return "nobody"
+	return _battlefield["teams"][team]["name"]
+
+
+func _owned_posts(game: Dictionary, team: int) -> Array[int]:
+	var owned: Array[int] = []
+	for i in (game["posts"] as Array).size():
+		if int(game["posts"][i]["owner"]) == team:
+			owned.append(i)
+	return owned
+
+
+func _choosing_spawn() -> bool:
+	return _client.is_spawned() and not _battlefield.is_empty() and _client.get_presented()["life"] == "waiting"
+
+
+func _cycle_post(step: int) -> void:
+	var owned := _owned_posts(_client.get_match(), int(_client.get_presented()["team"]))
+	if owned.is_empty():
+		return
+	var at := owned.find(_spawn_post)
+	_spawn_post = owned[posmod(at + step, owned.size())]
+
+
+func _request_spawn() -> void:
+	if _spawn_post >= 0:
+		_client.request_spawn(_spawn_class, _spawn_post)
+		_spawn_requested = true
+
+
+# The spawn screen: an overview of the chosen post. Bots other than the C++
+# one spawn as the first class at the first post their team holds.
+func _choose_spawn(game: Dictionary, own: Dictionary) -> void:
+	var owned := _owned_posts(game, int(own["team"]))
+	if not owned.has(_spawn_post):
+		_spawn_post = owned[0] if not owned.is_empty() else -1
+	if _bot != "" and _bot != "conquest" and not _spawn_requested:
+		_request_spawn()
+	if _spawn_post >= 0:
+		var target: Vector3 = _battlefield["posts"][_spawn_post]["position"]
+		var view := target + Basis(Vector3.UP, _yaw) * Vector3(0, 28, 38)
+		_camera.global_position = _camera.global_position.lerp(view, 0.1)
+		_camera.look_at(target, Vector3.UP)
+
+
+func _update_match_hud(delta: float) -> void:
+	_center.text = ""
+	var game: Dictionary = _client.get_match()
+	if game.is_empty() or not _client.is_spawned():
+		_match_label.text = ""
+		var own_state: Dictionary = _client.get_presented() if _client.is_spawned() else {}
+		if not own_state.is_empty() and not own_state["alive"]:
+			_center.text = "Eliminated. Respawning..."
+		return
+	var own: Dictionary = _client.get_presented()
+	var team := int(own["team"])
+	var text := "[center][color=#%s]%s %d[/color]     [color=#%s]%s %d[/color]\n" % [
+			_post_color(0, team).to_html(false), _team_name(0), ceili(game["tickets"][0]),
+			_post_color(1, team).to_html(false), _team_name(1), ceili(game["tickets"][1])]
+	match game["phase"]:
+		"warmup":
+			text += "Warmup: the match starts in %d s\n" % ceili(game["time_left"])
+		"live":
+			if int(game["dominant"]) >= 0:
+				text += "%s holds every command post: victory in %d s\n" % [_team_name(int(game["dominant"])),
+						ceili(game["victory_left"])]
+			else:
+				text += "\n"
+	var names := PackedStringArray()
+	for i in (game["posts"] as Array).size():
+		names.append("[color=#%s]%s[/color]" % [_post_color(int(game["posts"][i]["owner"]), team).to_html(false),
+				_battlefield["posts"][i]["name"]])
+	_match_label.text = text + "  ".join(names) + "[/center]"
+
+	var position: Vector3 = own["position"]
+	var inside := position.x >= float(_battlefield["min_x"]) and position.x <= float(_battlefield["max_x"]) \
+			and position.z >= float(_battlefield["min_z"]) and position.z <= float(_battlefield["max_z"])
+	_outside = 0.0 if inside or not own["alive"] else _outside + delta
+
+	if game["phase"] == "ended":
+		_center.text = _results(game, team)
+	elif own["life"] == "waiting":
+		_center.text = _spawn_menu(game, team)
+	elif own["life"] == "dead":
+		_center.text = "Eliminated"
+	elif _outside > 0:
+		_center.text = "Return to the battlefield!"
+
+
+func _spawn_menu(game: Dictionary, team: int) -> String:
+	var lines := PackedStringArray()
+	lines.append("%s: you fight for the %s" % [_battlefield["name"], _team_name(team)])
+	lines.append("")
+	var classes: Array = _battlefield["teams"][team]["classes"]
+	_spawn_class = mini(_spawn_class, classes.size() - 1)
+	for i in classes.size():
+		var soldier: Dictionary = classes[i]
+		lines.append("%s %d  %s  (%s, %d health)" % [">" if i == _spawn_class else "  ", i + 1, soldier["name"],
+				", ".join(soldier["weapons"]), roundi(soldier["max_health"])])
+	lines.append("")
+	if _spawn_post < 0:
+		lines.append("Your team holds no command posts")
+	else:
+		lines.append("Command post (Q / E):  < %s >" % _battlefield["posts"][_spawn_post]["name"])
+		lines.append("")
+		lines.append("Spawning..." if _spawn_requested else "Space or click to spawn")
+	if game["phase"] == "live" and ceili(game["tickets"][team]) <= 0:
+		lines.append("No reinforcements left")
+	return "\n".join(lines)
+
+
+func _results(game: Dictionary, team: int) -> String:
+	var winner := int(game["winner"])
+	var lines := PackedStringArray()
+	lines.append("Draw" if winner < 0 else ("Victory! " if winner == team else "Defeat. ") + "%s wins" % _team_name(winner))
+	lines.append("")
+	var everyone: Array = _client.get_remotes()
+	var own: Dictionary = _client.get_presented().duplicate()
+	own["id"] = _client.get_entity_id()
+	everyone.append(own)
+	for side in 2:
+		lines.append(_team_name(side))
+		var players := everyone.filter(func(p: Dictionary) -> bool: return int(p["team"]) == side)
+		players.sort_custom(func(a: Dictionary, b: Dictionary) -> bool: return int(a["kills"]) > int(b["kills"]))
+		for p: Dictionary in players:
+			lines.append("%-12s %3d kills %3d deaths %3d captures" % [_who(p["id"]), p["kills"], p["deaths"], p["captures"]])
+		lines.append("")
+	lines.append("Next match in %d s" % ceili(game["time_left"]))
+	return "\n".join(lines)
 
 
 # The server's spawn point (Galaxies x, z): --spawn, or the bake's center.

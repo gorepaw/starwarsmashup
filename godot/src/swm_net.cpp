@@ -36,6 +36,47 @@ godot::Dictionary to_dictionary(const core::MoveState& state) {
     return out;
 }
 
+const char* life_name(core::Life life) {
+    switch (life) {
+    case core::Life::waiting:
+        return "waiting";
+    case core::Life::alive:
+        return "alive";
+    case core::Life::dead:
+        return "dead";
+    }
+    return "";
+}
+
+// What snapshots say about an entity, besides its state.
+void describe(godot::Dictionary& out, const core::net::EntityState& entity) {
+    out["health"] = double(entity.health);
+    out["alive"] = entity.alive();
+    out["life"] = life_name(entity.life);
+    out["team"] = int64_t(entity.team);
+    out["soldier_class"] = int64_t(entity.soldier_class);
+    out["kills"] = int64_t(entity.kills);
+    out["deaths"] = int64_t(entity.deaths);
+    out["captures"] = int64_t(entity.captures);
+}
+
+void add_bolt_look(godot::Dictionary& entry, const core::WeaponDef& w) {
+    entry["color"] = godot::Color(float(w.bolt_color[0]), float(w.bolt_color[1]), float(w.bolt_color[2]),
+                                  float(w.bolt_color[3]));
+    entry["length"] = w.bolt_length;
+    entry["width"] = w.bolt_width;
+}
+
+godot::Error load_battlefield_file(std::optional<core::Battlefield>& battlefield, const godot::String& path) {
+    try {
+        battlefield = core::load_battlefield(to_std(path));
+    } catch (const std::exception& error) {
+        godot::UtilityFunctions::push_error("set_battlefield: ", error.what());
+        return godot::ERR_CANT_OPEN;
+    }
+    return godot::OK;
+}
+
 godot::Error load_soldier_file(core::SoldierDef& soldier, const godot::String& path) {
     try {
         soldier = core::load_soldier(to_std(path));
@@ -78,6 +119,112 @@ double SwmClient::now() const {
     return seconds_since(start_time_);
 }
 
+const core::SoldierDef& SwmClient::soldier() const {
+    return client_ ? client_->soldier() : soldier_;
+}
+
+const core::SoldierDef& SwmClient::soldier_of(int team, int soldier_class) const {
+    if (battlefield_ && team >= 0 && team < 2) {
+        const auto& classes = battlefield_->teams[size_t(team)].classes;
+        return classes[std::min<size_t>(size_t(soldier_class), classes.size() - 1)];
+    }
+    return soldier_;
+}
+
+godot::Error SwmClient::set_battlefield(const godot::String& path) {
+    return load_battlefield_file(battlefield_, path);
+}
+
+void SwmClient::set_bot(bool enabled) {
+    if (!enabled) {
+        bot_.reset();
+    } else if (!bot_) {
+        bot_ = std::make_unique<core::Bot>(uint64_t(start_time_.time_since_epoch().count()));
+    }
+}
+
+void SwmClient::request_spawn(int64_t soldier_class, int64_t post) {
+    if (client_) {
+        client_->request_spawn(int(soldier_class), int(post));
+    }
+}
+
+godot::Dictionary SwmClient::get_battlefield() const {
+    godot::Dictionary out;
+    if (!battlefield_) {
+        return out;
+    }
+    const core::Battlefield& field = *battlefield_;
+    out["name"] = godot::String::utf8(field.name.c_str());
+    out["min_x"] = field.min_x;
+    out["min_z"] = field.min_z;
+    out["max_x"] = field.max_x;
+    out["max_z"] = field.max_z;
+    godot::Array teams;
+    for (const core::Team& team : field.teams) {
+        godot::Array classes;
+        for (const core::SoldierDef& soldier : team.classes) {
+            godot::Array weapons;
+            for (const core::WeaponDef& weapon : soldier.weapons) {
+                weapons.push_back(godot::String::utf8(weapon.name.c_str()));
+            }
+            godot::Dictionary entry;
+            entry["name"] = godot::String::utf8(soldier.name.c_str());
+            entry["max_health"] = soldier.max_health;
+            entry["weapons"] = weapons;
+            classes.push_back(entry);
+        }
+        godot::Dictionary entry;
+        entry["name"] = godot::String::utf8(team.name.c_str());
+        entry["classes"] = classes;
+        teams.push_back(entry);
+    }
+    out["teams"] = teams;
+    godot::Array posts;
+    for (const core::CommandPost& post : field.posts) {
+        godot::Dictionary entry;
+        entry["name"] = godot::String::utf8(post.name.c_str());
+        core::Vec3 position = post.position;
+        if (world_) {
+            position.y = world_->terrain().height_at(position.x, position.z);
+        }
+        entry["position"] = to_godot(position);
+        entry["radius"] = post.radius;
+        entry["capturable"] = post.capturable;
+        posts.push_back(entry);
+    }
+    out["posts"] = posts;
+    return out;
+}
+
+godot::Dictionary SwmClient::get_match() const {
+    godot::Dictionary out;
+    if (!client_ || !client_->match()) {
+        return out;
+    }
+    const core::MatchState& match = *client_->match();
+    out["phase"] = match.phase == core::Phase::warmup ? "warmup" : match.phase == core::Phase::live ? "live" : "ended";
+    out["time_left"] = match.time_left;
+    godot::Array tickets;
+    tickets.push_back(match.tickets[0]);
+    tickets.push_back(match.tickets[1]);
+    out["tickets"] = tickets;
+    out["dominant"] = int64_t(match.dominant);
+    out["victory_left"] = match.victory_left;
+    out["winner"] = int64_t(match.winner);
+    godot::Array posts;
+    for (const core::PostState& post : match.posts) {
+        godot::Dictionary entry;
+        entry["owner"] = int64_t(post.owner);
+        entry["holder"] = int64_t(post.holder);
+        entry["charge"] = double(post.charge);
+        entry["contested"] = post.contested;
+        posts.push_back(entry);
+    }
+    out["posts"] = posts;
+    return out;
+}
+
 void SwmClient::set_simulated_network(double latency_ms, double jitter_ms, double loss) {
     impairment_.latency = latency_ms / 1000;
     impairment_.jitter = jitter_ms / 1000;
@@ -111,8 +258,9 @@ godot::Error SwmClient::start(const godot::String& server, const godot::String& 
         impaired_ = std::make_unique<core::net::ImpairedLink>(*udp_, impairment_, [this] { return now(); });
         link = impaired_.get();
     }
-    client_ = std::make_unique<core::GameClient>(
-        *link, *world_, core::ClientConfig{.server = *endpoint, .name = to_std(name), .soldier = soldier_});
+    core::ClientConfig config{.server = *endpoint, .name = to_std(name), .soldier = soldier_};
+    config.battlefield = battlefield_;
+    client_ = std::make_unique<core::GameClient>(*link, *world_, config);
     return godot::OK;
 }
 
@@ -139,6 +287,9 @@ void SwmClient::set_input(const godot::Dictionary& c) {
 
 void SwmClient::update() {
     if (client_) {
+        if (bot_) {
+            bot_->update(*client_, *world_, now());
+        }
         client_->update(now());
     }
 }
@@ -189,20 +340,29 @@ godot::Dictionary SwmClient::get_presented() const {
         return {};
     }
     godot::Dictionary out = to_dictionary(client_->presented());
-    out["health"] = client_->health();
-    out["alive"] = client_->alive();
+    describe(out, client_->self());
     return out;
 }
 
 godot::Array SwmClient::get_bolts() const {
     godot::Array out;
     if (client_) {
+        const auto remotes = client_->remotes();
         for (const core::net::BoltState& bolt : client_->bolts(now())) {
             godot::Dictionary entry;
             entry["owner"] = int64_t(bolt.owner);
             entry["weapon"] = int64_t(bolt.weapon);
             entry["position"] = to_godot(bolt.position);
             entry["velocity"] = to_godot(bolt.velocity);
+            int team = -1, soldier_class = 0;
+            for (const auto& remote : remotes) {
+                if (remote.id == bolt.owner) {
+                    team = remote.team;
+                    soldier_class = remote.soldier_class;
+                }
+            }
+            const core::SoldierDef& owner = soldier_of(team, soldier_class);
+            add_bolt_look(entry, owner.weapons[std::min<size_t>(bolt.weapon, owner.weapons.size() - 1)]);
             out.push_back(entry);
         }
     }
@@ -212,11 +372,17 @@ godot::Array SwmClient::get_bolts() const {
 godot::Array SwmClient::take_shots() {
     godot::Array out;
     if (client_) {
+        const core::SoldierDef& own = soldier();
         for (const core::Shot& shot : client_->take_shots()) {
             godot::Dictionary entry;
             entry["origin"] = to_godot(shot.origin);
-            entry["direction"] = to_godot(shot.direction);
+            godot::Array directions;
+            for (const core::Vec3& direction : shot.directions) {
+                directions.push_back(to_godot(direction));
+            }
+            entry["directions"] = directions;
             entry["weapon"] = int64_t(shot.weapon);
+            add_bolt_look(entry, own.weapons[std::min<size_t>(size_t(shot.weapon), own.weapons.size() - 1)]);
             out.push_back(entry);
         }
     }
@@ -228,7 +394,20 @@ godot::Array SwmClient::take_events() {
     if (client_) {
         for (const core::net::CombatEvent& event : client_->take_events()) {
             godot::Dictionary entry;
-            entry["kind"] = event.kind == core::net::CombatEvent::kill ? "kill" : "hit";
+            switch (event.kind) {
+            case core::net::CombatEvent::hit:
+                entry["kind"] = "hit";
+                break;
+            case core::net::CombatEvent::kill:
+                entry["kind"] = "kill";
+                break;
+            case core::net::CombatEvent::captured:
+                entry["kind"] = "captured";
+                break;
+            case core::net::CombatEvent::neutralized:
+                entry["kind"] = "neutralized";
+                break;
+            }
             entry["attacker"] = int64_t(event.attacker);
             entry["victim"] = int64_t(event.victim);
             entry["damage"] = double(event.damage);
@@ -240,7 +419,7 @@ godot::Array SwmClient::take_events() {
 
 godot::Array SwmClient::get_weapons() const {
     godot::Array out;
-    for (const core::WeaponDef& w : soldier_.weapons) {
+    for (const core::WeaponDef& w : soldier().weapons) {
         godot::Dictionary entry;
         entry["name"] = godot::String::utf8(w.name.c_str());
         entry["rounds_per_clip"] = int64_t(w.rounds_per_clip);
@@ -257,7 +436,7 @@ godot::Array SwmClient::get_weapons() const {
 }
 
 double SwmClient::get_max_health() const {
-    return soldier_.max_health;
+    return soldier().max_health;
 }
 
 godot::Array SwmClient::get_remotes() const {
@@ -266,8 +445,7 @@ godot::Array SwmClient::get_remotes() const {
         for (const core::GameClient::Remote& remote : client_->remotes()) {
             godot::Dictionary entry = to_dictionary(remote.state);
             entry["id"] = int64_t(remote.id);
-            entry["health"] = double(remote.health);
-            entry["alive"] = remote.alive;
+            describe(entry, remote);
             out.push_back(entry);
         }
     }
@@ -300,6 +478,11 @@ void SwmClient::_bind_methods() {
                          &SwmClient::add_building);
     ClassDB::bind_method(D_METHOD("start", "server", "bake_prefix", "name"), &SwmClient::start);
     ClassDB::bind_method(D_METHOD("set_soldier", "path"), &SwmClient::set_soldier);
+    ClassDB::bind_method(D_METHOD("set_battlefield", "path"), &SwmClient::set_battlefield);
+    ClassDB::bind_method(D_METHOD("set_bot", "enabled"), &SwmClient::set_bot);
+    ClassDB::bind_method(D_METHOD("get_battlefield"), &SwmClient::get_battlefield);
+    ClassDB::bind_method(D_METHOD("get_match"), &SwmClient::get_match);
+    ClassDB::bind_method(D_METHOD("request_spawn", "soldier_class", "post"), &SwmClient::request_spawn);
     ClassDB::bind_method(D_METHOD("set_input", "controls"), &SwmClient::set_input);
     ClassDB::bind_method(D_METHOD("get_bolts"), &SwmClient::get_bolts);
     ClassDB::bind_method(D_METHOD("take_shots"), &SwmClient::take_shots);
@@ -336,6 +519,14 @@ godot::Error SwmServer::set_soldier(const godot::String& path) {
     return load_soldier_file(soldier_, path);
 }
 
+godot::Error SwmServer::set_battlefield(const godot::String& path) {
+    return load_battlefield_file(battlefield_, path);
+}
+
+void SwmServer::set_bots(int64_t count) {
+    bot_count_ = int(std::clamp<int64_t>(count, 0, 64));
+}
+
 godot::Error SwmServer::start(int64_t port, const godot::String& bake_prefix, const godot::Vector2& spawn) {
     stop();  // the server refers to the ground, store and link replaced below
     try {
@@ -351,19 +542,39 @@ godot::Error SwmServer::start(int64_t port, const godot::String& bake_prefix, co
     }
     core::ServerConfig config;
     config.soldier = soldier_;
+    config.battlefield = battlefield_;
     config.spawn = {-spawn.x, 0, spawn.y};  // Galaxies to game coordinates
     server_ = std::make_unique<core::GameServer>(*udp_, *world_, config, store_.get());
     server_->log = [](const std::string& line) { godot::UtilityFunctions::print("server: ", line.c_str()); };
+    if (bot_count_ > 0) {
+        core::ClientConfig bot_config;
+        bot_config.server = *core::net::parse_endpoint("127.0.0.1:" + std::to_string(udp_->port()));
+        bot_config.soldier = soldier_;
+        bot_config.battlefield = battlefield_;
+        try {
+            bots_ = std::make_unique<core::BotPlayers>(bot_count_, *world_, bot_config);
+        } catch (const std::exception& error) {
+            godot::UtilityFunctions::push_error("SwmServer: bots: ", error.what());
+        }
+    }
     return godot::OK;
 }
 
 void SwmServer::update() {
     if (server_) {
-        server_->update(seconds_since(start_time_));
+        const double now = seconds_since(start_time_);
+        server_->update(now);
+        if (bots_) {
+            bots_->update(now);
+        }
     }
 }
 
 void SwmServer::stop() {
+    if (bots_) {
+        bots_->disconnect();
+    }
+    bots_.reset();
     if (server_) {
         server_->save_all();
     }
@@ -385,6 +596,8 @@ void SwmServer::_bind_methods() {
     using godot::D_METHOD;
     ClassDB::bind_method(D_METHOD("set_database", "path"), &SwmServer::set_database);
     ClassDB::bind_method(D_METHOD("set_soldier", "path"), &SwmServer::set_soldier);
+    ClassDB::bind_method(D_METHOD("set_battlefield", "path"), &SwmServer::set_battlefield);
+    ClassDB::bind_method(D_METHOD("set_bots", "count"), &SwmServer::set_bots);
     ClassDB::bind_method(D_METHOD("add_building", "collision_path", "position", "yaw_degrees"),
                          &SwmServer::add_building);
     ClassDB::bind_method(D_METHOD("start", "port", "bake_prefix", "spawn"), &SwmServer::start);

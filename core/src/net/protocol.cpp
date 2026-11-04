@@ -9,7 +9,7 @@ namespace swm::core::net {
 
 namespace {
 
-enum class Type : uint8_t { hello = 1, welcome, input_batch, snapshot, goodbye, refused };
+enum class Type : uint8_t { hello = 1, welcome, input_batch, snapshot, goodbye, refused, spawn_request };
 
 void put_vec3(ByteWriter& out, Vec3 v) {
     out.put(v.x);
@@ -95,6 +95,56 @@ MoveInput get_input(ByteReader& in) {
     return input;
 }
 
+void put_match(ByteWriter& out, const MatchState& m) {
+    out.put(uint8_t(m.phase));
+    out.put(float(m.time_left));
+    out.put(float(m.tickets[0]));
+    out.put(float(m.tickets[1]));
+    out.put(m.dominant);
+    out.put(float(m.victory_left));
+    out.put(m.winner);
+    out.put(uint8_t(m.posts.size()));
+    for (const PostState& post : m.posts) {
+        out.put(post.owner);
+        out.put(post.holder);
+        out.put(post.charge);
+        out.put(uint8_t(post.contested));
+    }
+}
+
+int8_t get_team(ByteReader& in) {
+    const int8_t team = in.get<int8_t>();
+    if (team < -1 || team > 1) {
+        throw PacketError("bad team");
+    }
+    return team;
+}
+
+MatchState get_match(ByteReader& in) {
+    MatchState m;
+    const uint8_t phase = in.get<uint8_t>();
+    if (phase > uint8_t(Phase::ended)) {
+        throw PacketError("bad match phase");
+    }
+    m.phase = Phase(phase);
+    m.time_left = in.get<float>();
+    m.tickets[0] = in.get<float>();
+    m.tickets[1] = in.get<float>();
+    m.dominant = get_team(in);
+    m.victory_left = in.get<float>();
+    m.winner = get_team(in);
+    const size_t count = in.get<uint8_t>();
+    for (size_t i = 0; i < count; ++i) {
+        PostState post;
+        post.owner = get_team(in);
+        post.holder = get_team(in);
+        post.charge = in.get<float>();
+        post.contested = in.get<uint8_t>() != 0;
+        m.posts.push_back(post);
+    }
+    return m;
+}
+
 struct Encoder {
     ByteWriter& out;
 
@@ -130,8 +180,13 @@ struct Encoder {
             out.put(entity.id);
             put_state(out, entity.state);
             out.put(entity.health);
-            out.put(uint8_t(entity.alive));
+            out.put(uint8_t(entity.life));
             out.put(entity.spawn_count);
+            out.put(entity.team);
+            out.put(entity.soldier_class);
+            out.put(entity.kills);
+            out.put(entity.deaths);
+            out.put(entity.captures);
         }
         out.put(uint16_t(m.bolts.size()));
         for (const BoltState& bolt : m.bolts) {
@@ -148,8 +203,17 @@ struct Encoder {
             out.put(event.victim);
             out.put(event.damage);
         }
+        out.put(uint8_t(m.match.has_value()));
+        if (m.match) {
+            put_match(out, *m.match);
+        }
     }
     void operator()(const Goodbye&) { out.put(uint8_t(Type::goodbye)); }
+    void operator()(const SpawnRequest& m) {
+        out.put(uint8_t(Type::spawn_request));
+        out.put(m.soldier_class);
+        out.put(m.post);
+    }
 };
 
 } // namespace
@@ -209,8 +273,17 @@ Message decode(std::span<const uint8_t> packet) {
             entity.id = in.get<uint32_t>();
             entity.state = get_state(in);
             entity.health = in.get<float>();
-            entity.alive = in.get<uint8_t>() != 0;
+            const uint8_t life = in.get<uint8_t>();
+            if (life > uint8_t(Life::dead)) {
+                throw PacketError("bad life state");
+            }
+            entity.life = Life(life);
             entity.spawn_count = in.get<uint8_t>();
+            entity.team = get_team(in);
+            entity.soldier_class = in.get<uint8_t>();
+            entity.kills = in.get<uint16_t>();
+            entity.deaths = in.get<uint16_t>();
+            entity.captures = in.get<uint16_t>();
             m.entities.push_back(entity);
         }
         const size_t bolts = in.get<uint16_t>();
@@ -227,7 +300,7 @@ Message decode(std::span<const uint8_t> packet) {
         for (size_t i = 0; i < events; ++i) {
             CombatEvent event;
             const uint8_t kind = in.get<uint8_t>();
-            if (kind != CombatEvent::hit && kind != CombatEvent::kill) {
+            if (kind < CombatEvent::hit || kind > CombatEvent::neutralized) {
                 throw PacketError("unknown combat event");
             }
             event.kind = CombatEvent::Kind(kind);
@@ -235,6 +308,9 @@ Message decode(std::span<const uint8_t> packet) {
             event.victim = in.get<uint32_t>();
             event.damage = in.get<float>();
             m.events.push_back(event);
+        }
+        if (in.get<uint8_t>() != 0) {
+            m.match = get_match(in);
         }
         message = std::move(m);
         break;
@@ -245,6 +321,13 @@ Message decode(std::span<const uint8_t> packet) {
     case Type::refused:
         message = Refused{in.get_string()};
         break;
+    case Type::spawn_request: {
+        SpawnRequest m;
+        m.soldier_class = in.get<uint8_t>();
+        m.post = in.get<uint8_t>();
+        message = m;
+        break;
+    }
     default:
         throw PacketError("unknown message type");
     }

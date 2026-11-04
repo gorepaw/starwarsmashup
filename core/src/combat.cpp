@@ -76,6 +76,7 @@ SoldierDef load_soldier(const std::filesystem::path& path) {
         w.spread_per_shot = s.number("SpreadPerShot", w.spread_per_shot);
         w.spread_recover_rate = s.number("SpreadRecoverRate", w.spread_recover_rate);
         w.spread_limit = s.number("SpreadLimit", w.spread_limit);
+        w.shots_per_salvo = std::max(1, int(s.number("ShotsPerSalvo", w.shots_per_salvo)));
         w.damage = s.number("MaxDamage", w.damage) * s.number("PersonScale", 1.0);
         w.bolt_speed = s.number("Velocity", w.bolt_speed);
         w.bolt_gravity = s.number("Gravity", w.bolt_gravity);
@@ -162,20 +163,26 @@ std::optional<Shot> simulate_weapons(MoveState& state, const MoveInput& input, c
         return std::nullopt;
     }
 
-    // Fire.
+    // Fire: every pellet uses a round (ASSUMPTION: a 40-round shotgun clip
+    // holding 8-pellet shots fires 5 times).
     c.cooldown += def.shot_delay;
+    const int pellets = uses_clip ? std::min<int>(def.shots_per_salvo, weapon.rounds) : def.shots_per_salvo;
     if (uses_clip) {
-        --weapon.rounds;
+        weapon.rounds = int16_t(weapon.rounds - pellets);
     }
     if (def.heat_per_shot > 0) {
         weapon.heat = float(std::min(1.0, weapon.heat + def.heat_per_shot));
         weapon.overheated = weapon.heat >= 1;
     }
-    const auto [u, v] = random_pair(input.sequence);
-    const double yaw = input.yaw + u * (def.yaw_spread + c.spread) * degrees;
-    const double pitch = input.pitch + v * (def.pitch_spread + c.spread) * degrees;
+    Shot shot{state.position + Vec3{0, eye_height, 0}, {}, c.weapon};
+    for (int i = 0; i < pellets; ++i) {
+        const auto [u, v] = random_pair(input.sequence ^ (uint64_t(i) << 32));
+        const double yaw = input.yaw + u * (def.yaw_spread + c.spread) * degrees;
+        const double pitch = input.pitch + v * (def.pitch_spread + c.spread) * degrees;
+        shot.directions.push_back(aim_direction(yaw, pitch));
+    }
     c.spread = std::min(def.spread_limit, c.spread + def.spread_per_shot);
-    return Shot{state.position + Vec3{0, eye_height, 0}, aim_direction(yaw, pitch), c.weapon};
+    return shot;
 }
 
 std::optional<Shot> simulate_character(MoveState& state, const MoveInput& input, bool alive, const World& world,

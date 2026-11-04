@@ -29,6 +29,7 @@ struct WeaponDef {
     double spread_per_shot = 0.75;   // SpreadPerShot, degrees of bloom per shot (ASSUMPTION: added to both)
     double spread_recover_rate = 2;  // SpreadRecoverRate, degrees per second
     double spread_limit = 1.25;      // SpreadLimit, most bloom (ASSUMPTION)
+    int shots_per_salvo = 1;         // ShotsPerSalvo: pellets per shot, each spread on its own and using a round
     double damage = 60;              // ordnance MaxDamage times PersonScale
     double bolt_speed = 300;         // ordnance Velocity, m/s
     double bolt_gravity = 1;         // ordnance Gravity, a multiple of world gravity
@@ -65,7 +66,7 @@ inline constexpr double weapon_switch_time = 0.4;
 // A shot leaving a weapon this tick.
 struct Shot {
     Vec3 origin;
-    Vec3 direction;  // unit
+    std::vector<Vec3> directions;  // unit; one per pellet (ShotsPerSalvo)
     int weapon = 0;
 };
 

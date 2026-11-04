@@ -2,6 +2,7 @@
 //
 //   swm_server --bake <prefix> [--db <file>] [--port 7777] [--spawn <swg_x> <swg_z>] [--seconds <n>]
 //              [--building <file.collision> <swg_x> <swg_y> <swg_z> <yaw_degrees>]... [--soldier <file.ini>]
+//              [--battlefield <file.ini>] [--bots <n>]
 //
 // <prefix> names a terrain bake (swgtool bake-terrain). --db is the SQLite
 // file characters are saved in (created if missing; default: none, nothing is
@@ -12,6 +13,12 @@
 // until Ctrl+C or for --seconds, then saves every connected character.
 // --soldier is everyone's class (from bf2tool export-soldier; default: built-in
 // Battlefront rifleman values); clients must use the same file.
+//
+// --battlefield runs a conquest match on a battlefield file (see
+// game/battlefields/) instead: teams, classes, command posts and
+// reinforcements, warmup, live, results, and again. Clients must load the
+// same file. Characters aren't saved in a match. --bots adds that many bots,
+// connected like players (over UDP, from this process), to fill the teams.
 
 #include <atomic>
 #include <chrono>
@@ -34,8 +41,11 @@
 #include <timeapi.h>
 #endif
 
+#include "swm/core/bot.h"
 #include "swm/core/build_info.h"
+#include "swm/core/client.h"
 #include "swm/core/combat.h"
+#include "swm/core/conquest.h"
 #include "swm/core/heightfield.h"
 #include "swm/core/net/udp.h"
 #include "swm/core/server.h"
@@ -49,7 +59,7 @@ std::atomic<bool> stop_requested = false;
 int usage() {
     std::cerr << "usage: swm_server --bake <prefix> [--db <file>] [--port 7777] [--spawn <swg_x> <swg_z>] "
                  "[--seconds <n>] [--building <file.collision> <swg_x> <swg_y> <swg_z> <yaw_degrees>]... "
-                 "[--soldier <file.ini>]\n";
+                 "[--soldier <file.ini>] [--battlefield <file.ini>] [--bots <n>]\n";
     return 2;
 }
 
@@ -63,6 +73,8 @@ int main(int argc, char** argv) {
     std::string bake;
     std::string db;
     std::string soldier;
+    std::string battlefield;
+    int bot_count = 0;
     int port = 7777;
     bool has_spawn = false;
     double spawn_x = 0, spawn_z = 0, run_for = 0;
@@ -77,6 +89,10 @@ int main(int argc, char** argv) {
             bake = argv[++i];
         } else if (arg == "--soldier" && i + 1 < argc) {
             soldier = argv[++i];
+        } else if (arg == "--battlefield" && i + 1 < argc) {
+            battlefield = argv[++i];
+        } else if (arg == "--bots" && i + 1 < argc) {
+            bot_count = std::atoi(argv[++i]);
         } else if (arg == "--db" && i + 1 < argc) {
             db = argv[++i];
         } else if (arg == "--port" && i + 1 < argc) {
@@ -96,7 +112,7 @@ int main(int argc, char** argv) {
             return usage();
         }
     }
-    if (bake.empty() || port <= 0 || port > 65535) {
+    if (bake.empty() || port <= 0 || port > 65535 || bot_count < 0 || bot_count > 64) {
         return usage();
     }
 
@@ -107,6 +123,17 @@ int main(int argc, char** argv) {
             config.soldier = swm::core::load_soldier(soldier);
             std::cout << std::format("soldier {}: {} health, {} weapon(s)\n", config.soldier.name,
                                      config.soldier.max_health, config.soldier.weapons.size());
+        }
+        if (!battlefield.empty()) {
+            config.battlefield = swm::core::load_battlefield(battlefield);
+            const auto& field = *config.battlefield;
+            std::cout << std::format("battlefield {}: {} command posts, {} ({} classes) vs {} ({} classes), {} tickets\n",
+                                     field.name, field.posts.size(), field.teams[0].name, field.teams[0].classes.size(),
+                                     field.teams[1].name, field.teams[1].classes.size(), field.tickets);
+            if (!db.empty()) {
+                std::cout << "--db is ignored in a match: characters aren't saved\n";
+                db.clear();
+            }
         }
         if (has_spawn) {
             config.spawn = {-spawn_x, 0, spawn_z};  // Galaxies to game coordinates
@@ -133,6 +160,12 @@ int main(int argc, char** argv) {
         server.log = [&](const std::string& line) {
             std::cout << std::format("[{:8.2f}] {}\n", seconds_since(start), line) << std::flush;
         };
+        // Bots: clients like any other, on their own sockets.
+        swm::core::ClientConfig bot_config;
+        bot_config.server = *swm::core::net::parse_endpoint(std::format("127.0.0.1:{}", link.port()));
+        bot_config.soldier = config.soldier;
+        bot_config.battlefield = config.battlefield;
+        swm::core::BotPlayers bots(bot_count, world, bot_config);
         std::cout << std::format("swm_server {}: UDP port {}, {} Hz, spawn ({:.1f}, {:.1f}) in Galaxies coordinates, {}\n",
                                  swm::core::version(), link.port(), config.tick_rate, -config.spawn.x, config.spawn.z,
                                  db.empty() ? std::string("not saving") : "saving to " + db)
@@ -159,6 +192,7 @@ int main(int argc, char** argv) {
                 break;
             }
             server.update(now);
+            bots.update(now);
             if (now >= next_status) {
                 next_status += 10;
                 server.log(std::format("tick {}, {} client(s){}", server.tick(), server.client_count(), positions()));
@@ -168,6 +202,7 @@ int main(int argc, char** argv) {
 #ifdef _WIN32
         timeEndPeriod(1);
 #endif
+        bots.disconnect();
         server.save_all();
         server.log(std::format("stopped; saved {} connected character(s){}", store ? server.client_count() : 0,
                                store ? positions() : ""));

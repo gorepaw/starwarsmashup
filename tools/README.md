@@ -104,13 +104,18 @@ Battlefront II munged files (`.lvl`) are `ucfb` chunk trees: `lvl_` sub-levels h
 - **skeleton**: print an animation bank's skeleton (`zaf_`) with rest world positions, e.g. `bf2tool skeleton ingame.lvl human_0`.
 - **anims**: list an animation bank's clips (`zaa_`): name hash, frames, bones. Names given on the command line are matched by hash, e.g. `bf2tool anims ingame.lvl human_0 human_rifle_stand_runforward`.
 - **odf**: list a file's ODF classes (munged into `entc`/`ordc`/`wpnc`/`expc` chunks: a `TYPE` name, a `BASE` parent, and `PROP` entries of a 32-bit FNV-1a hash of the lowercase property name plus a string value), or print one class's properties. Names are resolved from a list of documented ODF keys; unknown ones print as hashes.
-- **export-soldier**: write a soldier class for the game (`core::load_soldier`): health and movement, plus its first two blaster weapons and their bolts, with inheritance resolved across `side/<side>.lvl` and `ingame.lvl`. The output is game data from your install: write it to `game/imported_assets/`. Example, the Imperial rifleman:
+- **export-soldier**: write a soldier class for the game (`core::load_soldier`): health and movement, plus its first two blaster weapons (cannons firing bolts or bullets, including shotguns' pellets per shot) and their bolts, with inheritance resolved across `side/<side>.lvl` and `ingame.lvl`. Launchers, grenades and buffs are skipped for now. The output is game data from your install: write it to `game/imported_assets/`. Example, the Imperial rifleman:
 
   ```powershell
   bf2tool export-soldier "<Battlefront>\GameData\Data\_lvl_pc" imp imp_inf_rifleman -o game\imported_assets\combat\imp_inf_rifleman.ini
   ```
 
-  Then pass it to the server and clients with `--soldier`.
+  Then pass it to the server and clients with `--soldier`. The battlefield `game/battlefields/mos_eisley_outskirts.ini` uses six classes; export them all with:
+
+  ```powershell
+  foreach ($side in "imp", "all") { foreach ($class in "rifleman", "engineer", "sniper") {
+    bf2tool export-soldier "<Battlefront>\GameData\Data\_lvl_pc" $side "$($side)_inf_$class" -o "game\imported_assets\combat\$($side)_inf_$class.ini" } }
+  ```
 
 Animation data uses its own block format inside `BIN_` (byte-reversed tags) and identifies bones and clips by name hash (`bf2/hash.h`). See `bf2/animation.h` for the stream encoding.
 

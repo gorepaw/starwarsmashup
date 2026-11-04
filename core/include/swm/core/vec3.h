@@ -18,6 +18,7 @@ struct Vec3 {
     Vec3& operator+=(Vec3 b) { return *this = *this + b; }
 
     double length() const { return std::sqrt(x * x + y * y + z * z); }
+    double dot(Vec3 b) const { return x * b.x + y * b.y + z * b.z; }
 };
 
 } // namespace swm::core

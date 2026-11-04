@@ -57,6 +57,8 @@ Built so far (Phase 0 spike 4): `core::GameServer` and `core::GameClient` over U
 
 Combat (Stage 1): weapon state (clip, heat, cooldown, spread) and sprint energy are predicted like movement, from the same inputs. Shots become server-side bolts: plain position-and-velocity records advanced each tick and tested as segments against the world (`World::raycast`) and against characters rewound to the tick the shooter's client was showing (`MoveInput::view_tick`), so what a player hits is what they saw. Snapshots carry health, bolts in flight, and hit and kill events. Clients draw their own bolts the moment they fire and others' from snapshots; bolt looks are presentation only.
 
+Matches (Stage 1): `core::Conquest` is the conquest rules with no networking (posts, tickets, warmup/live/ended); it's stepped by the server with the positions of living soldiers. With a battlefield (`ServerConfig::battlefield`), the server puts joining players on the smaller team; they wait until their client sends a `SpawnRequest` for a class and a post their team holds. Snapshots carry each character's team, class, life (waiting, alive, dead) and score, plus the match state. Clients load the same battlefield file for its classes, so they predict with the right movement and weapons. Bots (`core::Bot`) are ordinary clients driven by code instead of keys.
+
 ## Persistence
 
 - **64-bit persistent entity IDs** for everything that can be saved (characters, items, structures, resource spawns).

@@ -3,11 +3,13 @@
 #include <cstdint>
 #include <deque>
 #include <map>
+#include <optional>
 #include <string>
 #include <vector>
 
 #include "swm/core/world.h"
 #include "swm/core/combat.h"
+#include "swm/core/conquest.h"
 #include "swm/core/movement.h"
 #include "swm/core/net/protocol.h"
 #include "swm/core/net/link.h"
@@ -22,7 +24,9 @@ struct ClientConfig {
     double hello_interval = 0.25;
     double timeout = 5;                // seconds without packets before giving up
     double smoothing = 10;             // 1/s: how fast a correction's visible jump fades
-    SoldierDef soldier;                // must match the server's
+    SoldierDef soldier;                // outside a match; must match the server's
+    std::optional<Battlefield> battlefield;  // in a match: the server's, for its classes
+    double spawn_request_interval = 0.25;
 };
 
 // Game client. Predicts its own character by running each input locally as
@@ -30,16 +34,16 @@ struct ClientConfig {
 // server's state for the newest input the server has simulated and replays
 // the inputs the server hasn't seen yet. Other characters are shown slightly
 // in the past, interpolated between snapshots.
+//
+// In a match the character starts out waiting: request_spawn() picks a class
+// and a command post, and the server spawns it there when it can.
 class GameClient {
 public:
     enum class Status { connecting, connected, refused, timed_out, disconnected };
 
-    struct Remote {
-        uint32_t id = 0;
-        MoveState state;
-        float health = 0;
-        bool alive = true;
-    };
+    // Another character as the newest snapshots describe it, its state
+    // interpolated.
+    using Remote = net::EntityState;
 
     struct Stats {
         uint32_t ticks = 0;          // inputs made
@@ -70,6 +74,7 @@ public:
     void disconnect();
 
     Status status() const { return status_; }
+    const ClientConfig& config() const { return config_; }
     // True once the server has placed the character.
     bool spawned() const { return spawned_; }
     uint32_t entity_id() const { return entity_; }
@@ -86,9 +91,19 @@ public:
     std::vector<Remote> remotes() const;
     const Stats& stats() const { return stats_; }
 
-    // Own health, as of the newest snapshot.
-    double health() const { return health_; }
-    bool alive() const { return alive_; }
+    // Own character as the newest snapshot describes it (health, life, team,
+    // class, score); its state is the server's, not the prediction.
+    const net::EntityState& self() const { return self_; }
+    double health() const { return self_.health; }
+    bool alive() const { return self_.life == Life::alive; }
+    // The class being played: its movement and weapons.
+    const SoldierDef& soldier() const;
+    // In a match: asks to spawn as a class of our team at a command post,
+    // until the character spawns. Spawning again after dying needs a new
+    // request.
+    void request_spawn(int soldier_class, int post);
+    // The match as of the newest snapshot, if there is one.
+    const std::optional<MatchState>& match() const { return match_; }
     // Other characters' bolts in flight, moved on from the newest snapshot.
     // (Own bolts come from take_shots(), the moment they're fired.)
     std::vector<net::BoltState> bolts(double now) const;
@@ -105,10 +120,7 @@ private:
     };
     struct Sample {
         uint32_t tick = 0;
-        MoveState state;
-        float health = 0;
-        bool alive = true;
-        uint8_t spawn_count = 0;
+        net::EntityState entity;
     };
 
     void receive(double now);
@@ -143,10 +155,11 @@ private:
     double render_tick_ = 0;
     std::map<uint32_t, std::deque<Sample>> history_;
     Stats stats_;
-    // Combat
-    double health_ = 0;
-    bool alive_ = true;
-    uint8_t spawn_count_ = 0;
+    // Combat and the match
+    net::EntityState self_;
+    std::optional<MatchState> match_;
+    std::optional<net::SpawnRequest> spawn_request_;
+    double last_spawn_request_ = -1e9;
     std::vector<net::BoltState> bolts_;  // others', from the newest snapshot
     double bolts_time_ = 0;
     std::vector<Shot> shots_;

@@ -1,6 +1,7 @@
 // Weapons (fire rate, clips, heat, switching, spread), soldier files, bolt
 // hits, and server-side combat with lag compensation over a simulated network.
 
+#include <algorithm>
 #include <cmath>
 #include <filesystem>
 #include <fstream>
@@ -120,15 +121,38 @@ void test_switch_and_spread() {
     input.yaw = 0.5f;
     const auto shot_a = simulate_weapons(a, input, soldier, dt);
     const auto shot_b = simulate_weapons(b, input, soldier, dt);
-    CHECK(shot_a && shot_b && shot_a->direction == shot_b->direction);
+    CHECK(shot_a && shot_b && shot_a->directions == shot_b->directions);
     const Vec3 aim = aim_direction(0.5, 0);
-    const double off = std::acos(std::min(1.0, aim.x * shot_a->direction.x + aim.y * shot_a->direction.y +
-                                                   aim.z * shot_a->direction.z));
+    const double off = std::acos(std::min(1.0, aim.dot(shot_a->directions[0])));
     CHECK(off < 0.33 * std::numbers::pi / 180);  // first shot: base spread only (0.225 degrees per axis)
     input.sequence = 78;
     MoveState c;
     reset_loadout(c, soldier);
-    CHECK(!(simulate_weapons(c, input, soldier, dt)->direction == shot_a->direction));
+    CHECK(!(simulate_weapons(c, input, soldier, dt)->directions == shot_a->directions));
+}
+
+// Battlefront's shotgun: 8 pellets a shot, each spread on its own, each a round.
+void test_shotgun() {
+    SoldierDef soldier;
+    WeaponDef& shotgun = soldier.weapons[0];
+    shotgun.rounds_per_clip = 40;
+    shotgun.shots_per_salvo = 8;
+    shotgun.shot_delay = 1.0;
+    shotgun.yaw_spread = 4.5;
+    shotgun.pitch_spread = 3.0;
+    MoveState state;
+    reset_loadout(state, soldier);
+    MoveInput input;
+    input.sequence = 1;
+    input.buttons = MoveInput::fire;
+    const auto shot = simulate_weapons(state, input, soldier, dt);
+    CHECK(shot && shot->directions.size() == 8 && state.combat.weapons[0].rounds == 32);
+    double widest = 0;
+    for (const Vec3& d : shot->directions) {
+        widest = std::max(widest, std::acos(std::min(1.0, d.dot(aim_direction(0, 0)))));
+        CHECK(!(d == shot->directions[0]) || &d == &shot->directions[0]);
+    }
+    CHECK(widest > 1 * std::numbers::pi / 180 && widest < 5.5 * std::numbers::pi / 180);
 }
 
 void test_cylinder() {
@@ -264,6 +288,7 @@ int main() {
     test_rifle();
     test_heat();
     test_switch_and_spread();
+    test_shotgun();
     test_cylinder();
     test_kill_and_respawn();
     test_lag_compensation();

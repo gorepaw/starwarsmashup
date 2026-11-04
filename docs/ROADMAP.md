@@ -34,11 +34,11 @@ Walk around Mos Eisley, queue at a recruiter, load into a 32v32 conquest match o
 - [ ] Return from match to hub with results
 
 **Match server**
-- [ ] Match lifecycle: warmup → live → end → results
-- [ ] Battlefield definition format (terrain bounds, command posts, spawns, vehicle spawns, out-of-bounds)
-- [ ] First battlefield: a chunk of Tatooine terrain with 5–7 command posts
-- [ ] Conquest rules: command-post capture, reinforcement tickets, win conditions
-- [ ] Class selection and spawning at owned command posts
+- [x] Match lifecycle: warmup → live → end → results, then the next match. Warmup is practice: deaths are free and posts can't change hands. Results show in the game; sending them back to the hub comes with the handoff.
+- [x] Battlefield definition format (terrain bounds, command posts, spawns, out-of-bounds): an INI file (`core::load_battlefield`) with teams and their classes, posts, tickets and timings. Vehicle spawns come with vehicles.
+- [x] First battlefield: `game/battlefields/mos_eisley_outskirts.ini`, five command posts in the basin east of the cantina, up to the mesa slope.
+- [x] Conquest rules (`core::Conquest`): posts are neutralized and captured by soldiers standing in them (Battlefront's NeutralizeTime 12 s and CaptureTime 10 s, read from its command-post class), and frozen while contested. Each death costs a ticket, and holding more posts bleeds the other team. A team wins when the other runs out, or by holding every post for 20 s.
+- [x] Class selection and spawning at owned command posts. Leaving the battlefield kills after 10 s.
 
 **Combat**
 - [ ] Third-person shooter controller with Battlefront feel: sprint, roll, crouch, zoom. Sprint (with energy), jump and over-the-shoulder aiming are done; roll, crouch and zoom aren't.
@@ -46,10 +46,10 @@ Walk around Mos Eisley, queue at a recruiter, load into a 32v32 conquest match o
 - [ ] Grenades
 - [x] Health, damage, death, respawn (400 health, respawn after 5 s at a spawn point)
 - [x] Lag-compensated hit detection: the server rewinds targets to where the shooter saw them (up to 0.5 s). In tests, a shooter 100 ms from the server lands 7 of its shots on a strafing target with rewinding and none without.
-- [ ] 4–5 classes with fixed kits (loadouts come in Stage 2). The data path works for any soldier class; only the rifleman is exported so far.
+- [ ] 4–5 classes with fixed kits (loadouts come in Stage 2). Three per side so far: rifleman, engineer (shotgun: 8 pellets a shot) and sniper. The rocketeer and the officer need explosions.
 
 Combat notes:
-- Everyone is hostile until teams come with the match rules.
+- In a match, teammates can't hurt each other (`ServerConfig::friendly_fire`). Outside one, everyone is hostile.
 - Spread uses the weapon's documented values, but how Battlefront combines `SpreadPerShot`, `SpreadThreshold` and `SpreadLimit` is a guess (marked ASSUMPTION in `swm/core/combat.h`). Ammo beyond the clip, damage falloff, headshots and firing animations aren't in yet.
 - Bolts are cheap on the server (a position and velocity, tested as a line segment each tick). How they look is up to each client: color, length and width come from the weapon's ordnance, scaled by graphics settings.
 
@@ -59,15 +59,17 @@ Combat notes:
 - [ ] Vehicle spawns tied to command posts
 
 **Bots**
-- [ ] Navigation on Galaxies terrain
-- [ ] Objective selection: attack and defend command posts
-- [ ] Combat behaviors: engage, take cover, retreat
+- [ ] Navigation on Galaxies terrain. For now bots run straight and jump when stuck.
+- [x] Objective selection: attack and defend command posts (`core::Bot`): spawn at the post nearest the fighting, head for the nearest post the team doesn't hold (some go elsewhere, so a team spreads out), guard one when the team holds them all.
+- [ ] Combat behaviors: engage, take cover, retreat. Bots engage (line of sight, leading the target, sidestepping); they don't take cover or retreat.
 - [ ] Vehicle use (basic)
-- [ ] Difficulty settings
+- [ ] Difficulty settings (`core::BotSkill` has aim error, reaction time and range; not exposed yet)
+
+Bots play through a `GameClient`, with a player's controls and view. `swm_server --bots N` connects them over UDP from the server process, and a whole match runs in `match_test`.
 
 **Presentation**
-- [ ] HUD: health, ammo/heat, command-post status, tickets, minimap
-- [ ] Scoreboard and end-of-match screen
+- [ ] HUD: health, ammo/heat, command-post status, tickets, minimap. All but the minimap, in the dev client (`net_demo.gd`).
+- [x] Scoreboard and end-of-match screen (dev client: kills, deaths and captures per team)
 - [ ] Battlefront audio: weapons, voice-overs, music
 
 ### Exit criteria
