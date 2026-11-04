@@ -1,15 +1,17 @@
 # Dev tool: renders a baked terrain region (swgtool bake-terrain) as a mesh at
 # its real world coordinates, optionally with a character standing on it.
 #
-#   godot --path game --script res://tools/render_terrain.gd -- <bake_prefix> <output.png> [character.gltf] [step]
+#   godot --path game --script res://tools/render_terrain.gd -- <bake_prefix> <output.png> [character.gltf] [step] [--terrain3d]
 #
 # <bake_prefix> names the .r32/.json pair (plus .shaders and textures, if the
-# bake has ground textures). [step] samples every Nth height (default 2). SWG
+# bake has ground textures). [step] samples every Nth height (default 2).
+# --terrain3d renders through the Terrain3D addon instead of a mesh. SWG
 # is left-handed, so world X is mirrored (Godot x = -SWG x).
 # Needs a real window: rendering doesn't run in --headless mode.
 extends SceneTree
 
 const TERRAIN_SHADER = preload("res://rendering/swg_terrain.gdshader")
+const Terrain3DBake = preload("res://tools/terrain3d_bake.gd")
 const SETTLE_FRAMES := 6
 const TEXTURE_SIZE := 512  # ground textures are resized to this to share one array
 const MAX_FAMILIES := 32   # matches the shader
@@ -20,8 +22,10 @@ var _output := ""
 
 func _init() -> void:
 	var args := OS.get_cmdline_user_args()
+	var use_terrain3d := args.has("--terrain3d")
+	args.erase("--terrain3d")
 	if args.size() < 2:
-		printerr("usage: -- <bake_prefix> <output.png> [character.gltf] [step]")
+		printerr("usage: -- <bake_prefix> <output.png> [character.gltf] [step] [--terrain3d]")
 		quit(2)
 		return
 	_output = args[1]
@@ -37,10 +41,17 @@ func _init() -> void:
 		quit(1)
 		return
 
-	var terrain := MeshInstance3D.new()
-	terrain.mesh = build_mesh(heights, samples, spacing, origin, step)
-	terrain.material_override = build_material(args[0], meta)
-	root.add_child(terrain)
+	if use_terrain3d:
+		if not Terrain3DBake.available():
+			printerr("Terrain3D isn't installed (tools/install_terrain3d.ps1)")
+			quit(1)
+			return
+		Terrain3DBake.create(root, args[0], meta)
+	else:
+		var terrain := MeshInstance3D.new()
+		terrain.mesh = build_mesh(heights, samples, spacing, origin, step)
+		terrain.material_override = build_material(args[0], meta)
+		root.add_child(terrain)
 
 	# Stand at the center of the region.
 	var center_column := samples / 2

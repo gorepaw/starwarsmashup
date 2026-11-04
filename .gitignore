@@ -36,6 +36,8 @@
 
 # ===== Godot =====
 .godot/
+# Third-party addons built and installed locally (tools/install_terrain3d.ps1)
+/game/addons/terrain_3d/
 *.import
 export_presets.cfg
 *.translation

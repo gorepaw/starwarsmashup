@@ -2,7 +2,7 @@
 # with physics, and saves screenshots along the way.
 #
 #   godot --path game --script res://tools/walk_building.gd -- <building.gltf> <output_prefix> <character.gltf>
-#         [--route <cell>,<cell>...] [--place <x> <y> <z> <yaw>] [--terrain <bake_prefix>]
+#         [--route <cell>,<cell>...] [--place <x> <y> <z> <yaw>] [--terrain <bake_prefix>] [--terrain3d]
 #
 # The character stands on the building's floors and is stopped by the walls
 # exported from the floors' uncrossable edges, as in Galaxies. The floors also
@@ -11,7 +11,9 @@
 # starts outside the entrance and runs to the middle of each --route cell in
 # turn (default: the cell with the most portals). --place puts the building
 # where the world snapshot has it (SWG position and yaw in degrees, as printed
-# by `swgtool snapshot`). --terrain adds that baked terrain around it.
+# by `swgtool snapshot`). --terrain adds that baked terrain around it, drawn by
+# the Terrain3D addon with --terrain3d. Collision near the building always
+# comes from the bake itself.
 #
 # Interior cells are lit only by their own Galaxies lights
 # (rendering/swg_cell.gdshader). Indoors, the character is lit by its current
@@ -25,6 +27,7 @@
 extends SceneTree
 
 const TerrainTool = preload("res://tools/render_terrain.gd")
+const Terrain3DBake = preload("res://tools/terrain3d_bake.gd")
 const CELL_SHADER = preload("res://rendering/swg_cell.gdshader")
 
 const WORLD_LAYERS := 1      # visual layers: terrain and buildings
@@ -49,7 +52,7 @@ var _prefix := ""
 var _route_names := PackedStringArray()
 var _layout: Dictionary = {}
 var _building: Node3D
-var _terrain: MeshInstance3D
+var _terrain: Node3D
 var _body: CharacterBody3D
 var _model: Node3D
 var _player: AnimationPlayer
@@ -81,7 +84,7 @@ func _init() -> void:
 	var args := OS.get_cmdline_user_args()
 	if args.size() < 3:
 		printerr("usage: -- <building.gltf> <output_prefix> <character.gltf> [--route a,b] ",
-				"[--place x y z yaw] [--terrain prefix]")
+				"[--place x y z yaw] [--terrain prefix] [--terrain3d]")
 		quit(2)
 		return
 	_prefix = args[1]
@@ -108,7 +111,7 @@ func _init() -> void:
 	_setup_cells()
 	var terrain := _option(args, "--terrain", 1)
 	if terrain.size() == 1:
-		_add_terrain(terrain[0])
+		_add_terrain(terrain[0], args.has("--terrain3d"))
 	if not _setup_character(args[2]):
 		quit(1)
 		return
@@ -337,7 +340,7 @@ func _add_collision(mesh: MeshInstance3D, layers: int, cell: int) -> void:
 	mesh.visible = false
 
 
-func _add_terrain(prefix: String) -> void:
+func _add_terrain(prefix: String, use_terrain3d: bool) -> void:
 	var meta: Variant = JSON.parse_string(FileAccess.get_file_as_string(prefix + ".json"))
 	var heights := FileAccess.get_file_as_bytes(prefix + ".r32").to_float32_array()
 	if meta == null:
@@ -346,10 +349,17 @@ func _add_terrain(prefix: String) -> void:
 	var samples: int = meta["samples"]
 	var spacing: float = meta["spacing"]
 	var origin := Vector2(meta["origin_x"], meta["origin_z"])
-	_terrain = MeshInstance3D.new()
-	_terrain.mesh = TerrainTool.build_mesh(heights, samples, spacing, origin, 2)
-	_terrain.material_override = TerrainTool.build_material(prefix, meta)
-	root.add_child(_terrain)
+	if use_terrain3d and Terrain3DBake.available():
+		_terrain = Terrain3DBake.create(root, prefix, meta)
+		_terrain.collision_mode = 0  # disabled: collision comes from the bake below
+	else:
+		if use_terrain3d:
+			printerr("Terrain3D isn't installed (tools/install_terrain3d.ps1); using a mesh")
+		var mesh := MeshInstance3D.new()
+		mesh.mesh = TerrainTool.build_mesh(heights, samples, spacing, origin, 2)
+		mesh.material_override = TerrainTool.build_material(prefix, meta)
+		root.add_child(mesh)
+		_terrain = mesh
 
 	# Collision only near the building: 160 m square at the bake's spacing.
 	var center_column := int(round((-_building.position.x - origin.x) / spacing))

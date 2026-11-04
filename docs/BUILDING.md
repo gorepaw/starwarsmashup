@@ -54,3 +54,20 @@ Set-Content game\.godot\extension_list.cfg "res://swm.gdextension"
 **Known issue (Godot 4.7.2):** on a fresh project with no `.godot/` yet, the editor discovers the extension during its first filesystem scan instead of at startup. A headless session then crashes at exit (`0xC0000005`) if the extension registers any class. The import itself has already finished, so a second run is clean. Writing `.godot/extension_list.cfg` first makes the extension load at startup and avoids the crash. Upstream: [godotengine/godot#123511](https://github.com/godotengine/godot/issues/123511), fix pending in [#123658](https://github.com/godotengine/godot/pull/123658). We confirmed it here: fresh imports crash with `SwmInfo` registered, exit cleanly with no classes registered, and exit cleanly with `extension_list.cfg` pre-written.
 
 The smoke test checks that the engine and the extension are both double precision and that the extension calls into `core/`. Open the project in the editor with `<godot> --path game -e`.
+
+## 4. Terrain3D (optional)
+
+[Terrain3D](https://github.com/TokisanGames/Terrain3D) (MIT) draws the terrain in the game. Dev tools fall back to a plain mesh without it. It's built from source against our double-precision API dump, outside this repo, and installed into the gitignored `game/addons/terrain_3d/`.
+
+Pinned version: **Terrain3D 1.1.0**.
+
+```powershell
+git clone --depth 1 --branch v1.1.0-stable --recurse-submodules https://github.com/TokisanGames/Terrain3D <terrain3d-src>
+cd <terrain3d-src>
+<venv>\Scripts\python -m SCons platform=windows target=template_debug precision=double custom_api_file=<repo>\third_party\godot-api\extension_api-4.7.2-double.json -j <cores>
+cd <repo>
+powershell -ExecutionPolicy Bypass -File tools\install_terrain3d.ps1 -Source <terrain3d-src>
+<godot> --headless --path game --import
+```
+
+The install script rewrites the addon's `.gdextension` to list only double-precision libraries, like ours. The import registers the extension in `.godot/extension_list.cfg`.
