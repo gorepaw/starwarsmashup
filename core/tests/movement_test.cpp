@@ -228,6 +228,90 @@ void test_buildings() {
           loaded.walls[0].b == walled.walls[0].b && near(loaded.walls[0].height, 3));
 }
 
+// An axis-aligned box as 12 triangles.
+void add_box(MapCollision& collision, Vec3 low, Vec3 high, uint8_t blocks = blocks_characters | blocks_shots) {
+    const auto corner = [&](int i) {
+        return Vec3{i & 1 ? high.x : low.x, i & 2 ? high.y : low.y, i & 4 ? high.z : low.z};
+    };
+    const int faces[6][4] = {{0, 1, 3, 2}, {4, 6, 7, 5}, {0, 4, 5, 1}, {2, 3, 7, 6}, {0, 2, 6, 4}, {1, 5, 7, 3}};
+    for (const auto& f : faces) {
+        collision.triangles.push_back({corner(f[0]), corner(f[1]), corner(f[2]), blocks});
+        collision.triangles.push_back({corner(f[0]), corner(f[2]), corner(f[3]), blocks});
+    }
+}
+
+void test_map_collision() {
+    const Heightfield flat = make_ground([](double, double) { return 0.0; });
+    const MoveParams params;
+    MoveInput east;  // facing +X
+    east.forward = 127;
+    east.yaw = float(-std::numbers::pi / 2);
+    MoveState start;
+    start.position = {-50, 0, 50};
+
+    // A crate stops the body `radius` short of it; at an angle, it slides.
+    MapCollision crate;
+    add_box(crate, {-46, 0, 45}, {-44, 2, 55});
+    World crate_world(flat);
+    crate_world.add_map_collision(crate);
+    MoveState state = run(start, east, crate_world, 60);
+    CHECK(near(state.position.x, -46 - params.radius, 1e-6) && near(state.position.z, 50) && near(state.position.y, 0));
+    MoveInput northeast = east;
+    northeast.yaw = float(-std::numbers::pi / 4);
+    state = run(start, northeast, crate_world, 30);  // reaches it at z ~ 46.4, slides on
+    CHECK(near(state.position.x, -46 - params.radius, 1e-6) && state.position.z < 46);
+    MoveInput sprint = east;
+    sprint.buttons = MoveInput::sprint;
+    CHECK(run(start, sprint, crate_world, 120).position.x < -46);
+    // Shots stop at its face.
+    const auto hit = crate_world.raycast({-50, 1, 50}, {-40, 1, 50});
+    CHECK(hit && near(*hit, 0.4));
+    CHECK(!crate_world.raycast({-50, 3, 50}, {-40, 3, 50}));  // over it
+
+    // A low box is stepped onto; its top is ground.
+    MapCollision low;
+    add_box(low, {-46, 0, 45}, {-40, 0.4, 55});
+    World low_world(flat);
+    low_world.add_map_collision(low);
+    state = run(start, east, low_world, 30);
+    CHECK(state.position.x > -46 && near(state.position.y, 0.4) && state.grounded);
+    CHECK(low_world.ground_at(-43, 50, 0, 0.5).on_floor && !low_world.ground_at(-43, 50, -1, 0.5).on_floor);
+
+    // A leaning face (60 degrees) blocks too, wherever it crosses the body.
+    MapCollision lean;
+    lean.triangles.push_back({{-45, 0, 40}, {-45, 0, 60}, {-45 + 3 / std::sqrt(3.0), 3, 50}});
+    World lean_world(flat);
+    lean_world.add_map_collision(lean);
+    state = run(start, east, lean_world, 60);
+    CHECK(state.position.x < -45 && state.position.x > -46);
+
+    // What a triangle stops: characters only, or shots only.
+    MapCollision ghost, glass;
+    add_box(ghost, {-46, 0, 45}, {-44, 2, 55}, blocks_characters);
+    add_box(glass, {-46, 0, 45}, {-44, 2, 55}, blocks_shots);
+    World ghost_world(flat), glass_world(flat);
+    ghost_world.add_map_collision(ghost);
+    glass_world.add_map_collision(glass);
+    CHECK(!ghost_world.raycast({-50, 1, 50}, {-40, 1, 50}));
+    CHECK(run(start, east, ghost_world, 60).position.x < -46);
+    CHECK(glass_world.raycast({-50, 1, 50}, {-40, 1, 50}));
+    CHECK(run(start, east, glass_world, 60).position.x > -44);
+
+    // The file round-trips; a bake without one adds nothing.
+    const auto dir = std::filesystem::temp_directory_path();
+    const auto path = map_collision_path(dir / "swm_movement_test_map");
+    CHECK(path.filename() == "swm_movement_test_map.collision");
+    save_map_collision(glass, path);
+    const MapCollision loaded = load_map_collision(path);
+    CHECK(loaded.triangles.size() == 12 && loaded.triangles[5].c == glass.triangles[5].c &&
+          loaded.triangles[0].blocks == blocks_shots);
+    World loaded_world(flat);
+    CHECK(loaded_world.add_map_collision_of(dir / "swm_movement_test_map") == 12);
+    CHECK(loaded_world.raycast({-50, 1, 50}, {-40, 1, 50}));
+    std::filesystem::remove(path);
+    CHECK(loaded_world.add_map_collision_of(dir / "swm_movement_test_map") == 0);
+}
+
 void test_determinism() {
     const Heightfield hills = make_ground([](double gx, double gz) { return 3 * std::sin(gx * 0.2) * std::cos(gz * 0.15); });
     MoveState a, b;
@@ -252,6 +336,7 @@ int main() {
     test_running();
     test_slopes_and_jumps();
     test_buildings();
+    test_map_collision();
     test_determinism();
     return swm::test::finish("movement_test");
 }

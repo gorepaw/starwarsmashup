@@ -46,10 +46,11 @@ Hub notes:
 
 **Battlefront II maps**
 - [x] Level importer (`bf2tool export-map`), from the player's own `.lvl` files: terrain heights, texture layers with their blend weights and baked lighting; every object's placement and model (glTF, with its textures as PNGs, including shared props from `ingame.lvl`); regions, paths, sky, fog and lights. Not yet: water, foliage patches (grass, hanging leaves), a fourth texture layer on patches that use more than three, and bump maps.
-- [ ] Collision in `core::World`: terrain, model collision meshes and primitives, barriers
-- [x] Conquest data from the map: command posts (starting team, capture region, spawn path) from the mode's layer, written as a map file that a battlefield includes (`Map = ...`). Bounds are the terrain's for now; Battlefront's barriers and death regions come with collision.
+- [x] Collision in `core::World`: every prop's collision mesh and primitives (boxes, cylinders), placed and written as one triangle file per map (`<map>.collision`, next to the bake). Gentle surfaces are ground to stand on, steep ones block like walls, and shots stop at them; a primitive's name says whether it stops soldiers, shots or both. On Dagobah: 51,565 triangles, under a microsecond per character per tick. The client's camera keeps clear of them too. Battlefront's AI barriers come with bot navigation; Dagobah has no boundary path (its playable area is the terrain).
+- [x] Conquest data from the map: command posts (starting team, capture region, spawn path) from the mode's layer, written as a map file that a battlefield includes (`Map = ...`). Bounds are the terrain's; maps with a boundary path or death regions will need them read.
+- [ ] Bot navigation on Battlefront maps, from the map's planning data (`plan`: hubs, connections and barriers)
 - [x] Rendering in Godot (`game/rendering/bf2_map.gd`): textured terrain (`bf2_terrain.gdshader`), props with alpha-tested foliage, the sky dome, fog, the sun and lamps. The terrain and baked-lit props show Battlefront's baked lighting instead of Godot's.
-- [ ] First map: Dagobah (`dag1`): small, outdoor, infantry only. A conquest match with bots plays on it (`game/battlefields/dagobah.ini`), drawn with its own models, textures and sky. Missing: collision with its trees and rocks, its swamp water and mist.
+- [ ] First map: Dagobah (`dag1`): small, outdoor, infantry only. A conquest match with bots plays on it (`game/battlefields/dagobah.ini`), drawn with its own models, textures and sky, and its trees, roots and rocks block movement and shots. Missing: bots steering around them (they run straight and slide along whatever they hit), its swamp water and mist.
 - [ ] More maps, and the hub picking one for each battle. Mos Eisley (`tat2`) comes last: queuing in Mos Eisley to fight in another Mos Eisley would be odd
 
 **Combat**

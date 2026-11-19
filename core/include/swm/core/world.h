@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstdint>
 #include <filesystem>
 #include <optional>
 #include <vector>
@@ -30,6 +31,26 @@ void save_building_collision(const BuildingCollision& collision, const std::file
 // Throws std::runtime_error on a missing or malformed file.
 BuildingCollision load_building_collision(const std::filesystem::path& path);
 
+// What a map triangle stops (bits).
+enum Blocks : uint8_t { blocks_characters = 1, blocks_shots = 2 };
+
+// The collision of a map's props, in game space: triangles, each stopping
+// characters, shots or both. bf2tool export-map writes it next to the
+// terrain bake (map_collision_path).
+struct MapCollision {
+    struct Triangle {
+        Vec3 a, b, c;
+        uint8_t blocks = blocks_characters | blocks_shots;
+    };
+    std::vector<Triangle> triangles;
+};
+
+void save_map_collision(const MapCollision& collision, const std::filesystem::path& path);
+// Throws std::runtime_error on a missing or malformed file.
+MapCollision load_map_collision(const std::filesystem::path& path);
+// Where a terrain bake's map collision is: <bake prefix>.collision.
+std::filesystem::path map_collision_path(const std::filesystem::path& bake);
+
 // Where a building stands: game-space position, and yaw in radians about +Y
 // (Godot's rotation.y).
 struct Placement {
@@ -41,7 +62,8 @@ struct Placement {
 // snapshot lists buildings (`swgtool snapshot`).
 Placement placement_from_galaxies(double x, double y, double z, double yaw_degrees);
 
-// Everything characters collide with: the terrain plus placed buildings.
+// Everything characters collide with: the terrain, placed buildings and a
+// map's props.
 // The server and every client build the same World, so movement predicts
 // exactly.
 class World {
@@ -49,6 +71,14 @@ public:
     explicit World(const Heightfield& terrain) : terrain_(terrain) {}
 
     void add_building(const BuildingCollision& collision, const Placement& placement);
+
+    // A map's props. Gentle triangles (up to 50 degrees) that stop characters
+    // are ground they can stand on; steeper ones push them out, like walls.
+    // Shots stop at triangles that stop shots.
+    void add_map_collision(const MapCollision& collision);
+    // Adds the map collision next to a terrain bake, if there is one; returns
+    // its triangle count (0 if none). Throws on a malformed file.
+    size_t add_map_collision_of(const std::filesystem::path& bake);
 
     struct Ground {
         double height = 0;
@@ -89,8 +119,29 @@ private:
         double min_x, max_x, min_z, max_z;  // of everything, for skipping far buildings
     };
 
+    // A map triangle, with what it's for and its bounds.
+    struct Solid {
+        Vec3 a, b, c;
+        Vec3 normal;  // unit
+        double min_x, max_x, min_y, max_y, min_z, max_z;
+        uint8_t blocks;
+        bool floor;  // gentle enough to stand on
+    };
+    // Calls visit(solid) for the solids in grid cells overlapping the XZ box
+    // (a solid in several cells comes up once per cell).
+    template <class Visit>
+    void for_solids(double min_x, double max_x, double min_z, double max_z, Visit&& visit) const;
+    // ...in the cells the segment a..b passes through.
+    template <class Visit>
+    void for_solids_along(Vec3 a, Vec3 b, Visit&& visit) const;
+
     const Heightfield& terrain_;
     std::vector<Building> buildings_;
+    std::vector<Solid> solids_;
+    static constexpr double grid_cell_ = 4;  // meters
+    double grid_x0_ = 0, grid_z0_ = 0;
+    int grid_w_ = 0, grid_h_ = 0;
+    std::vector<std::vector<uint32_t>> grid_;  // solid indices per cell, rows along +Z
 };
 
 } // namespace swm::core

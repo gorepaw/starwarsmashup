@@ -516,8 +516,9 @@ func _follow_route() -> Dictionary:
 	return {"forward": 1.0, "yaw": _yaw}
 
 
-# Camera collision against the building: how far behind the character the
-# camera fits. Physics queries belong in the physics step.
+# Camera collision: how far behind the character the camera fits, against
+# buildings (physics) and the world's own collision (a map's props).
+# Physics queries belong in the physics step.
 func _physics_process(_delta: float) -> bool:
 	if _client == null or not _client.is_spawned():
 		return false
@@ -525,10 +526,13 @@ func _physics_process(_delta: float) -> bool:
 	var wanted := pivot + _camera_basis() * Vector3(CAMERA_SHOULDER, 0.3, CAMERA_DISTANCE)
 	var query := PhysicsRayQueryParameters3D.create(pivot, wanted)
 	var hit := root.get_world_3d().direct_space_state.intersect_ray(query)
-	if hit.is_empty():
-		_camera_distance = CAMERA_DISTANCE
-	else:
-		_camera_distance = maxf(CAMERA_MIN_DISTANCE, pivot.distance_to(hit["position"]) - 0.25)
+	var reach := CAMERA_DISTANCE + 1.0
+	if not hit.is_empty():
+		reach = pivot.distance_to(hit["position"])
+	var along: float = _client.raycast(pivot, wanted)
+	if along >= 0:
+		reach = minf(reach, along * pivot.distance_to(wanted))
+	_camera_distance = CAMERA_DISTANCE if reach > CAMERA_DISTANCE else maxf(CAMERA_MIN_DISTANCE, reach - 0.25)
 	return false
 
 

@@ -104,9 +104,12 @@ godot::Error load_building(std::vector<std::pair<core::BuildingCollision, core::
     return godot::OK;
 }
 
-std::unique_ptr<core::World> make_world(const core::Heightfield& ground,
+// The world on a bake: its terrain, the map collision next to it (a
+// Battlefront map's props), and placed buildings.
+std::unique_ptr<core::World> make_world(const core::Heightfield& ground, const std::string& bake,
                                         const std::vector<std::pair<core::BuildingCollision, core::Placement>>& buildings) {
     auto world = std::make_unique<core::World>(ground);
+    world->add_map_collision_of(bake);
     for (const auto& [collision, placement] : buildings) {
         world->add_building(collision, placement);
     }
@@ -315,7 +318,7 @@ godot::Error SwmClient::start(const godot::String& server, const godot::String& 
     impaired_.reset();
     try {
         ground_ = core::load_bake(to_std(bake_prefix));
-        world_ = make_world(ground_, buildings_);
+        world_ = make_world(ground_, to_std(bake_prefix), buildings_);
         udp_ = std::make_unique<core::net::UdpLink>();
     } catch (const std::exception& error) {
         godot::UtilityFunctions::push_error("SwmClient: ", error.what());
@@ -598,6 +601,14 @@ double SwmClient::get_ground_height(double x, double z) const {
     return ground_.height_at(x, z);  // terrain only, for keeping a camera above it
 }
 
+double SwmClient::raycast(const godot::Vector3& from, const godot::Vector3& to) const {
+    if (!world_) {
+        return -1;
+    }
+    const auto t = world_->raycast({from.x, from.y, from.z}, {to.x, to.y, to.z});
+    return t ? *t : -1;
+}
+
 void SwmClient::_bind_methods() {
     using godot::ClassDB;
     using godot::D_METHOD;
@@ -638,6 +649,7 @@ void SwmClient::_bind_methods() {
     ClassDB::bind_method(D_METHOD("get_remotes"), &SwmClient::get_remotes);
     ClassDB::bind_method(D_METHOD("get_stats"), &SwmClient::get_stats);
     ClassDB::bind_method(D_METHOD("get_ground_height", "x", "z"), &SwmClient::get_ground_height);
+    ClassDB::bind_method(D_METHOD("raycast", "from", "to"), &SwmClient::raycast);
 }
 
 SwmServer::~SwmServer() {
@@ -679,7 +691,7 @@ godot::Error SwmServer::start(int64_t port, const godot::String& bake_prefix, co
     stop();  // the server refers to the ground, store and link replaced below
     try {
         ground_ = core::load_bake(to_std(bake_prefix));
-        world_ = make_world(ground_, buildings_);
+        world_ = make_world(ground_, to_std(bake_prefix), buildings_);
         if (!database_.empty()) {
             store_ = std::make_unique<core::SqliteCharacterStore>(database_);
         }

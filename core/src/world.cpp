@@ -16,6 +16,10 @@ namespace {
 
 constexpr uint32_t collision_magic = 0x4C434D53;  // "SMCL"
 constexpr uint32_t collision_version = 1;
+constexpr uint32_t map_collision_magic = 0x434D4D53;  // "SMMC"
+constexpr uint32_t map_collision_version = 1;
+// Map triangles at most this steep (50 degrees) are ground.
+const double walkable_normal_y = std::cos(50 * std::numbers::pi / 180);
 
 // Building space is small, so floats are plenty on disk. Everyone loads the
 // same file, so everyone gets the same doubles.
@@ -41,6 +45,67 @@ Vec3 transform(const Placement& p, Vec3 v) {
 // 2D cross product of (b - a) and (p - a) in the XZ plane.
 double cross_xz(Vec3 a, Vec3 b, Vec3 p) {
     return (b.x - a.x) * (p.z - a.z) - (b.z - a.z) * (p.x - a.x);
+}
+
+Vec3 cross(Vec3 a, Vec3 b) {
+    return {a.y * b.z - a.z * b.y, a.z * b.x - a.x * b.z, a.x * b.y - a.y * b.x};
+}
+
+double dot(Vec3 a, Vec3 b) {
+    return a.x * b.x + a.y * b.y + a.z * b.z;
+}
+
+// Where segment a..b crosses triangle (p0, p1, p2), 0..1 along it, from
+// either side (Moller-Trumbore).
+std::optional<double> segment_triangle(Vec3 a, Vec3 d, Vec3 p0, Vec3 p1, Vec3 p2) {
+    const Vec3 e1 = p1 - p0, e2 = p2 - p0;
+    const Vec3 p = cross(d, e2);
+    const double det = dot(e1, p);
+    if (std::abs(det) < 1e-12) {
+        return std::nullopt;
+    }
+    const Vec3 s = a - p0;
+    const double u = dot(s, p) / det;
+    if (u < 0 || u > 1) {
+        return std::nullopt;
+    }
+    const Vec3 q = cross(s, e1);
+    const double v = dot(d, q) / det;
+    if (v < 0 || u + v > 1) {
+        return std::nullopt;
+    }
+    const double t = dot(e2, q) / det;
+    if (t < 0 || t > 1) {
+        return std::nullopt;
+    }
+    return t;
+}
+
+// The part of a polygon on one side of a height: keeps y >= height (above)
+// or y <= height. Returns the new vertex count; `out` holds up to 8.
+int clip_height(const Vec3* in, int count, double height, bool above, Vec3* out) {
+    int n = 0;
+    for (int i = 0; i < count; ++i) {
+        const Vec3 p = in[i], q = in[(i + 1) % count];
+        const bool p_in = above ? p.y >= height : p.y <= height;
+        const bool q_in = above ? q.y >= height : q.y <= height;
+        if (p_in) {
+            out[n++] = p;
+        }
+        if (p_in != q_in) {
+            const double t = (height - p.y) / (q.y - p.y);
+            out[n++] = p + (q - p) * t;
+        }
+    }
+    return n;
+}
+
+// Closest point to (x, z) on the segment p..q, in XZ.
+Vec3 closest_on_segment_xz(Vec3 p, Vec3 q, double x, double z) {
+    const double ex = q.x - p.x, ez = q.z - p.z;
+    const double length2 = ex * ex + ez * ez;
+    const double t = length2 < 1e-12 ? 0 : std::clamp(((x - p.x) * ex + (z - p.z) * ez) / length2, 0.0, 1.0);
+    return {p.x + ex * t, 0, p.z + ez * t};
 }
 
 } // namespace
@@ -107,6 +172,59 @@ BuildingCollision load_building_collision(const std::filesystem::path& path) {
     return collision;
 }
 
+void save_map_collision(const MapCollision& collision, const std::filesystem::path& path) {
+    net::ByteWriter out;
+    out.put(map_collision_magic);
+    out.put(map_collision_version);
+    out.put(uint32_t(collision.triangles.size()));
+    for (const auto& triangle : collision.triangles) {
+        put_point(out, triangle.a);
+        put_point(out, triangle.b);
+        put_point(out, triangle.c);
+        out.put(triangle.blocks);
+    }
+    std::ofstream file(path, std::ios::binary);
+    file.write(reinterpret_cast<const char*>(out.data().data()), std::streamsize(out.data().size()));
+    if (!file) {
+        throw std::runtime_error("cannot write " + path.string());
+    }
+}
+
+MapCollision load_map_collision(const std::filesystem::path& path) {
+    std::ifstream file(path, std::ios::binary);
+    if (!file) {
+        throw std::runtime_error("cannot open " + path.string());
+    }
+    const std::vector<uint8_t> data{std::istreambuf_iterator<char>(file), std::istreambuf_iterator<char>()};
+    MapCollision collision;
+    try {
+        net::ByteReader in(data);
+        if (in.get<uint32_t>() != map_collision_magic || in.get<uint32_t>() != map_collision_version) {
+            throw std::runtime_error(path.string() + " is not a version 1 map collision file");
+        }
+        const uint32_t count = in.get<uint32_t>();
+        collision.triangles.reserve(count);
+        for (uint32_t i = 0; i < count; ++i) {
+            MapCollision::Triangle triangle;
+            triangle.a = get_point(in);
+            triangle.b = get_point(in);
+            triangle.c = get_point(in);
+            triangle.blocks = in.get<uint8_t>();
+            collision.triangles.push_back(triangle);
+        }
+        if (!in.at_end()) {
+            throw std::runtime_error(path.string() + " has trailing bytes");
+        }
+    } catch (const net::PacketError&) {
+        throw std::runtime_error(path.string() + " is truncated");
+    }
+    return collision;
+}
+
+std::filesystem::path map_collision_path(const std::filesystem::path& bake) {
+    return std::filesystem::path(bake.string() + ".collision");
+}
+
 Placement placement_from_galaxies(double x, double y, double z, double yaw_degrees) {
     // Mirroring X turns a left-handed yaw into its negative.
     return {{-x, y, z}, -yaw_degrees * std::numbers::pi / 180};
@@ -147,6 +265,114 @@ void World::add_building(const BuildingCollision& collision, const Placement& pl
     buildings_.push_back(std::move(building));
 }
 
+void World::add_map_collision(const MapCollision& collision) {
+    for (const auto& t : collision.triangles) {
+        const Vec3 n = cross(t.b - t.a, t.c - t.a);
+        const double length = n.length();
+        if (length < 1e-9 || t.blocks == 0) {
+            continue;  // degenerate, or stops nothing
+        }
+        Solid s{t.a, t.b, t.c, n * (1 / length), 0, 0, 0, 0, 0, 0, t.blocks, false};
+        s.min_x = std::min({t.a.x, t.b.x, t.c.x});
+        s.max_x = std::max({t.a.x, t.b.x, t.c.x});
+        s.min_y = std::min({t.a.y, t.b.y, t.c.y});
+        s.max_y = std::max({t.a.y, t.b.y, t.c.y});
+        s.min_z = std::min({t.a.z, t.b.z, t.c.z});
+        s.max_z = std::max({t.a.z, t.b.z, t.c.z});
+        s.floor = std::abs(s.normal.y) >= walkable_normal_y;
+        solids_.push_back(s);
+    }
+    // Rebuild the grid over every solid.
+    grid_.clear();
+    if (solids_.empty()) {
+        grid_w_ = grid_h_ = 0;
+        return;
+    }
+    double min_x = solids_[0].min_x, max_x = solids_[0].max_x;
+    double min_z = solids_[0].min_z, max_z = solids_[0].max_z;
+    for (const Solid& s : solids_) {
+        min_x = std::min(min_x, s.min_x);
+        max_x = std::max(max_x, s.max_x);
+        min_z = std::min(min_z, s.min_z);
+        max_z = std::max(max_z, s.max_z);
+    }
+    grid_x0_ = min_x;
+    grid_z0_ = min_z;
+    grid_w_ = int((max_x - min_x) / grid_cell_) + 1;
+    grid_h_ = int((max_z - min_z) / grid_cell_) + 1;
+    grid_.assign(size_t(grid_w_) * size_t(grid_h_), {});
+    for (uint32_t i = 0; i < solids_.size(); ++i) {
+        const Solid& s = solids_[i];
+        const int x0 = int((s.min_x - grid_x0_) / grid_cell_), x1 = int((s.max_x - grid_x0_) / grid_cell_);
+        const int z0 = int((s.min_z - grid_z0_) / grid_cell_), z1 = int((s.max_z - grid_z0_) / grid_cell_);
+        for (int gz = z0; gz <= z1; ++gz) {
+            for (int gx = x0; gx <= x1; ++gx) {
+                grid_[size_t(gz) * size_t(grid_w_) + size_t(gx)].push_back(i);
+            }
+        }
+    }
+}
+
+size_t World::add_map_collision_of(const std::filesystem::path& bake) {
+    const std::filesystem::path path = map_collision_path(bake);
+    if (!std::filesystem::exists(path)) {
+        return 0;
+    }
+    const MapCollision collision = load_map_collision(path);
+    add_map_collision(collision);
+    return collision.triangles.size();
+}
+
+template <class Visit>
+void World::for_solids(double min_x, double max_x, double min_z, double max_z, Visit&& visit) const {
+    if (grid_.empty()) {
+        return;
+    }
+    const int x0 = std::max(0, int(std::floor((min_x - grid_x0_) / grid_cell_)));
+    const int x1 = std::min(grid_w_ - 1, int(std::floor((max_x - grid_x0_) / grid_cell_)));
+    const int z0 = std::max(0, int(std::floor((min_z - grid_z0_) / grid_cell_)));
+    const int z1 = std::min(grid_h_ - 1, int(std::floor((max_z - grid_z0_) / grid_cell_)));
+    for (int gz = z0; gz <= z1; ++gz) {
+        for (int gx = x0; gx <= x1; ++gx) {
+            for (const uint32_t i : grid_[size_t(gz) * size_t(grid_w_) + size_t(gx)]) {
+                visit(solids_[i]);
+            }
+        }
+    }
+}
+
+template <class Visit>
+void World::for_solids_along(Vec3 a, Vec3 b, Visit&& visit) const {
+    if (grid_.empty()) {
+        return;
+    }
+    // Walk the cells the segment's XZ shadow crosses (Amanatides-Woo).
+    const double fx = (a.x - grid_x0_) / grid_cell_, fz = (a.z - grid_z0_) / grid_cell_;
+    const double dx = (b.x - a.x) / grid_cell_, dz = (b.z - a.z) / grid_cell_;
+    int gx = int(std::floor(fx)), gz = int(std::floor(fz));
+    const int end_x = int(std::floor(fx + dx)), end_z = int(std::floor(fz + dz));
+    const int step_x = dx > 0 ? 1 : -1, step_z = dz > 0 ? 1 : -1;
+    constexpr double never = std::numeric_limits<double>::infinity();
+    const double delta_x = dx != 0 ? std::abs(1 / dx) : never, delta_z = dz != 0 ? std::abs(1 / dz) : never;
+    double next_x = dx != 0 ? ((dx > 0 ? std::floor(fx) + 1 - fx : fx - std::floor(fx)) * delta_x) : never;
+    double next_z = dz != 0 ? ((dz > 0 ? std::floor(fz) + 1 - fz : fz - std::floor(fz)) * delta_z) : never;
+    const int steps = std::abs(end_x - gx) + std::abs(end_z - gz);
+    for (int i = 0; i <= steps; ++i) {
+        if (gx >= 0 && gx < grid_w_ && gz >= 0 && gz < grid_h_) {
+            for (const uint32_t index : grid_[size_t(gz) * size_t(grid_w_) + size_t(gx)]) {
+                visit(solids_[index]);
+            }
+        }
+        if (next_x < next_z) {
+            gx += step_x;
+            next_x += delta_x;
+        } else {
+            gz += step_z;
+            next_z += delta_z;
+        }
+    }
+}
+
 World::Ground World::ground_at(double x, double z, double y, double step_up) const {
     const double reach = y + step_up;
     Ground best;
@@ -181,6 +407,29 @@ World::Ground World::ground_at(double x, double z, double y, double step_up) con
             }
         }
     }
+    // Gentle map triangles under the point.
+    for_solids(x, x, z, z, [&](const Solid& s) {
+        if (!s.floor || !(s.blocks & blocks_characters) || x < s.min_x || x > s.max_x || z < s.min_z ||
+            z > s.max_z || s.min_y > reach) {
+            return;
+        }
+        const double area = cross_xz(s.a, s.b, s.c);
+        if (std::abs(area) < 1e-12) {
+            return;
+        }
+        const double wa = cross_xz(s.b, s.c, p) / area;
+        const double wb = cross_xz(s.c, s.a, p) / area;
+        const double wc = 1 - wa - wb;
+        constexpr double edge = -1e-9;
+        if (wa < edge || wb < edge || wc < edge) {
+            return;
+        }
+        const double height = wa * s.a.y + wb * s.b.y + wc * s.c.y;
+        if (height <= reach && (!found || height > best.height)) {
+            best = {height, {0, 1, 0}, true};
+            found = true;
+        }
+    });
     if (!found) {
         best = {terrain, terrain_.normal_at(x, z), false};
     }
@@ -216,6 +465,14 @@ std::optional<double> World::raycast(Vec3 a, Vec3 b) const {
             }
         }
     }
+
+    for_solids_along(a, b, [&](const Solid& s) {
+        if (s.blocks & blocks_shots) {
+            if (const auto t = segment_triangle(a, d, s.a, s.b, s.c)) {
+                consider(*t);
+            }
+        }
+    });
 
     const double min_x = std::min(a.x, b.x), max_x = std::max(a.x, b.x);
     const double min_z = std::min(a.z, b.z), max_z = std::max(a.z, b.z);
@@ -324,6 +581,88 @@ Vec3 World::resolve_walls(Vec3 from, Vec3 position, double radius, double height
                 moved = true;
             }
         }
+        // Steep map triangles: the part of each between the character's
+        // knees (step height) and head, seen from above, pushes the body's
+        // circle out: away from its nearest point, or, if the center is over
+        // it, across it toward the side the move came from.
+        const double lo = position.y + step_up, hi = position.y + height;
+        for_solids(position.x - radius, position.x + radius, position.z - radius, position.z + radius,
+                   [&](const Solid& s) {
+            if (s.floor || !(s.blocks & blocks_characters) || s.max_y <= lo || s.min_y >= hi ||
+                position.x + radius < s.min_x || position.x - radius > s.max_x || position.z + radius < s.min_z ||
+                position.z - radius > s.max_z) {
+                return;
+            }
+            const Vec3 triangle[3] = {s.a, s.b, s.c};
+            Vec3 above[8], slab[8];
+            const int n = clip_height(above, clip_height(triangle, 3, lo, true, above), hi, false, slab);
+            if (n == 0) {
+                return;
+            }
+            const Vec3 center{position.x, 0, position.z};
+            // Over the polygon: every edge turns the same way around the center.
+            double turn = 0;
+            bool over = n >= 3;
+            for (int i = 0; i < n && over; ++i) {
+                const double c = cross_xz(slab[i], slab[(i + 1) % n], center);
+                if (std::abs(c) < 1e-12) {
+                    continue;
+                }
+                over = turn == 0 || (c > 0) == (turn > 0);
+                turn = c;
+            }
+            over = over && turn != 0;
+            double nx = 0, nz = 0, push = 0;
+            double distance = 0;
+            if (!over) {
+                double best = std::numeric_limits<double>::infinity();
+                Vec3 nearest;
+                for (int i = 0; i < n; ++i) {
+                    const Vec3 q = closest_on_segment_xz(slab[i], slab[(i + 1) % n], center.x, center.z);
+                    const double d2 = (q.x - center.x) * (q.x - center.x) + (q.z - center.z) * (q.z - center.z);
+                    if (d2 < best) {
+                        best = d2;
+                        nearest = q;
+                    }
+                }
+                distance = std::sqrt(best);
+                if (distance >= radius) {
+                    return;
+                }
+                if (distance > 1e-9) {
+                    nx = (center.x - nearest.x) / distance;
+                    nz = (center.z - nearest.z) / distance;
+                    push = radius - distance;
+                }
+            }
+            if (push == 0) {
+                // Over it (or on it): across, along the triangle's facing,
+                // to the side the move came from.
+                const double flat = std::hypot(s.normal.x, s.normal.z);
+                if (flat < 1e-9) {
+                    return;
+                }
+                nx = s.normal.x / flat;
+                nz = s.normal.z / flat;
+                if ((from.x - s.a.x) * nx + (from.z - s.a.z) * nz < 0) {
+                    nx = -nx;
+                    nz = -nz;
+                }
+                double support = 0;
+                for (int i = 0; i < n; ++i) {
+                    support = std::max(support, (slab[i].x - center.x) * nx + (slab[i].z - center.z) * nz);
+                }
+                push = support + radius;
+            }
+            position.x += nx * push;
+            position.z += nz * push;
+            const double into = velocity.x * nx + velocity.z * nz;
+            if (into < 0) {
+                velocity.x -= nx * into;
+                velocity.z -= nz * into;
+            }
+            moved = true;
+        });
         if (!moved) {
             break;
         }

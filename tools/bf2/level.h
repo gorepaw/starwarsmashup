@@ -47,7 +47,7 @@ struct WorldItem {
     std::string layer;
     std::string type;   // object class (e.g. "dag1_prop_grandtree"), or region shape ("box", "sphere", "cylinder")
     std::string name;
-    std::array<float, 9> rotation{};  // 3x3, rows as stored
+    std::array<float, 9> rotation{};  // 3x3, its columns as stored (see bf2/model.h)
     std::array<float, 3> position{};
     std::array<float, 3> size{};      // regions only
     std::vector<std::pair<uint32_t, std::string>> properties;  // name hash, value

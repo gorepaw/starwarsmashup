@@ -11,8 +11,15 @@
 
 namespace swm::bf2 {
 
-// Munged models ("modl"), their skeletons ("skel") and textures ("tex_").
-// Coordinates are Battlefront's, as stored (left-handed; game x = -x).
+// Munged models ("modl"), their skeletons ("skel"), textures ("tex_") and
+// collision ("coll", "prim"). Coordinates are Battlefront's, as stored
+// (left-handed; game x = -x).
+//
+// Transforms (XFRM, here and in world layers) are a 3x3 rotation stored as
+// its three columns, i.e. the local axes, then a position: p' = R p + t with
+// R's columns as stored. (Found by fitting collision boxes to their models'
+// geometry, the crashed X-wing to the ground and the cave to the terrain's
+// cut holes; reading them as rows fits worse each time.)
 
 // Material flags (MTRL), as Battlefront II's mod tools name them.
 enum MaterialFlag : uint32_t {
@@ -55,10 +62,19 @@ struct Model {
     std::vector<ModelSegment> segments;
 };
 
+// A 3x3 rotation as stored (three columns) and a position.
+struct Transform {
+    std::array<float, 9> rotation{1, 0, 0, 0, 1, 0, 0, 0, 1};
+    std::array<float, 3> position{};
+
+    std::array<float, 3> apply(const std::array<float, 3>& p) const;
+    Transform then(const Transform& outer) const;  // this, then `outer`
+};
+
 struct ModelBone {
     std::string name;
     std::string parent;  // "" for a root
-    std::array<float, 9> rotation{1, 0, 0, 0, 1, 0, 0, 0, 1};  // 3x3, rows as stored
+    std::array<float, 9> rotation{1, 0, 0, 0, 1, 0, 0, 0, 1};  // 3x3, columns as stored
     std::array<float, 3> position{};
 };
 
@@ -66,10 +82,45 @@ struct Skeleton {
     std::string model;  // the model it belongs to
     std::vector<ModelBone> bones;
 
-    // A bone's rotation and position in model space (parents applied);
-    // identity for an unknown bone.
-    void model_transform(const std::string& bone, std::array<float, 9>& rotation, std::array<float, 3>& position) const;
+    // A bone's transform to model space (parents applied); identity for an
+    // unknown bone.
+    Transform model_transform(const std::string& bone) const;
 };
+
+// A model's collision mesh ("coll"): vertices, and an AABB tree whose leaves
+// are convex polygons (fanned into triangles here). Its vertices are in the
+// space of `bone`.
+struct CollisionMesh {
+    std::string model;
+    std::string bone;
+    std::vector<std::array<float, 3>> vertices;
+    std::vector<std::array<uint32_t, 3>> triangles;
+};
+
+// Collision primitives ("prim"), each on a bone of its model. Names say what
+// they stop: "p_-so-trunk" stops soldiers (s) and ordnance (o); other letters
+// are vehicles (v), buildings (b) and terrain (t). A name without flags stops
+// everything.
+struct CollisionPrimitive {
+    enum Shape : uint32_t { sphere = 1, cylinder = 2, box = 4 };  // ASSUMPTION: sphere (not seen yet)
+    std::string name;
+    std::string parent;  // bone
+    uint32_t shape = 0;
+    Transform transform;  // in the parent bone's space
+    // box: half extents; cylinder: radius, full height (along local y,
+    // centered); sphere: radius.
+    std::array<float, 3> size{};
+
+    bool stops(char kind) const;  // kind: 's', 'v', 'b', 'o' or 't'
+};
+
+struct CollisionPrimitives {
+    std::string model;
+    std::vector<CollisionPrimitive> primitives;
+};
+
+CollisionMesh read_collision_mesh(const UcfbNode& coll);
+CollisionPrimitives read_collision_primitives(const UcfbNode& prim);
 
 // Reads a "modl" chunk: segments with uncompressed vertex buffers (a
 // segment's compressed copy is ignored). Throws std::runtime_error on

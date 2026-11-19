@@ -30,6 +30,9 @@ public:
     const UcfbNode* model(std::string_view name) const;
     const UcfbNode* skeleton(std::string_view model) const;
     const UcfbNode* texture(std::string_view name) const;
+    // A model's collision mesh ("coll") and primitives ("prim"), or nullptr.
+    const UcfbNode* collision_mesh(std::string_view model) const;
+    const UcfbNode* collision_primitives(std::string_view model) const;
     const OdfLibrary& classes() const { return classes_; }
 
 private:
@@ -37,7 +40,7 @@ private:
 
     std::deque<std::vector<uint8_t>> files_;
     std::deque<UcfbNode> roots_;
-    std::map<std::string, const UcfbNode*> models_, skeletons_, textures_;  // lowercase names
+    std::map<std::string, const UcfbNode*> models_, skeletons_, textures_, meshes_, primitives_;  // lowercase names
     std::map<std::string, std::string> lod_names_;  // gmod -> its first LOD's model
     OdfLibrary classes_;
 };
@@ -58,6 +61,18 @@ struct ModelExport {
 // `textures_written`. Throws std::runtime_error if there's no such model.
 ModelExport export_model(const AssetLibrary& library, std::string_view name, const std::filesystem::path& model_dir,
                          const std::filesystem::path& texture_dir, std::set<std::string>& textures_written);
+
+// A model's collision, in its model space (Battlefront coordinates): its
+// collision mesh, and its primitives as triangles (boxes, 12-sided
+// cylinders, spheres). ASSUMPTION: the mesh stops soldiers and ordnance;
+// a primitive stops what its name says (CollisionPrimitive::stops), and one
+// stopping neither is left out.
+struct CollisionTriangle {
+    std::array<float, 3> a, b, c;
+    bool soldiers = true;
+    bool ordnance = true;
+};
+std::vector<CollisionTriangle> model_collision(const AssetLibrary& library, std::string_view model);
 
 // Writes a texture as a PNG. False if the library doesn't have it or no
 // stored format can be decoded.

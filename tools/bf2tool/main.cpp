@@ -19,6 +19,7 @@
 #include "bf2/odf.h"
 #include "bf2/ucfb.h"
 #include "swg/image.h"
+#include "swm/core/world.h"
 
 namespace {
 
@@ -557,6 +558,8 @@ int cmd_export_map(const std::vector<std::string>& args) {
         }
         return true;
     };
+    core::MapCollision collision;
+    std::map<std::string, std::vector<CollisionTriangle>> shapes;  // model -> its collision
     {
         std::ofstream json(out_dir / (map + ".objects.json"), std::ios::binary);
         json << "{\n  \"map\": " << json_string(map) << ",\n  \"objects\": [";
@@ -565,13 +568,31 @@ int cmd_export_map(const std::vector<std::string>& args) {
             if (!included(object.layer)) {
                 continue;
             }
+            // The rotation's stored triples are columns; mirroring x negates
+            // the entries that mix x with y or z. `basis` is row-major.
             const auto& r = object.rotation;
-            const std::array<float, 9> basis{r[0], -r[1], -r[2], -r[3], r[4], r[5], -r[6], r[7], r[8]};
-            // The class's model (GeometryName), if it has one.
+            const std::array<float, 9> basis{r[0], -r[3], -r[6], -r[1], r[4], r[7], -r[2], r[5], r[8]};
+            // The class's model (GeometryName), if it has one, and its
+            // collision, placed in game space.
             std::string model;
             if (library.classes().find(object.type) != nullptr) {
                 if (const auto geometry = library.classes().resolve(object.type).get("GeometryName")) {
                     model = model_file(*geometry);
+                    auto shape = shapes.find(lowercase(*geometry));
+                    if (shape == shapes.end()) {
+                        shape = shapes.emplace(lowercase(*geometry), model_collision(library, *geometry)).first;
+                    }
+                    const auto place = [&](const std::array<float, 3>& p) {
+                        const double x = -p[0], y = p[1], z = p[2];
+                        return core::Vec3{basis[0] * x + basis[1] * y + basis[2] * z - object.position[0],
+                                          basis[3] * x + basis[4] * y + basis[5] * z + object.position[1],
+                                          basis[6] * x + basis[7] * y + basis[8] * z + object.position[2]};
+                    };
+                    for (const CollisionTriangle& t : shape->second) {
+                        collision.triangles.push_back(
+                            {place(t.a), place(t.b), place(t.c),
+                             uint8_t((t.soldiers ? core::blocks_characters : 0) | (t.ordnance ? core::blocks_shots : 0))});
+                    }
                 }
             }
             json << (written++ ? ",\n" : "\n") << "    {\"layer\": " << json_string(object.layer)
@@ -587,6 +608,8 @@ int cmd_export_map(const std::vector<std::string>& args) {
         json << "\n  ]\n}\n";
         std::cerr << std::format("objects: {} of {} placed; {} models, {} textures\n", written, level.objects.size(),
                                  models.size(), textures.size());
+        core::save_map_collision(collision, core::map_collision_path(out_dir / map));
+        std::cerr << std::format("collision: {} triangles\n", collision.triangles.size());
     }
 
     // The mode's command posts: capture regions, starting teams, spawn points.

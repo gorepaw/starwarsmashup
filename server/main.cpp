@@ -167,6 +167,10 @@ int main(int argc, char** argv) {
         }
         swm::core::net::UdpLink link{uint16_t(port)};
         swm::core::World world(ground);
+        // A Battlefront map's props (bf2tool export-map), next to its bake.
+        if (const size_t triangles = world.add_map_collision_of(bake); triangles > 0) {
+            std::cout << std::format("map collision: {} triangles\n", triangles);
+        }
         for (const BuildingArg& building : buildings) {
             const auto collision = swm::core::load_building_collision(building.path);
             world.add_building(collision,

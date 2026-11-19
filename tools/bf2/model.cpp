@@ -218,35 +218,110 @@ swg::ImageRgba decode_pixels(uint32_t format, uint32_t width, uint32_t height, s
 
 } // namespace
 
-void Skeleton::model_transform(const std::string& bone, std::array<float, 9>& rotation,
-                               std::array<float, 3>& position) const {
-    rotation = {1, 0, 0, 0, 1, 0, 0, 0, 1};
-    position = {0, 0, 0};
+std::array<float, 3> Transform::apply(const std::array<float, 3>& p) const {
+    const auto& r = rotation;  // columns
+    return {r[0] * p[0] + r[3] * p[1] + r[6] * p[2] + position[0], r[1] * p[0] + r[4] * p[1] + r[7] * p[2] + position[1],
+            r[2] * p[0] + r[5] * p[1] + r[8] * p[2] + position[2]};
+}
+
+Transform Transform::then(const Transform& outer) const {
+    Transform out;
+    // Each column of the combined rotation is `outer`'s rotation of ours.
+    for (int column = 0; column < 3; ++column) {
+        const std::array<float, 3> axis{rotation[column * 3], rotation[column * 3 + 1], rotation[column * 3 + 2]};
+        const auto& o = outer.rotation;
+        out.rotation[column * 3] = o[0] * axis[0] + o[3] * axis[1] + o[6] * axis[2];
+        out.rotation[column * 3 + 1] = o[1] * axis[0] + o[4] * axis[1] + o[7] * axis[2];
+        out.rotation[column * 3 + 2] = o[2] * axis[0] + o[5] * axis[1] + o[8] * axis[2];
+    }
+    out.position = outer.apply(position);
+    return out;
+}
+
+Transform Skeleton::model_transform(const std::string& bone) const {
+    Transform transform;
     std::string name = bone;
-    // Walk up to the root, applying each parent's transform: p' = R p + t.
+    // Walk up to the root, applying each parent's transform.
     for (size_t guard = 0; guard <= bones.size() && !name.empty(); ++guard) {
         const auto it = std::find_if(bones.begin(), bones.end(), [&](const ModelBone& b) { return b.name == name; });
         if (it == bones.end()) {
             break;
         }
-        const auto& r = it->rotation;
-        std::array<float, 9> combined{};
-        for (int row = 0; row < 3; ++row) {
-            for (int col = 0; col < 3; ++col) {
-                for (int k = 0; k < 3; ++k) {
-                    combined[row * 3 + col] += r[row * 3 + k] * rotation[k * 3 + col];
-                }
-            }
-        }
-        std::array<float, 3> moved{};
-        for (int row = 0; row < 3; ++row) {
-            moved[row] = r[row * 3] * position[0] + r[row * 3 + 1] * position[1] + r[row * 3 + 2] * position[2] +
-                         it->position[row];
-        }
-        rotation = combined;
-        position = moved;
+        transform = transform.then(Transform{it->rotation, it->position});
         name = it->parent;
     }
+    return transform;
+}
+
+bool CollisionPrimitive::stops(char kind) const {
+    // "p_-so-name": the flags sit between the first two dashes after "p_".
+    if (name.size() < 3 || name[2] != '-') {
+        return true;
+    }
+    const size_t end = name.find('-', 3);
+    const std::string flags = name.substr(3, end == std::string::npos ? std::string::npos : end - 3);
+    return flags.find(kind) != std::string::npos;
+}
+
+// "coll": NAME (the model), NODE (its bone), INFO (vertex, node, leaf and
+// index counts, then a bounding box), POSI (float vertices), TREE (NODE and
+// LEAF chunks; a LEAF is an index count, 6 bytes of quantized bounds, then
+// uint16 indices of a convex polygon).
+CollisionMesh read_collision_mesh(const UcfbNode& coll) {
+    CollisionMesh mesh;
+    mesh.model = coll.name();
+    if (const UcfbNode* node = coll.child("NODE")) {
+        mesh.bone = text(node->data);
+    }
+    if (const UcfbNode* positions = coll.child("POSI")) {
+        for (size_t at = 0; at + 12 <= positions->data.size(); at += 12) {
+            mesh.vertices.push_back(read<std::array<float, 3>>(positions->data, at));
+        }
+    }
+    if (const UcfbNode* tree = coll.child("TREE")) {
+        for (const UcfbNode& leaf : tree->children) {
+            if (leaf.tag != "LEAF" || leaf.data.empty()) {
+                continue;
+            }
+            const size_t count = leaf.data[0];
+            std::vector<uint32_t> polygon;
+            for (size_t i = 0; i < count; ++i) {
+                polygon.push_back(read<uint16_t>(leaf.data, 7 + i * 2));
+                if (polygon.back() >= mesh.vertices.size()) {
+                    throw std::runtime_error("bf2 collision: index past the vertices");
+                }
+            }
+            for (size_t i = 2; i < polygon.size(); ++i) {
+                mesh.triangles.push_back({polygon[0], polygon[i - 1], polygon[i]});
+            }
+        }
+    }
+    return mesh;
+}
+
+// "prim": INFO (the model's name, then the count), then per primitive NAME,
+// PRNT (bone), XFRM and DATA (shape, then three sizes).
+CollisionPrimitives read_collision_primitives(const UcfbNode& prim) {
+    CollisionPrimitives primitives;
+    if (const UcfbNode* info = prim.child("INFO")) {
+        primitives.model = text(info->data);
+    }
+    CollisionPrimitive current;
+    for (const UcfbNode& child : prim.children) {
+        if (child.tag == "NAME") {
+            current.name = text(child.data);
+        } else if (child.tag == "PRNT") {
+            current.parent = text(child.data);
+        } else if (child.tag == "XFRM") {
+            current.transform = {read<std::array<float, 9>>(child.data, 0), read<std::array<float, 3>>(child.data, 36)};
+        } else if (child.tag == "DATA") {
+            current.shape = read<uint32_t>(child.data, 0);
+            current.size = read<std::array<float, 3>>(child.data, 4);
+            primitives.primitives.push_back(current);
+            current = {};
+        }
+    }
+    return primitives;
 }
 
 Model read_model(const UcfbNode& modl) {

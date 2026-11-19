@@ -1,6 +1,7 @@
 #include "bf2/model_export.h"
 
 #include <cctype>
+#include <cmath>
 #include <cstring>
 #include <stdexcept>
 
@@ -44,6 +45,13 @@ void AssetLibrary::index(const UcfbNode& node) {
             }
         } else if (child.tag == "tex_") {
             textures_.try_emplace(lowercase(child.name()), &child);
+        } else if (child.tag == "coll") {
+            meshes_.try_emplace(lowercase(child.name()), &child);
+        } else if (child.tag == "prim") {
+            if (const UcfbNode* info = child.child("INFO")) {
+                const auto* text = reinterpret_cast<const char*>(info->data.data());
+                primitives_.try_emplace(lowercase(std::string(text, strnlen(text, info->data.size()))), &child);
+            }
         }
     }
 }
@@ -69,6 +77,95 @@ const UcfbNode* AssetLibrary::skeleton(std::string_view model) const {
 const UcfbNode* AssetLibrary::texture(std::string_view name) const {
     const auto it = textures_.find(lowercase(name));
     return it == textures_.end() ? nullptr : it->second;
+}
+
+const UcfbNode* AssetLibrary::collision_mesh(std::string_view model) const {
+    const auto it = meshes_.find(lowercase(model));
+    return it == meshes_.end() ? nullptr : it->second;
+}
+
+const UcfbNode* AssetLibrary::collision_primitives(std::string_view model) const {
+    const auto it = primitives_.find(lowercase(model));
+    return it == primitives_.end() ? nullptr : it->second;
+}
+
+namespace {
+
+using Point = std::array<float, 3>;
+
+// A primitive's surface in its own space, as triangles.
+std::vector<std::array<Point, 3>> tessellate(const CollisionPrimitive& primitive) {
+    std::vector<std::array<Point, 3>> out;
+    const auto quad = [&](Point a, Point b, Point c, Point d) {
+        out.push_back({a, b, c});
+        out.push_back({a, c, d});
+    };
+    const auto& s = primitive.size;
+    if (primitive.shape == CollisionPrimitive::box) {
+        const auto corner = [&](int i) {
+            return Point{i & 1 ? s[0] : -s[0], i & 2 ? s[1] : -s[1], i & 4 ? s[2] : -s[2]};
+        };
+        const int faces[6][4] = {{0, 1, 3, 2}, {4, 6, 7, 5}, {0, 4, 5, 1}, {2, 3, 7, 6}, {0, 2, 6, 4}, {1, 5, 7, 3}};
+        for (const auto& f : faces) {
+            quad(corner(f[0]), corner(f[1]), corner(f[2]), corner(f[3]));
+        }
+    } else if (primitive.shape == CollisionPrimitive::cylinder) {
+        constexpr int sides = 12;
+        const float radius = s[0], half = s[1] / 2;
+        const auto rim = [&](int i, float y) {
+            const double angle = 2 * 3.14159265358979 * i / sides;
+            return Point{float(radius * std::cos(angle)), y, float(radius * std::sin(angle))};
+        };
+        for (int i = 0; i < sides; ++i) {
+            quad(rim(i, -half), rim(i + 1, -half), rim(i + 1, half), rim(i, half));
+            out.push_back({Point{0, half, 0}, rim(i, half), rim(i + 1, half)});
+            out.push_back({Point{0, -half, 0}, rim(i + 1, -half), rim(i, -half)});
+        }
+    } else if (primitive.shape == CollisionPrimitive::sphere) {
+        constexpr int rings = 6, sides = 8;
+        const auto at = [&](int ring, int side) {
+            const double polar = 3.14159265358979 * ring / rings, around = 2 * 3.14159265358979 * side / sides;
+            return Point{float(s[0] * std::sin(polar) * std::cos(around)), float(s[0] * std::cos(polar)),
+                         float(s[0] * std::sin(polar) * std::sin(around))};
+        };
+        for (int ring = 0; ring < rings; ++ring) {
+            for (int side = 0; side < sides; ++side) {
+                quad(at(ring, side), at(ring + 1, side), at(ring + 1, side + 1), at(ring, side + 1));
+            }
+        }
+    }
+    return out;
+}
+
+} // namespace
+
+std::vector<CollisionTriangle> model_collision(const AssetLibrary& library, std::string_view model) {
+    std::vector<CollisionTriangle> out;
+    Skeleton skeleton;
+    if (const UcfbNode* skel = library.skeleton(model)) {
+        skeleton = read_skeleton(*skel);
+    }
+    if (const UcfbNode* coll = library.collision_mesh(model)) {
+        const CollisionMesh mesh = read_collision_mesh(*coll);
+        const Transform bone = skeleton.model_transform(mesh.bone);
+        for (const auto& t : mesh.triangles) {
+            out.push_back({bone.apply(mesh.vertices[t[0]]), bone.apply(mesh.vertices[t[1]]),
+                           bone.apply(mesh.vertices[t[2]]), true, true});
+        }
+    }
+    if (const UcfbNode* prim = library.collision_primitives(model)) {
+        for (const CollisionPrimitive& primitive : read_collision_primitives(*prim).primitives) {
+            const bool soldiers = primitive.stops('s'), ordnance = primitive.stops('o');
+            if (!soldiers && !ordnance) {
+                continue;
+            }
+            const Transform place = primitive.transform.then(skeleton.model_transform(primitive.parent));
+            for (const auto& t : tessellate(primitive)) {
+                out.push_back({place.apply(t[0]), place.apply(t[1]), place.apply(t[2]), soldiers, ordnance});
+            }
+        }
+    }
+    return out;
 }
 
 bool export_texture(const AssetLibrary& library, std::string_view name, const std::filesystem::path& path) {
@@ -108,18 +205,14 @@ ModelExport export_model(const AssetLibrary& library, std::string_view name, con
             continue;
         }
         // Into model space through the segment's bone, then mirror x.
-        std::array<float, 9> r;
-        std::array<float, 3> t;
-        skeleton.model_transform(segment.bone, r, t);
+        const Transform bone = skeleton.model_transform(segment.bone);
+        const Transform turn{bone.rotation, {0, 0, 0}};
         std::vector<Vec3> positions, normals;
         for (size_t i = 0; i < segment.positions.size(); ++i) {
-            const auto& p = segment.positions[i];
-            const auto& n = segment.normals[i];
-            positions.push_back({-(r[0] * p[0] + r[1] * p[1] + r[2] * p[2] + t[0]),
-                                 r[3] * p[0] + r[4] * p[1] + r[5] * p[2] + t[1],
-                                 r[6] * p[0] + r[7] * p[1] + r[8] * p[2] + t[2]});
-            normals.push_back({-(r[0] * n[0] + r[1] * n[1] + r[2] * n[2]), r[3] * n[0] + r[4] * n[1] + r[5] * n[2],
-                               r[6] * n[0] + r[7] * n[1] + r[8] * n[2]});
+            const auto p = bone.apply(segment.positions[i]);
+            const auto n = turn.apply(segment.normals[i]);
+            positions.push_back({-p[0], p[1], p[2]});
+            normals.push_back({-n[0], n[1], n[2]});
         }
         // Mirroring reverses the winding: swap two corners back.
         std::vector<uint32_t> triangles = segment.triangles;

@@ -1,6 +1,7 @@
 // Reads a small synthetic munged model, skeleton and textures (no game data),
 // and writes the model as glTF.
 
+#include <algorithm>
 #include <cstdio>
 #include <cstring>
 #include <filesystem>
@@ -105,12 +106,12 @@ Bytes model() {
     return chunk("modl", join({chunk("NAME", text("test_prop")), chunk("segm", segment)}));
 }
 
-// root at the origin; child at (1, 2, 3) turned 90 degrees about y; tip at
-// (1, 0, 0) from child.
+// root at the origin; child at (2, 2, 3) turned 90 degrees about y (its x
+// axis is the root's z: the stored columns); tip at (1, 0, 0) from child.
 Bytes skeleton() {
     Bytes transforms;
     for (const float v : {1.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 0.0f,  //
-                          0.0f, 0.0f, 1.0f, 0.0f, 1.0f, 0.0f, -1.0f, 0.0f, 0.0f, 1.0f, 2.0f, 3.0f,  //
+                          0.0f, 0.0f, 1.0f, 0.0f, 1.0f, 0.0f, -1.0f, 0.0f, 0.0f, 2.0f, 2.0f, 3.0f,  //
                           1.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 0.0f, 1.0f, 1.0f, 0.0f, 0.0f}) {
         put(transforms, v);
     }
@@ -145,6 +146,84 @@ Bytes texture() {
                                format(60, Bytes(8, 0)), format(dxt1, Bytes(8, 0)), format(21, argb)}));
 }
 
+// A collision mesh of a quad and a triangle (leaves of 4 and 3 indices) on
+// bone "root", and three primitives: a box on "child", a soldier-and-ordnance
+// cylinder, and a vehicles-only box (left out of model_collision).
+Bytes collision() {
+    Bytes positions;
+    for (const float v : {0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 1.0f, 1.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 2.0f, 0.0f}) {
+        put(positions, v);
+    }
+    const auto leaf = [](std::initializer_list<uint16_t> indices) {
+        Bytes out{uint8_t(indices.size()), 0, 0, 0, 255, 255, 255};
+        for (const uint16_t i : indices) {
+            put(out, i);
+        }
+        return chunk("LEAF", out);
+    };
+    const Bytes coll = chunk(
+        "coll", join({chunk("NAME", text("test_prop")), chunk("NODE", text("root")), chunk("INFO", words({5, 1, 2, 7})),
+                      chunk("POSI", positions),
+                      chunk("TREE", join({chunk("NODE", Bytes(6, 0)), leaf({0, 1, 2, 3}), leaf({3, 2, 4})}))}));
+    const auto primitive = [](const char* name, const char* parent, uint32_t shape, float x, float y, float z) {
+        Bytes transform;
+        for (const float v : {1.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 1.0f, 0.0f}) {
+            put(transform, v);
+        }
+        Bytes data = words({shape});
+        put(data, x);
+        put(data, y);
+        put(data, z);
+        return join({chunk("NAME", text(name)), chunk("PRNT", text(parent)), chunk("XFRM", transform),
+                     chunk("DATA", data)});
+    };
+    const Bytes prim = chunk("prim", join({chunk("INFO", join({text("test_prop"), words({3})})),
+                                           primitive("p_crate", "child", 4, 0.5f, 0.5f, 0.5f),
+                                           primitive("p_-so-trunk", "root", 2, 0.3f, 4, 0),
+                                           primitive("p_-v-wall", "root", 4, 1, 1, 1)}));
+    return join({coll, prim});
+}
+
+void test_collision() {
+    const Bytes file = chunk("ucfb", join({skeleton(), model(), collision()}));
+    const UcfbNode root = parse_ucfb(file);
+
+    const CollisionMesh mesh = read_collision_mesh(*root.child("coll"));
+    CHECK(mesh.model == "test_prop" && mesh.bone == "root" && mesh.vertices.size() == 5);
+    CHECK(mesh.triangles.size() == 3);  // the quad fanned into two, and the triangle
+    CHECK(mesh.triangles[1] == (std::array<uint32_t, 3>{0, 2, 3}) && mesh.triangles[2] == (std::array<uint32_t, 3>{3, 2, 4}));
+
+    const CollisionPrimitives prims = read_collision_primitives(*root.child("prim"));
+    CHECK(prims.model == "test_prop" && prims.primitives.size() == 3);
+    const CollisionPrimitive& crate = prims.primitives[0];
+    CHECK(crate.parent == "child" && crate.shape == CollisionPrimitive::box && crate.size[0] == 0.5f);
+    CHECK(crate.stops('s') && crate.stops('o') && crate.stops('v'));  // no flags: everything
+    CHECK(prims.primitives[1].stops('s') && prims.primitives[1].stops('o') && !prims.primitives[1].stops('v'));
+    CHECK(!prims.primitives[2].stops('s') && !prims.primitives[2].stops('o'));
+
+    AssetLibrary library;
+    library.add(file);
+    CHECK(library.collision_mesh("TEST_PROP") && library.collision_primitives("test_prop"));
+    const std::vector<CollisionTriangle> triangles = model_collision(library, "test_prop");
+    CHECK(triangles.size() == 3 + 12 + 48);  // mesh, box, 12-sided cylinder (sides and caps)
+    // The crate: 1 m up from "child" (at (2, 2, 3), turned 90 degrees about y).
+    float low = 1e9f, high = -1e9f;
+    for (size_t i = 3; i < 15; ++i) {
+        for (const auto& p : {triangles[i].a, triangles[i].b, triangles[i].c}) {
+            low = std::min(low, p[1]);
+            high = std::max(high, p[1]);
+        }
+    }
+    CHECK(low == 2.5f && high == 3.5f);
+    // The trunk is 4 m tall, centered 1 m up: -1..3.
+    low = 1e9f;
+    for (size_t i = 15; i < triangles.size(); ++i) {
+        low = std::min({low, triangles[i].a[1], triangles[i].b[1], triangles[i].c[1]});
+        CHECK(triangles[i].soldiers && triangles[i].ordnance);
+    }
+    CHECK(low == -1.0f);
+}
+
 void test_model() {
     const Bytes file = chunk("ucfb", join({texture(), skeleton(), model()}));
     const UcfbNode root = parse_ucfb(file);
@@ -163,12 +242,11 @@ void test_model() {
 
     const Skeleton skel = read_skeleton(*root.child("skel"));
     CHECK(skel.model == "test_prop" && skel.bones.size() == 3 && skel.bones[2].parent == "child");
-    std::array<float, 9> r;
-    std::array<float, 3> t;
-    skel.model_transform("tip", r, t);
-    CHECK(t == (std::array<float, 3>{1, 2, 2}) && r[2] == 1 && r[6] == -1);
-    skel.model_transform("nope", r, t);
-    CHECK(t == (std::array<float, 3>{0, 0, 0}) && r[0] == 1);
+    const Transform tip = skel.model_transform("tip");
+    CHECK(tip.position == (std::array<float, 3>{2, 2, 4}) && tip.rotation[2] == 1 && tip.rotation[6] == -1);
+    CHECK(tip.apply({0, 0, 1}) == (std::array<float, 3>{1, 2, 4}));
+    const Transform none = skel.model_transform("nope");
+    CHECK(none.position == (std::array<float, 3>{0, 0, 0}) && none.rotation[0] == 1);
 
     const auto image = read_texture(*root.child("tex_"));
     CHECK(image && image->width == 2 && image->height == 2);
@@ -196,10 +274,10 @@ void test_model() {
     CHECK(json.find(R"("doubleSided":true)") != std::string::npos);
     CHECK(json.find("COLOR_0") != std::string::npos);
     CHECK(json.find("KHR_materials_unlit") != std::string::npos);  // baked lighting
-    // The quad sits at Battlefront x 2..3 through "child" (turned 90 degrees
-    // about y, at (1, 2, 3)): model x = z + 1 = 1..2 (mirrored to -2..-1),
-    // z = 3 - x = 0..1.
-    CHECK(json.find(R"("min":[-2,2.5,0],"max":[-1,2.5,1])") != std::string::npos);
+    // The quad sits at Battlefront x 2..3, z 0..1, through "child" (turned
+    // 90 degrees about y, at (2, 2, 3)): model x = 2 - z = 1..2 (mirrored to
+    // -2..-1), z = 3 + x = 5..6.
+    CHECK(json.find(R"("min":[-2,2.5,5],"max":[-1,2.5,6])") != std::string::npos);
     std::filesystem::remove_all(dir);
 }
 
@@ -208,6 +286,7 @@ void test_model() {
 int main() {
     try {
         test_model();
+        test_collision();
     } catch (const std::exception& error) {
         std::printf("FAIL: %s\n", error.what());
         ++failures;
