@@ -1,6 +1,7 @@
 // bf2tool: inspect Battlefront II munged files (.lvl).
 
 #include <algorithm>
+#include <cmath>
 #include <filesystem>
 #include <format>
 #include <fstream>
@@ -12,6 +13,7 @@
 
 #include "bf2/animation.h"
 #include "bf2/hash.h"
+#include "bf2/level.h"
 #include "bf2/odf.h"
 #include "bf2/ucfb.h"
 
@@ -28,6 +30,7 @@ constexpr const char* usage = R"(usage:
   bf2tool anims <file.lvl> <bank> [name...]
   bf2tool odf <file.lvl> [class]
   bf2tool export-loadout <_lvl_pc dir> <side> <soldier class> -o <loadout.ini> [--items <dir>]
+  bf2tool export-map <_lvl_pc dir> <map> -o <out dir> [--mode conquest] [--skip <layer>]...
 )";
 
 std::vector<uint8_t> read_file(const std::filesystem::path& path);
@@ -353,6 +356,138 @@ int cmd_export_loadout(const std::vector<std::string>& args) {
     return 0;
 }
 
+std::string json_string(const std::string& text) {
+    std::string out = "\"";
+    for (const char c : text) {
+        if (c == '"' || c == '\\') {
+            out += '\\';
+        }
+        out += uint8_t(c) < 0x20 ? ' ' : c;
+    }
+    return out + "\"";
+}
+
+// Writes a Battlefront II map for the game: its terrain as a heightfield
+// bake (<map>.r32/.json, like swgtool bake-terrain), its object placements in
+// game space (<map>.objects.json), and a game mode's command posts as a map
+// file for battlefields (<map>_<mode>.ini). Layers of other game modes, and
+// any --skip layers (e.g. the other era's props), are left out.
+int cmd_export_map(const std::vector<std::string>& args) {
+    if (args.size() < 4 || args[2] != "-o") {
+        std::cerr << usage;
+        return 2;
+    }
+    const std::string map = args[1];
+    const std::filesystem::path out_dir = args[3];
+    std::string mode = "conquest";
+    std::vector<std::string> skipped;
+    for (size_t i = 4; i + 1 < args.size(); i += 2) {
+        if (args[i] == "--mode") {
+            mode = args[i + 1];
+        } else if (args[i] == "--skip") {
+            skipped.push_back(args[i + 1]);
+        }
+    }
+    const std::string folder = map.substr(0, 3);
+    const std::vector<uint8_t> bytes = read_file(std::filesystem::path(args[0]) / folder / (map + ".lvl"));
+    const Level level = read_level(parse_ucfb(bytes));
+    std::filesystem::create_directories(out_dir);
+    const Terrain& terrain = level.terrain;
+    const int samples = terrain.cells + 1;
+
+    // Terrain bake.
+    {
+        std::ofstream r32(out_dir / (map + ".r32"), std::ios::binary);
+        r32.write(reinterpret_cast<const char*>(terrain.heights.data()), std::streamsize(terrain.heights.size() * 4));
+        const auto [low, high] = std::minmax_element(terrain.heights.begin(), terrain.heights.end());
+        std::ofstream json(out_dir / (map + ".json"), std::ios::binary);
+        json << "{\n  \"source\": " << json_string(map + ".lvl (Battlefront II)") << ",\n  \"samples\": " << samples
+             << ",\n  \"spacing\": " << terrain.unit << ",\n  \"origin_x\": " << terrain.origin()
+             << ",\n  \"origin_z\": " << terrain.origin() << ",\n  \"min_height\": " << *low
+             << ",\n  \"max_height\": " << *high
+             << ",\n  \"format\": \"float32 little-endian, row-major, rows along +Z\",\n  \"texture_layers\": [";
+        for (size_t i = 0; i < terrain.texture_layers.size(); ++i) {
+            json << (i ? ", " : "") << json_string(terrain.texture_layers[i]);
+        }
+        json << "]\n}\n";
+        std::cerr << std::format("terrain: {} x {} samples, {} m apart, heights {:.2f}..{:.2f} m, {} filled holes\n",
+                                 samples, samples, terrain.unit, *low, *high, terrain.missing);
+    }
+
+    // Objects, in game space (x mirrored; rotations conjugated by the mirror).
+    const std::string mode_layer = map + "_" + mode;
+    const auto included = [&](const std::string& layer) {
+        if (std::find(skipped.begin(), skipped.end(), layer) != skipped.end()) {
+            return false;
+        }
+        for (const char* other : {"_conquest", "_ctf", "_1flag", "_2flag", "_flag_cps", "_eli", "_hunt", "_assault"}) {
+            if (layer.find(other) != std::string::npos && layer != mode_layer) {
+                return false;
+            }
+        }
+        return true;
+    };
+    {
+        std::ofstream json(out_dir / (map + ".objects.json"), std::ios::binary);
+        json << "{\n  \"map\": " << json_string(map) << ",\n  \"objects\": [";
+        size_t written = 0;
+        for (const WorldItem& object : level.objects) {
+            if (!included(object.layer)) {
+                continue;
+            }
+            const auto& r = object.rotation;
+            const std::array<float, 9> basis{r[0], -r[1], -r[2], -r[3], r[4], r[5], -r[6], r[7], r[8]};
+            json << (written++ ? ",\n" : "\n") << "    {\"layer\": " << json_string(object.layer)
+                 << ", \"class\": " << json_string(object.type) << ", \"name\": " << json_string(object.name)
+                 << std::format(", \"position\": [{}, {}, {}], \"basis\": [", -object.position[0], object.position[1],
+                                object.position[2]);
+            for (size_t i = 0; i < 9; ++i) {
+                json << (i ? ", " : "") << basis[i];
+            }
+            json << "]}";
+        }
+        json << "\n  ]\n}\n";
+        std::cerr << std::format("objects: {} of {} placed\n", written, level.objects.size());
+    }
+
+    // The mode's command posts: capture regions, starting teams, spawn points.
+    std::ofstream ini(out_dir / (map + "_" + mode + ".ini"), std::ios::binary);
+    const double edge = terrain.origin();
+    ini << "; " << map << "'s " << mode << " layer (" << mode_layer
+        << "), written by bf2tool export-map from your own Battlefront II install.\n"
+           "; Game data: don't commit or share it. Positions are Battlefront coordinates (x z).\n\n[map]\nName = "
+        << map << "\nTerrain = " << map << "\n"
+        << std::format("Bounds = {} {} {} {}\n", edge, edge, -edge, -edge);
+    int posts = 0;
+    for (const WorldItem& object : level.objects) {
+        if (object.layer != mode_layer || object.get("CaptureRegion").empty()) {
+            continue;
+        }
+        const WorldItem* capture = level.region(object.get("CaptureRegion"));
+        const auto& at = capture ? capture->position : object.position;
+        ini << "\n[post]\nName = " << (object.get("Label").empty() ? object.name : object.get("Label")) << "\n"
+            << std::format("Position = {:.2f} {:.2f}\n", at[0], at[2]);
+        if (capture != nullptr) {
+            // ASSUMPTION: a capture cylinder's SIZE x is its radius.
+            ini << std::format("Radius = {:.2f}\n", std::max(capture->size[0], capture->size[2]));
+        }
+        if (const std::string team = object.get("Team"); team == "1" || team == "2") {
+            ini << "Owner = " << team << "\n";
+        }
+        if (const LevelPath* spawns = level.path(object.get("SpawnPath"), mode_layer)) {
+            for (const PathNode& node : spawns->nodes) {
+                ini << std::format("SpawnPoint = {:.2f} {:.2f}\n", node.position[0], node.position[2]);
+            }
+        }
+        ++posts;
+    }
+    std::cerr << std::format("{}: {} command posts\nwrote {}\n", mode_layer, posts, out_dir.string());
+    if (posts == 0) {
+        throw std::runtime_error("no command posts in layer " + mode_layer);
+    }
+    return 0;
+}
+
 int cmd_check(const std::vector<std::string>& args) {
     if (args.empty()) {
         std::cerr << usage;
@@ -431,6 +566,9 @@ int main(int argc, char** argv) {
         }
         if (command == "export-loadout") {
             return cmd_export_loadout(args);
+        }
+        if (command == "export-map") {
+            return cmd_export_map(args);
         }
     } catch (const std::exception& e) {
         std::cerr << "error: " << e.what() << "\n";

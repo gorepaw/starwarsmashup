@@ -16,14 +16,61 @@ bool iequals(std::string_view a, std::string_view b) {
                       [](char x, char y) { return std::tolower(uint8_t(x)) == std::tolower(uint8_t(y)); });
 }
 
-// Galaxies "x z" to game space.
-Vec3 galaxies_point(const std::string& text, const std::string& what) {
+// Source-world "x z" (Galaxies or Battlefront) to game space.
+Vec3 source_point(const std::string& text, const std::string& what) {
     std::istringstream fields(text);
     double x = 0, z = 0;
     if (!(fields >> x >> z)) {
         throw std::runtime_error(what + ": expected \"x z\", got \"" + text + "\"");
     }
     return {-x, 0, z};
+}
+
+// Bounds = min_x min_z max_x max_z, in source-world coordinates.
+void read_bounds(Battlefield& field, const std::string& text, const std::string& where) {
+    std::istringstream fields(text);
+    double x0 = 0, z0 = 0, x1 = 0, z1 = 0;
+    if (!(fields >> x0 >> z0 >> x1 >> z1) || x0 >= x1 || z0 >= z1) {
+        throw std::runtime_error(where + ": Bounds is \"min_x min_z max_x max_z\"");
+    }
+    field.min_x = -x1;  // x runs the other way in game space
+    field.max_x = -x0;
+    field.min_z = z0;
+    field.max_z = z1;
+}
+
+// The [post] sections of a battlefield or map file. Owner is a team's name,
+// or its number (1: the first [team]).
+void read_posts(Battlefield& field, const Ini& ini, const std::string& where) {
+    for (const Ini::Section& s : ini.sections()) {
+        if (s.name != "post") {
+            continue;
+        }
+        CommandPost post;
+        post.name = s.get("Name").value_or("Post " + std::to_string(field.posts.size() + 1));
+        post.position = source_point(s.get("Position").value_or(""), where + ": post " + post.name);
+        post.radius = s.number("Radius", post.radius);
+        post.neutralize_time = std::max(0.1, s.number("NeutralizeTime", post.neutralize_time));
+        post.capture_time = std::max(0.1, s.number("CaptureTime", post.capture_time));
+        post.spawn_radius = s.number("SpawnRadius", post.spawn_radius);
+        post.capturable = s.number("Capturable", 1) != 0;
+        if (const auto owner = s.get("Owner"); owner && !owner->empty()) {
+            for (size_t t = 0; t < field.teams.size(); ++t) {
+                if (iequals(*owner, field.teams[t].name) || *owner == std::to_string(t + 1)) {
+                    post.owner = int(t);
+                }
+            }
+            if (post.owner < 0) {
+                throw std::runtime_error(where + ": post " + post.name + " has unknown Owner " + *owner);
+            }
+        }
+        for (const auto& [key, value] : s.values) {
+            if (iequals(key, "SpawnPoint")) {
+                post.spawn_points.push_back(source_point(value, where + ": post " + post.name + " SpawnPoint"));
+            }
+        }
+        field.posts.push_back(post);
+    }
 }
 
 } // namespace
@@ -51,15 +98,7 @@ Battlefield load_battlefield(const std::filesystem::path& path) {
     }
     field.name = main->get("Name").value_or(path.stem().string());
     if (const auto bounds = main->get("Bounds")) {
-        std::istringstream fields(*bounds);
-        double x0 = 0, z0 = 0, x1 = 0, z1 = 0;
-        if (!(fields >> x0 >> z0 >> x1 >> z1) || x0 >= x1 || z0 >= z1) {
-            throw std::runtime_error(where + ": Bounds is \"min_x min_z max_x max_z\"");
-        }
-        field.min_x = -x1;  // Galaxies x runs the other way
-        field.max_x = -x0;
-        field.min_z = z0;
-        field.max_z = z1;
+        read_bounds(field, *bounds, where);
     }
     field.tickets = main->number("Tickets", field.tickets);
     field.warmup = main->number("Warmup", field.warmup);
@@ -90,30 +129,25 @@ Battlefield load_battlefield(const std::filesystem::path& path) {
     if (team_count != field.teams.size()) {
         throw std::runtime_error(where + ": needs two [team] sections");
     }
-    for (const Ini::Section& s : ini.sections()) {
-        if (s.name != "post") {
-            continue;
+    // A Battlefront map's posts, bounds and terrain, then any of our own.
+    if (const auto map = main->get("Map")) {
+        const std::filesystem::path map_path = path.parent_path() / *map;
+        if (!std::filesystem::exists(map_path)) {
+            throw std::runtime_error(where + ": map file " + map_path.string() +
+                                     " is missing (export it with bf2tool export-map)");
         }
-        CommandPost post;
-        post.name = s.get("Name").value_or("Post " + std::to_string(field.posts.size() + 1));
-        post.position = galaxies_point(s.get("Position").value_or(""), where + ": post " + post.name);
-        post.radius = s.number("Radius", post.radius);
-        post.neutralize_time = std::max(0.1, s.number("NeutralizeTime", post.neutralize_time));
-        post.capture_time = std::max(0.1, s.number("CaptureTime", post.capture_time));
-        post.spawn_radius = s.number("SpawnRadius", post.spawn_radius);
-        post.capturable = s.number("Capturable", 1) != 0;
-        if (const auto owner = s.get("Owner"); owner && !owner->empty()) {
-            for (size_t t = 0; t < field.teams.size(); ++t) {
-                if (iequals(*owner, field.teams[t].name)) {
-                    post.owner = int(t);
-                }
+        const Ini map_ini = Ini::load(map_path);
+        if (const Ini::Section* about = map_ini.section("map")) {
+            if (const auto bounds = about->get("Bounds"); bounds && !main->get("Bounds")) {
+                read_bounds(field, *bounds, map_path.string());
             }
-            if (post.owner < 0) {
-                throw std::runtime_error(where + ": post " + post.name + " has unknown Owner " + *owner);
+            if (const auto terrain = about->get("Terrain")) {
+                field.terrain = map_path.parent_path() / *terrain;
             }
         }
-        field.posts.push_back(post);
+        read_posts(field, map_ini, map_path.string());
     }
+    read_posts(field, ini, where);
     if (field.posts.empty()) {
         throw std::runtime_error(where + ": no [post] sections");
     }

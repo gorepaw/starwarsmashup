@@ -22,7 +22,8 @@ struct CommandPost {
     bool capturable = true;
     double neutralize_time = 12;  // NeutralizeTime: seconds for one soldier to take it from its owner
     double capture_time = 10;     // CaptureTime: seconds for one soldier to take it once it's neutral
-    double spawn_radius = 6;      // m: soldiers spawn on a ring this far from the post
+    double spawn_radius = 6;      // m: without spawn points, soldiers spawn on a ring this far from the post
+    std::vector<Vec3> spawn_points;  // game space (x, z); used in turn
 
     bool contains(Vec3 point) const;
 };
@@ -38,6 +39,7 @@ struct Team {
 // and their test loadouts, and the command posts they fight over.
 struct Battlefield {
     std::string name;
+    std::filesystem::path terrain;  // its heightfield bake prefix, if its map names one
     double min_x = -1e9, min_z = -1e9, max_x = 1e9, max_z = 1e9;  // game space
     std::array<Team, 2> teams;
     std::vector<CommandPost> posts;
@@ -54,9 +56,13 @@ struct Battlefield {
 };
 
 // Reads a battlefield file (see game/battlefields/). Positions in it are
-// Galaxies world coordinates (x z), as the snapshot tools print them;
-// loadout files are relative to it. Throws std::runtime_error if it, or a
-// loadout, can't be read or makes no sense.
+// source-world coordinates (x z): Galaxies', as the snapshot tools print
+// them, or Battlefront's (both are left-handed: game x = -x). Loadout files
+// are relative to it. `Map = <file>` takes the bounds, terrain and command
+// posts from a map file written by `bf2tool export-map` (its posts name
+// their starting team by number: 1 is the first [team]). Throws
+// std::runtime_error if it, a map or a loadout can't be read or makes no
+// sense.
 Battlefield load_battlefield(const std::filesystem::path& path);
 
 // Every character is waiting to spawn (choosing a loadout and a post), alive,

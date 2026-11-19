@@ -45,12 +45,12 @@ Hub notes:
 - [x] Loadout selection and spawning at owned command posts. Leaving the battlefield kills after 10 s. Until the hub sends each player's own gear (Stage 2), battlefields offer test loadouts.
 
 **Battlefront II maps**
-- [ ] Level importer (`bf2tool`): terrain (heights, texture layers), models and textures, world placements, from the player's own `.lvl` files
+- [ ] Level importer (`bf2tool export-map`), from the player's own `.lvl` files. Done: terrain heights (read from the terrain patches' vertices), world placements of every layer and sublevel, regions and paths. To do: models, textures, terrain texture layers.
 - [ ] Collision in `core::World`: terrain, model collision meshes and primitives, barriers
-- [ ] Conquest data from the map: command posts, capture and control regions, spawn paths, out-of-bounds; written as a battlefield file
+- [x] Conquest data from the map: command posts (starting team, capture region, spawn path) from the mode's layer, written as a map file that a battlefield includes (`Map = ...`). Bounds are the terrain's for now; Battlefront's barriers and death regions come with collision.
 - [ ] Rendering in Godot: terrain, props, sky, lighting
-- [ ] First map: Mos Eisley (`tat2`)
-- [ ] More maps, and the hub picking one for each battle
+- [ ] First map: Dagobah (`dag1`): small, outdoor, infantry only. A conquest match with bots plays on its terrain and command posts (`game/battlefields/dagobah.ini`), with placeholder shapes for its trees and props.
+- [ ] More maps, and the hub picking one for each battle. Mos Eisley (`tat2`) comes last: queuing in Mos Eisley to fight in another Mos Eisley would be odd
 
 **Combat**
 - [ ] Third-person shooter controller with Battlefront feel: sprint, roll, crouch, zoom. Sprint (with energy), jump and over-the-shoulder aiming are done; roll, crouch and zoom aren't.

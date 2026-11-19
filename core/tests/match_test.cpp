@@ -49,6 +49,23 @@ void test_battlefield_file() {
     CHECK(field.posts[1].position == Vec3(-200, 0, -300) && field.posts[1].radius == 15 && field.posts[1].capture_time == 16);
     CHECK(!field.posts[2].capturable && field.posts[0].neutralize_time == 12);
 
+    // A Battlefront map's posts, bounds and terrain (bf2tool export-map), with our teams.
+    std::filesystem::create_directories(dir / "maps");
+    std::ofstream(dir / "maps" / "m_conquest.ini") << "[map]\nName = m\nTerrain = m\nBounds = -512 -512 512 512\n\n"
+                                                      "[post]\nName = CP1\nPosition = 35 141\nRadius = 8\nOwner = 2\n"
+                                                      "SpawnPoint = 23 145\nSpawnPoint = 12 146\n\n"
+                                                      "[post]\nName = CP3\nPosition = 22 -120\nOwner = 1\n\n"
+                                                      "[post]\nName = CP2\nPosition = 74 -9\n";
+    std::ofstream(dir / "mapped.ini") << "[battlefield]\nName = Swamp\nMap = maps/m_conquest.ini\n"
+                                         "[team]\nName = Rebellion\nLoadout = loadouts/trooper.ini\n"
+                                         "[team]\nName = Empire\nLoadout = loadouts/trooper.ini\n";
+    const Battlefield mapped = load_battlefield(dir / "mapped.ini");
+    CHECK(mapped.name == "Swamp" && mapped.posts.size() == 3 && mapped.terrain == dir / "maps" / "m");
+    CHECK(mapped.min_x == -512 && mapped.max_z == 512);
+    CHECK(mapped.posts[0].owner == 1 && mapped.posts[1].owner == 0 && mapped.posts[2].owner == -1);
+    CHECK(mapped.posts[0].spawn_points.size() == 2 && mapped.posts[0].spawn_points[1] == Vec3(-12, 0, 146));
+    CHECK(mapped.posts[0].position == Vec3(-35, 0, 141) && mapped.posts[2].spawn_points.empty());
+
     std::ofstream(dir / "bad.ini") << "[battlefield]\n[team]\nName = A\nLoadout = loadouts/missing.ini\n";
     bool threw = false;
     try {

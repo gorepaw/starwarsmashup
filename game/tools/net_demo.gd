@@ -31,6 +31,10 @@
 # and a command post your team holds (Q/E), and spawn with Space or a click.
 # Posts show as beams: blue yours, red the enemy's, white neutral.
 #
+# A Battlefront II map exported with bf2tool export-map is a bake too: pass
+# its prefix (e.g. imported_assets/maps/dag1/dag1) and its objects
+# (<prefix>.objects.json) are drawn as placeholder shapes until models come.
+#
 # --hub hosts a hub (game/hubs/) instead: walk to the war terminal (the
 # yellow pillar) and press F or G to queue for a side, X to leave the queue.
 # When the battle starts you're sent to it, and back to the hub after the
@@ -216,6 +220,7 @@ func _init() -> void:
 	_battlefield = _client.get_battlefield()
 
 	_add_terrain(bake, meta, args.has("--terrain3d"))
+	_add_map_objects(bake + ".objects.json")
 	if not building.is_empty() and not _add_building(building[0], building_position, building_yaw):
 		quit(1)
 		return
@@ -749,6 +754,50 @@ func _add_building(path: String, galaxies_position: Vector3, yaw_degrees: float)
 	for mesh in building.find_children("*_mesh", "MeshInstance3D", true, false):
 		(mesh as MeshInstance3D).create_trimesh_collision()
 	return true
+
+
+# Placeholders for a Battlefront map's objects (bf2tool export-map): tall
+# cylinders for trees, boxes for the rest, until their models are imported.
+func _add_map_objects(path: String) -> void:
+	if not FileAccess.file_exists(path):
+		return
+	var parsed: Variant = JSON.parse_string(FileAccess.get_file_as_string(path))
+	if not parsed is Dictionary:
+		printerr("cannot read ", path)
+		return
+	var looks := {}
+	for kind: String in ["tree", "rock", "other"]:
+		var material := StandardMaterial3D.new()
+		material.albedo_color = {"tree": Color(0.25, 0.32, 0.18), "rock": Color(0.42, 0.4, 0.36),
+				"other": Color(0.55, 0.52, 0.48)}[kind]
+		var mesh: PrimitiveMesh
+		if kind == "tree":
+			var cylinder := CylinderMesh.new()
+			cylinder.top_radius = 1.2
+			cylinder.bottom_radius = 2.0
+			cylinder.height = 14.0
+			mesh = cylinder
+		else:
+			var box := BoxMesh.new()
+			box.size = Vector3(3, 2.5, 3) if kind == "rock" else Vector3(2, 2, 2)
+			mesh = box
+		mesh.material = material
+		looks[kind] = mesh
+	var count := 0
+	for object: Dictionary in parsed["objects"]:
+		var type: String = object["class"]
+		if type.begins_with("com_bldg_controlzone"):
+			continue  # command posts are drawn as beams
+		var kind := "tree" if "tree" in type else "rock" if "rock" in type or "cave" in type else "other"
+		var node := MeshInstance3D.new()
+		node.mesh = looks[kind]
+		var b: Array = object["basis"]
+		var p: Array = object["position"]
+		node.basis = Basis(Vector3(b[0], b[3], b[6]), Vector3(b[1], b[4], b[7]), Vector3(b[2], b[5], b[8]))
+		node.position = Vector3(p[0], p[1], p[2]) + Vector3.UP * (node.mesh.get_aabb().size.y / 2)
+		root.add_child(node)
+		count += 1
+	print("placed ", count, " placeholder objects from ", path.get_file())
 
 
 func _add_terrain(bake: String, meta: Dictionary, use_terrain3d: bool) -> void:

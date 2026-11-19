@@ -480,9 +480,13 @@ void GameServer::return_to_waiting(Client& client) {
 void GameServer::spawn_at_post(Client& client, size_t loadout_index, size_t post_index) {
     const Battlefield& field = conquest_->battlefield();
     const CommandPost& post = field.posts[post_index];
-    // Spread around the post (golden-angle steps), facing away from it.
-    const double angle = double(next_spawn_slot_++) * 2.399963;
-    Vec3 position = post.position + Vec3{std::cos(angle), 0, std::sin(angle)} * post.spawn_radius;
+    // At the post's spawn points in turn, or spread around it (golden-angle
+    // steps); facing away from it.
+    const uint32_t slot = next_spawn_slot_++;
+    const double angle = double(slot) * 2.399963;
+    Vec3 position = post.spawn_points.empty()
+                        ? post.position + Vec3{std::cos(angle), 0, std::sin(angle)} * post.spawn_radius
+                        : post.spawn_points[slot % post.spawn_points.size()];
     position.x = std::clamp(position.x, field.min_x, field.max_x);
     position.z = std::clamp(position.z, field.min_z, field.max_z);
     position = world_.clamp(position);

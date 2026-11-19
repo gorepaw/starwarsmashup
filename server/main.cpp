@@ -1,10 +1,11 @@
 // Standalone game server: core/ only, no Godot.
 //
-//   swm_server --bake <prefix> [--db <file>] [--port 7777] [--spawn <swg_x> <swg_z>] [--seconds <n>]
+//   swm_server [--bake <prefix>] [--db <file>] [--port 7777] [--spawn <swg_x> <swg_z>] [--seconds <n>]
 //              [--building <file.collision> <swg_x> <swg_y> <swg_z> <yaw_degrees>]... [--loadout <file.ini>]
 //              [--battlefield <file.ini>] [--bots <n>] [--hub <file.ini>]
 //
-// <prefix> names a terrain bake (swgtool bake-terrain). --db is the SQLite
+// <prefix> names a terrain bake (swgtool bake-terrain, or bf2tool export-map;
+// a battlefield on a Battlefront map brings its own). --db is the SQLite
 // file characters are saved in (created if missing; default: none, nothing is
 // saved). --spawn is where new characters start, in Galaxies coordinates as
 // the snapshot tools print them (default: the bake's center). --building
@@ -63,7 +64,7 @@ namespace {
 std::atomic<bool> stop_requested = false;
 
 int usage() {
-    std::cerr << "usage: swm_server --bake <prefix> [--db <file>] [--port 7777] [--spawn <swg_x> <swg_z>] "
+    std::cerr << "usage: swm_server [--bake <prefix>] [--db <file>] [--port 7777] [--spawn <swg_x> <swg_z>] "
                  "[--seconds <n>] [--building <file.collision> <swg_x> <swg_y> <swg_z> <yaw_degrees>]... "
                  "[--loadout <file.ini>] [--battlefield <file.ini>] [--bots <n>] [--hub <file.ini>]\n";
     return 2;
@@ -121,21 +122,29 @@ int main(int argc, char** argv) {
             return usage();
         }
     }
-    if (bake.empty() || port <= 0 || port > 65535 || bot_count < 0 || bot_count > 64 ||
+    if ((bake.empty() && battlefield.empty()) || port <= 0 || port > 65535 || bot_count < 0 || bot_count > 64 ||
         (!hub_file.empty() && !battlefield.empty())) {
         return usage();
     }
 
     try {
-        const swm::core::Heightfield ground = swm::core::load_bake(bake);
         swm::core::ServerConfig config;
+        if (!battlefield.empty()) {
+            config.battlefield = swm::core::load_battlefield(battlefield);
+        }
+        if (bake.empty() && config.battlefield && !config.battlefield->terrain.empty()) {
+            bake = config.battlefield->terrain.string();
+        }
+        if (bake.empty()) {
+            return usage();
+        }
+        const swm::core::Heightfield ground = swm::core::load_bake(bake);
         if (!loadout.empty()) {
             config.loadout = swm::core::load_loadout(loadout);
             std::cout << std::format("loadout {}: {} health\n", config.loadout.name,
                                      swm::core::stats_for(config.loadout, config.base_stats).max_health);
         }
-        if (!battlefield.empty()) {
-            config.battlefield = swm::core::load_battlefield(battlefield);
+        if (config.battlefield) {
             const auto& field = *config.battlefield;
             std::cout << std::format("battlefield {}: {} command posts, {} ({} loadouts) vs {} ({} loadouts), {} tickets\n",
                                      field.name, field.posts.size(), field.teams[0].name, field.teams[0].loadouts.size(),

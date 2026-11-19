@@ -94,6 +94,7 @@ bf2tool skeleton <file.lvl> <bank>
 bf2tool anims <file.lvl> <bank> [name...]
 bf2tool odf <file.lvl> [class]
 bf2tool export-loadout <_lvl_pc dir> <side> <soldier class> -o <loadout.ini> [--items <dir>]
+bf2tool export-map <_lvl_pc dir> <map> -o <out dir> [--mode conquest] [--skip <layer>]...
 ```
 
 Battlefront II munged files (`.lvl`) are `ucfb` chunk trees: `lvl_` sub-levels holding models (`modl`), textures (`tex_`), skeletons (`skel`), animations (`zaa_`/`zaf_`), entity classes (`entc`/`ordc`/`wpnc`/`expc`), and more.
@@ -118,6 +119,16 @@ Battlefront II munged files (`.lvl`) are `ucfb` chunk trees: `lvl_` sub-levels h
   ```
 
   (The Rebel officer's kit has no supported weapons, so it fails and isn't used. Weapons shared between kits, like pistols and thermal detonators, are one item each: the last kit exported sets their spare ammo.)
+
+- **export-map**: write a Battlefront II map (`<map>.lvl`, e.g. `dag1`) for the game. Out come its terrain as a heightfield bake (`<map>.r32`/`.json`, the format `swgtool bake-terrain` writes), every object's placement in game space (`<map>.objects.json`), and a game mode's command posts as a map file for battlefields (`<map>_conquest.ini`: starting teams, capture regions and spawn points). Other game modes' layers are left out, and so is any `--skip` layer, e.g. the other era's props. Game data from your install: write it to `game/imported_assets/maps/`. Dagobah:
+
+  ```powershell
+  bf2tool export-map "<Battlefront>\GameData\Data\_lvl_pc" dag1 -o game\imported_assets\maps\dag1 --skip dag1_gunship
+  ```
+
+  Then `swm_server --battlefield game/battlefields/dagobah.ini --bots 12` runs a match on it, and `net_demo.gd -- imported_assets/maps/dag1/dag1 ...` draws it.
+
+  How the map is read (`bf2/level.h`): the terrain chunk (`tern`) gives the grid (cells, meters per cell) and 8x8-cell patches whose vertices carry the heights; world layers (`wrld`, also inside the `lvl_` sublevels that hold game modes and era props) give object instances and regions (type, name, a 3x3 rotation and position, size, and hashed properties); `path` chunks are config records grouped by sublevel, and store z the other way around from the world layers.
 
 Animation data uses its own block format inside `BIN_` (byte-reversed tags) and identifies bones and clips by name hash (`bf2/hash.h`). See `bf2/animation.h` for the stream encoding.
 
