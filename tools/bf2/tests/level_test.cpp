@@ -85,6 +85,32 @@ Bytes record(const char* name, const std::string& value, std::initializer_list<f
     return chunk("DATA", out);
 }
 
+// Water: a 4x4 grid of 8 m cells centred on the map, one layer ("pond", 1.5 m
+// high). Cells (0, 0), (3, 0) and (2, 3) are wet; the last has the high bit
+// set, as some maps' cells do.
+Bytes water() {
+    Bytes info;
+    put(info, uint32_t(4));
+    put(info, uint32_t(2));
+    for (const float v : {8.0f, 16.0f, 16.0f}) {
+        put(info, v);
+    }
+    put(info, uint32_t(1));
+    Bytes layer = text("pond");
+    put(layer, uint32_t(10));
+    for (const float v : {1.5f, 0.1f, 0.2f, 2.0f, 3.0f}) {
+        put(layer, v);
+    }
+    for (const uint8_t c : {uint8_t(1), uint8_t(2), uint8_t(3), uint8_t(4)}) {
+        layer.push_back(c);
+    }
+    Bytes cells(8, 0);
+    cells[0] = 0x10;  // (0, 0) wet, (1, 0) dry
+    cells[1] = 0x01;  // (2, 0) dry, (3, 0) wet
+    cells[7] = 0x90;  // (2, 3) wet, (3, 3) dry
+    return chunk("WATR", join({chunk("INFO", info), chunk("LAYR", layer), chunk("WMAP", cells)}));
+}
+
 // A 16x16-cell terrain of 2x2 patches (8 cells each), 2 m cells: height x + z
 // at each grid point (in cells). Patch (1,1) misses one grid point. Patch
 // (0,0) uses layers mud (weight 200) and grass (55), lit (30, 20, 10); the
@@ -157,7 +183,8 @@ Bytes terrain() {
     }
     return chunk("tern", join({chunk("NAME", text("test")), chunk("INFO", info),
                                chunk("LTEX", join({text("grass"), text("mud"), text(""), text("")})),
-                               chunk("DTLX", text("detail")), chunk("SCAL", scales), chunk("PCHS", patches)}));
+                               chunk("DTLX", text("detail")), chunk("SCAL", scales), chunk("PCHS", patches),
+                               water()}));
 }
 
 Bytes xfrm(float x, float y, float z) {
@@ -231,6 +258,19 @@ Bytes sky_and_lights() {
     return join({sky, lights});
 }
 
+// The world's effects (water and a fog cloud), and a particle effect, which
+// isn't one of them.
+Bytes effects() {
+    const Bytes world = chunk(
+        "fx__", join({chunk("NAME", Bytes(4, 0)), record("Effect", "Water"),
+                      chunk("SCOP", join({record("MainTexture", "test_water"), record("Velocity", {0.01f, 0.02f}),
+                                          record("NormalMapTextures", "test_normal_", {16, 8})})),
+                      record("Effect", "FogCloud"), chunk("SCOP", record("Range", {60, 100}))}));
+    const Bytes particles = chunk("fx__", join({chunk("NAME", Bytes(4, 0)), record("ParticleEmitter", "Spark"),
+                                                chunk("SCOP", record("Range", {1, 2}))}));
+    return join({world, particles});
+}
+
 // An AI barrier for soldiers and hover vehicles at (10, 0, 20), 4 m along
 // its local x and 2 m along z, turned so that local x points along +z.
 Bytes barrier() {
@@ -257,7 +297,7 @@ void test_level() {
                                                                             chunk("NAME", text("tree1")),
                                                                             xfrm(-3, 2, 4)}))),
                                           barrier()})),
-                      sublevel(conquest), sky_and_lights(),
+                      sublevel(conquest), sky_and_lights(), effects(),
                       // The same path name in another group, then in the conquest one.
                       paths(0x0badf00d, "cp1_spawn", -99), paths(conquest, "cp1_spawn", -30)}));
     const Level level = read_level(parse_ucfb(file));
@@ -304,6 +344,27 @@ void test_level() {
         CHECK(b.layer == "test" && b.name == "barrier1" && b.flags == 3 && b.half_size[0] == 2 && b.half_size[1] == 1);
         const auto corners = b.corners();
         CHECK(corners[0] == (std::array<float, 2>{9, 22}) && corners[2] == (std::array<float, 2>{11, 18}));
+    }
+
+    const LevelWater& w = level.water;
+    CHECK(w.cells == 4 && w.cell_size == 8 && w.origin == (std::array<float, 2>{-16, -16}));
+    CHECK(w.layers.size() == 1 && w.map.size() == 16);
+    if (w.layers.size() == 1) {
+        const WaterLayer& pond = w.layers[0];
+        CHECK(pond.name == "pond" && pond.height == 1.5f && pond.velocity[1] == 0.2f && pond.repeat[1] == 3.0f);
+        CHECK(pond.color == (std::array<uint8_t, 4>{1, 2, 3, 4}));
+        CHECK(w.at(0, 0) == &pond && w.at(3, 0) == &pond && w.at(2, 3) == &pond);
+        CHECK(!w.at(1, 0) && !w.at(2, 0) && !w.at(3, 3) && !w.at(1, 1) && !w.at(-1, 0) && !w.at(0, 4));
+    }
+
+    CHECK(level.effects.size() == 2);
+    const LevelEffect* water_effect = level.effect("water");
+    CHECK(water_effect && water_effect->name == "Water" && level.effect("FogCloud") && !level.effect("Spark"));
+    if (water_effect) {
+        const ConfigRecord* normals = water_effect->get("NormalMapTextures");
+        CHECK(normals && normals->text == "test_normal_" && normals->numbers == (std::vector<float>{16, 8}));
+        CHECK(water_effect->get("Velocity") && water_effect->get("Velocity")->numbers[1] == 0.02f);
+        CHECK(!water_effect->get("Range"));
     }
 
     // The conquest layer's own spawn path, with z turned to world coordinates.

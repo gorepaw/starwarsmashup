@@ -399,6 +399,68 @@ void read_lights(const UcfbNode& chunk, Level& level) {
     });
 }
 
+// "WATR" (in the terrain): INFO {cells per side, an unknown 2, cell size,
+// half the grid's extent along x and z, an unknown 1}; a LAYR per layer {name,
+// an unknown 10 on every map, height, U and V velocity, U and V repeat, RGBA
+// color}; WMAP, 4 bits per cell, two cells a byte, the first in the high
+// nibble. (The grid's size, centring and nibble order were found by matching
+// Dagobah's water cells to its swamp pools; heights match other maps' water,
+// e.g. Yavin's -72.5 over terrain from -74.5.) ASSUMPTION: a cell's low three
+// bits are its layer number (nibbles of 9 occur on maps with one layer).
+LevelWater read_water(const UcfbNode& watr) {
+    LevelWater water;
+    const UcfbNode* info = watr.child("INFO");
+    const UcfbNode* cells = watr.child("WMAP");
+    if (info == nullptr || cells == nullptr) {
+        return water;
+    }
+    const int count = int(read<uint32_t>(info->data, 0));
+    const float size = read<float>(info->data, 8);
+    if (count <= 0 || count > 4096 || !(size > 0) || cells->data.size() < size_t(count) * size_t(count) / 2) {
+        throw std::runtime_error("bf2 level: bad water map");
+    }
+    water.cells = count;
+    water.cell_size = size;
+    water.origin = {-read<float>(info->data, 12), -read<float>(info->data, 16)};
+    for (const UcfbNode& layer : watr.children) {
+        if (layer.tag != "LAYR") {
+            continue;
+        }
+        WaterLayer out;
+        out.name = text(layer.data);
+        const size_t at = out.name.size() + 1;
+        out.height = read<float>(layer.data, at + 4);
+        out.velocity = {read<float>(layer.data, at + 8), read<float>(layer.data, at + 12)};
+        out.repeat = {read<float>(layer.data, at + 16), read<float>(layer.data, at + 20)};
+        for (size_t i = 0; i < 4; ++i) {
+            out.color[i] = read<uint8_t>(layer.data, at + 24 + i);
+        }
+        water.layers.push_back(out);
+    }
+    water.map.resize(size_t(count) * size_t(count));
+    for (size_t i = 0; i < water.map.size(); ++i) {
+        const uint8_t pair = cells->data[i / 2];
+        water.map[i] = uint8_t(((i % 2 == 0) ? pair >> 4 : pair) & 7);
+    }
+    return water;
+}
+
+// "fx__": Effect("name") records, each followed by a scope of properties.
+// (Particle effects, also "fx__", are named by other records and skipped.)
+void read_effects(const UcfbNode& chunk, std::vector<LevelEffect>& effects) {
+    const uint32_t effect = odf_hash("Effect");
+    for_each_record(chunk, [&](const ConfigRecord& record, const UcfbNode* scope) {
+        if (record.name != effect || scope == nullptr) {
+            return;
+        }
+        LevelEffect out{record.text, {}};
+        for_each_record(*scope, [&](const ConfigRecord& property, const UcfbNode*) {
+            out.properties.push_back(property);
+        });
+        effects.push_back(std::move(out));
+    });
+}
+
 // `group` is the enclosing sublevel's name hash (0 at the top: a base
 // layer's paths are grouped under its own name's hash).
 void read_tree(const UcfbNode& node, Level& level, uint32_t group) {
@@ -407,6 +469,11 @@ void read_tree(const UcfbNode& node, Level& level, uint32_t group) {
             read_tree(child, level, child.name_hash);
         } else if (child.tag == "tern" && level.terrain.cells == 0) {
             level.terrain = read_terrain(child);
+            if (const UcfbNode* watr = child.child("WATR")) {
+                level.water = read_water(*watr);
+            }
+        } else if (child.tag == "fx__") {
+            read_effects(child, level.effects);
         } else if (child.tag == "wrld") {
             const std::string layer = child.name();
             level.layers.push_back(layer);
@@ -442,6 +509,38 @@ std::array<std::array<float, 2>, 4> LevelBarrier::corners() const {
         out[i] = {position[0] + a * r[0] + b * r[6], position[2] + a * r[2] + b * r[8]};
     }
     return out;
+}
+
+const WaterLayer* LevelWater::at(int column, int row) const {
+    if (column < 0 || row < 0 || column >= cells || row >= cells) {
+        return nullptr;
+    }
+    const uint8_t layer = map[size_t(row) * size_t(cells) + size_t(column)];
+    if (layer == 0 || layers.empty()) {
+        return nullptr;
+    }
+    return &layers[std::min<size_t>(layer, layers.size()) - 1];
+}
+
+const ConfigRecord* LevelEffect::get(std::string_view property) const {
+    const uint32_t hash = odf_hash(property);
+    for (const ConfigRecord& record : properties) {
+        if (record.name == hash) {
+            return &record;
+        }
+    }
+    return nullptr;
+}
+
+const LevelEffect* Level::effect(std::string_view name) const {
+    for (const LevelEffect& e : effects) {
+        if (e.name.size() == name.size() &&
+            std::equal(e.name.begin(), e.name.end(), name.begin(),
+                       [](char a, char b) { return std::tolower(uint8_t(a)) == std::tolower(uint8_t(b)); })) {
+            return &e;
+        }
+    }
+    return nullptr;
 }
 
 std::string WorldItem::get(std::string_view property) const {

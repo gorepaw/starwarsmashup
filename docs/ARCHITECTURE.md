@@ -148,6 +148,7 @@ The extractor reports what it found, for example: `detected: SOE client files, 9
 
 - Source files are never edited. The importer **generates** Godot materials from the original textures and shader data (Galaxies normal/specular maps where present, Battlefront `.msh` material flags). Problems are fixed in the generator or in per-asset override files.
 - Forward+ renderer, SDFGI for large outdoor GI, volumetric fog, SSAO, real-time sun and sky, day/night cycle.
+- Battlefront II maps are drawn by `game/rendering/bf2_map.gd` from bf2tool's export: terrain layers (`bf2_terrain.gdshader`), models, sky dome, fog, water (`bf2_water.gdshader`: murky, rippled, fading out at the shore) and the fog cloud (`bf2_fog_cloud.gdshader`: drifting sprites in a ring where the view fades into the fog). `game/tools/view_bf2_map.gd` takes screenshots of a map from given viewpoints.
 - Terrain drawn by **Terrain3D** (clipmap terrain, MIT, built with double precision), fed from our terrain bakes. It's presentation only: gameplay and the server take heights from our own bakes. Physics via **Jolt**.
 
 ## Legal and hygiene rules

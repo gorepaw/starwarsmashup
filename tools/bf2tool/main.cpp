@@ -538,11 +538,139 @@ int cmd_export_map(const std::vector<std::string>& args) {
                  << std::format("{{\"position\": [{:.3f}, {:.3f}, {:.3f}], \"color\": {}, \"range\": {}}}",
                                 -l.position[0], l.position[1], l.position[2], color(l.color, 1), l.range);
         }
-        json << "\n    ]\n  }\n}\n";
+        json << "\n    ]";
+
+        // The fog cloud: big soft sprites drifting at a height (Effect("FogCloud")).
+        const auto numbers = [](const LevelEffect* effect, const char* property) {
+            const ConfigRecord* record = effect ? effect->get(property) : nullptr;
+            return record ? record->numbers : std::vector<float>{};
+        };
+        const auto number_list = [](const std::vector<float>& values, float scale) {
+            std::string out = "[";
+            for (size_t i = 0; i < values.size(); ++i) {
+                out += std::format("{}{}", i ? ", " : "", values[i] * scale);
+            }
+            return out + "]";
+        };
+        const auto text_of = [](const LevelEffect* effect, const char* property) {
+            const ConfigRecord* record = effect ? effect->get(property) : nullptr;
+            return record ? record->text : std::string();
+        };
+        const LevelEffect* cloud = level.effect("FogCloud");
+        if (cloud != nullptr && !numbers(cloud, "Enable").empty() && numbers(cloud, "Enable")[0] != 0) {
+            const auto first = [&](const char* property, float otherwise) {
+                const std::vector<float> values = numbers(cloud, property);
+                return values.empty() ? otherwise : values[0];
+            };
+            std::vector<float> velocity = numbers(cloud, "Velocity");
+            velocity.resize(2, 0.0f);
+            json << ",\n    \"fog_cloud\": {\"texture\": " << json_string(texture_file(text_of(cloud, "Texture")))
+                 << ", \"range\": " << number_list(numbers(cloud, "Range"), 1)
+                 << ", \"color\": " << number_list(numbers(cloud, "Color"), 1 / 255.0f)
+                 << std::format(", \"velocity\": [{}, {}]", -velocity[0], velocity[1])
+                 << std::format(", \"rotation\": {}, \"height\": {}, \"particle_size\": {}, \"density\": {}}}",
+                                first("Rotation", 0), first("Height", 0), first("ParticleSize", 1),
+                                first("ParticleDensity", 0));
+        }
+        json << "\n  }";
+
+        // Water: each layer's surface as rectangles in game space (runs of
+        // wet cells, merged down the rows), within the terrain; the look from
+        // Effect("Water").
+        const LevelWater& water = level.water;
+        size_t rectangles = 0;
+        if (!water.layers.empty()) {
+            const LevelEffect* look = level.effect("Water");
+            json << ",\n  \"water\": {\n    \"texture\": " << json_string(texture_file(text_of(look, "MainTexture")))
+                 << ",\n    \"cell_size\": " << water.cell_size
+                 << ",\n    \"tile\": " << number_list(numbers(look, "Tile"), 1)
+                 << ",\n    \"velocity\": " << number_list(numbers(look, "Velocity"), 1)
+                 << ",\n    \"refraction_color\": " << number_list(numbers(look, "RefractionColor"), 1 / 255.0f)
+                 << ",\n    \"reflection_color\": " << number_list(numbers(look, "ReflectionColor"), 1 / 255.0f)
+                 << ",\n    \"underwater_color\": " << number_list(numbers(look, "UnderwaterColor"), 1 / 255.0f)
+                 << ",\n    \"fresnel\": " << number_list(numbers(look, "FresnelMinMax"), 1);
+            // Animated normal maps: a name prefix, a frame count and a rate.
+            const ConfigRecord* normals = look ? look->get("NormalMapTextures") : nullptr;
+            json << ",\n    \"normal_maps\": [";
+            if (normals != nullptr && !normals->numbers.empty()) {
+                const int frames = std::clamp(int(normals->numbers[0]), 0, 64);
+                for (int i = 0; i < frames; ++i) {
+                    json << (i ? ", " : "") << json_string(texture_file(normals->text + std::to_string(i)));
+                }
+            }
+            json << "],\n    \"normal_map_rate\": "
+                 << (normals != nullptr && normals->numbers.size() >= 2 ? normals->numbers[1] : 0.0f);
+            json << ",\n    \"surfaces\": [";
+            const double low_x = terrain.origin(), high_x = -terrain.origin();
+            for (size_t layer = 0; layer < water.layers.size(); ++layer) {
+                const WaterLayer& surface = water.layers[layer];
+                // Runs per row as [first, last] columns, then rows merged
+                // while a run repeats.
+                struct Run {
+                    int first, last, row_first, row_last;
+                };
+                std::vector<Run> open, done;
+                for (int row = 0; row < water.cells; ++row) {
+                    std::vector<Run> next;
+                    for (int column = 0; column < water.cells;) {
+                        if (water.at(column, row) != &surface) {
+                            ++column;
+                            continue;
+                        }
+                        int last = column;
+                        while (last + 1 < water.cells && water.at(last + 1, row) == &surface) {
+                            ++last;
+                        }
+                        Run run{column, last, row, row};
+                        for (const Run& above : open) {
+                            if (above.first == column && above.last == last && above.row_last == row - 1) {
+                                run.row_first = above.row_first;
+                            }
+                        }
+                        next.push_back(run);
+                        column = last + 1;
+                    }
+                    for (const Run& above : open) {
+                        const bool continued = std::any_of(next.begin(), next.end(), [&](const Run& r) {
+                            return r.row_first == above.row_first && r.first == above.first && r.last == above.last;
+                        });
+                        if (!continued) {
+                            done.push_back(above);
+                        }
+                    }
+                    open = next;
+                }
+                done.insert(done.end(), open.begin(), open.end());
+                json << (layer ? ",\n      " : "\n      ") << "{\"name\": " << json_string(surface.name)
+                     << ", \"height\": " << surface.height
+                     << std::format(", \"color\": [{:.3f}, {:.3f}, {:.3f}, {:.3f}]", surface.color[0] / 255.0f,
+                                    surface.color[1] / 255.0f, surface.color[2] / 255.0f, surface.color[3] / 255.0f)
+                     << ", \"rectangles\": [";
+                size_t written = 0;
+                for (const Run& run : done) {
+                    // Battlefront x and z, clipped to the terrain; game x = -x.
+                    const double x0 = std::max(low_x, double(water.origin[0]) + run.first * double(water.cell_size));
+                    const double x1 = std::min(high_x, double(water.origin[0]) + (run.last + 1) * double(water.cell_size));
+                    const double z0 = std::max(low_x, double(water.origin[1]) + run.row_first * double(water.cell_size));
+                    const double z1 =
+                        std::min(high_x, double(water.origin[1]) + (run.row_last + 1) * double(water.cell_size));
+                    if (x0 >= x1 || z0 >= z1) {
+                        continue;
+                    }
+                    json << (written++ ? ", " : "") << std::format("[{}, {}, {}, {}]", -x1, z0, -x0, z1);
+                }
+                json << "]}";
+                rectangles += written;
+            }
+            json << "\n    ]\n  }";
+        }
+        json << "\n}\n";
         std::cerr << std::format("terrain: {} x {} samples, {} m apart, heights {:.2f}..{:.2f} m, {} filled holes, "
                                  "{} texture layers\n",
                                  samples, samples, terrain.unit, *low, *high, terrain.missing,
                                  terrain.texture_layers.size());
+        std::cerr << std::format("water: {} layers, {} rectangles; fog cloud: {}\n", water.layers.size(), rectangles,
+                                 cloud != nullptr ? "yes" : "no");
     }
 
     // Objects, in game space (x mirrored; rotations conjugated by the mirror).

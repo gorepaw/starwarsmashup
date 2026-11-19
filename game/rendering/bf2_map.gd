@@ -1,10 +1,13 @@
 # Draws a Battlefront II map exported with bf2tool export-map: its terrain's
-# texture layers, its objects' models, its sky dome, fog and lights. `prefix`
+# texture layers, its objects' models, its sky dome, fog, mist, water and
+# lights. `prefix`
 # is the export's bake prefix (e.g. imported_assets/maps/dag1/dag1); models,
 # textures and maps are relative to its folder.
 extends RefCounted
 
 const TERRAIN_SHADER = preload("res://rendering/bf2_terrain.gdshader")
+const WATER_SHADER = preload("res://rendering/bf2_water.gdshader")
+const FOG_CLOUD_SHADER = preload("res://rendering/bf2_fog_cloud.gdshader")
 const MAX_LAYERS := 8
 const LAYER_SIZE := 512
 const SKY_DOME_SCALE := 150.0  # Battlefront draws its few-meter dome at infinity
@@ -141,6 +144,129 @@ static func setup_environment(parent: Node, prefix: String, meta: Dictionary, en
 	dome.scale = Vector3.ONE * SKY_DOME_SCALE
 	parent.add_child(dome)
 	return dome
+
+
+# The map's water: one mesh of flat rectangles per surface, drawn with the
+# map's water look. Returns how many surfaces.
+static func add_water(parent: Node, prefix: String, meta: Dictionary, sun: DirectionalLight3D) -> int:
+	var water: Dictionary = meta.get("water", {})
+	if water.is_empty():
+		return 0
+	var dir := _dir(prefix)
+	var material := ShaderMaterial.new()
+	material.shader = WATER_SHADER
+	if water.get("texture", "") != "":
+		material.set_shader_parameter("main_texture", _texture(dir.path_join(water["texture"])))
+	var frames: Array[Image] = []
+	for file: String in water.get("normal_maps", []):
+		var image := Image.load_from_file(dir.path_join(file)) if file != "" else null
+		if image == null:
+			continue
+		image.convert(Image.FORMAT_RGBA8)
+		if not frames.is_empty() and image.get_size() != frames[0].get_size():
+			image.resize(frames[0].get_width(), frames[0].get_height())
+		image.generate_mipmaps()
+		frames.append(image)
+	if not frames.is_empty():
+		var normals := Texture2DArray.new()
+		normals.create_from_images(frames)
+		material.set_shader_parameter("normal_maps", normals)
+		material.set_shader_parameter("normal_frames", frames.size())
+		material.set_shader_parameter("normal_rate", float(water.get("normal_map_rate", 8.0)))
+	# ASSUMPTION: Tile is how many times the texture repeats across a water
+	# cell (Dagobah: twice over 16 m).
+	var tile: Array = water.get("tile", [])
+	var cell := float(water.get("cell_size", 16.0))
+	if tile.size() >= 1 and float(tile[0]) > 0:
+		material.set_shader_parameter("repeat_meters", cell / float(tile[0]))
+	var velocity: Array = water.get("velocity", [])
+	if velocity.size() >= 2:
+		material.set_shader_parameter("velocity", Vector2(velocity[0], velocity[1]))
+	for key: String in ["refraction_color", "reflection_color"]:
+		var c: Array = water.get(key, [])
+		if c.size() >= 3:
+			material.set_shader_parameter(key, Color(c[0], c[1], c[2]))
+	var fresnel: Array = water.get("fresnel", [])
+	if fresnel.size() >= 2:
+		material.set_shader_parameter("fresnel", Vector2(fresnel[0], fresnel[1]))
+	material.set_shader_parameter("sun_direction", -sun.basis.z)  # its parent is the root
+	material.set_shader_parameter("sun_color", sun.light_color)
+	var fog: Array = meta.get("environment", {}).get("fog_color", [])
+	if fog.size() >= 3:
+		material.set_shader_parameter("sky_color", Color(fog[0], fog[1], fog[2]))
+
+	var count := 0
+	for surface: Dictionary in water.get("surfaces", []):
+		var rectangles: Array = surface.get("rectangles", [])
+		if rectangles.is_empty():
+			continue
+		var y := float(surface["height"])
+		var tool := SurfaceTool.new()
+		tool.begin(Mesh.PRIMITIVE_TRIANGLES)
+		tool.set_normal(Vector3.UP)
+		for r: Array in rectangles:
+			var a := Vector3(r[0], y, r[1])
+			var b := Vector3(r[2], y, r[1])
+			var c := Vector3(r[2], y, r[3])
+			var d := Vector3(r[0], y, r[3])
+			for v: Vector3 in [a, b, c, a, c, d]:  # clockwise seen from above: facing up
+				tool.add_vertex(v)
+		var mesh := MeshInstance3D.new()
+		mesh.name = "Water"
+		mesh.mesh = tool.commit()
+		mesh.material_override = material
+		mesh.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		parent.add_child(mesh)
+		count += 1
+	print("water: ", count, " surfaces")
+	return count
+
+
+# The map's fog cloud: drifting sprites around the camera (the shader places
+# them). Returns the node, or null if the map has none.
+static func add_fog_cloud(parent: Node, prefix: String, meta: Dictionary) -> Node3D:
+	var cloud: Dictionary = meta.get("environment", {}).get("fog_cloud", {})
+	if cloud.is_empty() or int(cloud.get("density", 0)) <= 0:
+		return null
+	var material := ShaderMaterial.new()
+	material.shader = FOG_CLOUD_SHADER
+	if cloud.get("texture", "") != "":
+		material.set_shader_parameter("cloud_texture", _texture(_dir(prefix).path_join(cloud["texture"])))
+	var c: Array = cloud.get("color", [])
+	if c.size() >= 4:
+		material.set_shader_parameter("color", Color(c[0], c[1], c[2], c[3]))
+	var range_values: Array = cloud.get("range", [])
+	if range_values.size() >= 2:
+		material.set_shader_parameter("range", Vector2(range_values[0], range_values[1]))
+	var velocity: Array = cloud.get("velocity", [0, 0])
+	material.set_shader_parameter("velocity", Vector2(velocity[0], velocity[1]))
+	material.set_shader_parameter("spin", float(cloud.get("rotation", 0.0)))
+	material.set_shader_parameter("height", float(cloud.get("height", 0.0)))
+	var size := float(cloud.get("particle_size", 1.0))
+	material.set_shader_parameter("size", size)
+	material.set_shader_parameter("spread", size * 0.25)
+
+	# ASSUMPTION: the density is the number of sprites around the camera.
+	var quad := QuadMesh.new()
+	quad.material = material
+	var sprites := MultiMesh.new()
+	sprites.transform_format = MultiMesh.TRANSFORM_3D
+	sprites.use_custom_data = true
+	sprites.mesh = quad
+	sprites.instance_count = int(cloud["density"])
+	var random := RandomNumberGenerator.new()
+	random.seed = 1
+	for i in sprites.instance_count:
+		sprites.set_instance_transform(i, Transform3D.IDENTITY)
+		sprites.set_instance_custom_data(i, Color(random.randf(), random.randf(), random.randf(), random.randf()))
+	var node := MultiMeshInstance3D.new()
+	node.name = "FogCloud"
+	node.multimesh = sprites
+	node.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	# The shader moves the sprites to the camera: never cull them.
+	node.custom_aabb = AABB(Vector3(-1e5, -1e4, -1e5), Vector3(2e5, 2e4, 2e5))
+	parent.add_child(node)
+	return node
 
 
 static func _load_model(path: String) -> Node3D:

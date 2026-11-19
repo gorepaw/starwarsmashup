@@ -42,6 +42,17 @@ struct Terrain {
     double origin() const { return -cells * unit / 2; }
 };
 
+// One record of a munged config ("DATA" chunk): a name hash, a value count,
+// then 4-byte values: floats, except that a string's value is the offset (from
+// the first value) of its length and text, stored after the values. Only a
+// first value can be a string here; the numbers after it are kept.
+struct ConfigRecord {
+    uint32_t name = 0;
+    std::vector<float> numbers;
+    std::string text;
+};
+ConfigRecord read_config_record(std::span<const uint8_t> data);
+
 // A world layer's object or region, with its instance properties.
 struct WorldItem {
     std::string layer;
@@ -105,8 +116,42 @@ struct LevelSky {
     std::string sun;  // the global light's name (GlobalLights' Light1)
 };
 
+// Water ("WATR" in the terrain): a grid of square cells centred on the map,
+// each naming a water layer or none, and the layers' flat surfaces. The grid
+// may reach past the terrain (Dagobah's: 128 cells of 16 m over a 1024 m
+// terrain).
+struct WaterLayer {
+    std::string name;
+    float height = 0;                    // the surface's y
+    std::array<float, 2> velocity{};     // texture scrolling (u, v)
+    std::array<float, 2> repeat{1, 1};   // texture repeats (u, v)
+    std::array<uint8_t, 4> color{};      // RGBA
+};
+
+struct LevelWater {
+    int cells = 0;           // per side
+    float cell_size = 0;     // meters
+    std::array<float, 2> origin{};  // (x, z) of the grid's -X,-Z corner, in world-layer coordinates
+    std::vector<WaterLayer> layers;
+    std::vector<uint8_t> map;  // cells^2, rows along +Z, x fastest: a layer number (1-based), 0 for none
+
+    // The layer of cell (column, row), or nullptr.
+    const WaterLayer* at(int column, int row) const;
+};
+
+// A map-wide effect from the world's effects ("fx__": Effect("Water"),
+// Effect("FogCloud"), ...): its properties as stored.
+struct LevelEffect {
+    std::string name;
+    std::vector<ConfigRecord> properties;
+
+    const ConfigRecord* get(std::string_view property) const;
+};
+
 struct Level {
     Terrain terrain;
+    LevelWater water;
+    std::vector<LevelEffect> effects;
     LevelSky sky;
     std::vector<LevelLight> lights;
     std::vector<WorldItem> objects;
@@ -117,22 +162,12 @@ struct Level {
     std::map<std::string, uint32_t> layer_groups;  // layer -> its paths' group
 
     const WorldItem* region(std::string_view name) const;
+    const LevelEffect* effect(std::string_view name) const;  // by name, ignoring case
     // A path by name, preferring the one belonging with `layer`.
     const LevelPath* path(std::string_view name, std::string_view layer = {}) const;
 };
 
 // Reads a map file's tree. Throws std::runtime_error on malformed data.
 Level read_level(const UcfbNode& root);
-
-// One record of a munged config ("DATA" chunk): a name hash, a value count,
-// then 4-byte values: floats, except that a string's value is the offset (from
-// the first value) of its length and text, stored after the values. Only a
-// first value can be a string here; the numbers after it are kept.
-struct ConfigRecord {
-    uint32_t name = 0;
-    std::vector<float> numbers;
-    std::string text;
-};
-ConfigRecord read_config_record(std::span<const uint8_t> data);
 
 } // namespace swm::bf2

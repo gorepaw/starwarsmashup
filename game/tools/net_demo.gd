@@ -805,6 +805,8 @@ func _setup_scene(bake: String, meta: Dictionary) -> void:
 	root.add_child(sun)
 	if Bf2Map.is_bf2(meta):
 		_sky_dome = Bf2Map.setup_environment(root, bake, meta, environment, sun)
+		Bf2Map.add_water(root, bake, meta, sun)
+		Bf2Map.add_fog_cloud(root, bake, meta)
 
 	_camera = Camera3D.new()
 	_camera.fov = 65
