@@ -1,5 +1,6 @@
 #include "bf2/odf.h"
 
+#include <algorithm>
 #include <array>
 #include <cctype>
 #include <cstring>
@@ -103,8 +104,15 @@ void OdfLibrary::add(const UcfbNode& root) {
 }
 
 const OdfClass* OdfLibrary::find(std::string_view type) const {
+    // Battlefront's names are case-insensitive ("dag1_prop_X-wing" is placed
+    // as "dag1_prop_x-wing").
+    const auto same = [](std::string_view a, std::string_view b) {
+        return a.size() == b.size() && std::equal(a.begin(), a.end(), b.begin(), [](char x, char y) {
+                   return std::tolower(static_cast<unsigned char>(x)) == std::tolower(static_cast<unsigned char>(y));
+               });
+    };
     for (const OdfClass& odf : classes_) {
-        if (odf.type == type) {
+        if (same(odf.type, type)) {
             return &odf;
         }
     }

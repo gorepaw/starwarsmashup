@@ -88,6 +88,8 @@ void decode_dxt3_alpha(const uint8_t* block, uint8_t out[16][4]) {
     }
 }
 
+} // namespace
+
 ImageRgba decode_dxt(std::span<const uint8_t> data, uint32_t width, uint32_t height, int dxt) {
     const size_t block_size = dxt == 1 ? 8 : 16;
     const uint32_t blocks_x = (width + 3) / 4, blocks_y = (height + 3) / 4;
@@ -115,6 +117,8 @@ ImageRgba decode_dxt(std::span<const uint8_t> data, uint32_t width, uint32_t hei
     }
     return image;
 }
+
+namespace {
 
 uint8_t extract_channel(uint32_t pixel, uint32_t mask) {
     if (mask == 0) {

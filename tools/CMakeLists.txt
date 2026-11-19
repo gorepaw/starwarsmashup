@@ -37,9 +37,12 @@ endforeach()
 add_library(swm_bf2 STATIC
   bf2/animation.cpp
   bf2/level.cpp
+  bf2/model.cpp
+  bf2/model_export.cpp
   bf2/odf.cpp
   bf2/ucfb.cpp)
 target_include_directories(swm_bf2 PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(swm_bf2 PUBLIC swm_swg)  # glTF and PNG writing, DXT decoding
 swm_target_warnings(swm_bf2)
 
 # Battlefront animation -> Galaxies skeleton.
@@ -53,7 +56,7 @@ add_executable(bf2tool bf2tool/main.cpp)
 target_link_libraries(bf2tool PRIVATE swm_bf2)
 swm_target_warnings(bf2tool)
 
-foreach(test animation_test level_test ucfb_test)
+foreach(test animation_test level_test model_test ucfb_test)
   add_executable(${test} bf2/tests/${test}.cpp)
   target_link_libraries(${test} PRIVATE swm_bf2)
   swm_target_warnings(${test})

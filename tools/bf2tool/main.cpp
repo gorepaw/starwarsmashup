@@ -7,6 +7,7 @@
 #include <fstream>
 #include <iostream>
 #include <map>
+#include <set>
 #include <span>
 #include <string>
 #include <vector>
@@ -14,8 +15,10 @@
 #include "bf2/animation.h"
 #include "bf2/hash.h"
 #include "bf2/level.h"
+#include "bf2/model_export.h"
 #include "bf2/odf.h"
 #include "bf2/ucfb.h"
+#include "swg/image.h"
 
 namespace {
 
@@ -389,17 +392,90 @@ int cmd_export_map(const std::vector<std::string>& args) {
         }
     }
     const std::string folder = map.substr(0, 3);
-    const std::vector<uint8_t> bytes = read_file(std::filesystem::path(args[0]) / folder / (map + ".lvl"));
+    std::vector<uint8_t> bytes = read_file(std::filesystem::path(args[0]) / folder / (map + ".lvl"));
     const Level level = read_level(parse_ucfb(bytes));
+    // Models and textures: the map's own, then the shared props' (ingame.lvl).
+    AssetLibrary library;
+    library.add(std::move(bytes));
+    if (const std::filesystem::path ingame = std::filesystem::path(args[0]) / "ingame.lvl";
+        std::filesystem::exists(ingame)) {
+        library.add(read_file(ingame));
+    }
     std::filesystem::create_directories(out_dir);
     const Terrain& terrain = level.terrain;
     const int samples = terrain.cells + 1;
+    const std::filesystem::path texture_dir = out_dir / "textures";
+    const std::filesystem::path model_dir = out_dir / "models";
+    std::set<std::string> textures;  // written (lowercase names)
+    // A texture's file relative to out_dir, written on first use; "" if
+    // missing.
+    const auto texture_file = [&](const std::string& name) -> std::string {
+        const std::string key = lowercase(name);
+        if (key.empty()) {
+            return "";
+        }
+        if (!textures.contains(key)) {
+            if (!export_texture(library, key, texture_dir / (key + ".png"))) {
+                std::cerr << "texture " << name << ": not found or not decodable\n";
+                return "";
+            }
+            textures.insert(key);
+        }
+        return "textures/" + key + ".png";
+    };
+    // A model's file relative to out_dir, written on first use; "" if missing.
+    std::map<std::string, std::string> models;  // lowercase name -> file
+    const auto model_file = [&](const std::string& name) -> std::string {
+        const std::string key = lowercase(name);
+        if (const auto it = models.find(key); it != models.end()) {
+            return it->second;
+        }
+        std::string file;
+        if (library.model(key) != nullptr) {
+            try {
+                const ModelExport written = export_model(library, key, model_dir, texture_dir, textures);
+                file = "models/" + key + ".gltf";
+                if (written.skipped > 0 || !written.missing_textures.empty()) {
+                    std::cerr << std::format("model {}: {} segments, {} skipped, {} missing textures\n", key,
+                                             written.segments, written.skipped, written.missing_textures.size());
+                }
+            } catch (const std::exception& error) {
+                std::cerr << "model " << key << ": " << error.what() << "\n";
+            }
+        } else {
+            std::cerr << "model " << key << ": not found\n";
+        }
+        models[key] = file;
+        return file;
+    };
 
-    // Terrain bake.
+    // Terrain bake, its texture layers (weights per sample in RGBA splat
+    // maps, four layers each), baked lighting, and the map's sky and lights.
     {
         std::ofstream r32(out_dir / (map + ".r32"), std::ios::binary);
         r32.write(reinterpret_cast<const char*>(terrain.heights.data()), std::streamsize(terrain.heights.size() * 4));
+        const size_t points = size_t(samples) * size_t(samples);
+        std::vector<std::string> splat_maps;
+        for (size_t first = 0; first < terrain.layer_weights.size(); first += 4) {
+            swg::ImageRgba splat{uint32_t(samples), uint32_t(samples), std::vector<uint8_t>(points * 4, 0)};
+            for (size_t p = 0; p < points; ++p) {
+                for (size_t c = 0; c < 4 && first + c < terrain.layer_weights.size(); ++c) {
+                    splat.pixels[p * 4 + c] = terrain.layer_weights[first + c][p];
+                }
+            }
+            splat_maps.push_back(std::format("{}.splat{}.png", map, first / 4));
+            swg::write_png(out_dir / splat_maps.back(), splat);
+        }
+        swg::ImageRgba light{uint32_t(samples), uint32_t(samples), std::vector<uint8_t>(points * 4, 255)};
+        for (size_t p = 0; p < points; ++p) {
+            std::copy(terrain.light[p].begin(), terrain.light[p].end(), light.pixels.begin() + std::ptrdiff_t(p * 4));
+        }
+        swg::write_png(out_dir / (map + ".light.png"), light);
+
         const auto [low, high] = std::minmax_element(terrain.heights.begin(), terrain.heights.end());
+        const auto color = [](const std::array<float, 3>& c, float scale) {
+            return std::format("[{:.3f}, {:.3f}, {:.3f}]", c[0] * scale, c[1] * scale, c[2] * scale);
+        };
         std::ofstream json(out_dir / (map + ".json"), std::ios::binary);
         json << "{\n  \"source\": " << json_string(map + ".lvl (Battlefront II)") << ",\n  \"samples\": " << samples
              << ",\n  \"spacing\": " << terrain.unit << ",\n  \"origin_x\": " << terrain.origin()
@@ -409,9 +485,63 @@ int cmd_export_map(const std::vector<std::string>& args) {
         for (size_t i = 0; i < terrain.texture_layers.size(); ++i) {
             json << (i ? ", " : "") << json_string(terrain.texture_layers[i]);
         }
-        json << "]\n}\n";
-        std::cerr << std::format("terrain: {} x {} samples, {} m apart, heights {:.2f}..{:.2f} m, {} filled holes\n",
-                                 samples, samples, terrain.unit, *low, *high, terrain.missing);
+        // Splat and light maps: one pixel per sample, rows along +Z, x
+        // (Battlefront's, not mirrored) along each row.
+        json << "],\n  \"terrain_layers\": [";
+        for (size_t i = 0; i < terrain.texture_layers.size(); ++i) {
+            json << (i ? ",\n    " : "\n    ") << "{\"name\": " << json_string(terrain.texture_layers[i])
+                 << ", \"texture\": " << json_string(texture_file(terrain.texture_layers[i]))
+                 << ", \"scale\": " << terrain.texture_scales[i] << "}";
+        }
+        json << "\n  ],\n  \"splat_maps\": [";
+        for (size_t i = 0; i < splat_maps.size(); ++i) {
+            json << (i ? ", " : "") << json_string(splat_maps[i]);
+        }
+        json << "],\n  \"light_map\": " << json_string(map + ".light.png")
+             << ",\n  \"detail_texture\": " << json_string(texture_file(terrain.detail_texture));
+
+        // The sky and lights. The sun shines along its local +Z (ASSUMPTION),
+        // turned by its rotation (w, x, y, z) in the paths' frame: negate z
+        // for the world layers', then x for the game's.
+        const LevelSky& sky = level.sky;
+        json << ",\n  \"environment\": {\n    \"fog_color\": " << color(sky.fog_color, 1 / 255.0f)
+             << ",\n    \"near_scene_range\": [";
+        for (size_t i = 0; i < sky.near_scene_range.size(); ++i) {
+            json << (i ? ", " : "") << sky.near_scene_range[i];
+        }
+        json << "],\n    \"ambient_top\": " << color(sky.ambient_top, 1 / 255.0f)
+             << ",\n    \"ambient_bottom\": " << color(sky.ambient_bottom, 1 / 255.0f);
+        if (!sky.dome_models.empty()) {
+            json << ",\n    \"sky_dome\": " << json_string(model_file(sky.dome_models[0]));
+        }
+        const LevelLight* sun = nullptr;
+        for (const LevelLight& l : level.lights) {
+            if (l.type == 1 && (sun == nullptr || lowercase(l.name) == lowercase(sky.sun))) {
+                sun = &l;
+            }
+        }
+        if (sun != nullptr) {
+            const auto [w, x, y, z] = sun->rotation;
+            // q * (0, 0, 1) * q^-1: the rotation matrix's third column.
+            const std::array<float, 3> along{2 * (x * z + w * y), 2 * (y * z - w * x), 1 - 2 * (x * x + y * y)};
+            json << std::format(",\n    \"sun\": {{\"direction\": [{:.4f}, {:.4f}, {:.4f}], \"color\": {}}}",
+                                -along[0], along[1], -along[2], color(sun->color, 1));
+        }
+        json << ",\n    \"lights\": [";
+        size_t lights = 0;
+        for (const LevelLight& l : level.lights) {
+            if (l.type != 2) {
+                continue;  // omni lights only for now
+            }
+            json << (lights++ ? ",\n      " : "\n      ")
+                 << std::format("{{\"position\": [{:.3f}, {:.3f}, {:.3f}], \"color\": {}, \"range\": {}}}",
+                                -l.position[0], l.position[1], l.position[2], color(l.color, 1), l.range);
+        }
+        json << "\n    ]\n  }\n}\n";
+        std::cerr << std::format("terrain: {} x {} samples, {} m apart, heights {:.2f}..{:.2f} m, {} filled holes, "
+                                 "{} texture layers\n",
+                                 samples, samples, terrain.unit, *low, *high, terrain.missing,
+                                 terrain.texture_layers.size());
     }
 
     // Objects, in game space (x mirrored; rotations conjugated by the mirror).
@@ -437,8 +567,16 @@ int cmd_export_map(const std::vector<std::string>& args) {
             }
             const auto& r = object.rotation;
             const std::array<float, 9> basis{r[0], -r[1], -r[2], -r[3], r[4], r[5], -r[6], r[7], r[8]};
+            // The class's model (GeometryName), if it has one.
+            std::string model;
+            if (library.classes().find(object.type) != nullptr) {
+                if (const auto geometry = library.classes().resolve(object.type).get("GeometryName")) {
+                    model = model_file(*geometry);
+                }
+            }
             json << (written++ ? ",\n" : "\n") << "    {\"layer\": " << json_string(object.layer)
                  << ", \"class\": " << json_string(object.type) << ", \"name\": " << json_string(object.name)
+                 << ", \"model\": " << json_string(model)
                  << std::format(", \"position\": [{}, {}, {}], \"basis\": [", -object.position[0], object.position[1],
                                 object.position[2]);
             for (size_t i = 0; i < 9; ++i) {
@@ -447,7 +585,8 @@ int cmd_export_map(const std::vector<std::string>& args) {
             json << "]}";
         }
         json << "\n  ]\n}\n";
-        std::cerr << std::format("objects: {} of {} placed\n", written, level.objects.size());
+        std::cerr << std::format("objects: {} of {} placed; {} models, {} textures\n", written, level.objects.size(),
+                                 models.size(), textures.size());
     }
 
     // The mode's command posts: capture regions, starting teams, spawn points.

@@ -20,13 +20,23 @@ namespace swm::bf2 {
 
 // The terrain: a square grid of heights. Munged terrain is stored as 8x8-cell
 // patches of vertices; heights are read from the vertices on grid points.
+// Each patch also lists the texture layers it uses (up to three), and a
+// compressed copy of its vertices carries their weights.
 struct Terrain {
     std::string name;
     int cells = 0;              // per side
     double unit = 1;            // meters per cell
     std::vector<float> heights; // (cells + 1)^2, rows along +Z, x fastest
     int missing = 0;            // grid points no patch vertex covered (holes); filled from neighbours
+    // Texture layers by slot ("" for an unused slot before a used one), with
+    // their tiling (SCAL; ASSUMPTION: meters per texture repeat).
     std::vector<std::string> texture_layers;
+    std::vector<float> texture_scales;
+    std::string detail_texture;  // DTLX, tiled over everything
+    // Per grid point (same order as heights): each layer's weight (0..255,
+    // summing to 255) and the baked lighting color (RGB).
+    std::vector<std::vector<uint8_t>> layer_weights;  // [layer][point]
+    std::vector<std::array<uint8_t, 3>> light;
 
     // Coordinates of grid point (0, 0): the grid is centred on the origin.
     double origin() const { return -cells * unit / 2; }
@@ -59,8 +69,31 @@ struct LevelPath {
     std::vector<PathNode> nodes;
 };
 
+// A light from the map's lighting ("lght"); its position is converted to
+// world-layer coordinates.
+struct LevelLight {
+    std::string name;
+    int type = 0;  // 1 directional, 2 omni, 3 spot
+    std::array<float, 4> rotation{1, 0, 0, 0};  // as stored (w, x, y, z), in the paths' frame (z negated)
+    std::array<float, 3> position{};
+    std::array<float, 3> color{1, 1, 1};        // 0..1
+    float range = 0;
+};
+
+// The sky ("sky_") and global lighting. Colors are 0..255, as stored.
+struct LevelSky {
+    std::array<float, 3> fog_color{};
+    std::vector<float> near_scene_range;  // as stored: (20, 30, 60, 80) on Dagobah
+    std::string dome_texture;
+    std::vector<std::string> dome_models;
+    std::array<float, 3> ambient_top{}, ambient_bottom{};  // hemisphere ambient light
+    std::string sun;  // the global light's name (GlobalLights' Light1)
+};
+
 struct Level {
     Terrain terrain;
+    LevelSky sky;
+    std::vector<LevelLight> lights;
     std::vector<WorldItem> objects;
     std::vector<WorldItem> regions;
     std::vector<LevelPath> paths;
@@ -75,8 +108,10 @@ struct Level {
 // Reads a map file's tree. Throws std::runtime_error on malformed data.
 Level read_level(const UcfbNode& root);
 
-// One record of a munged config ("DATA" chunk): a name hash, then values.
-// Strings are stored inline; numbers as floats.
+// One record of a munged config ("DATA" chunk): a name hash, a value count,
+// then 4-byte values: floats, except that a string's value is the offset (from
+// the first value) of its length and text, stored after the values. Only a
+// first value can be a string here; the numbers after it are kept.
 struct ConfigRecord {
     uint32_t name = 0;
     std::vector<float> numbers;

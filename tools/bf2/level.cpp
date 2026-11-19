@@ -1,5 +1,6 @@
 #include "bf2/level.h"
 
+#include <algorithm>
 #include <cmath>
 #include <cstring>
 #include <map>
@@ -53,15 +54,29 @@ Terrain read_terrain(const UcfbNode& tern) {
         for (size_t at = 0; at < layers->data.size();) {
             const std::string name = text(layers->data.subspan(at));
             at += name.size() + 1;
-            if (!name.empty()) {
-                terrain.texture_layers.push_back(name);
-            }
+            terrain.texture_layers.push_back(name);
         }
+        while (!terrain.texture_layers.empty() && terrain.texture_layers.back().empty()) {
+            terrain.texture_layers.pop_back();
+        }
+    }
+    if (const UcfbNode* scales = tern.child("SCAL")) {
+        for (size_t i = 0; i < terrain.texture_layers.size() && (i + 1) * 4 <= scales->data.size(); ++i) {
+            terrain.texture_scales.push_back(read<float>(scales->data, i * 4));
+        }
+    }
+    terrain.texture_scales.resize(terrain.texture_layers.size(), 1.0f);
+    if (const UcfbNode* detail = tern.child("DTLX")) {
+        terrain.detail_texture = text(detail->data);
     }
 
     const int points = terrain.cells + 1;
     const int per_row = terrain.cells / patch_cells;
-    terrain.heights.assign(size_t(points) * points, NAN);
+    const size_t point_count = size_t(points) * points;
+    terrain.heights.assign(point_count, NAN);
+    terrain.layer_weights.assign(terrain.texture_layers.size(), std::vector<uint8_t>(point_count, 0));
+    terrain.light.assign(point_count, {255, 255, 255});
+    std::vector<bool> weighted(point_count, false);
     int index = 0;
     for (const UcfbNode& patch : patches->children) {
         if (patch.tag != "PTCH") {
@@ -69,27 +84,74 @@ Terrain read_terrain(const UcfbNode& tern) {
         }
         const int px = index % per_row, pz = index / per_row;
         ++index;
+        // INFO: the number of layers used, then their slots.
+        std::vector<size_t> slots;
+        if (const UcfbNode* patch_info = patch.child("INFO"); patch_info && !patch_info->data.empty()) {
+            const size_t used = std::min<size_t>(patch_info->data[0], 3);
+            for (size_t i = 0; i < used && 1 + i < patch_info->data.size(); ++i) {
+                slots.push_back(patch_info->data[1 + i]);
+            }
+        }
+        // The geometry buffer (28-byte vertices: float position local to the
+        // patch, float normal, D3D color = baked light) and its compressed
+        // copy (16 bytes: int16 position and w, normal, color), whose spare
+        // bytes hold the layers' weights: color alpha for the first layer,
+        // normal w for the second, position w for the third. (Found by
+        // matching shared edge vertices between patches.)
+        const UcfbNode* geometry = nullptr;
+        const UcfbNode* compressed = nullptr;
         for (const UcfbNode& buffer : patch.children) {
-            if (buffer.tag != "VBUF" || read<uint32_t>(buffer.data, 4) != 28) {
+            if (buffer.tag == "VBUF" && read<uint32_t>(buffer.data, 4) == 28 && !geometry) {
+                geometry = &buffer;
+            } else if (buffer.tag == "VBUF" && read<uint32_t>(buffer.data, 4) == 16 && !compressed) {
+                compressed = &buffer;
+            }
+        }
+        if (geometry == nullptr) {
+            continue;
+        }
+        const uint32_t count = read<uint32_t>(geometry->data, 0);
+        if (compressed != nullptr && read<uint32_t>(compressed->data, 0) != count) {
+            compressed = nullptr;
+        }
+        for (uint32_t i = 0; i < count; ++i) {
+            const size_t at = 12 + size_t(i) * 28;
+            const float x = read<float>(geometry->data, at) / float(terrain.unit);
+            const float y = read<float>(geometry->data, at + 4);
+            const float z = read<float>(geometry->data, at + 8) / float(terrain.unit);
+            // Vertices off the grid (along cuts) are skipped.
+            if (std::abs(x - std::round(x)) > 1e-3f || std::abs(z - std::round(z)) > 1e-3f) {
                 continue;
             }
-            const uint32_t count = read<uint32_t>(buffer.data, 0);
-            for (uint32_t i = 0; i < count; ++i) {
-                const size_t at = 12 + size_t(i) * 28;
-                const float x = read<float>(buffer.data, at) / float(terrain.unit);
-                const float y = read<float>(buffer.data, at + 4);
-                const float z = read<float>(buffer.data, at + 8) / float(terrain.unit);
-                // Vertices off the grid (along cuts) are skipped.
-                if (std::abs(x - std::round(x)) > 1e-3f || std::abs(z - std::round(z)) > 1e-3f) {
-                    continue;
-                }
-                const int gx = px * patch_cells + int(std::lround(x));
-                const int gz = pz * patch_cells + int(std::lround(z));
-                if (gx >= 0 && gx < points && gz >= 0 && gz < points) {
-                    terrain.heights[size_t(gz) * points + gx] = y;
-                }
+            const int gx = px * patch_cells + int(std::lround(x));
+            const int gz = pz * patch_cells + int(std::lround(z));
+            if (gx < 0 || gx >= points || gz < 0 || gz >= points) {
+                continue;
             }
-            break;
+            const size_t point = size_t(gz) * points + size_t(gx);
+            terrain.heights[point] = y;
+            terrain.light[point] = {read<uint8_t>(geometry->data, at + 26), read<uint8_t>(geometry->data, at + 25),
+                                    read<uint8_t>(geometry->data, at + 24)};
+            if (compressed != nullptr && !slots.empty() && !weighted[point]) {
+                const size_t c = 12 + size_t(i) * 16;
+                const uint8_t weights[3] = {read<uint8_t>(compressed->data, c + 15),
+                                            read<uint8_t>(compressed->data, c + 11),
+                                            read<uint8_t>(compressed->data, c + 6)};
+                for (size_t slot = 0; slot < slots.size(); ++slot) {
+                    if (slots[slot] < terrain.layer_weights.size()) {
+                        terrain.layer_weights[slots[slot]][point] = weights[slot];
+                    }
+                }
+                weighted[point] = true;
+            }
+        }
+    }
+    // Points no patch weighted get the first layer.
+    if (!terrain.layer_weights.empty()) {
+        for (size_t point = 0; point < point_count; ++point) {
+            if (!weighted[point]) {
+                terrain.layer_weights[0][point] = 255;
+            }
         }
     }
     // Holes: take the mean of known neighbours (repeating outward).
@@ -218,6 +280,101 @@ void read_paths(const UcfbNode& chunk, std::vector<LevelPath>& paths) {
     }
 }
 
+// Calls `visit(record, scope)` for each record among a config chunk's (or
+// scope's) children; `scope` is the SCOP right after it, or nullptr.
+template <class Visitor>
+void for_each_record(const UcfbNode& node, Visitor&& visit) {
+    for (size_t i = 0; i < node.children.size(); ++i) {
+        if (node.children[i].tag != "DATA") {
+            continue;
+        }
+        const UcfbNode* scope =
+            i + 1 < node.children.size() && node.children[i + 1].tag == "SCOP" ? &node.children[i + 1] : nullptr;
+        visit(read_config_record(node.children[i].data), scope);
+    }
+}
+
+std::array<float, 3> first3(const std::vector<float>& numbers) {
+    std::array<float, 3> out{};
+    for (size_t i = 0; i < 3 && i < numbers.size(); ++i) {
+        out[i] = numbers[i];
+    }
+    return out;
+}
+
+// "sky_": a sky-info scope (fog color, view ranges) and DomeInfo (the dome's
+// texture, and DomeModel scopes naming its geometry).
+void read_sky(const UcfbNode& chunk, LevelSky& sky) {
+    const uint32_t fog_color = odf_hash("FogColor"), near_range = odf_hash("NearSceneRange");
+    const uint32_t dome_info = odf_hash("DomeInfo"), texture = odf_hash("Texture");
+    const uint32_t dome_model = odf_hash("DomeModel"), geometry = odf_hash("Geometry");
+    for_each_record(chunk, [&](const ConfigRecord& section, const UcfbNode* scope) {
+        if (scope == nullptr) {
+            return;
+        }
+        for_each_record(*scope, [&](const ConfigRecord& record, const UcfbNode* inner) {
+            if (record.name == fog_color) {
+                sky.fog_color = first3(record.numbers);
+            } else if (record.name == near_range) {
+                sky.near_scene_range = record.numbers;
+            } else if (section.name == dome_info && record.name == texture) {
+                sky.dome_texture = record.text;
+            } else if (section.name == dome_info && record.name == dome_model && inner != nullptr) {
+                for_each_record(*inner, [&](const ConfigRecord& model, const UcfbNode*) {
+                    if (model.name == geometry && !model.text.empty()) {
+                        sky.dome_models.push_back(model.text);
+                    }
+                });
+            }
+        });
+    });
+}
+
+// "lght": Light("name", ...) scopes (Type, Rotation, Position, Color, Range)
+// and GlobalLights (the sun's name, the ambient colors).
+void read_lights(const UcfbNode& chunk, Level& level) {
+    const uint32_t light = odf_hash("Light"), global = odf_hash("GlobalLights");
+    const uint32_t type = odf_hash("Type"), rotation = odf_hash("Rotation"), position = odf_hash("Position");
+    const uint32_t color = odf_hash("Color"), range = odf_hash("Range");
+    const uint32_t light1 = odf_hash("Light1"), top = odf_hash("Top"), bottom = odf_hash("Bottom");
+    for_each_record(chunk, [&](const ConfigRecord& section, const UcfbNode* scope) {
+        if (scope == nullptr) {
+            return;
+        }
+        if (section.name == light) {
+            LevelLight l;
+            l.name = section.text;
+            for_each_record(*scope, [&](const ConfigRecord& r, const UcfbNode*) {
+                if (r.name == type && !r.numbers.empty()) {
+                    l.type = int(r.numbers[0]);
+                } else if (r.name == rotation && r.numbers.size() >= 4) {
+                    l.rotation = {r.numbers[0], r.numbers[1], r.numbers[2], r.numbers[3]};
+                } else if (r.name == position) {
+                    // Like paths, lights store z the other way around (the
+                    // lamps' lights sit on the lamp props with z negated).
+                    l.position = first3(r.numbers);
+                    l.position[2] = -l.position[2];
+                } else if (r.name == color) {
+                    l.color = first3(r.numbers);
+                } else if (r.name == range && !r.numbers.empty()) {
+                    l.range = r.numbers[0];
+                }
+            });
+            level.lights.push_back(l);
+        } else if (section.name == global) {
+            for_each_record(*scope, [&](const ConfigRecord& r, const UcfbNode*) {
+                if (r.name == light1) {
+                    level.sky.sun = r.text;
+                } else if (r.name == top) {
+                    level.sky.ambient_top = first3(r.numbers);
+                } else if (r.name == bottom) {
+                    level.sky.ambient_bottom = first3(r.numbers);
+                }
+            });
+        }
+    });
+}
+
 // `group` is the enclosing sublevel's name hash (0 at the top: a base
 // layer's paths are grouped under its own name's hash).
 void read_tree(const UcfbNode& node, Level& level, uint32_t group) {
@@ -239,6 +396,10 @@ void read_tree(const UcfbNode& node, Level& level, uint32_t group) {
             }
         } else if (child.tag == "path") {
             read_paths(child, level.paths);
+        } else if (child.tag == "sky_") {
+            read_sky(child, level.sky);
+        } else if (child.tag == "lght") {
+            read_lights(child, level);
         }
     }
 }
@@ -284,15 +445,18 @@ ConfigRecord read_config_record(std::span<const uint8_t> data) {
     record.name = read<uint32_t>(data, 0);
     const uint8_t count = read<uint8_t>(data, 4);
     const std::span<const uint8_t> values = data.subspan(5);
-    // A string: offset 4 (to the text), then its length, then the text.
-    if (count == 1 && values.size() > 8 && read<uint32_t>(values, 0) == 4) {
-        const uint32_t length = read<uint32_t>(values, 4);
-        if (8 + size_t(length) <= values.size()) {
-            record.text = text(values.subspan(8, length));
-            return record;
+    // A string first: its offset is just past the values, where its length
+    // and text are. (No float stores those bit patterns: they're denormals.)
+    size_t first_number = 0;
+    const size_t string_at = size_t(count) * 4;
+    if (count >= 1 && values.size() > string_at + 4 && read<uint32_t>(values, 0) == string_at) {
+        const uint32_t length = read<uint32_t>(values, string_at);
+        if (string_at + 4 + size_t(length) <= values.size()) {
+            record.text = text(values.subspan(string_at + 4, length));
+            first_number = 1;
         }
     }
-    for (size_t i = 0; i < count && (i + 1) * 4 <= values.size(); ++i) {
+    for (size_t i = first_number; i < count && (i + 1) * 4 <= values.size(); ++i) {
         record.numbers.push_back(read<float>(values, i * 4));
     }
     return record;

@@ -106,6 +106,9 @@ void Gltf::write(const std::filesystem::path& path) const {
     bin_path.replace_extension(".bin");
 
     std::string json = R"({"asset":{"version":"2.0","generator":"starwarsmashup swgtool"},"scene":0,)";
+    if (std::any_of(materials.begin(), materials.end(), [](const Material& m) { return m.unlit; })) {
+        json += R"("extensionsUsed":["KHR_materials_unlit"],)";
+    }
     json += std::format(R"("scenes":[{{"nodes":{}}}],)", int_list(scene_nodes));
 
     json += R"("nodes":[)";
@@ -169,11 +172,28 @@ void Gltf::write(const std::filesystem::path& path) const {
 
     json += R"("materials":[)";
     for (size_t i = 0; i < materials.size(); ++i) {
-        json += (i ? "," : "") + std::format(R"({{"name":{},"pbrMetallicRoughness":{{)", json_string(materials[i].name));
-        if (materials[i].texture >= 0) {
-            json += std::format(R"("baseColorTexture":{{"index":{}}},)", materials[i].texture);
+        const Material& m = materials[i];
+        json += (i ? "," : "") + std::format(R"({{"name":{},"pbrMetallicRoughness":{{)", json_string(m.name));
+        if (m.texture >= 0) {
+            json += std::format(R"("baseColorTexture":{{"index":{}}},)", m.texture);
         }
-        json += R"("metallicFactor":0,"roughnessFactor":0.8}})";
+        if (m.color != std::array<float, 4>{1, 1, 1, 1}) {
+            json += std::format(R"("baseColorFactor":[{},{},{},{}],)", m.color[0], m.color[1], m.color[2], m.color[3]);
+        }
+        json += R"("metallicFactor":0,"roughnessFactor":0.8})";
+        if (m.alpha_mode != "OPAQUE") {
+            json += std::format(R"(,"alphaMode":{})", json_string(m.alpha_mode));
+            if (m.alpha_mode == "MASK") {
+                json += std::format(R"(,"alphaCutoff":{})", m.alpha_cutoff);
+            }
+        }
+        if (m.double_sided) {
+            json += R"(,"doubleSided":true)";
+        }
+        if (m.unlit) {
+            json += R"(,"extensions":{"KHR_materials_unlit":{}})";
+        }
+        json += "}";
     }
     json += "],";
 

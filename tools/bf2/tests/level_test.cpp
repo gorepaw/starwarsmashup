@@ -69,11 +69,16 @@ Bytes record(const char* name, std::initializer_list<float> numbers) {
     return chunk("DATA", out);
 }
 
-Bytes record(const char* name, const std::string& value) {
+// A string first, then numbers: the string's value is its offset, past the
+// values.
+Bytes record(const char* name, const std::string& value, std::initializer_list<float> numbers = {}) {
     Bytes out;
     put(out, odf_hash(name));
-    put(out, uint8_t(1));
-    put(out, uint32_t(4));
+    put(out, uint8_t(1 + numbers.size()));
+    put(out, uint32_t(4 * (1 + numbers.size())));
+    for (const float n : numbers) {
+        put(out, n);
+    }
     put(out, uint32_t(value.size() + 1));
     const Bytes t = text(value);
     out.insert(out.end(), t.begin(), t.end());
@@ -81,7 +86,9 @@ Bytes record(const char* name, const std::string& value) {
 }
 
 // A 16x16-cell terrain of 2x2 patches (8 cells each), 2 m cells: height x + z
-// at each grid point (in cells). Patch (1,1) misses one grid point.
+// at each grid point (in cells). Patch (1,1) misses one grid point. Patch
+// (0,0) uses layers mud (weight 200) and grass (55), lit (30, 20, 10); the
+// others grass only, unlit.
 Bytes terrain() {
     Bytes info;
     put(info, 2.0f);   // unit
@@ -95,8 +102,15 @@ Bytes terrain() {
     Bytes patches = chunk("COMN", {});
     for (int pz = 0; pz < 2; ++pz) {
         for (int px = 0; px < 2; ++px) {
-            Bytes vertices;
+            const bool first = px == 0 && pz == 0;
+            Bytes vertices, compressed;
             uint32_t count = 0;
+            // A compressed vertex: int16 position and w (third layer's
+            // weight), normal and w (second's), color and alpha (first's).
+            const auto compress = [&](uint8_t first_weight, uint8_t second_weight) {
+                const uint8_t v[16] = {0, 0, 0, 0, 0, 0, 0, 0, 127, 255, 127, second_weight, 0, 0, 0, first_weight};
+                compressed.insert(compressed.end(), v, v + 16);
+            };
             for (int z = 0; z <= 8; ++z) {
                 for (int x = 0; x <= 8; ++x) {
                     if (px == 1 && pz == 1 && x == 4 && z == 4) {
@@ -105,9 +119,14 @@ Bytes terrain() {
                     put(vertices, float(x * 2));
                     put(vertices, float(px * 8 + x + pz * 8 + z));
                     put(vertices, float(z * 2));
-                    for (int pad = 0; pad < 4; ++pad) {
-                        put(vertices, 0.0f);  // normal, color
+                    for (int pad = 0; pad < 3; ++pad) {
+                        put(vertices, 0.0f);  // normal
                     }
+                    for (const uint8_t b : first ? std::initializer_list<uint8_t>{10, 20, 30, 0}
+                                                 : std::initializer_list<uint8_t>{255, 255, 255, 0}) {
+                        vertices.push_back(b);  // baked light, B G R A
+                    }
+                    first ? compress(200, 55) : compress(255, 0);
                     ++count;
                 }
             }
@@ -115,17 +134,30 @@ Bytes terrain() {
             for (const float v : {1.0f, 99.0f, 1.0f, 0.0f, 0.0f, 0.0f, 0.0f}) {
                 put(vertices, v);
             }
+            compress(0, 0);
             ++count;
-            Bytes vbuf;
-            put(vbuf, count);
-            put(vbuf, uint32_t(28));
-            put(vbuf, uint32_t(0));
-            vbuf.insert(vbuf.end(), vertices.begin(), vertices.end());
-            patches = join({patches, chunk("PTCH", join({chunk("INFO", Bytes(8, 0)), chunk("VBUF", vbuf)}))});
+            const auto buffer = [&](uint32_t stride, const Bytes& data) {
+                Bytes vbuf;
+                put(vbuf, count);
+                put(vbuf, stride);
+                put(vbuf, uint32_t(0));
+                vbuf.insert(vbuf.end(), data.begin(), data.end());
+                return chunk("VBUF", vbuf);
+            };
+            Bytes layers(8, 0);
+            layers[0] = first ? 2 : 1;  // layers used: mud and grass, or grass
+            layers[1] = first ? 1 : 0;
+            patches = join({patches, chunk("PTCH", join({chunk("INFO", layers), buffer(16, compressed),
+                                                         buffer(28, vertices)}))});
         }
     }
+    Bytes scales;
+    for (const float v : {8.0f, 16.0f, 1.0f, 1.0f}) {
+        put(scales, v);
+    }
     return chunk("tern", join({chunk("NAME", text("test")), chunk("INFO", info),
-                               chunk("LTEX", join({text("grass"), text("mud")})), chunk("PCHS", patches)}));
+                               chunk("LTEX", join({text("grass"), text("mud"), text(""), text("")})),
+                               chunk("DTLX", text("detail")), chunk("SCAL", scales), chunk("PCHS", patches)}));
 }
 
 Bytes xfrm(float x, float y, float z) {
@@ -176,6 +208,29 @@ Bytes paths(uint32_t group, const std::string& name, float z) {
                                record("Path", name), chunk("SCOP", nodes)}));
 }
 
+// The sky: fog and view ranges in an info scope, the dome's texture and
+// model. The lights: a sun, a lamp (z stored the other way around, like
+// paths), and the global lights naming the sun.
+Bytes sky_and_lights() {
+    const Bytes sky = chunk(
+        "sky_", join({chunk("NAME", Bytes(4, 0)), record("SkyInfo", {}),
+                      chunk("SCOP", join({record("FogColor", {95, 111, 126}), record("NearSceneRange", {20, 30, 60, 80})})),
+                      record("DomeInfo", {}),
+                      chunk("SCOP", join({record("Texture", "test_sky"), record("DomeModel", {}),
+                                          chunk("SCOP", record("Geometry", "test_dome"))}))}));
+    const Bytes lights = chunk(
+        "lght",
+        join({chunk("NAME", Bytes(4, 0)), record("Light", "sun", {1}),
+              chunk("SCOP", join({record("Rotation", {0.5f, 0.5f, -0.5f, 0.5f}), record("Type", {1}),
+                                  record("Color", {0.4f, 0.5f, 0.6f})})),
+              record("Light", "lamp", {1}),
+              chunk("SCOP", join({record("Position", {1, 2, 3}), record("Type", {2}), record("Range", {5})})),
+              record("GlobalLights", {}),
+              chunk("SCOP", join({record("Light1", "sun"), record("Top", {101, 114, 127}),
+                                  record("Bottom", {70, 90, 115})}))}));
+    return join({sky, lights});
+}
+
 void test_level() {
     const uint32_t conquest = 0x12345678;
     const Bytes file = chunk(
@@ -184,7 +239,7 @@ void test_level() {
                                           chunk("inst", chunk("INFO", join({chunk("TYPE", text("test_prop_tree")),
                                                                             chunk("NAME", text("tree1")),
                                                                             xfrm(-3, 2, 4)})))})),
-                      sublevel(conquest),
+                      sublevel(conquest), sky_and_lights(),
                       // The same path name in another group, then in the conquest one.
                       paths(0x0badf00d, "cp1_spawn", -99), paths(conquest, "cp1_spawn", -30)}));
     const Level level = read_level(parse_ucfb(file));
@@ -195,6 +250,26 @@ void test_level() {
     CHECK(t.heights.size() == 17 * 17 && t.missing == 1);
     CHECK(t.heights[5 * 17 + 3] == 8 && t.heights[16 * 17 + 16] == 32);
     CHECK(t.heights[12 * 17 + 12] == 24);  // the hole, filled from its neighbours
+
+    // Texture layers: slots (trailing empties dropped), tiling, weights per
+    // point (a patch's first-listed layer weighs its color alpha, the second
+    // its normal w), baked light.
+    CHECK(t.texture_layers.size() == 2 && t.texture_scales == (std::vector<float>{8, 16}));
+    CHECK(t.detail_texture == "detail" && t.layer_weights.size() == 2 && t.light.size() == 17 * 17);
+    CHECK(t.layer_weights[1][3 * 17 + 5] == 200 && t.layer_weights[0][3 * 17 + 5] == 55);  // patch (0,0)
+    CHECK(t.layer_weights[0][12 * 17 + 13] == 255 && t.layer_weights[1][12 * 17 + 13] == 0);  // patch (1,1)
+    CHECK(t.layer_weights[0][12 * 17 + 12] == 255);  // the hole: first layer
+    CHECK(t.light[3 * 17 + 5] == (std::array<uint8_t, 3>{30, 20, 10}));
+    CHECK(t.light[12 * 17 + 13] == (std::array<uint8_t, 3>{255, 255, 255}));
+
+    const LevelSky& sky = level.sky;
+    CHECK(sky.fog_color == (std::array<float, 3>{95, 111, 126}) && sky.near_scene_range.size() == 4);
+    CHECK(sky.dome_texture == "test_sky" && sky.dome_models == (std::vector<std::string>{"test_dome"}));
+    CHECK(sky.sun == "sun" && sky.ambient_top[2] == 127 && sky.ambient_bottom[0] == 70);
+    CHECK(level.lights.size() == 2 && level.lights[0].name == "sun" && level.lights[0].type == 1);
+    CHECK(level.lights[0].rotation[2] == -0.5f && level.lights[0].color[1] == 0.5f);
+    CHECK(level.lights[1].name == "lamp" && level.lights[1].type == 2 && level.lights[1].range == 5);
+    CHECK(level.lights[1].position == (std::array<float, 3>{1, 2, -3}));
 
     CHECK(level.layers.size() == 2 && level.layers[1] == "test_conquest");
     CHECK(level.objects.size() == 2 && level.regions.size() == 1);

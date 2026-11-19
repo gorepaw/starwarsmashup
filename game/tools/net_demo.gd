@@ -32,8 +32,8 @@
 # Posts show as beams: blue yours, red the enemy's, white neutral.
 #
 # A Battlefront II map exported with bf2tool export-map is a bake too: pass
-# its prefix (e.g. imported_assets/maps/dag1/dag1) and its objects
-# (<prefix>.objects.json) are drawn as placeholder shapes until models come.
+# its prefix (e.g. imported_assets/maps/dag1/dag1) and it's drawn with its
+# terrain textures, models, sky, fog and lights (rendering/bf2_map.gd).
 #
 # --hub hosts a hub (game/hubs/) instead: walk to the war terminal (the
 # yellow pillar) and press F or G to queue for a side, X to leave the queue.
@@ -59,6 +59,7 @@ extends SceneTree
 const TerrainTool = preload("res://tools/render_terrain.gd")
 const Terrain3DBake = preload("res://tools/terrain3d_bake.gd")
 const SwgBuilding = preload("res://rendering/swg_building.gd")
+const Bf2Map = preload("res://rendering/bf2_map.gd")
 
 const RUN_ANIMATION := "human_rifle_stand_runforward"
 const IDLE_ANIMATION := "human_rifle_stand_idle_emote_full"
@@ -97,6 +98,7 @@ var _saw_remote := false
 var _solo := false
 var _announced := false
 var _camera: Camera3D
+var _sky_dome: Node3D  # follows the camera
 var _camera_yaw := 0.0
 var _camera_distance := CAMERA_DISTANCE  # pulled in when a wall is behind the character
 var _route: Array[Vector2] = []  # game x, z
@@ -220,7 +222,8 @@ func _init() -> void:
 	_battlefield = _client.get_battlefield()
 
 	_add_terrain(bake, meta, args.has("--terrain3d"))
-	_add_map_objects(bake + ".objects.json")
+	if Bf2Map.is_bf2(meta):
+		Bf2Map.add_objects(root, bake)
 	if not building.is_empty() and not _add_building(building[0], building_position, building_yaw):
 		quit(1)
 		return
@@ -228,7 +231,7 @@ func _init() -> void:
 	if _own.is_empty():
 		quit(1)
 		return
-	_setup_scene()
+	_setup_scene(bake, meta)
 	_add_posts()
 	root.window_input.connect(_on_input)
 	DisplayServer.window_set_size(Vector2i(1280, 720))
@@ -272,6 +275,8 @@ func _process(delta: float) -> bool:
 		_update_bolts(delta)
 		_update_events()
 	_update_hud(delta)
+	if _sky_dome != null:
+		_sky_dome.global_position = _camera.global_position
 
 	if _pending_shot != "":
 		_shot_delay -= 1
@@ -756,50 +761,6 @@ func _add_building(path: String, galaxies_position: Vector3, yaw_degrees: float)
 	return true
 
 
-# Placeholders for a Battlefront map's objects (bf2tool export-map): tall
-# cylinders for trees, boxes for the rest, until their models are imported.
-func _add_map_objects(path: String) -> void:
-	if not FileAccess.file_exists(path):
-		return
-	var parsed: Variant = JSON.parse_string(FileAccess.get_file_as_string(path))
-	if not parsed is Dictionary:
-		printerr("cannot read ", path)
-		return
-	var looks := {}
-	for kind: String in ["tree", "rock", "other"]:
-		var material := StandardMaterial3D.new()
-		material.albedo_color = {"tree": Color(0.25, 0.32, 0.18), "rock": Color(0.42, 0.4, 0.36),
-				"other": Color(0.55, 0.52, 0.48)}[kind]
-		var mesh: PrimitiveMesh
-		if kind == "tree":
-			var cylinder := CylinderMesh.new()
-			cylinder.top_radius = 1.2
-			cylinder.bottom_radius = 2.0
-			cylinder.height = 14.0
-			mesh = cylinder
-		else:
-			var box := BoxMesh.new()
-			box.size = Vector3(3, 2.5, 3) if kind == "rock" else Vector3(2, 2, 2)
-			mesh = box
-		mesh.material = material
-		looks[kind] = mesh
-	var count := 0
-	for object: Dictionary in parsed["objects"]:
-		var type: String = object["class"]
-		if type.begins_with("com_bldg_controlzone"):
-			continue  # command posts are drawn as beams
-		var kind := "tree" if "tree" in type else "rock" if "rock" in type or "cave" in type else "other"
-		var node := MeshInstance3D.new()
-		node.mesh = looks[kind]
-		var b: Array = object["basis"]
-		var p: Array = object["position"]
-		node.basis = Basis(Vector3(b[0], b[3], b[6]), Vector3(b[1], b[4], b[7]), Vector3(b[2], b[5], b[8]))
-		node.position = Vector3(p[0], p[1], p[2]) + Vector3.UP * (node.mesh.get_aabb().size.y / 2)
-		root.add_child(node)
-		count += 1
-	print("placed ", count, " placeholder objects from ", path.get_file())
-
-
 func _add_terrain(bake: String, meta: Dictionary, use_terrain3d: bool) -> void:
 	if use_terrain3d and Terrain3DBake.available():
 		var terrain: Node3D = Terrain3DBake.create(root, bake, meta)
@@ -812,11 +773,14 @@ func _add_terrain(bake: String, meta: Dictionary, use_terrain3d: bool) -> void:
 	# Every sample, so the mesh matches the heights characters stand on.
 	mesh.mesh = TerrainTool.build_mesh(heights, meta["samples"], meta["spacing"],
 			Vector2(meta["origin_x"], meta["origin_z"]), 1)
-	mesh.material_override = TerrainTool.build_material(bake, meta)
+	if Bf2Map.is_bf2(meta):
+		mesh.material_override = Bf2Map.build_terrain_material(bake, meta)
+	else:
+		mesh.material_override = TerrainTool.build_material(bake, meta)
 	root.add_child(mesh)
 
 
-func _setup_scene() -> void:
+func _setup_scene(bake: String, meta: Dictionary) -> void:
 	var environment := Environment.new()
 	environment.background_mode = Environment.BG_COLOR
 	environment.background_color = Color(0.62, 0.72, 0.85)
@@ -835,6 +799,8 @@ func _setup_scene() -> void:
 	sun.light_energy = 1.3
 	sun.shadow_enabled = true
 	root.add_child(sun)
+	if Bf2Map.is_bf2(meta):
+		_sky_dome = Bf2Map.setup_environment(root, bake, meta, environment, sun)
 
 	_camera = Camera3D.new()
 	_camera.fov = 65

@@ -33,7 +33,7 @@ class OdfLibrary {
 public:
     // Adds a file's classes. The first definition of a name wins.
     void add(const UcfbNode& root);
-    const OdfClass* find(std::string_view type) const;
+    const OdfClass* find(std::string_view type) const;  // case-insensitive
     // A class with its ancestors' properties first, so OdfClass::get()
     // returns the most derived value. `base` becomes the built-in class label
     // at the root of the chain (e.g. "soldier", "cannon", "bolt").

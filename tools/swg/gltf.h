@@ -41,6 +41,11 @@ public:
     struct Material {
         std::string name;
         int texture = -1;  // index into images (one texture per image)
+        std::array<float, 4> color{1, 1, 1, 1};  // base color factor
+        std::string alpha_mode = "OPAQUE";       // or "MASK", "BLEND"
+        float alpha_cutoff = 0.5f;                // MASK only
+        bool double_sided = false;
+        bool unlit = false;  // KHR_materials_unlit
     };
     struct AnimationChannel {
         int node = -1;
