@@ -21,10 +21,13 @@ namespace {
 void test_hub_file() {
     const auto dir = std::filesystem::temp_directory_path() / "swm_hub_test";
     std::filesystem::create_directories(dir / "fields");
-    std::ofstream(dir / "trooper.ini") << "[soldier]\nName = trooper\n";
+    std::filesystem::create_directories(dir / "items");
+    std::filesystem::create_directories(dir / "loadouts");
+    std::ofstream(dir / "items" / "rifle.ini") << "[weapon]\nName = rifle\n";
+    std::ofstream(dir / "loadouts" / "trooper.ini") << "[loadout]\nPrimary = rifle\n";
     std::ofstream(dir / "fields" / "dunes.ini") << "[battlefield]\nName = Dunes\n"
-                                                   "[team]\nName = Empire\nClass = ../trooper.ini\n"
-                                                   "[team]\nName = Rebellion\nClass = ../trooper.ini\n"
+                                                   "[team]\nName = Empire\nLoadout = ../loadouts/trooper.ini\n"
+                                                   "[team]\nName = Rebellion\nLoadout = ../loadouts/trooper.ini\n"
                                                    "[post]\nPosition = 0 0\nOwner = Empire\n"
                                                    "[post]\nPosition = 50 0\nOwner = Rebellion\n";
     std::ofstream(dir / "hub.ini") << "[hub]\nName = Mos Eisley\nBattlefield = fields/dunes.ini\nTeamSize = 4\n"
@@ -60,8 +63,8 @@ private:
 Battlefield small_field() {
     Battlefield field;
     field.name = "Test Field";
-    field.teams[0] = {"Empire", {SoldierDef{}}};
-    field.teams[1] = {"Rebellion", {SoldierDef{}}};
+    field.teams[0] = {"Empire", {Loadout{}}};
+    field.teams[1] = {"Rebellion", {Loadout{}}};
     field.min_x = -100;
     field.max_x = 100;
     field.min_z = -60;

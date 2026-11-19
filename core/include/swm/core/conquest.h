@@ -7,7 +7,7 @@
 #include <string>
 #include <vector>
 
-#include "swm/core/combat.h"
+#include "swm/core/loadout.h"
 #include "swm/core/vec3.h"
 
 namespace swm::core {
@@ -29,11 +29,13 @@ struct CommandPost {
 
 struct Team {
     std::string name;
-    std::vector<SoldierDef> classes;  // what its soldiers can spawn as
+    // Loadouts its soldiers can spawn with: a stand-in for testing until the
+    // hub sends each player's own gear.
+    std::vector<Loadout> loadouts;
 };
 
 // Where a conquest match is fought: a bounded part of a planet, two teams
-// and their classes, and the command posts they fight over.
+// and their test loadouts, and the command posts they fight over.
 struct Battlefield {
     std::string name;
     double min_x = -1e9, min_z = -1e9, max_x = 1e9, max_z = 1e9;  // game space
@@ -52,12 +54,12 @@ struct Battlefield {
 };
 
 // Reads a battlefield file (see game/battlefields/). Positions in it are
-// Galaxies world coordinates (x z), as the snapshot tools print them; class
-// files are relative to it. Throws std::runtime_error if it, or a class
-// file, can't be read or makes no sense.
+// Galaxies world coordinates (x z), as the snapshot tools print them;
+// loadout files are relative to it. Throws std::runtime_error if it, or a
+// loadout, can't be read or makes no sense.
 Battlefield load_battlefield(const std::filesystem::path& path);
 
-// Every character is waiting to spawn (choosing a class and a post), alive,
+// Every character is waiting to spawn (choosing a loadout and a post), alive,
 // or dead (down until it may spawn again).
 enum class Life : uint8_t { waiting, alive, dead };
 

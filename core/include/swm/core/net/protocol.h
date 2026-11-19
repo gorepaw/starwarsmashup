@@ -89,10 +89,10 @@ struct InputBatch {
     std::vector<MoveInput> inputs;
 };
 
-// Client -> server, repeated while waiting to spawn: the class and command
-// post wanted (indexes into the battlefield's team classes and posts).
+// Client -> server, repeated while waiting to spawn: the loadout and command
+// post wanted (indexes into the battlefield's team loadouts and posts).
 struct SpawnRequest {
-    uint8_t soldier_class = 0;
+    uint8_t loadout = 0;
     uint8_t post = 0;
 };
 
@@ -103,7 +103,7 @@ struct EntityState {
     Life life = Life::alive;
     uint8_t spawn_count = 0;  // changes on every respawn: clients jump there instead of easing
     int8_t team = -1;         // -1: no teams (outside a match)
-    uint8_t soldier_class = 0;
+    uint8_t loadout = 0;      // index into the team's loadouts
     uint16_t kills = 0;
     uint16_t deaths = 0;
     uint16_t captures = 0;    // command posts taken or neutralized while in them

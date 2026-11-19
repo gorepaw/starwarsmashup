@@ -93,7 +93,7 @@ bf2tool check <dir>
 bf2tool skeleton <file.lvl> <bank>
 bf2tool anims <file.lvl> <bank> [name...]
 bf2tool odf <file.lvl> [class]
-bf2tool export-soldier <_lvl_pc dir> <side> <soldier class> -o <out.ini>
+bf2tool export-loadout <_lvl_pc dir> <side> <soldier class> -o <loadout.ini> [--items <dir>]
 ```
 
 Battlefront II munged files (`.lvl`) are `ucfb` chunk trees: `lvl_` sub-levels holding models (`modl`), textures (`tex_`), skeletons (`skel`), animations (`zaa_`/`zaf_`), entity classes (`entc`/`ordc`/`wpnc`/`expc`), and more.
@@ -104,20 +104,20 @@ Battlefront II munged files (`.lvl`) are `ucfb` chunk trees: `lvl_` sub-levels h
 - **skeleton**: print an animation bank's skeleton (`zaf_`) with rest world positions, e.g. `bf2tool skeleton ingame.lvl human_0`.
 - **anims**: list an animation bank's clips (`zaa_`): name hash, frames, bones. Names given on the command line are matched by hash, e.g. `bf2tool anims ingame.lvl human_0 human_rifle_stand_runforward`.
 - **odf**: list a file's ODF classes (munged into `entc`/`ordc`/`wpnc`/`expc` chunks: a `TYPE` name, a `BASE` parent, and `PROP` entries of a 32-bit FNV-1a hash of the lowercase property name plus a string value), or print one class's properties. Names are resolved from a list of documented ODF keys; unknown ones print as hashes.
-- **export-soldier**: write a soldier class for the game (`core::load_soldier`): health and movement, plus its first two primary weapons and its first grenade (Battlefront's weapon channel 1) as the secondary, with inheritance resolved across `side/<side>.lvl` and `ingame.lvl`. Supported: cannons firing bolts or bullets (including shotguns' pellets per shot), launchers firing missiles, and grenades (thrown or lobbed, like mortars). Each weapon's ordnance and explosion are followed, and its spare ammo (`WeaponAmmo`) is kept. Mines, detpacks, turrets, droids, buffs and flamethrowers are skipped and listed. The output is game data from your install: write it to `game/imported_assets/`. Example, the Imperial rifleman:
+- **export-loadout**: write a Battlefront soldier's kit as a test loadout. Each weapon becomes an item file (`core::load_weapon`) in `--items` (default: `items` beside the loadout's folder), and the loadout file (`core::load_loadout`) names them: the first two primary weapons as the primary and the sidearm, the first grenade (Battlefront's weapon channel 1) as the secondary. Inheritance is resolved across `side/<side>.lvl` and `ingame.lvl`. The soldier's own health and speed aren't exported: characters have no classes, and their statistics come from their gear. Supported: cannons firing bolts or bullets (including shotguns' pellets per shot), launchers firing missiles, and grenades (thrown or lobbed, like mortars). Each weapon's ordnance and explosion are followed, and its spare ammo (`WeaponAmmo`) is kept. Mines, detpacks, turrets, droids, buffs and flamethrowers are skipped and listed. The output is game data from your install: write it to `game/imported_assets/`. Example, the Imperial rifleman's kit:
 
   ```powershell
-  bf2tool export-soldier "<Battlefront>\GameData\Data\_lvl_pc" imp imp_inf_rifleman -o game\imported_assets\combat\imp_inf_rifleman.ini
+  bf2tool export-loadout "<Battlefront>\GameData\Data\_lvl_pc" imp imp_inf_rifleman -o game\imported_assets\loadouts\imp_inf_rifleman.ini
   ```
 
-  Then pass it to the server and clients with `--soldier`. The battlefield `game/battlefields/mos_eisley_outskirts.ini` uses nine classes; export them all with:
+  Then pass it to the server and clients with `--loadout`. The battlefield `game/battlefields/mos_eisley_outskirts.ini` uses nine kits; export them all with:
 
   ```powershell
   foreach ($side in "imp", "all") { foreach ($class in "rifleman", "rocketeer", "sniper", "engineer", "officer") {
-    bf2tool export-soldier "<Battlefront>\GameData\Data\_lvl_pc" $side "$($side)_inf_$class" -o "game\imported_assets\combat\$($side)_inf_$class.ini" } }
+    bf2tool export-loadout "<Battlefront>\GameData\Data\_lvl_pc" $side "$($side)_inf_$class" -o "game\imported_assets\loadouts\$($side)_inf_$class.ini" } }
   ```
 
-  (The Rebel officer comes out with no supported weapons and isn't used.)
+  (The Rebel officer's kit has no supported weapons, so it fails and isn't used. Weapons shared between kits, like pistols and thermal detonators, are one item each: the last kit exported sets their spare ammo.)
 
 Animation data uses its own block format inside `BIN_` (byte-reversed tags) and identifies bones and clips by name hash (`bf2/hash.h`). See `bf2/animation.h` for the stream encoding.
 

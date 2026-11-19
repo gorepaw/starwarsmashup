@@ -29,7 +29,8 @@ struct ServerConfig {
     double save_interval = 10;   // seconds between saves of every connected character
     double respawn_delay = 5;    // seconds dead before respawning (in a match: before choosing a spawn)
     double max_rewind = 0.5;     // seconds: the most the server rewinds targets for a shooter
-    SoldierDef soldier;          // everyone's class outside a match; must match the clients'
+    Loadout loadout;             // everyone's outside a match; must match the clients'
+    CharacterStats base_stats;   // before gear; must match the clients'
     // With a battlefield the server runs a conquest match on it: players
     // join a team, choose a class and a command post to spawn at, and the
     // match's rules decide who wins. Clients must load the same battlefield.
@@ -135,7 +136,8 @@ private:
         uint32_t respawn_tick = 0;
         uint8_t spawn_count = 0;
         int team = -1;
-        size_t soldier_class = 0;
+        size_t loadout = 0;          // index into the team's loadouts (in a match)
+        CharacterStats stats;        // with the loadout's gear
         std::optional<net::SpawnRequest> wants_spawn;
         double outside = 0;  // seconds out of bounds
         uint16_t kills = 0, deaths = 0, captures = 0;
@@ -169,13 +171,13 @@ private:
     void run_match();
     void fire(const Client& shooter, const Shot& shot, double view_tick);
     void advance_bolts();
-    void damage(Client& victim, double amount, uint32_t attacker);
+    void damage(Client& victim, double raw, DamageType type, uint32_t attacker);
     void explode(const Bolt& bolt, Vec3 at);
     void kill(Client& victim, uint32_t attacker);
     void respawn(Client& client);
-    void spawn_at_post(Client& client, size_t soldier_class, size_t post);
+    void spawn_at_post(Client& client, size_t loadout, size_t post);
     void return_to_waiting(Client& client);
-    const SoldierDef& soldier_of(const Client& client) const;
+    const Loadout& loadout_of(const Client& client) const;
     net::EntityState describe(const Client& client) const;
     Vec3 spawn_point(uint32_t index) const;
     Vec3 position_at(const Client& client, double tick) const;

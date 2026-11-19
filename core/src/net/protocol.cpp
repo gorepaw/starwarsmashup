@@ -69,7 +69,7 @@ MoveState get_state(ByteReader& in) {
         w.heat = in.get<float>();
         w.overheated = in.get<uint8_t>() != 0;
     }
-    if (c.weapon >= max_weapons) {
+    if (c.weapon >= hand_slots) {
         throw PacketError("bad weapon slot");
     }
     return state;
@@ -196,7 +196,7 @@ struct Encoder {
             out.put(uint8_t(entity.life));
             out.put(entity.spawn_count);
             out.put(entity.team);
-            out.put(entity.soldier_class);
+            out.put(entity.loadout);
             out.put(entity.kills);
             out.put(entity.deaths);
             out.put(entity.captures);
@@ -238,7 +238,7 @@ struct Encoder {
     void operator()(const Goodbye&) { out.put(uint8_t(Type::goodbye)); }
     void operator()(const SpawnRequest& m) {
         out.put(uint8_t(Type::spawn_request));
-        out.put(m.soldier_class);
+        out.put(m.loadout);
         out.put(m.post);
     }
     void operator()(const QueueRequest& m) {
@@ -332,7 +332,7 @@ Message decode(std::span<const uint8_t> packet) {
             entity.life = Life(life);
             entity.spawn_count = in.get<uint8_t>();
             entity.team = get_team(in);
-            entity.soldier_class = in.get<uint8_t>();
+            entity.loadout = in.get<uint8_t>();
             entity.kills = in.get<uint16_t>();
             entity.deaths = in.get<uint16_t>();
             entity.captures = in.get<uint16_t>();
@@ -399,7 +399,7 @@ Message decode(std::span<const uint8_t> packet) {
         break;
     case Type::spawn_request: {
         SpawnRequest m;
-        m.soldier_class = in.get<uint8_t>();
+        m.loadout = in.get<uint8_t>();
         m.post = in.get<uint8_t>();
         message = m;
         break;

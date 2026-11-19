@@ -6,7 +6,7 @@
 #   godot --path game --script res://tools/net_demo.gd -- <bake_prefix> <character.gltf>
 #         [--server a.b.c.d:port] [--host <port>] [--db <file>] [--spawn <x> <z>] [--name <name>]
 #         [--building <building.gltf> <x> <y> <z> <yaw>] [--bot circle|chase|route] [--route <x,z;x,z;...>]
-#         [--soldier <file.ini>] [--battlefield <file.ini>] [--bots <n>] [--hub <file.ini>] [--lag <ms>] [--jitter <ms>]
+#         [--loadout <file.ini>] [--battlefield <file.ini>] [--bots <n>] [--hub <file.ini>] [--lag <ms>] [--jitter <ms>]
 #         [--loss <0..1>] [--seconds <n>] [--shots <output_prefix>] [--solo] [--terrain3d]
 #
 # Connects to a running server (default 127.0.0.1:7777; see server/ for
@@ -22,12 +22,12 @@
 # with its cells' own lights, and its floors and walls (<name>.collision) used
 # by the movement. The server must place the same building.
 #
-# --soldier is the soldier class (bf2tool export-soldier: health, movement,
-# weapons); the server must use the same file.
+# --loadout is what you carry outside a match: weapons and gear (a loadout
+# file, see game/loadouts/); the server must use the same file.
 #
 # --battlefield joins (or with --host, hosts) a conquest match on a
 # battlefield file (game/battlefields/); the server must use the same file.
-# --bots adds bots to a hosted server. In a match you choose a class (1-9)
+# --bots adds bots to a hosted server. In a match you choose a loadout (1-9)
 # and a command post your team holds (Q/E), and spawn with Space or a click.
 # Posts show as beams: blue yours, red the enemy's, white neutral.
 #
@@ -102,13 +102,13 @@ var _crosshair: Label
 var _feed: Label
 var _feed_lines: PackedStringArray = []
 var _hit_flash := 0.0
-var _weapons: Array = []          # from SwmClient.get_weapons: the class being played
+var _weapons: Array = []          # from SwmClient.get_weapons: the held weapons, by slot
 var _weapon := 0                  # slot wanted
 var _bolt_materials := {}         # bolt color (html) -> material
 var _bolt_mesh: BoxMesh           # a unit cube, scaled per bolt
 var _battlefield: Dictionary = {} # from SwmClient.get_battlefield; empty outside a match
 var _posts: Array = []            # per command post: {beam, ring, label, material}
-var _spawn_class := 0
+var _spawn_loadout := 0
 var _spawn_post := -1
 var _spawn_requested := false
 var _center: Label                # spawn menu, results, warnings
@@ -135,7 +135,7 @@ func _init() -> void:
 	if args.size() < 2 or not ClassDB.class_exists("SwmClient"):
 		printerr("usage: -- <bake_prefix> <character.gltf> [--server addr:port] [--host port] [--spawn x z] ",
 				"[--name n] [--building gltf x y z yaw] [--bot circle|chase|route|conquest] [--route x,z;...] ",
-				"[--soldier ini] [--battlefield ini] [--bots n] [--hub ini] [--lag ms] ",
+				"[--loadout ini] [--battlefield ini] [--bots n] [--hub ini] [--lag ms] ",
 				"[--jitter ms] [--loss 0..1] [--seconds n] [--shots prefix] [--solo] [--terrain3d]",
 				"   (needs the swm GDExtension)")
 		quit(2)
@@ -178,7 +178,7 @@ func _init() -> void:
 		if collision != "" and _server.add_building(collision, building_position, building_yaw) != OK:
 			quit(1)
 			return
-		if _option(args, "--soldier", "") != "" and _server.set_soldier(_os_path(_option(args, "--soldier", ""))) != OK:
+		if _option(args, "--loadout", "") != "" and _server.set_loadout(_os_path(_option(args, "--loadout", ""))) != OK:
 			quit(1)
 			return
 		if battlefield != "" and _server.set_battlefield(_os_path(battlefield)) != OK:
@@ -201,7 +201,7 @@ func _init() -> void:
 	if collision != "" and _client.add_building(collision, building_position, building_yaw) != OK:
 		quit(1)
 		return
-	if _option(args, "--soldier", "") != "" and _client.set_soldier(_os_path(_option(args, "--soldier", ""))) != OK:
+	if _option(args, "--loadout", "") != "" and _client.set_loadout(_os_path(_option(args, "--loadout", ""))) != OK:
 		quit(1)
 		return
 	if battlefield != "" and _client.set_battlefield(_os_path(battlefield)) != OK:
@@ -379,9 +379,9 @@ func _on_input(event: InputEvent) -> void:
 		_request_spawn()
 	elif event is InputEventKey and event.pressed and _choosing_spawn() and event.physical_keycode != KEY_ESCAPE:
 		var key: int = event.physical_keycode
-		var classes: Array = _battlefield["teams"][int(_client.get_presented()["team"])]["classes"]
+		var loadouts: Array = _battlefield["teams"][int(_client.get_presented()["team"])]["loadouts"]
 		if key >= KEY_1 and key <= KEY_9:
-			_spawn_class = mini(key - KEY_1, classes.size() - 1)
+			_spawn_loadout = mini(key - KEY_1, loadouts.size() - 1)
 		elif key in [KEY_Q, KEY_LEFT]:
 			_cycle_post(-1)
 		elif key in [KEY_E, KEY_RIGHT]:
@@ -1036,12 +1036,12 @@ func _cycle_post(step: int) -> void:
 
 func _request_spawn() -> void:
 	if _spawn_post >= 0:
-		_client.request_spawn(_spawn_class, _spawn_post)
+		_client.request_spawn(_spawn_loadout, _spawn_post)
 		_spawn_requested = true
 
 
 # The spawn screen: an overview of the chosen post. Bots other than the C++
-# one spawn as the first class at the first post their team holds.
+# one spawn with the first loadout at the first post their team holds.
 func _choose_spawn(game: Dictionary, own: Dictionary) -> void:
 	var owned := _owned_posts(game, int(own["team"]))
 	if not owned.has(_spawn_post):
@@ -1110,13 +1110,13 @@ func _spawn_menu(game: Dictionary, team: int) -> String:
 	var lines := PackedStringArray()
 	lines.append("%s: you fight for the %s" % [_battlefield["name"], _team_name(team)])
 	lines.append("")
-	var classes: Array = _battlefield["teams"][team]["classes"]
-	_spawn_class = mini(_spawn_class, classes.size() - 1)
-	for i in classes.size():
-		var soldier: Dictionary = classes[i]
-		lines.append("%s %d  %s  (%s, %d health)" % [">" if i == _spawn_class else "  ", i + 1, soldier["name"],
-				", ".join(soldier["weapons"] + ([soldier["secondary"]] if soldier["secondary"] != "" else [])),
-				roundi(soldier["max_health"])])
+	var loadouts: Array = _battlefield["teams"][team]["loadouts"]
+	_spawn_loadout = mini(_spawn_loadout, loadouts.size() - 1)
+	for i in loadouts.size():
+		var loadout: Dictionary = loadouts[i]
+		lines.append("%s %d  %s  (%s, %d health)" % [">" if i == _spawn_loadout else "  ", i + 1, loadout["name"],
+				", ".join(loadout["weapons"] + ([loadout["secondary"]] if loadout["secondary"] != "" else [])),
+				roundi(loadout["max_health"])])
 	lines.append("")
 	if _spawn_post < 0:
 		lines.append("Your team holds no command posts")

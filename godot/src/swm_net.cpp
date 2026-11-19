@@ -58,7 +58,7 @@ void describe(godot::Dictionary& out, const core::net::EntityState& entity) {
     out["alive"] = entity.alive();
     out["life"] = life_name(entity.life);
     out["team"] = int64_t(entity.team);
-    out["soldier_class"] = int64_t(entity.soldier_class);
+    out["loadout"] = int64_t(entity.loadout);
     out["kills"] = int64_t(entity.kills);
     out["deaths"] = int64_t(entity.deaths);
     out["captures"] = int64_t(entity.captures);
@@ -81,11 +81,11 @@ godot::Error load_battlefield_file(std::optional<core::Battlefield>& battlefield
     return godot::OK;
 }
 
-godot::Error load_soldier_file(core::SoldierDef& soldier, const godot::String& path) {
+godot::Error load_loadout_file(core::Loadout& loadout, const godot::String& path) {
     try {
-        soldier = core::load_soldier(to_std(path));
+        loadout = core::load_loadout(to_std(path));
     } catch (const std::exception& error) {
-        godot::UtilityFunctions::push_error("set_soldier: ", error.what());
+        godot::UtilityFunctions::push_error("set_loadout: ", error.what());
         return godot::ERR_CANT_OPEN;
     }
     return godot::OK;
@@ -127,16 +127,16 @@ const std::optional<core::Battlefield>& SwmClient::battlefield() const {
     return client() ? client()->config().battlefield : battlefield_;
 }
 
-const core::SoldierDef& SwmClient::soldier() const {
-    return client() ? client()->soldier() : soldier_;
+const core::Loadout& SwmClient::loadout() const {
+    return client() ? client()->loadout() : loadout_;
 }
 
-const core::SoldierDef& SwmClient::soldier_of(int team, int soldier_class) const {
+const core::Loadout& SwmClient::loadout_of(int team, int index) const {
     if (battlefield() && team >= 0 && team < 2) {
-        const auto& classes = battlefield()->teams[size_t(team)].classes;
-        return classes[std::min<size_t>(size_t(soldier_class), classes.size() - 1)];
+        const auto& loadouts = battlefield()->teams[size_t(team)].loadouts;
+        return loadouts[std::min<size_t>(size_t(index), loadouts.size() - 1)];
     }
-    return soldier_;
+    return loadout_;
 }
 
 godot::Error SwmClient::set_battlefield(const godot::String& path) {
@@ -151,9 +151,9 @@ void SwmClient::set_bot(bool enabled) {
     }
 }
 
-void SwmClient::request_spawn(int64_t soldier_class, int64_t post) {
+void SwmClient::request_spawn(int64_t loadout, int64_t post) {
     if (client()) {
-        client()->request_spawn(int(soldier_class), int(post));
+        client()->request_spawn(int(loadout), int(post));
     }
 }
 
@@ -226,22 +226,25 @@ godot::Dictionary SwmClient::get_battlefield() const {
     out["max_z"] = field.max_z;
     godot::Array teams;
     for (const core::Team& team : field.teams) {
-        godot::Array classes;
-        for (const core::SoldierDef& soldier : team.classes) {
+        godot::Array loadouts;
+        for (const core::Loadout& loadout : team.loadouts) {
             godot::Array weapons;
-            for (const core::WeaponDef& weapon : soldier.weapons) {
-                weapons.push_back(godot::String::utf8(weapon.name.c_str()));
+            for (int slot = 0; slot < core::hand_slots; ++slot) {
+                if (const core::WeaponDef* weapon = core::weapon_in_slot(loadout, slot)) {
+                    weapons.push_back(godot::String::utf8(weapon->name.c_str()));
+                }
             }
+            const core::WeaponDef* secondary = core::weapon_in_slot(loadout, core::secondary_slot);
             godot::Dictionary entry;
-            entry["name"] = godot::String::utf8(soldier.name.c_str());
-            entry["max_health"] = soldier.max_health;
+            entry["name"] = godot::String::utf8(loadout.name.c_str());
+            entry["max_health"] = core::stats_for(loadout).max_health;
             entry["weapons"] = weapons;
-            entry["secondary"] = soldier.secondary ? godot::String::utf8(soldier.secondary->name.c_str()) : godot::String();
-            classes.push_back(entry);
+            entry["secondary"] = secondary ? godot::String::utf8(secondary->name.c_str()) : godot::String();
+            loadouts.push_back(entry);
         }
         godot::Dictionary entry;
         entry["name"] = godot::String::utf8(team.name.c_str());
-        entry["classes"] = classes;
+        entry["loadouts"] = loadouts;
         teams.push_back(entry);
     }
     out["teams"] = teams;
@@ -323,7 +326,7 @@ godot::Error SwmClient::start(const godot::String& server, const godot::String& 
         impaired_ = std::make_unique<core::net::ImpairedLink>(*udp_, impairment_, [this] { return now(); });
         link = impaired_.get();
     }
-    core::ClientConfig config{.server = *endpoint, .name = to_std(name), .soldier = soldier_};
+    core::ClientConfig config{.server = *endpoint, .name = to_std(name), .loadout = loadout_};
     config.battlefield = battlefield_;
     // Battles a hub sends us to: their battlefield file, by name.
     auto find_battlefield = [dir = battlefield_dir_](const std::string& id) -> std::optional<core::Battlefield> {
@@ -341,8 +344,8 @@ godot::Error SwmClient::start(const godot::String& server, const godot::String& 
     return godot::OK;
 }
 
-godot::Error SwmClient::set_soldier(const godot::String& path) {
-    return load_soldier_file(soldier_, path);
+godot::Error SwmClient::set_loadout(const godot::String& path) {
+    return load_loadout_file(loadout_, path);
 }
 
 void SwmClient::set_input(const godot::Dictionary& c) {
@@ -438,23 +441,22 @@ godot::Array SwmClient::get_bolts() const {
             entry["weapon"] = int64_t(bolt.weapon);
             entry["position"] = to_godot(bolt.position);
             entry["velocity"] = to_godot(bolt.velocity);
-            int team = -1, soldier_class = 0;
+            int team = -1, loadout_index = 0;
             for (const auto& remote : remotes) {
                 if (remote.id == bolt.owner) {
                     team = remote.team;
-                    soldier_class = remote.soldier_class;
+                    loadout_index = remote.loadout;
                 }
             }
-            const core::SoldierDef* owner_def = &soldier_of(team, soldier_class);
+            const core::Loadout* owner_def = &loadout_of(team, loadout_index);
             if (bolt.owner == uint32_t(client()->entity_id())) {
-                owner_def = &soldier();  // own missiles and grenades
+                owner_def = &loadout();  // own missiles and grenades
             }
-            const core::SoldierDef& owner = *owner_def;
             entry["kind"] = bolt.kind == core::Projectile::bolt      ? "bolt"
                             : bolt.kind == core::Projectile::missile ? "missile"
                                                                      : "grenade";
             const core::WeaponDef* weapon = core::weapon_in_slot(*owner_def, bolt.weapon);
-            add_bolt_look(entry, weapon != nullptr ? *weapon : owner.weapons[0]);
+            add_bolt_look(entry, weapon != nullptr ? *weapon : core::WeaponDef{});
             out.push_back(entry);
         }
     }
@@ -464,7 +466,7 @@ godot::Array SwmClient::get_bolts() const {
 godot::Array SwmClient::take_shots() {
     godot::Array out;
     if (client()) {
-        const core::SoldierDef& own = soldier();
+        const core::Loadout& own = loadout();
         for (const core::Shot& shot : client()->take_shots()) {
             const core::WeaponDef* weapon = core::weapon_in_slot(own, shot.weapon);
             if (weapon == nullptr || weapon->projectile != core::Projectile::bolt) {
@@ -529,16 +531,22 @@ godot::Array SwmClient::take_explosions() {
 
 godot::Dictionary SwmClient::get_secondary() const {
     godot::Dictionary out;
-    if (soldier().secondary) {
-        out["name"] = godot::String::utf8(soldier().secondary->name.c_str());
+    if (const core::WeaponDef* secondary = core::weapon_in_slot(loadout(), core::secondary_slot)) {
+        out["name"] = godot::String::utf8(secondary->name.c_str());
     }
     return out;
 }
 
 godot::Array SwmClient::get_weapons() const {
     godot::Array out;
-    for (const core::WeaponDef& w : soldier().weapons) {
+    for (int slot = 0; slot < core::hand_slots; ++slot) {
+        const core::WeaponDef* held = core::weapon_in_slot(loadout(), slot);
         godot::Dictionary entry;
+        if (held == nullptr) {
+            out.push_back(entry);
+            continue;
+        }
+        const core::WeaponDef& w = *held;
         entry["name"] = godot::String::utf8(w.name.c_str());
         entry["rounds_per_clip"] = int64_t(w.rounds_per_clip);
         entry["projectile"] = w.projectile == core::Projectile::bolt      ? "bolt"
@@ -557,7 +565,7 @@ godot::Array SwmClient::get_weapons() const {
 }
 
 double SwmClient::get_max_health() const {
-    return soldier().max_health;
+    return client() ? client()->character_stats().max_health : core::stats_for(loadout_).max_health;
 }
 
 godot::Array SwmClient::get_remotes() const {
@@ -598,7 +606,7 @@ void SwmClient::_bind_methods() {
     ClassDB::bind_method(D_METHOD("add_building", "collision_path", "position", "yaw_degrees"),
                          &SwmClient::add_building);
     ClassDB::bind_method(D_METHOD("start", "server", "bake_prefix", "name"), &SwmClient::start);
-    ClassDB::bind_method(D_METHOD("set_soldier", "path"), &SwmClient::set_soldier);
+    ClassDB::bind_method(D_METHOD("set_loadout", "path"), &SwmClient::set_loadout);
     ClassDB::bind_method(D_METHOD("set_battlefield", "path"), &SwmClient::set_battlefield);
     ClassDB::bind_method(D_METHOD("set_bot", "enabled"), &SwmClient::set_bot);
     ClassDB::bind_method(D_METHOD("set_battlefield_dir", "path"), &SwmClient::set_battlefield_dir);
@@ -610,7 +618,7 @@ void SwmClient::_bind_methods() {
     ClassDB::bind_method(D_METHOD("get_player_status"), &SwmClient::get_player_status);
     ClassDB::bind_method(D_METHOD("get_battlefield"), &SwmClient::get_battlefield);
     ClassDB::bind_method(D_METHOD("get_match"), &SwmClient::get_match);
-    ClassDB::bind_method(D_METHOD("request_spawn", "soldier_class", "post"), &SwmClient::request_spawn);
+    ClassDB::bind_method(D_METHOD("request_spawn", "loadout", "post"), &SwmClient::request_spawn);
     ClassDB::bind_method(D_METHOD("set_input", "controls"), &SwmClient::set_input);
     ClassDB::bind_method(D_METHOD("get_bolts"), &SwmClient::get_bolts);
     ClassDB::bind_method(D_METHOD("take_shots"), &SwmClient::take_shots);
@@ -645,8 +653,8 @@ godot::Error SwmServer::add_building(const godot::String& collision_path, const 
     return load_building(buildings_, collision_path, position, yaw_degrees);
 }
 
-godot::Error SwmServer::set_soldier(const godot::String& path) {
-    return load_soldier_file(soldier_, path);
+godot::Error SwmServer::set_loadout(const godot::String& path) {
+    return load_loadout_file(loadout_, path);
 }
 
 godot::Error SwmServer::set_battlefield(const godot::String& path) {
@@ -681,7 +689,7 @@ godot::Error SwmServer::start(int64_t port, const godot::String& bake_prefix, co
         return godot::ERR_CANT_OPEN;
     }
     core::ServerConfig config;
-    config.soldier = soldier_;
+    config.loadout = loadout_;
     config.battlefield = battlefield_;
     config.spawn = {-spawn.x, 0, spawn.y};  // Galaxies to game coordinates
     server_ = std::make_unique<core::GameServer>(*udp_, *world_, config, store_.get());
@@ -693,7 +701,7 @@ godot::Error SwmServer::start(int64_t port, const godot::String& bake_prefix, co
     if (bot_count_ > 0) {
         core::ClientConfig bot_config;
         bot_config.server = *core::net::parse_endpoint("127.0.0.1:" + std::to_string(udp_->port()));
-        bot_config.soldier = soldier_;
+        bot_config.loadout = loadout_;
         bot_config.battlefield = battlefield_;
         try {
             bots_ = std::make_unique<core::BotPlayers>(bot_count_, *world_, bot_config);
@@ -743,7 +751,7 @@ void SwmServer::_bind_methods() {
     using godot::ClassDB;
     using godot::D_METHOD;
     ClassDB::bind_method(D_METHOD("set_database", "path"), &SwmServer::set_database);
-    ClassDB::bind_method(D_METHOD("set_soldier", "path"), &SwmServer::set_soldier);
+    ClassDB::bind_method(D_METHOD("set_loadout", "path"), &SwmServer::set_loadout);
     ClassDB::bind_method(D_METHOD("set_battlefield", "path"), &SwmServer::set_battlefield);
     ClassDB::bind_method(D_METHOD("set_bots", "count"), &SwmServer::set_bots);
     ClassDB::bind_method(D_METHOD("set_hub", "path"), &SwmServer::set_hub);

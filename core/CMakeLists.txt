@@ -8,6 +8,7 @@ add_library(swm_core STATIC
   src/heightfield.cpp
   src/hub.cpp
   src/ini.cpp
+  src/loadout.cpp
   src/movement.cpp
   src/net/link.cpp
   src/net/protocol.cpp

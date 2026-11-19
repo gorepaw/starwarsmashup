@@ -27,7 +27,7 @@ constexpr const char* usage = R"(usage:
   bf2tool skeleton <file.lvl> <bank>
   bf2tool anims <file.lvl> <bank> [name...]
   bf2tool odf <file.lvl> [class]
-  bf2tool export-soldier <_lvl_pc dir> <side> <soldier class> -o <out.ini>
+  bf2tool export-loadout <_lvl_pc dir> <side> <soldier class> -o <loadout.ini> [--items <dir>]
 )";
 
 std::vector<uint8_t> read_file(const std::filesystem::path& path);
@@ -256,15 +256,24 @@ void write_weapon(std::ostream& out, const char* section, const CarriedWeapon& c
     }
 }
 
-// Writes a soldier class as a data file for core::load_soldier, inheritance
-// resolved: its first two primary weapons the game supports, and its first
-// grenade as the secondary.
-int cmd_export_soldier(const std::vector<std::string>& args) {
+// Writes a Battlefront soldier's kit as a test loadout (core::load_loadout):
+// each weapon the game supports as an item file (core::load_weapon), and a
+// loadout naming them: its first two primary weapons as the primary and the
+// sidearm, and its first grenade as the secondary. Battlefront's per-class
+// health and speed aren't kept: there are no classes in this game.
+int cmd_export_loadout(const std::vector<std::string>& args) {
     if (args.size() < 5 || args[3] != "-o") {
         std::cerr << usage;
         return 2;
     }
     const std::filesystem::path dir = args[0];
+    const std::filesystem::path out_path = args[4];
+    std::filesystem::path items = out_path.parent_path().parent_path() / "items";
+    for (size_t i = 5; i + 1 < args.size(); i += 2) {
+        if (args[i] == "--items") {
+            items = args[i + 1];
+        }
+    }
     std::vector<std::vector<uint8_t>> files;  // the parsed trees view these bytes
     OdfLibrary library;
     for (const std::filesystem::path& path : {dir / "side" / (args[1] + ".lvl"), dir / "ingame.lvl"}) {
@@ -276,21 +285,7 @@ int cmd_export_soldier(const std::vector<std::string>& args) {
         throw std::runtime_error(args[2] + " is not a soldier class");
     }
 
-    std::ofstream out(args[4], std::ios::binary);
-    out << "; " << args[2] << " from Battlefront II (" << args[1] << ".lvl, ingame.lvl), written by bf2tool export-soldier.\n";
-    out << "; Game data from your own install: don't commit or share it.\n\n[soldier]\nName = " << args[2] << "\n";
-    for (const char* key : {"MaxHealth", "MaxSpeed", "MaxStrafeSpeed", "JumpHeight", "Acceleration", "EnergyRestore",
-                            "EnergyRestoreIdle", "EnergyDrainSprint", "EnergyMinSprint"}) {
-        if (const auto value = soldier.get(key)) {
-            out << key << " = " << *value << "\n";
-        }
-    }
-    for (const auto& [hash, value] : soldier.properties) {
-        if (hash == odf_hash("ControlSpeed")) {
-            out << "ControlSpeed = " << value << "\n";
-        }
-    }
-
+    // The kit in order: WeaponAmmo and WeaponChannel follow their WeaponName.
     // No award weapons: they're unlocks.
     std::vector<CarriedWeapon> carried;
     for (const auto& [hash, value] : soldier.properties) {
@@ -302,8 +297,9 @@ int cmd_export_soldier(const std::vector<std::string>& args) {
             carried.back().channel = std::atoi(value.c_str());
         }
     }
-    int primaries = 0;
-    bool secondary = false;
+    std::filesystem::create_directories(items);
+    std::vector<std::string> held;  // primary, sidearm
+    std::string secondary;
     for (const CarriedWeapon& weapon : carried) {
         if (weapon.name.find("award") != std::string::npos) {
             continue;
@@ -311,25 +307,49 @@ int cmd_export_soldier(const std::vector<std::string>& args) {
         const OdfClass def = library.resolve(weapon.name);
         const OdfClass ordnance = ordnance_of(def, library);
         const std::string projectile = projectile_of(def, ordnance);
-        const bool as_primary = weapon.channel == 0 && primaries < 2 && !projectile.empty();
-        const bool as_secondary = weapon.channel == 1 && !secondary && projectile == "grenade";
-        if (!as_primary && !as_secondary) {
+        const bool as_held = weapon.channel == 0 && held.size() < 2 && !projectile.empty();
+        const bool as_secondary = weapon.channel == 1 && secondary.empty() && projectile == "grenade";
+        if (!as_held && !as_secondary) {
             std::cerr << std::format("  skipped {} ({}, ordnance {})\n", weapon.name, def.base, ordnance.base);
             continue;
         }
-        write_weapon(out, as_primary ? "weapon" : "secondary", weapon, library, projectile);
-        if (as_primary) {
-            ++primaries;
-        } else {
-            secondary = true;
+        const std::filesystem::path item = items / (weapon.name + ".ini");
+        std::ofstream file(item, std::ios::binary);
+        file << "; " << weapon.name << " from Battlefront II (" << args[1]
+             << ".lvl, ingame.lvl), written by bf2tool export-loadout.\n"
+                "; Game data from your own install: don't commit or share it.\n";
+        write_weapon(file, "weapon", weapon, library, projectile);
+        if (!file) {
+            throw std::runtime_error("cannot write " + item.string());
         }
-        std::cerr << std::format("  {} {} ({}, {})\n", as_primary ? "weapon" : "secondary", weapon.name, projectile,
-                                 ordnance.type);
+        if (as_held) {
+            held.push_back(weapon.name);
+        } else {
+            secondary = weapon.name;
+        }
+        std::cerr << std::format("  {} {} ({}, {})\n", as_held ? (held.size() == 1 ? "primary" : "sidearm") : "secondary",
+                                 weapon.name, projectile, ordnance.type);
+    }
+    if (held.empty()) {
+        throw std::runtime_error(args[2] + " carries no weapon the game supports");
+    }
+
+    std::filesystem::create_directories(out_path.parent_path());
+    std::ofstream out(out_path, std::ios::binary);
+    out << "; A test loadout: " << args[2] << "'s kit from Battlefront II, written by bf2tool export-loadout.\n"
+        << "; Its weapons are item files in " << items.generic_string() << ".\n\n[loadout]\nName = " << args[2] << "\n"
+        << "Items = " << std::filesystem::relative(items, out_path.parent_path()).generic_string() << " ../../items\n"
+        << "Primary = " << held[0] << "\n";
+    if (held.size() > 1) {
+        out << "Sidearm = " << held[1] << "\n";
+    }
+    if (!secondary.empty()) {
+        out << "Secondary = " << secondary << "\n";
     }
     if (!out) {
-        throw std::runtime_error("cannot write " + args[4]);
+        throw std::runtime_error("cannot write " + out_path.string());
     }
-    std::cerr << "wrote " << args[4] << "\n";
+    std::cerr << "wrote " << out_path.string() << "\n";
     return 0;
 }
 
@@ -409,8 +429,8 @@ int main(int argc, char** argv) {
         if (command == "odf") {
             return cmd_odf(args);
         }
-        if (command == "export-soldier") {
-            return cmd_export_soldier(args);
+        if (command == "export-loadout") {
+            return cmd_export_loadout(args);
         }
     } catch (const std::exception& e) {
         std::cerr << "error: " << e.what() << "\n";

@@ -36,14 +36,14 @@ MoveState lerp_state(const MoveState& a, const MoveState& b, double t) {
 } // namespace
 
 GameClient::GameClient(net::Link& link, const World& world, ClientConfig config)
-    : link_(link), world_(world), config_(std::move(config)) {}
+    : link_(link), world_(world), config_(std::move(config)), character_stats_(stats_for(config_.loadout, config_.base_stats)) {}
 
-const SoldierDef& GameClient::soldier() const {
+const Loadout& GameClient::loadout() const {
     if (config_.battlefield && self_.team >= 0) {
-        const auto& classes = config_.battlefield->teams[size_t(self_.team)].classes;
-        return classes[std::min<size_t>(self_.soldier_class, classes.size() - 1)];
+        const auto& loadouts = config_.battlefield->teams[size_t(self_.team)].loadouts;
+        return loadouts[std::min<size_t>(self_.loadout, loadouts.size() - 1)];
     }
-    return config_.soldier;
+    return config_.loadout;
 }
 
 void GameClient::queue(int team) {
@@ -51,8 +51,8 @@ void GameClient::queue(int team) {
     last_queue_request_ = -1e9;
 }
 
-void GameClient::request_spawn(int soldier_class, int post) {
-    spawn_request_ = net::SpawnRequest{uint8_t(std::clamp(soldier_class, 0, 255)), uint8_t(std::clamp(post, 0, 255))};
+void GameClient::request_spawn(int loadout, int post) {
+    spawn_request_ = net::SpawnRequest{uint8_t(std::clamp(loadout, 0, 255)), uint8_t(std::clamp(post, 0, 255))};
     last_spawn_request_ = -1e9;  // send at once
 }
 
@@ -64,7 +64,7 @@ void GameClient::set_input(const Controls& c) {
     next_input_.buttons = uint8_t((c.sprint ? MoveInput::sprint : 0) | (c.jump ? MoveInput::jump : 0) |
                                   (c.fire ? MoveInput::fire : 0) | (c.reload ? MoveInput::reload : 0) |
                                   (c.secondary ? MoveInput::secondary : 0));
-    next_input_.weapon = uint8_t(std::clamp(c.weapon, 0, max_weapons - 1));
+    next_input_.weapon = uint8_t(std::clamp(c.weapon, 0, hand_slots - 1));
 }
 
 std::vector<net::BoltState> GameClient::bolts(double now) const {
@@ -232,7 +232,11 @@ void GameClient::handle(const net::Datagram& datagram, double now) {
 void GameClient::reconcile(uint32_t last_input, const net::EntityState& server, double now) {
     const MoveState& server_state = server.state;
     const uint8_t spawn_count = self_.spawn_count;
-    self_ = server;  // also picks the class the replay below predicts with
+    const bool new_loadout = server.team != self_.team || server.loadout != self_.loadout;
+    self_ = server;  // also picks the loadout the replay below predicts with
+    if (new_loadout) {
+        character_stats_ = stats_for(loadout(), config_.base_stats);
+    }
     if (!spawned_) {
         spawned_ = true;
         current_ = previous_ = server_state;
@@ -259,7 +263,7 @@ void GameClient::reconcile(uint32_t last_input, const net::EntityState& server, 
     MoveState state = server_state;
     for (Pending& p : pending_) {
         if (self_.life != Life::waiting) {
-            simulate_character(state, p.input, alive(), world_, soldier(), dt);  // shots were drawn already
+            simulate_character(state, p.input, alive(), world_, loadout(), character_stats_, dt);  // shots were drawn already
         }
         p.result = state;
     }
@@ -281,7 +285,7 @@ void GameClient::tick(double now) {
     input.view_tick = render_tick_;
     previous_ = current_;
     if (self_.life != Life::waiting) {
-        if (auto shot = simulate_character(current_, input, alive(), world_, soldier(), 1 / tick_rate_)) {
+        if (auto shot = simulate_character(current_, input, alive(), world_, loadout(), character_stats_, 1 / tick_rate_)) {
             shots_.push_back(*shot);
         }
     }

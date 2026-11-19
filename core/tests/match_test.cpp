@@ -25,13 +25,16 @@ constexpr double dt = 1.0 / 30;
 
 void test_battlefield_file() {
     const auto dir = std::filesystem::temp_directory_path() / "swm_match_test";
-    std::filesystem::create_directories(dir / "classes");
-    std::ofstream(dir / "classes" / "trooper.ini") << "[soldier]\nName = trooper\nMaxHealth = 300\n";
+    std::filesystem::create_directories(dir / "items");
+    std::filesystem::create_directories(dir / "loadouts");
+    std::ofstream(dir / "items" / "rifle.ini") << "[weapon]\nName = rifle\n";
+    std::ofstream(dir / "items" / "suit.ini") << "[gear]\nName = suit\nSlot = chest\nModifier = max_health - 100\n";
+    std::ofstream(dir / "loadouts" / "trooper.ini") << "[loadout]\nName = trooper\nPrimary = rifle\nGear = suit\n";
     std::ofstream(dir / "field.ini") << "[battlefield]\nName = Dunes\nBounds = 100 -500 300 -200\nTickets = 80\n"
                                         "Warmup = 5\n\n"
-                                        "[team]\nName = Empire\nClass = classes/trooper.ini\n\n"
-                                        "[team]\nName = Rebellion\nClass = classes/trooper.ini\n"
-                                        "Class = classes/trooper.ini\n\n"
+                                        "[team]\nName = Empire\nLoadout = loadouts/trooper.ini\n\n"
+                                        "[team]\nName = Rebellion\nLoadout = loadouts/trooper.ini\n"
+                                        "Loadout = loadouts/trooper.ini\n\n"
                                         "[post]\nName = West\nPosition = 120 -300\nOwner = empire\n\n"
                                         "[post]\nName = Middle\nPosition = 200 -300\nRadius = 15\nCaptureTime = 16\n\n"
                                         "[post]\nName = East\nPosition = 280 -300\nOwner = Rebellion\nCapturable = 0\n";
@@ -40,13 +43,13 @@ void test_battlefield_file() {
     // Galaxies x runs the other way: game x is -300..-100.
     CHECK(field.min_x == -300 && field.max_x == -100 && field.min_z == -500 && field.max_z == -200);
     CHECK(field.contains({-200, 0, -300}) && !field.contains({200, 0, -300}));
-    CHECK(field.teams[0].name == "Empire" && field.teams[0].classes.size() == 1 && field.teams[1].classes.size() == 2);
-    CHECK(field.teams[0].classes[0].max_health == 300);
+    CHECK(field.teams[0].name == "Empire" && field.teams[0].loadouts.size() == 1 && field.teams[1].loadouts.size() == 2);
+    CHECK(field.teams[0].loadouts[0].name == "trooper" && stats_for(field.teams[0].loadouts[0]).max_health == 300);
     CHECK(field.posts.size() == 3 && field.posts[0].owner == 0 && field.posts[1].owner == -1 && field.posts[2].owner == 1);
     CHECK(field.posts[1].position == Vec3(-200, 0, -300) && field.posts[1].radius == 15 && field.posts[1].capture_time == 16);
     CHECK(!field.posts[2].capturable && field.posts[0].neutralize_time == 12);
 
-    std::ofstream(dir / "bad.ini") << "[battlefield]\n[team]\nName = A\nClass = classes/missing.ini\n";
+    std::ofstream(dir / "bad.ini") << "[battlefield]\n[team]\nName = A\nLoadout = loadouts/missing.ini\n";
     bool threw = false;
     try {
         load_battlefield(dir / "bad.ini");
@@ -60,8 +63,8 @@ void test_battlefield_file() {
 // Three posts in a row along x: team 0 holds West, team 1 East, Middle is neutral.
 Battlefield three_posts() {
     Battlefield field;
-    field.teams[0] = {"Empire", {SoldierDef{}}};
-    field.teams[1] = {"Rebellion", {SoldierDef{}}};
+    field.teams[0] = {"Empire", {Loadout{}}};
+    field.teams[1] = {"Rebellion", {Loadout{}}};
     field.min_x = -100;
     field.max_x = 100;
     field.min_z = -50;
@@ -202,10 +205,11 @@ void test_match_server() {
     Battlefield battlefield = three_posts();
     battlefield.out_of_bounds_time = 3;
     battlefield.warmup = 2;
-    SoldierDef scout;
+    // A light loadout: its suit costs half the health.
+    Loadout scout;
     scout.name = "scout";
-    scout.max_health = 200;
-    battlefield.teams[1].classes.push_back(scout);
+    scout.gear.push_back({"light suit", "chest", {{Stat::max_health, 0, 0.5}}});
+    battlefield.teams[1].loadouts.push_back(scout);
     Field field(battlefield);
     GameClient& a = field.join("a");
     GameClient& b = field.join("b");
@@ -222,8 +226,8 @@ void test_match_server() {
     a.request_spawn(0, 0);
     c.request_spawn(0, 0);
     field.run(0.5);
-    CHECK(a.alive() && b.alive() && c.alive() && b.self().soldier_class == 1 && b.health() == 200);
-    CHECK(b.soldier().name == "scout");
+    CHECK(a.alive() && b.alive() && c.alive() && b.self().loadout == 1 && b.health() == 200);
+    CHECK(b.loadout().name == "scout" && b.character_stats().max_health == 200);
     CHECK((b.predicted().position - battlefield.posts[2].position).length() < 6.5);
     // The match goes live at the end of the warmup: everyone spawns again.
     field.run(0.6);

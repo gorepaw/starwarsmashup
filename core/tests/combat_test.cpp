@@ -1,5 +1,6 @@
-// Weapons (fire rate, clips, heat, switching, spread), soldier files, bolt
-// hits, and server-side combat with lag compensation over a simulated network.
+// Weapons (fire rate, clips, heat, switching, spread), weapon, gear and
+// loadout files, character statistics and armor, bolt hits, explosives, and
+// server-side combat with lag compensation over a simulated network.
 
 #include <algorithm>
 #include <cmath>
@@ -22,130 +23,169 @@ namespace {
 constexpr double dt = 1.0 / 30;
 
 // Holds `buttons` for `ticks` ticks; returns how many shots came out.
-int hold(MoveState& state, const SoldierDef& soldier, uint8_t buttons, int ticks, uint32_t& sequence, int weapon = 0) {
+int hold(MoveState& state, const Loadout& loadout, uint8_t buttons, int ticks, uint32_t& sequence, int weapon = 0) {
     int shots = 0;
     for (int i = 0; i < ticks; ++i) {
         MoveInput input;
         input.sequence = ++sequence;
         input.buttons = buttons;
         input.weapon = uint8_t(weapon);
-        shots += simulate_weapons(state, input, soldier, dt) ? 1 : 0;
+        shots += simulate_weapons(state, input, loadout, dt) ? 1 : 0;
     }
     return shots;
 }
 
-void test_soldier_file() {
-    const auto path = std::filesystem::temp_directory_path() / "swm_combat_test_soldier.ini";
-    std::ofstream(path) << "[soldier]\nName = imp_inf_rifleman\nMaxHealth = 300\nMaxSpeed = 6.5\n"
-                           "JumpHeight = 1.25\nControlSpeed = stand  1.00 1.00 1.00\n"
-                           "ControlSpeed = sprint 1.40 0.60 0.35\n\n"
-                           "[weapon]\nName = rifle\nShotDelay = 0.25\nRoundsPerClip = 30\nMaxDamage = 50.0\n"
-                           "PersonScale = 0.5\nVelocity = 250\n\n"
-                           "[weapon]\nName = pistol\nRoundsPerClip = 0\nHeatPerShot = 0.2\n";
-    const SoldierDef soldier = load_soldier(path);
-    std::filesystem::remove(path);
-    CHECK(soldier.name == "imp_inf_rifleman" && soldier.max_health == 300 && soldier.move.run_speed == 6.5);
-    CHECK(near(soldier.move.jump_speed, std::sqrt(2 * 9.8 * 1.25)));
-    CHECK(soldier.move.sprint_factor == 1.4 && soldier.move.sprint_strafe == 0.6);
-    CHECK(soldier.weapons.size() == 2 && soldier.weapons[0].name == "rifle" && soldier.weapons[0].damage == 25);
-    CHECK(soldier.weapons[0].rounds_per_clip == 30 && soldier.weapons[0].bolt_speed == 250);
-    CHECK(soldier.weapons[1].rounds_per_clip == 0 && soldier.weapons[1].heat_per_shot == 0.2);
+// Item files and a loadout naming them, from its Items folder.
+std::filesystem::path write_items(const std::string& test) {
+    const auto dir = std::filesystem::temp_directory_path() / ("swm_combat_test_" + test);
+    std::filesystem::create_directories(dir / "items");
+    std::filesystem::create_directories(dir / "loadouts");
+    return dir;
+}
+
+void test_loadout_files() {
+    const auto dir = write_items("files");
+    std::ofstream(dir / "items" / "rifle.ini") << "[weapon]\nName = rifle\nShotDelay = 0.25\nRoundsPerClip = 30\n"
+                                                  "MaxDamage = 50.0\nPersonScale = 0.5\nVelocity = 250\n";
+    std::ofstream(dir / "items" / "pistol.ini") << "[weapon]\nName = pistol\nRoundsPerClip = 0\nHeatPerShot = 0.2\n"
+                                                   "DamageType = ballistic\n";
+    std::ofstream(dir / "items" / "plate.ini") << "[gear]\nName = plate\nSlot = chest\n"
+                                                  "Modifier = mitigation + 0.1\nModifier = mitigation_laser + 0.5\n"
+                                                  "Modifier = run_speed * 0.8\nModifier = max_health + 100\n"
+                                                  "Modifier = jump_height * 0.5\n";
+    std::ofstream(dir / "items" / "helmet.ini") << "[gear]\nName = helmet\nSlot = head\nModifier = run_speed * 0.5\n";
+    std::ofstream(dir / "loadouts" / "trooper.ini") << "[loadout]\nName = trooper\nPrimary = rifle\nSidearm = pistol\n"
+                                                       "Gear = plate\nGear = helmet\n";
+    const Loadout loadout = load_loadout(dir / "loadouts" / "trooper.ini");
+    CHECK(loadout.name == "trooper" && loadout.gear.size() == 2 && !loadout.weapons[secondary_slot]);
+    const WeaponDef* rifle = weapon_in_slot(loadout, primary_slot);
+    const WeaponDef* pistol = weapon_in_slot(loadout, sidearm_slot);
+    CHECK(rifle && rifle->name == "rifle" && rifle->damage == 25 && rifle->rounds_per_clip == 30);
+    CHECK(rifle->bolt_speed == 250 && rifle->damage_type == DamageType::laser);
+    CHECK(pistol && pistol->rounds_per_clip == 0 && pistol->heat_per_shot == 0.2 && pistol->damage_type == DamageType::ballistic);
+
+    // Gear changes statistics: additions, then multipliers, all stacking.
+    const CharacterStats base;
+    const CharacterStats stats = stats_for(loadout, base);
+    CHECK(stats.max_health == 500 && near(stats.move.run_speed, 7 * 0.8 * 0.5));
+    CHECK(near(stats.move.jump_speed * stats.move.jump_speed / (2 * 9.8), base.move.jump_speed * base.move.jump_speed / (2 * 9.8) / 2));
+    CHECK(near(stats.mitigation, 0.1) && near(stats.mitigation_by_type[size_t(DamageType::laser)], 0.5));
+    // General mitigation, then by type: a 100-point laser hit does 45, a ballistic one 90.
+    CHECK(near(mitigated_damage(stats, 100, DamageType::laser), 45));
+    CHECK(near(mitigated_damage(stats, 100, DamageType::ballistic), 90));
+    CHECK(near(mitigated_damage(base, 100, DamageType::explosive), 100));
+
+    // Bad files say what's wrong.
+    std::ofstream(dir / "loadouts" / "missing.ini") << "[loadout]\nPrimary = blaster_that_isnt_there\n";
+    std::ofstream(dir / "items" / "odd.ini") << "[gear]\nName = odd\nModifier = luck + 1\n";
+    std::ofstream(dir / "loadouts" / "odd.ini") << "[loadout]\nPrimary = rifle\nGear = odd\n";
+    std::ofstream(dir / "loadouts" / "two_plates.ini") << "[loadout]\nPrimary = rifle\nGear = plate\nGear = plate\n";
+    for (const char* bad : {"missing.ini", "odd.ini", "two_plates.ini"}) {
+        bool threw = false;
+        try {
+            load_loadout(dir / "loadouts" / bad);
+        } catch (const std::runtime_error&) {
+            threw = true;
+        }
+        CHECK(threw);
+    }
+    std::filesystem::remove_all(dir);
 }
 
 void test_rifle() {
-    SoldierDef soldier;  // E-11: a shot every 0.166 s, 50-round clips
-    soldier.weapons[0].rounds_per_clip = 12;
+    Loadout loadout;  // E-11: a shot every 0.166 s, 50-round clips
+    loadout.weapons[0]->rounds_per_clip = 12;
     MoveState state;
-    reset_loadout(state, soldier);
+    reset_loadout(state, loadout, stats_for(loadout));
     uint32_t sequence = 0;
     // Five ticks a shot at 30 Hz: six shots in a second.
-    CHECK(hold(state, soldier, MoveInput::fire, 30, sequence) == 6);
+    CHECK(hold(state, loadout, MoveInput::fire, 30, sequence) == 6);
     CHECK(state.combat.weapons[0].rounds == 6);
     // Emptying the clip, then pulling the trigger again, reloads.
-    CHECK(hold(state, soldier, MoveInput::fire, 35, sequence) == 6 && state.combat.reload > 0);
+    CHECK(hold(state, loadout, MoveInput::fire, 35, sequence) == 6 && state.combat.reload > 0);
     // The reload started 4 ticks ago and takes 1.5 s (45 ticks).
-    CHECK(hold(state, soldier, MoveInput::fire, 40, sequence) == 0);
-    CHECK(hold(state, soldier, 0, 3, sequence) == 0 && state.combat.weapons[0].rounds == 12);
+    CHECK(hold(state, loadout, MoveInput::fire, 40, sequence) == 0);
+    CHECK(hold(state, loadout, 0, 3, sequence) == 0 && state.combat.weapons[0].rounds == 12);
     // Reloading by hand, from a partial clip.
-    hold(state, soldier, MoveInput::fire, 1, sequence);
-    hold(state, soldier, 0, 10, sequence);
-    hold(state, soldier, MoveInput::reload, 1, sequence);
+    hold(state, loadout, MoveInput::fire, 1, sequence);
+    hold(state, loadout, 0, 10, sequence);
+    hold(state, loadout, MoveInput::reload, 1, sequence);
     CHECK(state.combat.reload > 0);
-    hold(state, soldier, 0, 46, sequence);
+    hold(state, loadout, 0, 46, sequence);
     CHECK(state.combat.weapons[0].rounds == 12 && state.combat.reload == 0);
 }
 
 void test_heat() {
-    SoldierDef soldier;
+    Loadout loadout;
     WeaponDef pistol;  // Battlefront's com_weap_inf_pistol: no clip, overheats
     pistol.rounds_per_clip = 0;
     pistol.shot_delay = 0.2;
     pistol.heat_per_shot = 0.175;
     pistol.heat_recover_rate = 0.3;
     pistol.heat_threshold = 0.25;
-    soldier.weapons = {pistol};
+    loadout.weapons[0] = pistol;
     MoveState state;
-    reset_loadout(state, soldier);
+    reset_loadout(state, loadout, stats_for(loadout));
     uint32_t sequence = 0;
     int shots = 0;
     int ticks = 0;
     while (!state.combat.weapons[0].overheated && ticks < 300) {
-        shots += hold(state, soldier, MoveInput::fire, 1, sequence);
+        shots += hold(state, loadout, MoveInput::fire, 1, sequence);
         ++ticks;
     }
     CHECK(state.combat.weapons[0].overheated && shots >= 7 && shots <= 10);
     // Overheated: no shots until it cools to the threshold (0.75 at 0.3/s: 2.5 s).
-    CHECK(hold(state, soldier, MoveInput::fire, 70, sequence) == 0);
-    CHECK(hold(state, soldier, MoveInput::fire, 10, sequence) >= 1 && !state.combat.weapons[0].overheated);
+    CHECK(hold(state, loadout, MoveInput::fire, 70, sequence) == 0);
+    CHECK(hold(state, loadout, MoveInput::fire, 10, sequence) >= 1 && !state.combat.weapons[0].overheated);
 }
 
 void test_switch_and_spread() {
-    SoldierDef soldier;
+    Loadout loadout;
     WeaponDef pistol;
     pistol.rounds_per_clip = 0;
-    soldier.weapons.push_back(pistol);
+    loadout.weapons[sidearm_slot] = pistol;
     MoveState state;
-    reset_loadout(state, soldier);
+    reset_loadout(state, loadout, stats_for(loadout));
     uint32_t sequence = 0;
     // Switching takes 0.4 s (12 ticks) before the next shot.
-    CHECK(hold(state, soldier, MoveInput::fire, 12, sequence, 1) == 0 && state.combat.weapon == 1);
-    CHECK(hold(state, soldier, MoveInput::fire, 2, sequence, 1) == 1);
+    CHECK(hold(state, loadout, MoveInput::fire, 12, sequence, 1) == 0 && state.combat.weapon == 1);
+    CHECK(hold(state, loadout, MoveInput::fire, 2, sequence, 1) == 1);
 
     // Spread is deterministic per input, and within the cone.
     MoveState a, b;
-    reset_loadout(a, soldier);
-    reset_loadout(b, soldier);
+    reset_loadout(a, loadout, stats_for(loadout));
+    reset_loadout(b, loadout, stats_for(loadout));
     MoveInput input;
     input.sequence = 77;
     input.buttons = MoveInput::fire;
     input.yaw = 0.5f;
-    const auto shot_a = simulate_weapons(a, input, soldier, dt);
-    const auto shot_b = simulate_weapons(b, input, soldier, dt);
+    const auto shot_a = simulate_weapons(a, input, loadout, dt);
+    const auto shot_b = simulate_weapons(b, input, loadout, dt);
     CHECK(shot_a && shot_b && shot_a->directions == shot_b->directions);
     const Vec3 aim = aim_direction(0.5, 0);
     const double off = std::acos(std::min(1.0, aim.dot(shot_a->directions[0])));
     CHECK(off < 0.33 * std::numbers::pi / 180);  // first shot: base spread only (0.225 degrees per axis)
     input.sequence = 78;
     MoveState c;
-    reset_loadout(c, soldier);
-    CHECK(!(simulate_weapons(c, input, soldier, dt)->directions == shot_a->directions));
+    reset_loadout(c, loadout, stats_for(loadout));
+    CHECK(!(simulate_weapons(c, input, loadout, dt)->directions == shot_a->directions));
 }
 
 // Battlefront's shotgun: 8 pellets a shot, each spread on its own, each a round.
 void test_shotgun() {
-    SoldierDef soldier;
-    WeaponDef& shotgun = soldier.weapons[0];
+    Loadout loadout;
+    WeaponDef& shotgun = *loadout.weapons[0];
     shotgun.rounds_per_clip = 40;
     shotgun.shots_per_salvo = 8;
     shotgun.shot_delay = 1.0;
     shotgun.yaw_spread = 4.5;
     shotgun.pitch_spread = 3.0;
     MoveState state;
-    reset_loadout(state, soldier);
+    reset_loadout(state, loadout, stats_for(loadout));
     MoveInput input;
     input.sequence = 1;
     input.buttons = MoveInput::fire;
-    const auto shot = simulate_weapons(state, input, soldier, dt);
+    const auto shot = simulate_weapons(state, input, loadout, dt);
     CHECK(shot && shot->directions.size() == 8 && state.combat.weapons[0].rounds == 32);
     double widest = 0;
     for (const Vec3& d : shot->directions) {
@@ -174,21 +214,21 @@ struct Arena {
     net::LoopbackLink a_raw{hub, {2, 1}};
     net::LoopbackLink b_link{hub, {3, 1}};
     net::ImpairedLink a_link;
-    SoldierDef soldier;
+    Loadout loadout;
     GameServer server;
-    GameClient a{a_link, world, ClientConfig{.server = {1, 1}, .name = "a", .soldier = soldier}};
-    GameClient b{b_link, world, ClientConfig{.server = {1, 1}, .name = "b", .soldier = soldier}};
+    GameClient a{a_link, world, ClientConfig{.server = {1, 1}, .name = "a", .loadout = loadout}};
+    GameClient b{b_link, world, ClientConfig{.server = {1, 1}, .name = "b", .loadout = loadout}};
 
-    Arena(double latency, double max_rewind, BuildingCollision building = {}, SoldierDef soldier_def = {})
+    Arena(double latency, double max_rewind, BuildingCollision building = {}, Loadout carried = {})
         : a_link(a_raw, {.latency = latency, .seed = 5}, [this] { return now; }),
-          soldier(std::move(soldier_def)),
-          server(server_link, world, config(max_rewind, soldier)) {
+          loadout(std::move(carried)),
+          server(server_link, world, config(max_rewind, loadout)) {
         world.add_building(building, {});
     }
 
-    static ServerConfig config(double max_rewind, const SoldierDef& soldier) {
+    static ServerConfig config(double max_rewind, const Loadout& loadout) {
         ServerConfig c;
-        c.soldier = soldier;
+        c.loadout = loadout;
         c.spawn = {0, 0, 0};
         c.spawn_spacing = 12;
         c.max_rewind = max_rewind;
@@ -284,43 +324,52 @@ void test_wall_blocks() {
     CHECK(arena.a.take_shots().size() >= 10 && arena.server.health_of(arena.b.entity_id()) == 400);
 }
 
-// Battlefront's thermal detonator and rocket launcher, as export-soldier writes them.
-SoldierDef rocketeer() {
-    const auto path = std::filesystem::temp_directory_path() / "swm_combat_test_rocketeer.ini";
-    std::ofstream(path) << "[soldier]\nName = rocketeer\n\n"
-                           "[weapon]\nName = launcher\nProjectile = missile\nWeaponAmmo = 3\nRoundsPerClip = 1\n"
-                           "ReloadTime = 4.0\nShotDelay = 0.0\nYawSpread = 0.0\nPitchSpread = 0.0\n"
-                           "MaxDamage = 500.0\nVelocity = 100.0\nAcceleration = 80.0\nGravity = 0.0\nLifeSpan = 10.0\n"
-                           "ExplosionDamage = 400.0\nExplosionRadiusInner = 1.0\nExplosionRadiusOuter = 3.0\n\n"
-                           "[secondary]\nName = thermal\nProjectile = grenade\nWeaponAmmo = 4\nRoundsPerClip = 1\n"
-                           "ReloadTime = 0.0\nShotDelay = 1.3\nShotElevate = 0.21\nVelocity = 25.0\nGravity = 1.25\n"
-                           "Rebound = 0.2\nLifeSpan = 0.6\nFuse = 2.0\nExplosionImpact = 0\n"
-                           "ExplosionDamage = 450.0\nExplosionRadiusInner = 4.5\nExplosionRadiusOuter = 6.5\n";
-    SoldierDef soldier = load_soldier(path);
-    std::filesystem::remove(path);
-    return soldier;
+// Battlefront's rocket launcher and thermal detonator, as export-loadout writes them.
+Loadout rocketeer() {
+    const auto dir = write_items("rocketeer");
+    std::ofstream(dir / "items" / "launcher.ini")
+        << "[weapon]\nName = launcher\nProjectile = missile\nWeaponAmmo = 3\nRoundsPerClip = 1\n"
+           "ReloadTime = 4.0\nShotDelay = 0.0\nYawSpread = 0.0\nPitchSpread = 0.0\n"
+           "MaxDamage = 500.0\nVelocity = 100.0\nAcceleration = 80.0\nGravity = 0.0\nLifeSpan = 10.0\n"
+           "ExplosionDamage = 400.0\nExplosionRadiusInner = 1.0\nExplosionRadiusOuter = 3.0\n";
+    std::ofstream(dir / "items" / "thermal.ini")
+        << "[weapon]\nName = thermal\nProjectile = grenade\nWeaponAmmo = 4\nRoundsPerClip = 1\n"
+           "ReloadTime = 0.0\nShotDelay = 1.3\nShotElevate = 0.21\nVelocity = 25.0\nGravity = 1.25\n"
+           "Rebound = 0.2\nLifeSpan = 0.6\nFuse = 2.0\nExplosionImpact = 0\n"
+           "ExplosionDamage = 450.0\nExplosionRadiusInner = 4.5\nExplosionRadiusOuter = 6.5\n";
+    std::ofstream(dir / "loadouts" / "rocketeer.ini") << "[loadout]\nName = rocketeer\nPrimary = launcher\n"
+                                                         "Secondary = thermal\n";
+    Loadout loadout = load_loadout(dir / "loadouts" / "rocketeer.ini");
+    std::filesystem::remove_all(dir);
+    return loadout;
 }
 
 void test_explosives_file() {
-    const SoldierDef soldier = rocketeer();
-    CHECK(soldier.weapons.size() == 1 && soldier.secondary.has_value());
-    const WeaponDef& launcher = soldier.weapons[0];
+    const Loadout loadout = rocketeer();
+    CHECK(loadout.weapons[primary_slot] && !loadout.weapons[sidearm_slot] && loadout.weapons[secondary_slot]);
+    const WeaponDef& launcher = *loadout.weapons[primary_slot];
     CHECK(launcher.projectile == Projectile::missile && launcher.bolt_acceleration == 80 && launcher.ammo == 3);
     CHECK(launcher.explode_on_impact && launcher.explosion_damage == 400 && launcher.explosion_outer == 3);
-    const WeaponDef& thermal = *soldier.secondary;
+    CHECK(launcher.damage_type == DamageType::explosive);
+    const WeaponDef& thermal = *loadout.weapons[secondary_slot];
     CHECK(thermal.projectile == Projectile::grenade && !thermal.explode_on_impact && thermal.fuse == 2.0);
-    CHECK(thermal.yaw_spread == 0 && thermal.shot_elevate == 0.21 && weapon_in_slot(soldier, secondary_slot) == &thermal);
+    CHECK(thermal.yaw_spread == 0 && thermal.shot_elevate == 0.21 && weapon_in_slot(loadout, secondary_slot) == &thermal);
     // Clips carried: the launcher holds one rocket and carries two more.
     MoveState state;
-    reset_loadout(state, soldier);
+    reset_loadout(state, loadout, stats_for(loadout));
     CHECK(state.combat.weapons[0].rounds == 1 && state.combat.weapons[0].reserve == 2);
     CHECK(state.combat.weapons[secondary_slot].rounds == 1 && state.combat.weapons[secondary_slot].reserve == 3);
+    // Without a sidearm, switching to it does nothing.
+    MoveInput input;
+    input.weapon = sidearm_slot;
+    simulate_weapons(state, input, loadout, dt);
+    CHECK(state.combat.weapon == primary_slot);
 }
 
 void test_grenades_and_ammo() {
-    const SoldierDef soldier = rocketeer();
+    const Loadout loadout = rocketeer();
     MoveState state;
-    reset_loadout(state, soldier);
+    reset_loadout(state, loadout, stats_for(loadout));
     uint32_t sequence = 0;
     // Four grenades, one every 1.3 s (39 ticks), thrown above the crosshair.
     int thrown = 0;
@@ -328,7 +377,7 @@ void test_grenades_and_ammo() {
         MoveInput input;
         input.sequence = ++sequence;
         input.buttons = MoveInput::secondary;
-        if (auto shot = simulate_weapons(state, input, soldier, dt)) {
+        if (auto shot = simulate_weapons(state, input, loadout, dt)) {
             CHECK(shot->weapon == secondary_slot && shot->directions.size() == 1);
             CHECK(near(std::asin(shot->directions[0].y), 0.21, 1e-6));
             ++thrown;
@@ -341,7 +390,7 @@ void test_grenades_and_ammo() {
         MoveInput input;
         input.sequence = ++sequence;
         input.buttons = MoveInput::fire;
-        fired += simulate_weapons(state, input, soldier, dt) ? 1 : 0;
+        fired += simulate_weapons(state, input, loadout, dt) ? 1 : 0;
     }
     CHECK(fired == 3 && state.combat.weapons[0].rounds == 0 && state.combat.weapons[0].reserve == 0);
     CHECK(state.combat.reload == 0);
@@ -418,10 +467,33 @@ void test_rocket_splash() {
     CHECK(near(arena.server.health_of(b_id), expected, 25));
 }
 
+// Armor that absorbs half of all laser damage: B takes 14 E-11 hits to kill
+// instead of 7.
+void test_armor_in_combat() {
+    Loadout armored;
+    armored.gear.push_back({"vest", "chest", {{Stat::mitigation_laser, 0.5}}});
+    Arena arena(0, 0.5, {}, armored);
+    arena.run(0.5, [] {});
+    const uint32_t b_id = arena.b.entity_id();
+    int hits = 0;
+    bool killed = false;
+    arena.run(5.0, [&] {
+        arena.a.set_input(arena.a_aims_at_b(arena.server.alive(b_id)));
+        for (const auto& event : arena.a.take_events()) {
+            if (event.victim == b_id) {
+                hits += event.kind == net::CombatEvent::hit;
+                killed |= event.kind == net::CombatEvent::kill;
+                CHECK(event.kind != net::CombatEvent::hit || event.damage == 30);
+            }
+        }
+    });
+    CHECK(killed && hits == 14);
+}
+
 } // namespace
 
 int main() {
-    test_soldier_file();
+    test_loadout_files();
     test_rifle();
     test_heat();
     test_switch_and_spread();
@@ -435,5 +507,6 @@ int main() {
     test_explosion_falloff();
     test_grenade_and_rocket_kills();
     test_rocket_splash();
+    test_armor_in_combat();
     return swm::test::finish("combat_test");
 }

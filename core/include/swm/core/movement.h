@@ -50,11 +50,11 @@ struct WeaponState {
 };
 
 struct CombatState {
-    uint8_t weapon = 0;   // primary slot in hand
+    uint8_t weapon = 0;   // held slot: primary or sidearm
     double cooldown = 0;  // seconds until it can fire
     double reload = 0;    // seconds of reloading left
     double spread = 0;    // degrees of bloom from recent shots
-    std::array<WeaponState, 3> weapons{};  // two primary slots, then the secondary
+    std::array<WeaponState, 3> weapons{};  // primary, sidearm, secondary
 
     friend bool operator==(const CombatState&, const CombatState&) = default;
 };
@@ -74,7 +74,7 @@ struct MoveState {
 };
 
 // Movement tuning. Defaults are Battlefront II's com_inf_default soldier;
-// load_soldier() reads them from the player's own files.
+// gear changes them (see CharacterStats).
 struct MoveParams {
     double run_speed = 7.0;         // MaxSpeed, m/s forward
     double strafe_speed = 5.25;     // MaxStrafeSpeed, m/s sideways and back

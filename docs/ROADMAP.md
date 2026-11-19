@@ -39,18 +39,18 @@ Hub notes:
 
 **Match server**
 - [x] Match lifecycle: warmup → live → end → results, then the next match. Warmup is practice: deaths are free and posts can't change hands. Results show in the game; sending them back to the hub comes with the handoff.
-- [x] Battlefield definition format (terrain bounds, command posts, spawns, out-of-bounds): an INI file (`core::load_battlefield`) with teams and their classes, posts, tickets and timings. Vehicle spawns come with vehicles.
+- [x] Battlefield definition format (terrain bounds, command posts, spawns, out-of-bounds): an INI file (`core::load_battlefield`) with teams and their test loadouts, posts, tickets and timings. Vehicle spawns come with vehicles.
 - [x] First battlefield: `game/battlefields/mos_eisley_outskirts.ini`, five command posts in the basin east of the cantina, up to the mesa slope.
 - [x] Conquest rules (`core::Conquest`): posts are neutralized and captured by soldiers standing in them (Battlefront's NeutralizeTime 12 s and CaptureTime 10 s, read from its command-post class), and frozen while contested. Each death costs a ticket, and holding more posts bleeds the other team. A team wins when the other runs out, or by holding every post for 20 s.
-- [x] Class selection and spawning at owned command posts. Leaving the battlefield kills after 10 s.
+- [x] Loadout selection and spawning at owned command posts. Leaving the battlefield kills after 10 s. Until the hub sends each player's own gear (Stage 2), battlefields offer test loadouts.
 
 **Combat**
 - [ ] Third-person shooter controller with Battlefront feel: sprint, roll, crouch, zoom. Sprint (with energy), jump and over-the-shoulder aiming are done; roll, crouch and zoom aren't.
-- [x] Projectile weapons with clips and overheating: blaster bolts fly at their real speed with gravity. Stats come from the player's own Battlefront II files (`bf2tool export-soldier`): the Imperial rifleman's E-11 (60 damage, a shot every 0.166 s, 50-round clips) and pistol (overheats).
-- [x] Grenades and explosives: thermal detonators (right mouse) bounce and explode on a fuse. Rockets accelerate and explode on impact, and mortar shells lob and burst on contact. Explosions do full damage within an inner radius, falling to nothing at the outer one (the thermal detonator: 450 within 4.5 m, nothing past 6.5 m). Soldiers carry the ammo Battlefront gives them: spare clips, 2–4 grenades, 7 rockets.
+- [x] Projectile weapons with clips and overheating: blaster bolts fly at their real speed with gravity. Stats come from the player's own Battlefront II files (`bf2tool export-loadout`): the Imperial rifleman's E-11 (60 damage, a shot every 0.166 s, 50-round clips) and pistol (overheats).
+- [x] Grenades and explosives: thermal detonators (right mouse) bounce and explode on a fuse. Rockets accelerate and explode on impact, and mortar shells lob and burst on contact. Explosions do full damage within an inner radius, falling to nothing at the outer one (the thermal detonator: 450 within 4.5 m, nothing past 6.5 m). Weapons carry the ammo Battlefront gives them: spare clips, 2–4 grenades, 7 rockets.
 - [x] Health, damage, death, respawn (400 health, respawn after 5 s at a spawn point)
 - [x] Lag-compensated hit detection: the server rewinds targets to where the shooter saw them (up to 0.5 s). In tests, a shooter 100 ms from the server lands 7 of its shots on a strafing target with rewinding and none without.
-- [x] 4–5 classes with fixed kits (loadouts come in Stage 2): rifleman, rocketeer, sniper, engineer (shotgun: 8 pellets a shot) and, for the Empire, the officer (sonic blaster and mortar). The Rebel officer's incinerator and buffs, and every class's mines, detpacks, turrets and droids, aren't supported yet.
+- [x] Loadouts instead of classes (decided 2026-11-18: there are no character classes). A loadout is a primary, a sidearm, a secondary and gear; weapons and gear are item files, and any of them can change any character statistic (`core::stats_for`). Damage is mitigated by the target's general and per-type mitigation (ballistic, laser, electro, bio, explosive, melee). For testing, Battlefront's kits are exported as loadouts: rifleman, rocketeer, sniper, engineer (shotgun: 8 pellets a shot) and the Imperial officer (sonic blaster and mortar), plus `game/loadouts/test_heavy_trooper.ini` with test armor. Mines, detpacks, turrets, droids, buffs and flamethrowers aren't supported yet.
 
 Combat notes:
 - In a match, teammates can't hurt each other (`ServerConfig::friendly_fire`). Outside one, everyone is hostile.
@@ -93,14 +93,14 @@ Galaxies' weapon and armor library becomes loadouts you choose in the hub and ta
 **Data and items**
 - [ ] Weapon archetype definitions (handling, fire mode, projectile, heat)
 - [ ] Map Galaxies weapons to archetypes, with sidegrade stat profiles
-- [ ] Armor classes and a simplified damage type model (2–3 types)
+- [ ] Armor from Galaxies, with stats on the gear statistics model (mitigation general and by damage type, health, movement)
 - [ ] Item definitions (data files) separate from item instances (persistent ID + stat values)
 - [ ] Persistence for inventory and loadouts (SQLite via the persistence interface)
 
 **Hub infrastructure**
 - [ ] Inventory UI
 - [ ] Equipment / paperdoll UI (appearance separate from stats)
-- [ ] Loadout editor with per-class slots
+- [ ] Loadout editor: gear slots filled from the inventory
 - [ ] Shooting range in the city for testing weapons
 - [ ] Faction quartermaster: standard-issue gear for faction points
 - [ ] Squads / groups and squad queueing

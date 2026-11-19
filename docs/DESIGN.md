@@ -16,9 +16,9 @@ Battlefront's combat never had a persistent world behind it. Galaxies' world nev
 
 - Third-person shooter controls and feel, based on Battlefront II: sprint, roll, crouch, zoom, grenades, vehicles.
 - Server-authoritative hit detection with lag compensation.
-- Battlefront's classes map onto Galaxies-style combat professions. Examples:
+- **No character classes.** Nobody is locked into a role. What a player can do in a fight comes from the gear they bring: a primary weapon, a sidearm, a secondary (throwables and gadgets), and armor. Battlefront's classes survive only as play styles that gear (and, later, profession skills) make possible. Examples of where those styles lead:
 
-  | Battlefront role | Profession direction |
+  | Battlefront style | Profession direction |
   |---|---|
   | Soldier | Rifleman / Marksman |
   | Heavy | Commando |
@@ -50,8 +50,9 @@ Galaxies has hundreds of weapons and dozens of armor sets. Battlefront has about
   - **Standard:** quality is flattened. Only the sidegrade choice matters.
   - **Gear:** quality counts. The Galactic Civil War, and eventually open-world conquest.
 - **Overheating** from Battlefront stays.
-- **Damage types** are simplified to 2–3, matched against armor classes.
-- **Classes become loadout templates:** a class defines slots and allowed archetypes, and the player fills them from their inventory.
+- **Damage types:** ballistic, laser, electro, bio, explosive and melee.
+- **Gear slots, not classes:** a loadout is a primary weapon, a sidearm, a secondary (throwables and gadgets, used with their own button), and armor and other gear, filled from the player's inventory.
+- **Any gear can change any character statistic.** Armor mostly sets general damage mitigation, mitigation per damage type, movement speed and health; a heavy weapon could slow its carrier too.
 - **Getting gear before crafting exists:** faction quartermasters sell standard-issue gear for faction points earned in battle. Crafted gear supplements it later.
 - **Shooting range:** every hub has one for trying weapons before committing to them.
 

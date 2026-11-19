@@ -1,7 +1,7 @@
 // Standalone game server: core/ only, no Godot.
 //
 //   swm_server --bake <prefix> [--db <file>] [--port 7777] [--spawn <swg_x> <swg_z>] [--seconds <n>]
-//              [--building <file.collision> <swg_x> <swg_y> <swg_z> <yaw_degrees>]... [--soldier <file.ini>]
+//              [--building <file.collision> <swg_x> <swg_y> <swg_z> <yaw_degrees>]... [--loadout <file.ini>]
 //              [--battlefield <file.ini>] [--bots <n>] [--hub <file.ini>]
 //
 // <prefix> names a terrain bake (swgtool bake-terrain). --db is the SQLite
@@ -11,11 +11,11 @@
 // places a building's floors and walls (from swgtool export-building) where
 // the world snapshot has it; clients must place the same buildings. Runs
 // until Ctrl+C or for --seconds, then saves every connected character.
-// --soldier is everyone's class (from bf2tool export-soldier; default: built-in
-// Battlefront rifleman values); clients must use the same file.
+// --loadout is everyone's weapons and gear outside a match (a loadout file,
+// see game/loadouts/; default: an E-11 alone); clients must use the same file.
 //
 // --battlefield runs a conquest match on a battlefield file (see
-// game/battlefields/) instead: teams, classes, command posts and
+// game/battlefields/) instead: teams, their loadouts, command posts and
 // reinforcements, warmup, live, results, and again. Clients must load the
 // same file. Characters aren't saved in a match. --bots adds that many bots,
 // connected like players (over UDP, from this process), to fill the teams.
@@ -65,7 +65,7 @@ std::atomic<bool> stop_requested = false;
 int usage() {
     std::cerr << "usage: swm_server --bake <prefix> [--db <file>] [--port 7777] [--spawn <swg_x> <swg_z>] "
                  "[--seconds <n>] [--building <file.collision> <swg_x> <swg_y> <swg_z> <yaw_degrees>]... "
-                 "[--soldier <file.ini>] [--battlefield <file.ini>] [--bots <n>] [--hub <file.ini>]\n";
+                 "[--loadout <file.ini>] [--battlefield <file.ini>] [--bots <n>] [--hub <file.ini>]\n";
     return 2;
 }
 
@@ -78,7 +78,7 @@ double seconds_since(std::chrono::steady_clock::time_point start) {
 int main(int argc, char** argv) {
     std::string bake;
     std::string db;
-    std::string soldier;
+    std::string loadout;
     std::string battlefield;
     std::string hub_file;
     int bot_count = 0;
@@ -94,8 +94,8 @@ int main(int argc, char** argv) {
         const std::string arg = argv[i];
         if (arg == "--bake" && i + 1 < argc) {
             bake = argv[++i];
-        } else if (arg == "--soldier" && i + 1 < argc) {
-            soldier = argv[++i];
+        } else if (arg == "--loadout" && i + 1 < argc) {
+            loadout = argv[++i];
         } else if (arg == "--battlefield" && i + 1 < argc) {
             battlefield = argv[++i];
         } else if (arg == "--hub" && i + 1 < argc) {
@@ -129,17 +129,17 @@ int main(int argc, char** argv) {
     try {
         const swm::core::Heightfield ground = swm::core::load_bake(bake);
         swm::core::ServerConfig config;
-        if (!soldier.empty()) {
-            config.soldier = swm::core::load_soldier(soldier);
-            std::cout << std::format("soldier {}: {} health, {} weapon(s)\n", config.soldier.name,
-                                     config.soldier.max_health, config.soldier.weapons.size());
+        if (!loadout.empty()) {
+            config.loadout = swm::core::load_loadout(loadout);
+            std::cout << std::format("loadout {}: {} health\n", config.loadout.name,
+                                     swm::core::stats_for(config.loadout, config.base_stats).max_health);
         }
         if (!battlefield.empty()) {
             config.battlefield = swm::core::load_battlefield(battlefield);
             const auto& field = *config.battlefield;
-            std::cout << std::format("battlefield {}: {} command posts, {} ({} classes) vs {} ({} classes), {} tickets\n",
-                                     field.name, field.posts.size(), field.teams[0].name, field.teams[0].classes.size(),
-                                     field.teams[1].name, field.teams[1].classes.size(), field.tickets);
+            std::cout << std::format("battlefield {}: {} command posts, {} ({} loadouts) vs {} ({} loadouts), {} tickets\n",
+                                     field.name, field.posts.size(), field.teams[0].name, field.teams[0].loadouts.size(),
+                                     field.teams[1].name, field.teams[1].loadouts.size(), field.tickets);
             if (!db.empty()) {
                 std::cout << "--db is ignored in a match: characters aren't saved\n";
                 db.clear();
@@ -173,7 +173,8 @@ int main(int argc, char** argv) {
         // Bots: clients like any other, on their own sockets.
         swm::core::ClientConfig bot_config;
         bot_config.server = *swm::core::net::parse_endpoint(std::format("127.0.0.1:{}", link.port()));
-        bot_config.soldier = config.soldier;
+        bot_config.loadout = config.loadout;
+        bot_config.base_stats = config.base_stats;
         bot_config.battlefield = config.battlefield;
         swm::core::BotPlayers bots(bot_count, world, bot_config);
         swm::core::UdpHubNetwork hub_network;

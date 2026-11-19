@@ -42,9 +42,9 @@ public:
     // from swgtool export-building), at a Galaxies position and yaw in
     // degrees. Must match the server's buildings. Call before start().
     godot::Error add_building(const godot::String& collision_path, const godot::Vector3& position, double yaw_degrees);
-    // The soldier class (an OS path to a file from bf2tool export-soldier).
-    // Must match the server's. Call before start().
-    godot::Error set_soldier(const godot::String& path);
+    // The loadout outside a match (an OS path to a loadout file; see
+    // game/loadouts/). Must match the server's. Call before start().
+    godot::Error set_loadout(const godot::String& path);
     // A battlefield file (an OS path; see game/battlefields/), for a server
     // running a match on it. Must match the server's. Call before start().
     godot::Error set_battlefield(const godot::String& path);
@@ -73,13 +73,13 @@ public:
     // sprinting, weapon, rounds, reserve (-1: unlimited), heat, overheated,
     // reloading, grenades, health, alive,
     // life ("waiting", "alive" or "dead"), team (-1 outside a match),
-    // soldier_class, kills, deaths, captures}.
+    // loadout (index into the team's loadouts), kills, deaths, captures}.
     godot::Dictionary get_presented() const;
     // Other characters: [{id, position, velocity, yaw, ..., health, alive, life, team, ...}].
     godot::Array get_remotes() const;
     // Projectiles in flight: others' bolts, and everyone's missiles and grenades:
     // [{owner, weapon, kind ("bolt", "missile" or "grenade"), position, velocity,
-    // color, length, width}] (the looks come from the firing soldier's weapon).
+    // color, length, width}] (the looks come from the firing character's weapon).
     // Own bolts come from take_shots.
     godot::Array get_bolts() const;
     // Own bolts since the last call, to draw at once:
@@ -93,23 +93,24 @@ public:
     godot::Array take_events();
     // Explosions since the last call: [{position, radius, owner}].
     godot::Array take_explosions();
-    // The current class's secondary (grenade): {name}, or empty.
+    // The current loadout's secondary (a throwable): {name}, or empty.
     godot::Dictionary get_secondary() const;
-    // The current class's weapons: [{name, rounds_per_clip, heat_per_shot,
+    // The current loadout's held weapons, by slot (primary, sidearm; {} for an
+    // empty slot): [{name, rounds_per_clip, heat_per_shot,
     // bolt_speed, bolt_life, bolt_color, bolt_length, bolt_width}].
     godot::Array get_weapons() const;
     double get_max_health() const;
     // The battlefield: {name, min_x, min_z, max_x, max_z (game space), teams:
-    // [{name, classes: [{name, max_health, weapons: [names], secondary}]}], posts: [{name,
+    // [{name, loadouts: [{name, max_health, weapons: [names], secondary}]}], posts: [{name,
     // position, radius, capturable}]}; empty outside a match.
     godot::Dictionary get_battlefield() const;
     // The match: {phase ("warmup", "live" or "ended"), time_left, tickets: [a, b],
     // dominant, victory_left, winner, posts: [{owner, holder, charge, contested}]};
     // empty outside a match.
     godot::Dictionary get_match() const;
-    // Asks to spawn as a class of our team at a command post (indexes into
+    // Asks to spawn with one of our team's loadouts at a command post (indexes into
     // get_battlefield()), until the character spawns.
-    void request_spawn(int64_t soldier_class, int64_t post);
+    void request_spawn(int64_t loadout, int64_t post);
     // How many times the server has sent us to another server.
     int64_t get_generation() const;
     // Why the last transfer couldn't be followed (e.g. a missing battlefield).
@@ -133,15 +134,15 @@ private:
     double now() const;
     core::GameClient* client() const { return session_ ? &session_->client() : nullptr; }
     const std::optional<core::Battlefield>& battlefield() const;
-    const core::SoldierDef& soldier() const;
-    // The class an entity plays, by team and class index.
-    const core::SoldierDef& soldier_of(int team, int soldier_class) const;
+    const core::Loadout& loadout() const;
+    // An entity's loadout, by team and loadout index.
+    const core::Loadout& loadout_of(int team, int loadout) const;
 
     std::chrono::steady_clock::time_point start_time_ = std::chrono::steady_clock::now();
     core::net::ImpairedLink::Settings impairment_;
     core::Heightfield ground_;
     std::vector<std::pair<core::BuildingCollision, core::Placement>> buildings_;
-    core::SoldierDef soldier_;
+    core::Loadout loadout_;
     std::optional<core::Battlefield> battlefield_;
     std::string battlefield_dir_;
     std::unique_ptr<core::Bot> bot_;
@@ -164,8 +165,8 @@ public:
     void set_database(const godot::String& path);
     // As SwmClient.add_building. Call before start().
     godot::Error add_building(const godot::String& collision_path, const godot::Vector3& position, double yaw_degrees);
-    // As SwmClient.set_soldier. Call before start().
-    godot::Error set_soldier(const godot::String& path);
+    // As SwmClient.set_loadout. Call before start().
+    godot::Error set_loadout(const godot::String& path);
     // Runs a conquest match on this battlefield (as SwmClient.set_battlefield).
     // Call before start().
     godot::Error set_battlefield(const godot::String& path);
@@ -190,7 +191,7 @@ private:
     std::string database_;
     core::Heightfield ground_;
     std::vector<std::pair<core::BuildingCollision, core::Placement>> buildings_;
-    core::SoldierDef soldier_;
+    core::Loadout loadout_;
     std::optional<core::Battlefield> battlefield_;
     int bot_count_ = 0;
     std::unique_ptr<core::World> world_;

@@ -78,17 +78,12 @@ Battlefield load_battlefield(const std::filesystem::path& path) {
             Team& team = field.teams[team_count++];
             team.name = s.get("Name").value_or("Team " + std::to_string(team_count));
             for (const auto& [key, value] : s.values) {
-                if (iequals(key, "Class")) {
-                    const std::filesystem::path file = path.parent_path() / value;
-                    if (!std::filesystem::exists(file)) {
-                        throw std::runtime_error(where + ": class file " + file.string() +
-                                                 " is missing (export it with bf2tool export-soldier)");
-                    }
-                    team.classes.push_back(load_soldier(file));
+                if (iequals(key, "Loadout")) {
+                    team.loadouts.push_back(load_loadout(path.parent_path() / value));
                 }
             }
-            if (team.classes.empty()) {
-                throw std::runtime_error(where + ": team " + team.name + " has no Class");
+            if (team.loadouts.empty()) {
+                throw std::runtime_error(where + ": team " + team.name + " has no Loadout");
             }
         }
     }

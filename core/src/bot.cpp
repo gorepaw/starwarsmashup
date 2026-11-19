@@ -68,9 +68,9 @@ void Bot::choose_spawn(GameClient& client) {
     const Battlefield& field = *client.config().battlefield;
     const MatchState& match = *client.match();
     const int team = client.self().team;
-    const auto& classes = field.teams[size_t(team)].classes;
-    // Mostly the first class (the rifleman), sometimes another.
-    const size_t soldier_class = random() < 0.5 ? 0 : size_t(random() * double(classes.size())) % classes.size();
+    const auto& loadouts = field.teams[size_t(team)].loadouts;
+    // Mostly the first loadout, sometimes another.
+    const size_t loadout = random() < 0.5 ? 0 : size_t(random() * double(loadouts.size())) % loadouts.size();
     // The owned post closest to one we don't hold; now and then any owned post.
     int best = -1;
     double best_distance = std::numeric_limits<double>::max();
@@ -91,7 +91,7 @@ void Bot::choose_spawn(GameClient& client) {
         }
     }
     if (best >= 0) {
-        client.request_spawn(int(soldier_class), best);
+        client.request_spawn(int(loadout), best);
         requested_ = true;
     }
 }
@@ -155,8 +155,11 @@ void Bot::update(GameClient& client, const World& world, double now) {
 
     const MoveState& me = client.predicted();
     const Vec3 eye = me.position + Vec3{0, eye_height, 0};
-    const SoldierDef& soldier = client.soldier();
-    const WeaponDef& weapon = soldier.weapons[std::min<size_t>(me.combat.weapon, soldier.weapons.size() - 1)];
+    const Loadout& loadout = client.loadout();
+    const double gravity = client.character_stats().move.gravity;
+    static const WeaponDef unarmed;
+    const WeaponDef* held = weapon_in_slot(loadout, me.combat.weapon);
+    const WeaponDef& weapon = held != nullptr ? *held : unarmed;
 
     // Where to go.
     std::optional<Vec3> destination;
@@ -218,17 +221,17 @@ void Bot::update(GameClient& client, const World& world, double now) {
         const double flight = target_distance / std::max(1.0, weapon.bolt_speed);
         const Vec3 d = point + target->state.velocity * flight - eye;
         const double wobble = skill_.aim_error * std::numbers::pi / 180;
-        const auto arc = ballistic_pitch(weapon.bolt_speed, weapon.bolt_gravity * soldier.move.gravity,
+        const auto arc = ballistic_pitch(weapon.bolt_speed, weapon.bolt_gravity * gravity,
                                          std::hypot(d.x, d.z), d.y);
         controls.yaw = yaw_toward(d) + wobble * std::sin(now * 2.3 + aim_phase_);
         controls.pitch = arc.value_or(0) - weapon.shot_elevate + wobble * std::sin(now * 3.1 + aim_phase_ * 2);
         controls.fire = arc.has_value() && now - target_since_ >= skill_.reaction;
         // Now and then a grenade at someone close.
-        const WeaponDef* thrown = weapon_in_slot(soldier, secondary_slot);
+        const WeaponDef* thrown = weapon_in_slot(loadout, secondary_slot);
         if (thrown != nullptr && me.combat.weapons[secondary_slot].rounds > 0 && target_distance > 8 &&
             target_distance < 25 && now >= next_grenade_ && now - target_since_ >= skill_.reaction) {
             const Vec3 feet = target->state.position - eye;
-            if (const auto lob = ballistic_pitch(thrown->bolt_speed, thrown->bolt_gravity * soldier.move.gravity,
+            if (const auto lob = ballistic_pitch(thrown->bolt_speed, thrown->bolt_gravity * gravity,
                                                  std::hypot(feet.x, feet.z), feet.y)) {
                 throw_until_ = now + 0.15;
                 next_grenade_ = now + 6 + random() * 8;

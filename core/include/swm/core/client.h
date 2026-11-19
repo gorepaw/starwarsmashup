@@ -27,8 +27,9 @@ struct ClientConfig {
     double hello_interval = 0.25;
     double timeout = 5;                // seconds without packets before giving up
     double smoothing = 10;             // 1/s: how fast a correction's visible jump fades
-    SoldierDef soldier;                // outside a match; must match the server's
-    std::optional<Battlefield> battlefield;  // in a match: the server's, for its classes
+    Loadout loadout;                   // outside a match; must match the server's
+    CharacterStats base_stats;         // before gear; must match the server's
+    std::optional<Battlefield> battlefield;  // in a match: the server's, for its loadouts
     double spawn_request_interval = 0.25;
     uint64_t ticket = 0;               // from a hub, for the match it sent us to
 };
@@ -98,16 +99,17 @@ public:
     const Stats& stats() const { return stats_; }
 
     // Own character as the newest snapshot describes it (health, life, team,
-    // class, score); its state is the server's, not the prediction.
+    // loadout, score); its state is the server's, not the prediction.
     const net::EntityState& self() const { return self_; }
     double health() const { return self_.health; }
     bool alive() const { return self_.life == Life::alive; }
-    // The class being played: its movement and weapons.
-    const SoldierDef& soldier() const;
-    // In a match: asks to spawn as a class of our team at a command post,
-    // until the character spawns. Spawning again after dying needs a new
-    // request.
-    void request_spawn(int soldier_class, int post);
+    // What we carry, and our statistics with it.
+    const Loadout& loadout() const;
+    const CharacterStats& character_stats() const { return character_stats_; }
+    // In a match: asks to spawn with one of our team's loadouts at a command
+    // post, until the character spawns. Spawning again after dying needs a
+    // new request.
+    void request_spawn(int loadout, int post);
     // The match as of the newest snapshot, if there is one.
     const std::optional<MatchState>& match() const { return match_; }
 
@@ -176,6 +178,7 @@ private:
     Stats stats_;
     // Combat and the match
     net::EntityState self_;
+    CharacterStats character_stats_;  // of loadout()
     std::optional<MatchState> match_;
     std::optional<net::SpawnRequest> spawn_request_;
     double last_spawn_request_ = -1e9;
@@ -196,7 +199,7 @@ private:
 // A client that follows the server's transfers, from a hub to a match and
 // back. Each server gets a new GameClient: entity ids and everything else
 // start over, and generation() counts them. `battlefields` finds a match's
-// battlefield by name, for its classes. Every server must use the same world
+// battlefield by name, for its loadouts. Every server must use the same world
 // for now.
 class ClientSession {
 public:

@@ -116,16 +116,16 @@ std::optional<net::EntityState> GameServer::describe(uint32_t entity) const {
 }
 
 net::EntityState GameServer::describe(const Client& c) const {
-    return {c.entity,      c.state,     float(c.health), c.life,    c.spawn_count, int8_t(c.team),
-            uint8_t(c.soldier_class), c.kills, c.deaths, c.captures};
+    return {c.entity, c.state, float(c.health), c.life, c.spawn_count, int8_t(c.team), uint8_t(c.loadout),
+            c.kills,  c.deaths, c.captures};
 }
 
-const SoldierDef& GameServer::soldier_of(const Client& client) const {
+const Loadout& GameServer::loadout_of(const Client& client) const {
     if (config_.battlefield && client.team >= 0) {
-        const auto& classes = config_.battlefield->teams[size_t(client.team)].classes;
-        return classes[std::min(client.soldier_class, classes.size() - 1)];
+        const auto& loadouts = config_.battlefield->teams[size_t(client.team)].loadouts;
+        return loadouts[std::min(client.loadout, loadouts.size() - 1)];
     }
-    return config_.soldier;
+    return config_.loadout;
 }
 
 void GameServer::update(double now) {
@@ -256,7 +256,8 @@ GameServer::Client* GameServer::join(const net::Endpoint& from, const std::strin
         view = world_.clamp(view);
         view.y = world_.terrain().height_at(view.x, view.z);
         joined.state.position = view;
-        reset_loadout(joined.state, soldier_of(joined));
+        joined.stats = stats_for(loadout_of(joined), config_.base_stats);
+        reset_loadout(joined.state, loadout_of(joined), joined.stats);
         clients_.push_back(joined);
         say(std::format("{} joined from {} as entity {} on team {}", name, from.to_string(), joined.entity,
                         field.teams[size_t(joined.team)].name));
@@ -282,10 +283,11 @@ GameServer::Client* GameServer::join(const net::Endpoint& from, const std::strin
     }
     // Stand on whatever is under the spawn point, near its height: a building
     // floor, or the terrain. A saved position may have been mid-jump.
-    spawn.y = world_.ground_at(spawn.x, spawn.z, spawn.y, config_.soldier.move.step_up).height;
+    joined.stats = stats_for(config_.loadout, config_.base_stats);
+    spawn.y = world_.ground_at(spawn.x, spawn.z, spawn.y, joined.stats.move.step_up).height;
     joined.state.position = spawn;
-    reset_loadout(joined.state, config_.soldier);
-    joined.health = config_.soldier.max_health;
+    reset_loadout(joined.state, config_.loadout, joined.stats);
+    joined.health = joined.stats.max_health;
     clients_.push_back(joined);
     say(std::format("{} joined from {} as entity {} ({} character {}) at ({:.2f}, {:.2f}, {:.2f})", name,
                     from.to_string(), joined.entity, where, joined.character, spawn.x, spawn.y, spawn.z));
@@ -321,8 +323,8 @@ void GameServer::step() {
             if (client.life == Life::waiting) {
                 continue;  // not in the world
             }
-            const auto shot =
-                simulate_character(client.state, input, client.life == Life::alive, world_, soldier_of(client), dt);
+            const auto shot = simulate_character(client.state, input, client.life == Life::alive, world_,
+                                                 loadout_of(client), client.stats, dt);
             if (shot) {
                 fire(client, *shot, input.view_tick);
             }
@@ -459,11 +461,10 @@ void GameServer::run_match() {
         if (client.life != Life::waiting || !client.wants_spawn) {
             continue;
         }
-        const size_t soldier_class = client.wants_spawn->soldier_class;
+        const size_t loadout = client.wants_spawn->loadout;
         const size_t post = client.wants_spawn->post;
-        if (soldier_class < field.teams[size_t(client.team)].classes.size() &&
-            conquest_->can_spawn(client.team, post)) {
-            spawn_at_post(client, soldier_class, post);
+        if (loadout < field.teams[size_t(client.team)].loadouts.size() && conquest_->can_spawn(client.team, post)) {
+            spawn_at_post(client, loadout, post);
         }
     }
 }
@@ -476,7 +477,7 @@ void GameServer::return_to_waiting(Client& client) {
     client.state.velocity = {};
 }
 
-void GameServer::spawn_at_post(Client& client, size_t soldier_class, size_t post_index) {
+void GameServer::spawn_at_post(Client& client, size_t loadout_index, size_t post_index) {
     const Battlefield& field = conquest_->battlefield();
     const CommandPost& post = field.posts[post_index];
     // Spread around the post (golden-angle steps), facing away from it.
@@ -486,26 +487,26 @@ void GameServer::spawn_at_post(Client& client, size_t soldier_class, size_t post
     position.z = std::clamp(position.z, field.min_z, field.max_z);
     position = world_.clamp(position);
     const double terrain = world_.terrain().height_at(position.x, position.z);
-    client.soldier_class = soldier_class;
-    const SoldierDef& soldier = soldier_of(client);
-    position.y = world_.ground_at(position.x, position.z, terrain, soldier.move.step_up).height;
+    client.loadout = loadout_index;
+    const Loadout& loadout = loadout_of(client);
+    client.stats = stats_for(loadout, config_.base_stats);
+    position.y = world_.ground_at(position.x, position.z, terrain, client.stats.move.step_up).height;
 
     client.state = MoveState{};
     client.state.position = position;
     client.state.yaw = float(std::atan2(-(position.x - post.position.x), -(position.z - post.position.z)));
-    reset_loadout(client.state, soldier);
-    client.health = soldier.max_health;
+    reset_loadout(client.state, loadout, client.stats);
+    client.health = client.stats.max_health;
     client.life = Life::alive;
     client.outside = 0;
     client.history.clear();
     client.wants_spawn.reset();
     ++client.spawn_count;
-    say(std::format("{} spawned as {} at {}", client.name, soldier.name, post.name));
+    say(std::format("{} spawned with {} at {}", client.name, loadout.name, post.name));
 }
 
 void GameServer::fire(const Client& shooter, const Shot& shot, double view_tick) {
-    const SoldierDef& soldier = soldier_of(shooter);
-    const WeaponDef* def = weapon_in_slot(soldier, shot.weapon);
+    const WeaponDef* def = weapon_in_slot(loadout_of(shooter), shot.weapon);
     if (def == nullptr) {
         return;
     }
@@ -522,7 +523,7 @@ void GameServer::fire(const Client& shooter, const Shot& shot, double view_tick)
         bolt.def = def;
         bolt.velocity = direction * weapon.bolt_speed;
         bolt.life = weapon.projectile == Projectile::grenade && !weapon.explode_on_impact ? weapon.fuse : weapon.bolt_life;
-        bolt.gravity = weapon.bolt_gravity * soldier.move.gravity;
+        bolt.gravity = weapon.bolt_gravity * shooter.stats.move.gravity;
         bolt.rewind = rewind;
         bolts_.push_back(bolt);
     }
@@ -590,7 +591,7 @@ void GameServer::advance_bolts() {
             }
         }
         if (victim != nullptr) {
-            damage(*victim, def.damage, bolt.owner);
+            damage(*victim, def.damage, def.damage_type, bolt.owner);
             blasts.emplace_back(bolt, from + (to - from) * *nearest);
             return true;
         }
@@ -642,12 +643,14 @@ void GameServer::explode(const Bolt& bolt, Vec3 at) {
         }
         const double amount = explosion_damage(def, at, position_at(target, double(tick_) - bolt.rewind));
         if (amount > 0) {
-            damage(target, amount, bolt.owner);
+            damage(target, amount, DamageType::explosive, bolt.owner);
         }
     }
 }
 
-void GameServer::damage(Client& victim, double amount, uint32_t attacker) {
+// Damage after the victim's mitigation (its armor, mostly).
+void GameServer::damage(Client& victim, double raw, DamageType type, uint32_t attacker) {
+    const double amount = mitigated_damage(victim.stats, raw, type);
     if (victim.life != Life::alive || amount <= 0) {
         return;
     }
@@ -678,18 +681,18 @@ void GameServer::kill(Client& victim, uint32_t attacker) {
 Vec3 GameServer::spawn_point(uint32_t index) const {
     Vec3 spawn = world_.clamp(config_.spawn + Vec3{config_.spawn_spacing * (index % 8), 0, 0});
     const double terrain = world_.terrain().height_at(spawn.x, spawn.z);
-    spawn.y = world_.ground_at(spawn.x, spawn.z, terrain, config_.soldier.move.step_up).height;
+    spawn.y = world_.ground_at(spawn.x, spawn.z, terrain, config_.base_stats.move.step_up).height;
     return spawn;
 }
 
 void GameServer::respawn(Client& client) {
     client.life = Life::alive;
-    client.health = config_.soldier.max_health;
+    client.health = client.stats.max_health;
     const float yaw = client.state.yaw;
     client.state = MoveState{};
     client.state.position = spawn_point(client.entity - 1);
     client.state.yaw = yaw;
-    reset_loadout(client.state, config_.soldier);
+    reset_loadout(client.state, config_.loadout, client.stats);
     client.history.clear();
     ++client.spawn_count;
     say(std::format("{} respawned", client.name));
