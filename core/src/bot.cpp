@@ -6,6 +6,7 @@
 #include <limits>
 #include <numbers>
 
+#include "swm/core/nav.h"
 #include "swm/core/world.h"
 
 namespace swm::core {
@@ -128,6 +129,36 @@ void Bot::choose_objective(const GameClient& client, double now) {
     next_objective_ = now + 4 + random() * 4;
 }
 
+Vec3 Bot::steer(Vec3 position, Vec3 destination, double now) {
+    if (!navigation_) {
+        return destination;
+    }
+    const bool moved = path_.empty() || horizontal_distance(destination, path_goal_) > 2;
+    if ((moved || now >= replan_at_) && now >= earliest_plan_) {
+        path_ = navigation_->find_path(position, destination);
+        corner_ = 0;
+        path_goal_ = destination;
+        replan_at_ = now + 4 + random() * 2;
+        earliest_plan_ = now + 0.5;
+    }
+    // On past corners it has reached, or can cut to the one after.
+    while (corner_ + 1 < path_.size() && horizontal_distance(position, path_[corner_]) < 0.6) {
+        ++corner_;
+    }
+    if (now >= next_look_ && corner_ + 1 < path_.size()) {
+        next_look_ = now + 0.25;
+        if (navigation_->clear_line(position, path_[corner_ + 1])) {
+            ++corner_;
+        }
+    }
+    if (corner_ >= path_.size()) {
+        return destination;  // no route: straight at it
+    }
+    // The last corner is the reachable spot nearest the destination.
+    return corner_ + 1 == path_.size() && horizontal_distance(path_.back(), destination) < 0.5 ? destination
+                                                                                                 : path_[corner_];
+}
+
 void Bot::update(GameClient& client, const World& world, double now) {
     GameClient::Controls controls;
     controls.yaw = client.predicted().yaw;
@@ -144,6 +175,7 @@ void Bot::update(GameClient& client, const World& world, double now) {
         }
         objective_ = -1;
         target_ = 0;
+        path_.clear();
         client.set_input(controls);
         return;
     }
@@ -202,10 +234,13 @@ void Bot::update(GameClient& client, const World& world, double now) {
     Vec3 move;
     double to_go = 0;
     if (destination) {
-        const Vec3 d{destination->x - me.position.x, 0, destination->z - me.position.z};
-        to_go = d.length();
+        to_go = horizontal_distance(*destination, me.position);
         if (to_go > 1.5) {
-            move = d * (1 / to_go);
+            const Vec3 toward = steer(me.position, *destination, now);
+            const Vec3 d{toward.x - me.position.x, 0, toward.z - me.position.z};
+            if (d.length() > 1e-3) {
+                move = d * (1 / d.length());
+            }
         }
     }
     if (now >= next_strafe_) {
@@ -264,6 +299,7 @@ void Bot::update(GameClient& client, const World& world, double now) {
         } else if (now - slow_since_ > 1.0) {
             unstick_until_ = now + 0.8;
             slow_since_ = -1;
+            replan_at_ = now;  // the route may be wrong
         }
     } else {
         slow_since_ = -1;
@@ -285,11 +321,15 @@ void Bot::update(GameClient& client, const World& world, double now) {
 
 BotPlayers::BotPlayers(int count, const World& world, const ClientConfig& base, LinkFactory open_link)
     : world_(world) {
+    if (base.battlefield) {
+        navigation_ = std::make_shared<NavGrid>(world, *base.battlefield);
+    }
     for (int i = 0; i < count; ++i) {
         ClientConfig config = base;
         config.name = std::format("Bot {}", i + 1);
         auto link = open_link ? open_link() : std::make_unique<net::UdpLink>();
         players_.push_back(std::make_unique<Player>(std::move(link), world, std::move(config), uint64_t(i + 1)));
+        players_.back()->bot.set_navigation(navigation_);
     }
 }
 

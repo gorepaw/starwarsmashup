@@ -11,6 +11,7 @@
 #include "swm/core/bot.h"
 #include "swm/core/client.h"
 #include "swm/core/conquest.h"
+#include "swm/core/nav.h"
 #include "swm/core/net/link.h"
 #include "swm/core/server.h"
 #include "swm/core/world.h"
@@ -51,7 +52,8 @@ void test_battlefield_file() {
 
     // A Battlefront map's posts, bounds and terrain (bf2tool export-map), with our teams.
     std::filesystem::create_directories(dir / "maps");
-    std::ofstream(dir / "maps" / "m_conquest.ini") << "[map]\nName = m\nTerrain = m\nBounds = -512 -512 512 512\n\n"
+    std::ofstream(dir / "maps" / "m_conquest.ini") << "[map]\nName = m\nTerrain = m\nBounds = -512 -512 512 512\n"
+                                                      "Barrier = 1 1 3 1 3 2 1 2\n\n"
                                                       "[post]\nName = CP1\nPosition = 35 141\nRadius = 8\nOwner = 2\n"
                                                       "SpawnPoint = 23 145\nSpawnPoint = 12 146\n\n"
                                                       "[post]\nName = CP3\nPosition = 22 -120\nOwner = 1\n\n"
@@ -65,6 +67,9 @@ void test_battlefield_file() {
     CHECK(mapped.posts[0].owner == 1 && mapped.posts[1].owner == 0 && mapped.posts[2].owner == -1);
     CHECK(mapped.posts[0].spawn_points.size() == 2 && mapped.posts[0].spawn_points[1] == Vec3(-12, 0, 146));
     CHECK(mapped.posts[0].position == Vec3(-35, 0, 141) && mapped.posts[2].spawn_points.empty());
+    // Its barrier, with x the other way.
+    CHECK(mapped.barriers.size() == 1 && mapped.barriers[0].corners[1] == Vec3(-3, 0, 1));
+    CHECK(mapped.barriers[0].contains({-2, 0, 1.5}) && !mapped.barriers[0].contains({-2, 0, 2.5}));
 
     std::ofstream(dir / "bad.ini") << "[battlefield]\n[team]\nName = A\nLoadout = loadouts/missing.ini\n";
     bool threw = false;
@@ -296,7 +301,19 @@ void test_match_server() {
     CHECK(killed && a.self().kills == 1 && b.self().deaths == 2 && a.match()->tickets[1] < tickets);
 }
 
-// Bots on both teams play a match to the end.
+void add_wall(MapCollision& collision, Vec3 low, Vec3 high) {
+    const auto corner = [&](int i) {
+        return Vec3{i & 1 ? high.x : low.x, i & 2 ? high.y : low.y, i & 4 ? high.z : low.z};
+    };
+    const int faces[6][4] = {{0, 1, 3, 2}, {4, 6, 7, 5}, {0, 4, 5, 1}, {2, 3, 7, 6}, {0, 2, 6, 4}, {1, 5, 7, 3}};
+    for (const auto& f : faces) {
+        collision.triangles.push_back({corner(f[0]), corner(f[1]), corner(f[2])});
+        collision.triangles.push_back({corner(f[0]), corner(f[2]), corner(f[3])});
+    }
+}
+
+// Bots on both teams play a match to the end, finding their way around
+// walls between the posts.
 void test_bots_play_a_match() {
     Battlefield battlefield = three_posts();
     battlefield.posts.insert(battlefield.posts.begin() + 1, CommandPost{.name = "Inner west", .position = {-30, 0, 10}});
@@ -304,10 +321,20 @@ void test_bots_play_a_match() {
     battlefield.tickets = 40;
     battlefield.bleed = 0.2;
     Field field(battlefield);
+    // Walls 3 m tall across the field on either side of the middle, open
+    // only at one end (the other end meets the bounds).
+    MapCollision walls;
+    add_wall(walls, {-46, 0, -51}, {-44, 3, 35});
+    add_wall(walls, {-16, 0, -35}, {-14, 3, 51});
+    add_wall(walls, {14, 0, -51}, {16, 3, 35});
+    add_wall(walls, {44, 0, -35}, {46, 3, 51});
+    field.world.add_map_collision(walls);
+    const auto navigation = std::make_shared<NavGrid>(field.world, battlefield);
     std::vector<Bot> bots;
     for (int i = 0; i < 6; ++i) {
         field.join("bot" + std::to_string(i));
         bots.emplace_back(uint64_t(i + 1));
+        bots.back().set_navigation(navigation);
     }
     bool ended = false;
     MatchState result;

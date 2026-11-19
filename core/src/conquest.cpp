@@ -39,6 +39,26 @@ void read_bounds(Battlefield& field, const std::string& text, const std::string&
     field.max_z = z1;
 }
 
+// Barrier = x1 z1 x2 z2 x3 z3 x4 z4: a quadrilateral's corners in order, in
+// source-world coordinates.
+void read_barriers(Battlefield& field, const Ini::Section& section, const std::string& where) {
+    for (const auto& [key, value] : section.values) {
+        if (!iequals(key, "Barrier")) {
+            continue;
+        }
+        std::istringstream fields(value);
+        Barrier barrier;
+        for (Vec3& corner : barrier.corners) {
+            double x = 0, z = 0;
+            if (!(fields >> x >> z)) {
+                throw std::runtime_error(where + ": Barrier is \"x1 z1 x2 z2 x3 z3 x4 z4\", got \"" + value + "\"");
+            }
+            corner = {-x, 0, z};
+        }
+        field.barriers.push_back(barrier);
+    }
+}
+
 // The [post] sections of a battlefield or map file. Owner is a team's name,
 // or its number (1: the first [team]).
 void read_posts(Battlefield& field, const Ini& ini, const std::string& where) {
@@ -78,6 +98,17 @@ void read_posts(Battlefield& field, const Ini& ini, const std::string& where) {
 bool CommandPost::contains(Vec3 point) const {
     const double dx = point.x - position.x, dz = point.z - position.z;
     return dx * dx + dz * dz <= radius * radius;
+}
+
+bool Barrier::contains(Vec3 point) const {
+    // Inside a convex polygon: on the same side of every edge.
+    int sides = 0;
+    for (size_t i = 0; i < corners.size(); ++i) {
+        const Vec3 a = corners[i], b = corners[(i + 1) % corners.size()];
+        const double cross = (b.x - a.x) * (point.z - a.z) - (b.z - a.z) * (point.x - a.x);
+        sides |= cross > 0 ? 1 : cross < 0 ? 2 : 0;
+    }
+    return sides != 3;
 }
 
 bool Battlefield::contains(Vec3 point) const {
@@ -144,10 +175,12 @@ Battlefield load_battlefield(const std::filesystem::path& path) {
             if (const auto terrain = about->get("Terrain")) {
                 field.terrain = map_path.parent_path() / *terrain;
             }
+            read_barriers(field, *about, map_path.string());
         }
         read_posts(field, map_ini, map_path.string());
     }
     read_posts(field, ini, where);
+    read_barriers(field, *main, where);
     if (field.posts.empty()) {
         throw std::runtime_error(where + ": no [post] sections");
     }

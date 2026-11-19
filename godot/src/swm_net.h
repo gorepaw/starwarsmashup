@@ -19,6 +19,7 @@
 #include "swm/core/conquest.h"
 #include "swm/core/heightfield.h"
 #include "swm/core/hub.h"
+#include "swm/core/nav.h"
 #include "swm/core/net/link.h"
 #include "swm/core/net/udp.h"
 #include "swm/core/server.h"
@@ -150,6 +151,7 @@ private:
     std::string battlefield_dir_;
     std::unique_ptr<core::Bot> bot_;
     int bot_generation_ = 0;
+    std::shared_ptr<const core::NavGrid> navigation_;  // the bot's, for the current battlefield
     std::unique_ptr<core::World> world_;
     std::unique_ptr<core::net::UdpLink> udp_;
     std::unique_ptr<core::net::ImpairedLink> impaired_;

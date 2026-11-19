@@ -620,6 +620,20 @@ int cmd_export_map(const std::vector<std::string>& args) {
            "; Game data: don't commit or share it. Positions are Battlefront coordinates (x z).\n\n[map]\nName = "
         << map << "\nTerrain = " << map << "\n"
         << std::format("Bounds = {} {} {} {}\n", edge, edge, -edge, -edge);
+    // The AI barriers that stop soldiers: places bots keep out of when they can.
+    size_t barriers = 0;
+    for (const LevelBarrier& barrier : level.barriers) {
+        if (!included(barrier.layer) || !(barrier.flags & 1)) {
+            continue;
+        }
+        ini << "Barrier =";
+        for (const auto& corner : barrier.corners()) {
+            ini << std::format(" {:.2f} {:.2f}", corner[0], corner[1]);
+        }
+        ini << "\n";
+        ++barriers;
+    }
+    std::cerr << std::format("barriers: {} of {}\n", barriers, level.barriers.size());
     int posts = 0;
     for (const WorldItem& object : level.objects) {
         if (object.layer != mode_layer || object.get("CaptureRegion").empty()) {

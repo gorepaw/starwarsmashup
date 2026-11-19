@@ -151,6 +151,7 @@ void SwmClient::set_bot(bool enabled) {
         bot_.reset();
     } else if (!bot_) {
         bot_ = std::make_unique<core::Bot>(uint64_t(start_time_.time_since_epoch().count()));
+        bot_->set_navigation(navigation_);
     }
 }
 
@@ -375,6 +376,12 @@ void SwmClient::update() {
             if (bot_generation_ != session_->generation()) {
                 bot_generation_ = int(session_->generation());
                 bot_ = std::make_unique<core::Bot>(uint64_t(start_time_.time_since_epoch().count()));
+                navigation_.reset();
+            }
+            // Its way around the battlefield, worked out as it goes.
+            if (!navigation_ && battlefield()) {
+                navigation_ = std::make_shared<core::NavGrid>(*world_, *battlefield());
+                bot_->set_navigation(navigation_);
             }
             bot_->update(*client(), *world_, now());
         }

@@ -124,7 +124,7 @@ Battlefront II munged files (`.lvl`) are `ucfb` chunk trees: `lvl_` sub-levels h
   - its terrain as a heightfield bake (`<map>.r32`/`.json`, the format `swgtool bake-terrain` writes), with its texture layers (`terrain_layers`: texture and tiling), their weights (`<map>.splat0.png`: RGBA = four layers' weights per sample), its baked lighting (`<map>.light.png`), and the sky, fog and lights (`environment`);
   - every object's placement in game space and its model (`<map>.objects.json`, models in `models/` as glTF in game space, textures in `textures/` as PNG). Models come from the map's file, then `ingame.lvl` for shared props like command posts;
   - every object's collision, placed, as one triangle file (`<map>.collision`, `core::MapCollision`), each triangle marked for what it stops: characters, shots or both. The server and clients load it next to the bake;
-  - a game mode's command posts as a map file for battlefields (`<map>_conquest.ini`: starting teams, capture regions and spawn points).
+  - a game mode's command posts as a map file for battlefields (`<map>_conquest.ini`: starting teams, capture regions and spawn points), with the map's AI barriers that stop soldiers (`Barrier = `, four corners), which bots avoid where they can.
 
   Other game modes' layers are left out, and so is any `--skip` layer, e.g. the other era's props. Game data from your install: write it to `game/imported_assets/maps/`. Dagobah:
 
@@ -141,6 +141,8 @@ Battlefront II munged files (`.lvl`) are `ucfb` chunk trees: `lvl_` sub-levels h
   Transforms (`XFRM`, in world layers, skeletons and primitives) store a 3x3 rotation as its three columns (the local axes), then a position. That was settled by fitting collision boxes to their models, the crashed X-wing to the ground, and the cave to the terrain's cut holes.
 
   Collision: a `coll` is a model's collision mesh, as vertices (`POSI`) and an AABB tree (`TREE`) whose leaves are convex polygons of vertex indices. A `prim` lists a model's primitives (box: half extents; cylinder: radius and full height along local y; each on a bone). A primitive's name flags what it stops: `p_-so-trunk` stops soldiers and ordnance, and a name without flags stops everything. ASSUMPTION: collision meshes stop both. Textures (`tex_`) store each mip level in one or more Direct3D formats (DXT1/3/5, 32-, 16- and 8-bit); the best one decodable is used.
+
+  AI data: a world layer's `BARR` chunks are barriers (`INFO`: `NAME`, `XFRM`, `SIZE` with half extents along local x and z, `FLAG` with the classes kept out: 1 soldiers, 2 hover, 4 small, 8 medium, 16 huge, 32 flyers). The `plan` chunk is the AI's hub graph: `INFO` (hub count, connection count, class count), `NODE` (per hub: a 16-byte name, position, radius, 8 connection slots, then per class a count of tables of one byte per hub) and `ARCS` (per connection: a 16-byte name, from and to hubs, class flags, 4 more bytes). Only barriers are exported; bots plan on their own grid.
 
 Animation data uses its own block format inside `BIN_` (byte-reversed tags) and identifies bones and clips by name hash (`bf2/hash.h`). See `bf2/animation.h` for the stream encoding.
 

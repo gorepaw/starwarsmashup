@@ -231,6 +231,23 @@ Bytes sky_and_lights() {
     return join({sky, lights});
 }
 
+// An AI barrier for soldiers and hover vehicles at (10, 0, 20), 4 m along
+// its local x and 2 m along z, turned so that local x points along +z.
+Bytes barrier() {
+    Bytes transform;
+    for (const float v : {0.0f, 0.0f, 1.0f, 0.0f, 1.0f, 0.0f, -1.0f, 0.0f, 0.0f, 10.0f, 0.0f, 20.0f}) {
+        put(transform, v);
+    }
+    Bytes size;
+    for (const float v : {2.0f, 0.0f, 1.0f}) {
+        put(size, v);
+    }
+    Bytes flags;
+    put(flags, uint32_t(3));
+    return chunk("BARR", chunk("INFO", join({chunk("NAME", text("barrier1")), chunk("XFRM", transform),
+                                             chunk("SIZE", size), chunk("FLAG", flags)})));
+}
+
 void test_level() {
     const uint32_t conquest = 0x12345678;
     const Bytes file = chunk(
@@ -238,7 +255,8 @@ void test_level() {
                       chunk("wrld", join({chunk("NAME", text("test")),
                                           chunk("inst", chunk("INFO", join({chunk("TYPE", text("test_prop_tree")),
                                                                             chunk("NAME", text("tree1")),
-                                                                            xfrm(-3, 2, 4)})))})),
+                                                                            xfrm(-3, 2, 4)}))),
+                                          barrier()})),
                       sublevel(conquest), sky_and_lights(),
                       // The same path name in another group, then in the conquest one.
                       paths(0x0badf00d, "cp1_spawn", -99), paths(conquest, "cp1_spawn", -30)}));
@@ -279,6 +297,14 @@ void test_level() {
     CHECK(post.get("Team") == "2" && post.get("CaptureRegion") == "cp1_capture" && post.get("Missing").empty());
     const WorldItem* capture = level.region("cp1_capture");
     CHECK(capture && capture->type == "cylinder" && capture->size[0] == 8 && capture->position[2] == 21);
+
+    CHECK(level.barriers.size() == 1);
+    if (!level.barriers.empty()) {
+        const LevelBarrier& b = level.barriers[0];
+        CHECK(b.layer == "test" && b.name == "barrier1" && b.flags == 3 && b.half_size[0] == 2 && b.half_size[1] == 1);
+        const auto corners = b.corners();
+        CHECK(corners[0] == (std::array<float, 2>{9, 22}) && corners[2] == (std::array<float, 2>{11, 18}));
+    }
 
     // The conquest layer's own spawn path, with z turned to world coordinates.
     const LevelPath* spawn = level.path("cp1_spawn", "test_conquest");

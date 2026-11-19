@@ -56,6 +56,21 @@ struct WorldItem {
     std::string get(std::string_view property) const;
 };
 
+// An AI barrier ("BARR" in a world layer): a rectangle on the ground the
+// AI keeps out of, for the classes in `flags` (1 soldiers, 2 hover, 4 small,
+// 8 medium, 16 huge, 32 flyers).
+struct LevelBarrier {
+    std::string layer;
+    std::string name;
+    std::array<float, 9> rotation{};  // 3x3, its columns as stored
+    std::array<float, 3> position{};
+    std::array<float, 2> half_size{};  // along its local x and z
+    uint32_t flags = 0;
+
+    // Corners in order, in world-layer coordinates (x, z).
+    std::array<std::array<float, 2>, 4> corners() const;
+};
+
 struct PathNode {
     std::array<float, 3> position{};  // in world-layer coordinates
     std::array<float, 4> rotation{};  // as stored (w, x, y, z; not converted)
@@ -96,6 +111,7 @@ struct Level {
     std::vector<LevelLight> lights;
     std::vector<WorldItem> objects;
     std::vector<WorldItem> regions;
+    std::vector<LevelBarrier> barriers;
     std::vector<LevelPath> paths;
     std::vector<std::string> layers;  // world layer names, in file order
     std::map<std::string, uint32_t> layer_groups;  // layer -> its paths' group

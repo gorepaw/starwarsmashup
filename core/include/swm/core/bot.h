@@ -11,6 +11,7 @@
 
 namespace swm::core {
 
+class NavGrid;
 class World;
 
 struct BotSkill {
@@ -25,8 +26,9 @@ struct BotSkill {
 // (or guards one), and shoots enemies it can see, leading them (and lobbing
 // grenades and mortar shells on a ballistic arc). In a hub it
 // walks to the nearest war terminal and queues for a battle. Elsewhere it
-// hunts the nearest other character. No pathfinding yet: it runs straight,
-// and jumps when stuck.
+// hunts the nearest other character. With a NavGrid it walks around
+// obstacles on the grid's routes; without one it runs straight. Either way
+// it jumps when stuck.
 class Bot {
 public:
     explicit Bot(uint64_t seed, BotSkill skill = {});
@@ -39,12 +41,22 @@ public:
     int objective() const { return objective_; }
     // The side it queues for in a hub (default: picked from the seed).
     void set_queue_team(int team) { queue_team_ = team; }
+    // The walkable grid of the battlefield it plays on (shared between bots;
+    // null: run straight).
+    void set_navigation(std::shared_ptr<const NavGrid> navigation) { navigation_ = std::move(navigation); }
+    // The route it's following (corners on the ground), and the next corner.
+    const std::vector<Vec3>& path() const { return path_; }
+    size_t next_corner() const { return corner_; }
 
 private:
     double random();  // 0..1
     void go_to_recruiter(GameClient& client, double now);
     void choose_spawn(GameClient& client);
     void choose_objective(const GameClient& client, double now);
+    // Where to head now on the way to `destination`: the next corner of its
+    // route (planned again when the destination moves, when it's stuck, and
+    // now and then), or the destination itself without a grid.
+    Vec3 steer(Vec3 position, Vec3 destination, double now);
 
     uint64_t rng_;
     BotSkill skill_;
@@ -63,6 +75,13 @@ private:
     double throw_until_ = 0;
     double grenade_pitch_ = 0;
     int queue_team_ = 0;
+    std::shared_ptr<const NavGrid> navigation_;
+    std::vector<Vec3> path_;
+    size_t corner_ = 0;
+    Vec3 path_goal_;
+    double replan_at_ = 0;     // plans again then (sooner if the destination moves)
+    double earliest_plan_ = 0;  // but not before then
+    double next_look_ = 0;     // checks then whether the corner after next is in a straight line
 };
 
 // Bots connected to a server like players, each with its own UDP socket,
@@ -88,6 +107,7 @@ private:
             : link(std::move(l)), client(*link, world, std::move(config)), bot(seed) {}
     };
     const World& world_;
+    std::shared_ptr<const NavGrid> navigation_;  // the battlefield's, shared by the bots
     std::vector<std::unique_ptr<Player>> players_;
 };
 

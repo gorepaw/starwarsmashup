@@ -227,6 +227,30 @@ WorldItem read_item(const UcfbNode& node, const std::string& layer) {
     return item;
 }
 
+// A "BARR": INFO {NAME, XFRM, SIZE (half extents x, y, z), FLAG}.
+LevelBarrier read_barrier(const UcfbNode& node, const std::string& layer) {
+    LevelBarrier barrier;
+    barrier.layer = layer;
+    const UcfbNode* info = node.child("INFO");
+    const UcfbNode* xfrm = info ? info->child("XFRM") : nullptr;
+    const UcfbNode* size = info ? info->child("SIZE") : nullptr;
+    if (xfrm == nullptr || size == nullptr || xfrm->data.size() < 48 || size->data.size() < 12) {
+        throw std::runtime_error("bf2 level: malformed BARR");
+    }
+    barrier.name = child_text(*info, "NAME");
+    for (size_t i = 0; i < 9; ++i) {
+        barrier.rotation[i] = read<float>(xfrm->data, i * 4);
+    }
+    for (size_t i = 0; i < 3; ++i) {
+        barrier.position[i] = read<float>(xfrm->data, 36 + i * 4);
+    }
+    barrier.half_size = {read<float>(size->data, 0), read<float>(size->data, 8)};
+    if (const UcfbNode* flag = info->child("FLAG"); flag && flag->data.size() >= 4) {
+        barrier.flags = read<uint32_t>(flag->data, 0);
+    }
+    return barrier;
+}
+
 // A "path" chunk holds a layer's paths as config records: Path = <name>,
 // then a scope whose "Nodes" scope has one "Node" scope per point
 // (Position, Rotation, ...). Positions are converted to the world layers'
@@ -392,6 +416,8 @@ void read_tree(const UcfbNode& node, Level& level, uint32_t group) {
                     level.objects.push_back(read_item(item, layer));
                 } else if (item.tag == "regn") {
                     level.regions.push_back(read_item(item, layer));
+                } else if (item.tag == "BARR") {
+                    level.barriers.push_back(read_barrier(item, layer));
                 }
             }
         } else if (child.tag == "path") {
@@ -405,6 +431,18 @@ void read_tree(const UcfbNode& node, Level& level, uint32_t group) {
 }
 
 } // namespace
+
+std::array<std::array<float, 2>, 4> LevelBarrier::corners() const {
+    // The local x axis is the rotation's first column, z its third.
+    const auto& r = rotation;
+    std::array<std::array<float, 2>, 4> out{};
+    const float signs[4][2] = {{1, 1}, {1, -1}, {-1, -1}, {-1, 1}};
+    for (size_t i = 0; i < 4; ++i) {
+        const float a = signs[i][0] * half_size[0], b = signs[i][1] * half_size[1];
+        out[i] = {position[0] + a * r[0] + b * r[6], position[2] + a * r[2] + b * r[8]};
+    }
+    return out;
+}
 
 std::string WorldItem::get(std::string_view property) const {
     const uint32_t hash = odf_hash(property);

@@ -28,6 +28,14 @@ struct CommandPost {
     bool contains(Vec3 point) const;
 };
 
+// An area bots keep out of when they can (Battlefront's AI barriers): a
+// convex quadrilateral on the ground, game space (only x and z matter).
+struct Barrier {
+    std::array<Vec3, 4> corners;
+
+    bool contains(Vec3 point) const;
+};
+
 struct Team {
     std::string name;
     // Loadouts its soldiers can spawn with: a stand-in for testing until the
@@ -43,6 +51,7 @@ struct Battlefield {
     double min_x = -1e9, min_z = -1e9, max_x = 1e9, max_z = 1e9;  // game space
     std::array<Team, 2> teams;
     std::vector<CommandPost> posts;
+    std::vector<Barrier> barriers;
     double tickets = 150;          // reinforcements per team: each death costs one
     double warmup = 15;            // seconds of practice before the match goes live
     double results = 15;           // seconds the results show before the next match
@@ -60,7 +69,8 @@ struct Battlefield {
 // them, or Battlefront's (both are left-handed: game x = -x). Loadout files
 // are relative to it. `Map = <file>` takes the bounds, terrain and command
 // posts from a map file written by `bf2tool export-map` (its posts name
-// their starting team by number: 1 is the first [team]). Throws
+// their starting team by number: 1 is the first [team]), and its barriers
+// (`Barrier = x1 z1 x2 z2 x3 z3 x4 z4`, corners in order). Throws
 // std::runtime_error if it, a map or a loadout can't be read or makes no
 // sense.
 Battlefield load_battlefield(const std::filesystem::path& path);
