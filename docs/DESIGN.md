@@ -35,8 +35,8 @@ Battlefront's combat never had a persistent world behind it. Galaxies' world nev
 ## Battles and hubs
 
 - **Hubs:** players queue for battles from Galaxies cities, at faction recruiters or war terminals. Mos Eisley is the first hub. Later, player cities can host their own war terminals.
-- **Battlefields are chunks of Galaxies planets**, not imported Battlefront levels: bounded areas of real terrain with command posts, Galaxies structures, and Battlefront props as cover.
-- **Progression of the battlefield:** instanced matches on terrain chunks → more and larger battlefields → live conquest zones in the open world.
+- **Queued matches are played on Battlefront II's maps**, imported from the player's install.
+- **Progression of the battlefield:** instanced matches on Battlefront's maps → much later, command-post battles built from Galaxies assets, and live conquest zones in the open world.
 
 ## Weapons and loadouts
 

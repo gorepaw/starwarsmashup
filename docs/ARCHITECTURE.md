@@ -83,11 +83,11 @@ player's game install  →  extractor/converters (tools/)  →  glTF + JSON side
 | Terrain | heightmap worlds | procedural `.trn` (layered rules, 16 × 16 km planets) |
 | Data | `.odf` | datatables (`.iff`), string files (`.stf`) |
 
-Battlefront's level/world format is **not** imported: battlefields are built on Galaxies terrain (see [Roadmap](ROADMAP.md)).
+Battlefront's maps **are** imported, for the matches players queue into (see [Roadmap](ROADMAP.md)): terrain, models, world placements, collision and command posts, from the munged `.lvl` files. Battles built from Galaxies assets come later, with the open world.
 
 **Who supplies what:**
 - **Galaxies:** all characters (players and AI soldiers alike), so the full Galaxies character creator works for everyone. All equipment the player owns: weapons, armor, and clothing, since that's where the item variety lives. Also terrain, buildings, creatures, and crafting-era items.
-- **Battlefront II:** shooter animations, weapon handling and feel (fire modes, overheating), weapon and blaster effects, sounds, vehicles, and props. Read from the munged `.lvl` files in the player's install (`ucfb` chunk trees), not from the Mod Tools.
+- **Battlefront II:** the maps matches are played on, shooter animations, weapon handling and feel (fire modes, overheating), weapon and blaster effects, sounds, vehicles, and props. Read from the munged `.lvl` files in the player's install (`ucfb` chunk trees), not from the Mod Tools.
 
 JSON sidecars carry the data glTF can't: ODF stats, Galaxies customization variables and palettes, POB portal/cell graphs.
 

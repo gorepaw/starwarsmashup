@@ -9,7 +9,7 @@ Battles come first, the world after. A match has clear boundaries and can be tes
 | 2 | Galaxies weapons and equipment | Loadouts give players something to chase |
 | 3+ | World systems | The planets fill up |
 
-The battlefield evolves alongside: **instanced match on a chunk of Galaxies terrain → more and larger battlefields → live conquest zones in the open world.**
+The battlefield evolves alongside: **instanced matches on Battlefront II's own maps → much later, command-post battles built from Galaxies assets in the open world.**
 
 ---
 
@@ -17,11 +17,11 @@ The battlefield evolves alongside: **instanced match on a chunk of Galaxies terr
 
 ### Goal
 
-Walk around Mos Eisley, queue at a recruiter, load into a 32v32 conquest match on Tatooine terrain (bots filling empty slots), play to the end, and return to the city with the results.
+Walk around Mos Eisley, queue at a recruiter, load into a 32v32 conquest match on a Battlefront II map (bots filling empty slots), play to the end, and return to the city with the results.
 
 ### Decisions
 
-- **Battle maps are built on Galaxies terrain**, not imported Battlefront levels. A battlefield is a bounded chunk of a planet with command posts, Galaxies structures, and Battlefront props. That way we never need an importer for Battlefront's level/world format, only for its characters, weapons, vehicles, props, effects, and sounds.
+- **Matches are played on Battlefront II's own maps** (decided 2026-11-18, reversing the earlier plan to build battlefields on Galaxies terrain). Players queue into the real maps, imported from their own install: terrain, props, collision, command posts and spawns. Command-post battles built from Galaxies assets come much later, with the open world. The Galaxies battlefield already made (`mos_eisley_outskirts.ini`) stays as a test field for match rules.
 - **Bots are part of Stage 1.** They make solo testing possible and fill matches when few players are online. They use the same input/command path as players.
 - **The match server is the first real server.** It's the "instance server" from the [architecture](ARCHITECTURE.md#networking). The hub can run locally with one player for now.
 
@@ -40,9 +40,17 @@ Hub notes:
 **Match server**
 - [x] Match lifecycle: warmup → live → end → results, then the next match. Warmup is practice: deaths are free and posts can't change hands. Results show in the game; sending them back to the hub comes with the handoff.
 - [x] Battlefield definition format (terrain bounds, command posts, spawns, out-of-bounds): an INI file (`core::load_battlefield`) with teams and their test loadouts, posts, tickets and timings. Vehicle spawns come with vehicles.
-- [x] First battlefield: `game/battlefields/mos_eisley_outskirts.ini`, five command posts in the basin east of the cantina, up to the mesa slope.
+- [x] A test battlefield: `game/battlefields/mos_eisley_outskirts.ini`, five command posts on Galaxies terrain east of the cantina. It tests the match rules until the Battlefront maps work.
 - [x] Conquest rules (`core::Conquest`): posts are neutralized and captured by soldiers standing in them (Battlefront's NeutralizeTime 12 s and CaptureTime 10 s, read from its command-post class), and frozen while contested. Each death costs a ticket, and holding more posts bleeds the other team. A team wins when the other runs out, or by holding every post for 20 s.
 - [x] Loadout selection and spawning at owned command posts. Leaving the battlefield kills after 10 s. Until the hub sends each player's own gear (Stage 2), battlefields offer test loadouts.
+
+**Battlefront II maps**
+- [ ] Level importer (`bf2tool`): terrain (heights, texture layers), models and textures, world placements, from the player's own `.lvl` files
+- [ ] Collision in `core::World`: terrain, model collision meshes and primitives, barriers
+- [ ] Conquest data from the map: command posts, capture and control regions, spawn paths, out-of-bounds; written as a battlefield file
+- [ ] Rendering in Godot: terrain, props, sky, lighting
+- [ ] First map: Mos Eisley (`tat2`)
+- [ ] More maps, and the hub picking one for each battle
 
 **Combat**
 - [ ] Third-person shooter controller with Battlefront feel: sprint, roll, crouch, zoom. Sprint (with energy), jump and over-the-shoulder aiming are done; roll, crouch and zoom aren't.
@@ -78,7 +86,7 @@ Bots play through a `GameClient`, with a player's controls and view. `swm_server
 
 ### Exit criteria
 
-A full 32v32 conquest match with bots on Tatooine terrain, launched from and returning to Mos Eisley, that is fun to play solo.
+A full 32v32 conquest match with bots on a Battlefront II map, launched from and returning to Mos Eisley, that is fun to play solo.
 
 ---
 
