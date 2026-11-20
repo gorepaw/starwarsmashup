@@ -212,6 +212,58 @@ void test_cost() {
     CHECK(length(path, from) > 9 * 60);
 }
 
+// Surfaces stacked in a cell: a deck 3 m up, reached by a ramp, with open
+// ground under it; and a cellar under the terrain, reached through a hole
+// cut in it (like Endor's bunker).
+void test_stacked() {
+    Heightfield ground = flat();
+    MapCollision props;
+    add_box(props, {-60, 3, 45}, {-40, 3.3, 55});  // the deck
+    // The ramp: from the ground at x -30 up to the deck's edge at x -40.
+    props.triangles.push_back({{-30, 0, 45}, {-40, 3.3, 45}, {-40, 3.3, 55}});
+    props.triangles.push_back({{-30, 0, 45}, {-40, 3.3, 55}, {-30, 0, 55}});
+    World world(ground);
+    world.add_map_collision(props);
+    const NavGrid grid(world, open_field());
+    // Under the deck and on it.
+    CHECK(grid.walkable({-50, 0, 50}) && grid.walkable({-50, 3.3, 50}));
+    // Under it is a straight line; onto it isn't.
+    const Vec3 south{-50, 0, 35}, north{-50, 0, 65}, deck{-50, 3.3, 50};
+    CHECK(grid.clear_line(south, north) && !grid.clear_line(south, deck));
+    const auto under = grid.find_path(south, north);
+    CHECK(sound(grid, under, south) && under.size() == 1 && near(length(under, south), 30));
+    // Onto it: up the ramp.
+    const auto up = grid.find_path(south, deck);
+    CHECK(sound(grid, up, south) && !up.empty() && near(up.back().y, 3.3, 0.01) && length(up, south) > 25);
+    const Vec3 end = walk(world, up, south, 15);
+    CHECK(std::hypot(end.x - deck.x, end.z - deck.z) < 0.5 && near(end.y, 3.3, 0.05));
+    // And off it the short way: dropping off its edge.
+    const auto down = grid.find_path(deck, north);
+    CHECK(sound(grid, down, deck) && length(down, deck) < 16);
+
+    // The cellar: a floor 4 m under the terrain from x -70 to -90, its
+    // ceiling 1 m under the terrain, reached by a ramp down a hole cut from
+    // x -60 to -70.
+    MapCollision cellar;
+    add_box(cellar, {-90, -5, 10}, {-70, -4, 20});    // the floor
+    add_box(cellar, {-90, -1, 10}, {-70, -0.5, 20});  // the ceiling
+    cellar.triangles.push_back({{-60, 0, 10}, {-70, -4, 10}, {-70, -4, 20}});
+    cellar.triangles.push_back({{-60, 0, 10}, {-70, -4, 20}, {-60, 0, 20}});
+    ground.set_cuts({TerrainCut{{-65, -2, 15}, 8,
+                                {{1, 0, 0, 60}, {-1, 0, 0, -70}, {0, 0, 1, -20}, {0, 0, -1, 10}, {0, 1, 0, -1},
+                                 {0, -1, 0, -6}}}});
+    World below(ground);
+    below.add_map_collision(cellar);
+    const NavGrid cellar_grid(below, open_field());
+    const Vec3 outside{-50, 0, 15}, inside{-80, -4, 15};
+    // Above it on the terrain, and in it.
+    CHECK(cellar_grid.walkable({-80, 0, 15}) && cellar_grid.walkable(inside));
+    const auto in = cellar_grid.find_path(outside, inside);
+    CHECK(sound(cellar_grid, in, outside) && !in.empty() && near(in.back().y, -4, 0.01));
+    const Vec3 reached = walk(below, in, outside, 12);
+    CHECK(std::hypot(reached.x - inside.x, reached.z - inside.z) < 0.5 && near(reached.y, -4, 0.05));
+}
+
 } // namespace
 
 int main() {
@@ -221,5 +273,6 @@ int main() {
     test_barriers();
     test_slopes();
     test_cost();
+    test_stacked();
     return swm::test::finish("nav_test");
 }

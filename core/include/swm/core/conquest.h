@@ -23,7 +23,14 @@ struct CommandPost {
     double neutralize_time = 12;  // NeutralizeTime: seconds for one soldier to take it from its owner
     double capture_time = 10;     // CaptureTime: seconds for one soldier to take it once it's neutral
     double spawn_radius = 6;      // m: without spawn points, soldiers spawn on a ring this far from the post
-    std::vector<Vec3> spawn_points;  // game space (x, z); used in turn
+    std::vector<Vec3> spawn_points;  // game space (x, z, and y if spawn_heights); used in turn
+    // The spawn points' heights are given: soldiers spawn on the surface
+    // there (a walkway, a bunker's floor), not on the terrain.
+    bool spawn_heights = false;
+    // How high the capture region reaches (game y): soldiers above or below
+    // it (on the hill over a bunker) don't count. The position's y is its
+    // middle.
+    double low = -1e9, high = 1e9;
 
     bool contains(Vec3 point) const;
 };
@@ -32,6 +39,22 @@ struct CommandPost {
 // convex quadrilateral on the ground, game space (only x and z matter).
 struct Barrier {
     std::array<Vec3, 4> corners;
+
+    bool contains(Vec3 point) const;
+};
+
+// A region of space where soldiers die (Battlefront's death regions: a
+// chasm, the bottom of a shaft): a box, sphere or cylinder, placed and
+// turned. Game space.
+struct DeathRegion {
+    enum class Shape : uint8_t { box, sphere, cylinder };
+    Shape shape = Shape::box;
+    Vec3 center;
+    // ASSUMPTION: Battlefront's region sizes are half sizes: a box's half
+    // extents, a sphere's radius (x), a cylinder's radius (x) and half
+    // height (y).
+    Vec3 size;
+    std::array<double, 9> basis{1, 0, 0, 0, 1, 0, 0, 0, 1};  // row-major; its columns are the region's axes
 
     bool contains(Vec3 point) const;
 };
@@ -49,6 +72,10 @@ struct Battlefield {
     std::string name;
     std::filesystem::path terrain;  // its heightfield bake prefix, if its map names one
     double min_x = -1e9, min_z = -1e9, max_x = 1e9, max_z = 1e9;  // game space
+    // The playable area within those (Battlefront's boundary paths): inside
+    // any of these polygons (game space, x and z). None: all of the bounds.
+    std::vector<std::vector<Vec3>> boundaries;
+    std::vector<DeathRegion> death_regions;
     std::array<Team, 2> teams;
     std::vector<CommandPost> posts;
     std::vector<Barrier> barriers;
@@ -64,17 +91,26 @@ struct Battlefield {
     // client fits the image to the bounds.
     std::array<double, 4> minimap{};
 
+    // Whether a point is on the battlefield: within the bounds and a
+    // boundary.
     bool contains(Vec3 point) const;
+    // Whether a soldier standing at `feet` is in a death region.
+    bool deadly(Vec3 feet) const;
     Vec3 center() const;
 };
 
-// Reads a battlefield file (see game/battlefields/). Positions in it are
+// Reads a battlefield file (see game/battlefields/). A post's `Altitude = low
+// high` bounds its capture region in height, and its spawn points may give
+// their heights (`SpawnPoint = x z y`). Positions in it are
 // source-world coordinates (x z): Galaxies', as the snapshot tools print
 // them, or Battlefront's (both are left-handed: game x = -x). Loadout files
 // are relative to it. `Map = <file>` takes the bounds, terrain and command
 // posts from a map file written by `bf2tool export-map` (its posts name
 // their starting team by number: 1 is the first [team]), and its barriers
-// (`Barrier = x1 z1 x2 z2 x3 z3 x4 z4`, corners in order). `Minimap = x0 z0
+// (`Barrier = x1 z1 x2 z2 x3 z3 x4 z4`, corners in order), boundaries
+// (`Boundary = x1 z1 x2 z2 ...`, a polygon; the bounds shrink to fit them)
+// and death regions (`DeathRegion = box|sphere|cylinder x y z sx sy sz` and
+// the rotation's rows, 9 numbers, as Battlefront stores them). `Minimap = x0 z0
 // x1 z1` is where the map's minimap image lies: the coordinates under its
 // left, top, right and bottom edges (north up). Throws
 // std::runtime_error if it, a map or a loadout can't be read or makes no

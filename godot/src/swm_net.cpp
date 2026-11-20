@@ -234,6 +234,15 @@ godot::Dictionary SwmClient::get_battlefield() const {
         minimap.push_back(edge);
     }
     out["minimap"] = minimap;  // game x, z under the image's left, top, right, bottom edges; zeros if unset
+    godot::Array boundaries;
+    for (const auto& polygon : field.boundaries) {
+        godot::PackedVector2Array points;
+        for (const core::Vec3& p : polygon) {
+            points.push_back(godot::Vector2(real_t(p.x), real_t(p.z)));
+        }
+        boundaries.push_back(points);
+    }
+    out["boundaries"] = boundaries;
     godot::Array teams;
     for (const core::Team& team : field.teams) {
         godot::Array loadouts;
@@ -623,9 +632,14 @@ double SwmClient::raycast(const godot::Vector3& from, const godot::Vector3& to) 
     return t ? *t : -1;
 }
 
+bool SwmClient::in_battlefield(const godot::Vector3& point) const {
+    return !battlefield() || battlefield()->contains({point.x, point.y, point.z});
+}
+
 void SwmClient::_bind_methods() {
     using godot::ClassDB;
     using godot::D_METHOD;
+    ClassDB::bind_method(D_METHOD("in_battlefield", "point"), &SwmClient::in_battlefield);
     ClassDB::bind_method(D_METHOD("set_simulated_network", "latency_ms", "jitter_ms", "loss"),
                          &SwmClient::set_simulated_network);
     ClassDB::bind_method(D_METHOD("add_building", "collision_path", "position", "yaw_degrees"),

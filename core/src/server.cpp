@@ -385,12 +385,22 @@ void GameServer::step() {
     });
 }
 
+// How far below the lowest terrain a falling soldier dies.
+constexpr double fall_depth = 50;
+
 void GameServer::run_match() {
     const double dt = 1 / config_.tick_rate;
     const Battlefield& field = conquest_->battlefield();
     for (Client& client : clients_) {
         if (client.life == Life::dead && tick_ >= client.respawn_tick) {
             return_to_waiting(client);
+        }
+        // So do death regions, at once, and falling through a hole in the
+        // terrain with nothing below.
+        if (client.life == Life::alive && (field.deadly(client.state.position) ||
+                                           client.state.position.y < world_.terrain().lowest() - fall_depth)) {
+            kill(client, 0);
+            continue;
         }
         // Leaving the battlefield kills, after a warning.
         if (client.life == Life::alive && !field.contains(client.state.position)) {
@@ -490,11 +500,15 @@ void GameServer::spawn_at_post(Client& client, size_t loadout_index, size_t post
     position.x = std::clamp(position.x, field.min_x, field.max_x);
     position.z = std::clamp(position.z, field.min_z, field.max_z);
     position = world_.clamp(position);
-    const double terrain = world_.terrain().height_at(position.x, position.z);
+    // On the surface at the spawn point's height, if it has one; else on
+    // the terrain (or what stands on it).
+    const double from = post.spawn_heights && !post.spawn_points.empty()
+                            ? position.y
+                            : world_.terrain().height_at(position.x, position.z);
     client.loadout = loadout_index;
     const Loadout& loadout = loadout_of(client);
     client.stats = stats_for(loadout, config_.base_stats);
-    position.y = world_.ground_at(position.x, position.z, terrain, client.stats.move.step_up).height;
+    position.y = world_.ground_at(position.x, position.z, from, client.stats.move.step_up).height;
 
     client.state = MoveState{};
     client.state.position = position;

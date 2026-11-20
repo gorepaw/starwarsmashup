@@ -37,6 +37,7 @@ constexpr const char* usage = R"(usage:
   bf2tool odf <file.lvl> [class]
   bf2tool export-loadout <_lvl_pc dir> <side> <soldier class> -o <loadout.ini> [--items <dir>]
   bf2tool export-map <_lvl_pc dir> <map> -o <out dir> [--mode conquest] [--skip <layer>]...
+                     [--death <region>]...
   bf2tool export-hud <_lvl_pc dir> -o <out dir>
 )";
 
@@ -377,8 +378,10 @@ std::string json_string(const std::string& text) {
 // Writes a Battlefront II map for the game: its terrain as a heightfield
 // bake (<map>.r32/.json, like swgtool bake-terrain), its object placements in
 // game space (<map>.objects.json), and a game mode's command posts as a map
-// file for battlefields (<map>_<mode>.ini). Layers of other game modes, and
-// any --skip layers (e.g. the other era's props), are left out.
+// file for battlefields (<map>_<mode>.ini), with its boundary and the death
+// regions named by --death (the mission script's AddDeathRegion). Each game
+// mode is a sublevel; other modes' are left out, and so are any --skip
+// layers (e.g. the other era's props).
 int cmd_export_map(const std::vector<std::string>& args) {
     if (args.size() < 4 || args[2] != "-o") {
         std::cerr << usage;
@@ -388,11 +391,14 @@ int cmd_export_map(const std::vector<std::string>& args) {
     const std::filesystem::path out_dir = args[3];
     std::string mode = "conquest";
     std::vector<std::string> skipped;
+    std::vector<std::string> deaths;
     for (size_t i = 4; i + 1 < args.size(); i += 2) {
         if (args[i] == "--mode") {
             mode = args[i + 1];
         } else if (args[i] == "--skip") {
             skipped.push_back(args[i + 1]);
+        } else if (args[i] == "--death") {
+            deaths.push_back(args[i + 1]);
         }
     }
     const std::string folder = map.substr(0, 3);
@@ -458,6 +464,21 @@ int cmd_export_map(const std::vector<std::string>& args) {
     {
         std::ofstream r32(out_dir / (map + ".r32"), std::ios::binary);
         r32.write(reinterpret_cast<const char*>(terrain.heights.data()), std::streamsize(terrain.heights.size() * 4));
+        // Its cutters, in game space (x mirrored: a plane's normal x
+        // negated), one per line: center x y z, radius, then each plane's
+        // nx ny nz d (core::load_bake).
+        {
+            std::ofstream cuts(out_dir / (map + ".cuts"), std::ios::binary);
+            cuts << "# " << map << "'s terrain cutters: center x y z, radius, then planes (nx ny nz d), game space\n";
+            for (const TerrainCut& cut : terrain.cuts) {
+                cuts << std::format("{:.3f} {:.3f} {:.3f} {:.3f}", -cut.center[0], cut.center[1], cut.center[2],
+                                    cut.radius);
+                for (const auto& plane : cut.planes) {
+                    cuts << std::format("  {:.5f} {:.5f} {:.5f} {:.4f}", -plane[0], plane[1], plane[2], plane[3]);
+                }
+                cuts << "\n";
+            }
+        }
         const size_t points = size_t(samples) * size_t(samples);
         std::vector<std::string> splat_maps;
         for (size_t first = 0; first < terrain.layer_weights.size(); first += 4) {
@@ -531,8 +552,9 @@ int cmd_export_map(const std::vector<std::string>& args) {
             const auto [w, x, y, z] = sun->rotation;
             // q * (0, 0, 1) * q^-1: the rotation matrix's third column.
             const std::array<float, 3> along{2 * (x * z + w * y), 2 * (y * z - w * x), 1 - 2 * (x * x + y * y)};
-            json << std::format(",\n    \"sun\": {{\"direction\": [{:.4f}, {:.4f}, {:.4f}], \"color\": {}}}",
-                                -along[0], along[1], -along[2], color(sun->color, 1));
+            json << std::format(",\n    \"sun\": {{\"direction\": [{:.4f}, {:.4f}, {:.4f}], \"color\": {}, "
+                                "\"baked\": {}}}",
+                                -along[0], along[1], -along[2], color(sun->color, 1), sun->baked ? "true" : "false");
         }
         json << ",\n    \"lights\": [";
         size_t lights = 0;
@@ -679,19 +701,85 @@ int cmd_export_map(const std::vector<std::string>& args) {
                                  cloud != nullptr ? "yes" : "no");
     }
 
-    // Objects, in game space (x mirrored; rotations conjugated by the mirror).
-    const std::string mode_layer = map + "_" + mode;
-    const auto included = [&](const std::string& layer) {
+    // The game mode's sublevel. Its layers are named for the mode
+    // (dag1_conquest, tat2_con, myg1_cp-conquest; with others, like
+    // hoth_cps). Failing that (Felucia's and Mustafar's conquest is a lone
+    // "_design" layer), it's the one sublevel with command posts that no
+    // other mode's name claims. Other sublevels without command posts are
+    // era props (Dagobah's X-wing), kept unless skipped.
+    const auto ends_with = [](const std::string& text, std::string_view end) {
+        return text.size() >= end.size() && text.compare(text.size() - end.size(), end.size(), end) == 0;
+    };
+    const std::vector<std::string> mode_names =
+        mode == "conquest" ? std::vector<std::string>{"_conquest", "_con", "_cp-conquest"}
+                           : std::vector<std::string>{"_" + mode};
+    const auto named_for_mode = [&](const std::string& layer) {
+        const std::string name = lowercase(layer);
+        return std::any_of(mode_names.begin(), mode_names.end(), [&](const std::string& m) { return ends_with(name, m); });
+    };
+    const auto named_for_other_mode = [&](const std::string& layer) {
+        const std::string name = lowercase(layer);
+        for (const char* other : {"conquest", "_con", "ctf", "flag", "_eli", "hunt", "tdm", "campaign", "objective",
+                                  "_obj", "assault", "assult", "xl"}) {
+            if (name.find(other) != std::string::npos) {
+                return true;
+            }
+        }
+        return false;
+    };
+    std::set<uint32_t> post_sublevels;  // sublevels with command posts
+    for (const WorldItem& object : level.objects) {
+        if (object.sublevel != 0 && !object.get("CaptureRegion").empty()) {
+            post_sublevels.insert(object.sublevel);
+        }
+    }
+    uint32_t mode_sublevel = 0;
+    std::string mode_layers;  // its layers, for the map file's header
+    for (int pass = 0; pass < 2 && mode_sublevel == 0; ++pass) {
+        for (const auto& [hash, layers] : level.sublevels) {
+            const bool chosen =
+                pass == 0 ? std::any_of(layers.begin(), layers.end(), named_for_mode)
+                          : post_sublevels.contains(hash) && std::none_of(layers.begin(), layers.end(), named_for_other_mode);
+            if (chosen) {
+                mode_sublevel = hash;
+                for (const std::string& layer : layers) {
+                    mode_layers += (mode_layers.empty() ? "" : ", ") + layer;
+                }
+                break;
+            }
+        }
+    }
+    if (mode_sublevel == 0) {
+        throw std::runtime_error("no " + mode + " sublevel");
+    }
+    std::set<uint32_t> modes;  // every game mode's sublevel
+    for (const auto& [hash, layers] : level.sublevels) {
+        if (post_sublevels.contains(hash) || std::any_of(layers.begin(), layers.end(), named_for_other_mode)) {
+            modes.insert(hash);
+        }
+    }
+    const auto included_in = [&](const std::string& layer, uint32_t sublevel) {
         if (std::find(skipped.begin(), skipped.end(), layer) != skipped.end()) {
             return false;
         }
-        for (const char* other : {"_conquest", "_ctf", "_1flag", "_2flag", "_flag_cps", "_eli", "_hunt", "_assault"}) {
-            if (layer.find(other) != std::string::npos && layer != mode_layer) {
-                return false;
-            }
-        }
-        return true;
+        return sublevel == 0 || sublevel == mode_sublevel || !modes.contains(sublevel);
     };
+    const auto included = [&](const auto& item) { return included_in(item.layer, item.sublevel); };
+    // Paths of what's included: base layers' are grouped by their layer's
+    // name hash, a sublevel's by its hash.
+    std::set<uint32_t> path_groups;
+    for (const auto& [layer, group] : level.layer_groups) {
+        if (group == odf_hash(layer) && std::find(skipped.begin(), skipped.end(), layer) == skipped.end()) {
+            path_groups.insert(group);
+        }
+    }
+    for (const auto& [hash, layers] : level.sublevels) {
+        if (hash == mode_sublevel || !modes.contains(hash)) {
+            path_groups.insert(hash);
+        }
+    }
+
+    // Objects, in game space (x mirrored; rotations conjugated by the mirror).
     core::MapCollision collision;
     std::map<std::string, std::vector<CollisionTriangle>> shapes;  // model -> its collision
     {
@@ -699,7 +787,7 @@ int cmd_export_map(const std::vector<std::string>& args) {
         json << "{\n  \"map\": " << json_string(map) << ",\n  \"objects\": [";
         size_t written = 0;
         for (const WorldItem& object : level.objects) {
-            if (!included(object.layer)) {
+            if (!included(object)) {
                 continue;
             }
             // The rotation's stored triples are columns; mirroring x negates
@@ -791,7 +879,7 @@ int cmd_export_map(const std::vector<std::string>& args) {
     // The mode's command posts: capture regions, starting teams, spawn points.
     std::ofstream ini(out_dir / (map + "_" + mode + ".ini"), std::ios::binary);
     const double edge = terrain.origin();
-    ini << "; " << map << "'s " << mode << " layer (" << mode_layer
+    ini << "; " << map << "'s " << mode << " (" << mode_layers
         << "), written by bf2tool export-map from your own Battlefront II install.\n"
            "; Game data: don't commit or share it. Positions are Battlefront coordinates (x z).\n\n[map]\nName = "
         << map << "\nTerrain = " << map << "\n"
@@ -799,7 +887,7 @@ int cmd_export_map(const std::vector<std::string>& args) {
     // The AI barriers that stop soldiers: places bots keep out of when they can.
     size_t barriers = 0;
     for (const LevelBarrier& barrier : level.barriers) {
-        if (!included(barrier.layer) || !(barrier.flags & 1)) {
+        if (!included(barrier) || !(barrier.flags & 1)) {
             continue;
         }
         ini << "Barrier =";
@@ -810,32 +898,89 @@ int cmd_export_map(const std::vector<std::string>& args) {
         ++barriers;
     }
     std::cerr << std::format("barriers: {} of {}\n", barriers, level.barriers.size());
-    int posts = 0;
-    for (const WorldItem& object : level.objects) {
-        if (object.layer != mode_layer || object.get("CaptureRegion").empty()) {
+    // The playable area: boundary paths (named "boundary..."; Polis Massa's
+    // "Boundry1"), each once. A sublevel may repeat its mode's copy.
+    std::vector<std::vector<PathNode>> boundaries;
+    for (const LevelPath& path : level.paths) {
+        const std::string name = lowercase(path.name);
+        if (!path_groups.contains(path.group) || path.nodes.size() < 3 ||
+            !(name.starts_with("boundary") || name.starts_with("boundry"))) {
             continue;
         }
-        const WorldItem* capture = level.region(object.get("CaptureRegion"));
+        const bool repeat = std::any_of(boundaries.begin(), boundaries.end(), [&](const auto& nodes) {
+            return nodes.size() == path.nodes.size() &&
+                   std::equal(nodes.begin(), nodes.end(), path.nodes.begin(),
+                              [](const PathNode& a, const PathNode& b) { return a.position == b.position; });
+        });
+        if (!repeat) {
+            boundaries.push_back(path.nodes);
+            ini << "Boundary =";
+            for (const PathNode& node : path.nodes) {
+                ini << std::format(" {:.2f} {:.2f}", node.position[0], node.position[2]);
+            }
+            ini << "\n";
+        }
+    }
+    // Death regions: shape, center (x y z), size, and rotation (rows), as
+    // Battlefront stores them.
+    size_t death_regions = 0;
+    for (const WorldItem& region : level.regions) {
+        if (!included(region)) {
+            continue;
+        }
+        const bool named = std::any_of(deaths.begin(), deaths.end(), [&](const std::string& death) {
+            return lowercase(region.name) == lowercase(death) || lowercase(region.get("Name")) == lowercase(death);
+        });
+        if (!named) {
+            continue;
+        }
+        const auto& r = region.rotation;  // stored columns
+        ini << std::format("DeathRegion = {} {:.2f} {:.2f} {:.2f} {:.2f} {:.2f} {:.2f}", region.type, region.position[0],
+                           region.position[1], region.position[2], region.size[0], region.size[1], region.size[2]);
+        for (int row = 0; row < 3; ++row) {
+            for (int column = 0; column < 3; ++column) {
+                ini << std::format(" {:.4f}", r[size_t(column * 3 + row)]);
+            }
+        }
+        ini << "\n";
+        ++death_regions;
+    }
+    std::cerr << std::format("boundaries: {}; death regions: {} ({} named)\n", boundaries.size(), death_regions,
+                             deaths.size());
+    int posts = 0;
+    for (const WorldItem& object : level.objects) {
+        if (object.sublevel != mode_sublevel || object.get("CaptureRegion").empty()) {
+            continue;
+        }
+        const WorldItem* capture = level.region(object.get("CaptureRegion"), mode_sublevel);
         const auto& at = capture ? capture->position : object.position;
         ini << "\n[post]\nName = " << (object.get("Label").empty() ? object.name : object.get("Label")) << "\n"
             << std::format("Position = {:.2f} {:.2f}\n", at[0], at[2]);
         if (capture != nullptr) {
             // ASSUMPTION: a capture cylinder's SIZE x is its radius.
             ini << std::format("Radius = {:.2f}\n", std::max(capture->size[0], capture->size[2]));
+            // How high it reaches (a sphere's radius, else half its y
+            // size), and the post itself: a bunker's post isn't taken from
+            // the hill over it.
+            const double half = capture->type == "sphere" ? capture->size[0] : capture->size[1];
+            const double post_y = object.position[1];
+            ini << std::format("Altitude = {:.2f} {:.2f}\n", std::min(capture->position[1] - half, post_y - 0.5),
+                               std::max(capture->position[1] + half, post_y + 2.0));
         }
         if (const std::string team = object.get("Team"); team == "1" || team == "2") {
             ini << "Owner = " << team << "\n";
         }
-        if (const LevelPath* spawns = level.path(object.get("SpawnPath"), mode_layer)) {
+        if (const LevelPath* spawns = level.path_in(object.get("SpawnPath"), mode_sublevel)) {
             for (const PathNode& node : spawns->nodes) {
-                ini << std::format("SpawnPoint = {:.2f} {:.2f}\n", node.position[0], node.position[2]);
+                ini << std::format("SpawnPoint = {:.2f} {:.2f} {:.2f}\n", node.position[0], node.position[2],
+                                   node.position[1]);
             }
         }
         ++posts;
     }
-    std::cerr << std::format("{}: {} command posts\nwrote {}\n", mode_layer, posts, out_dir.string());
+    std::cerr << std::format("{} ({}): {} command posts\nwrote {}\n", mode, mode_layers, posts, out_dir.string());
     if (posts == 0) {
-        throw std::runtime_error("no command posts in layer " + mode_layer);
+        throw std::runtime_error("no command posts in " + mode + " (" + mode_layers + ")");
     }
     return 0;
 }

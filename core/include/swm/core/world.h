@@ -88,8 +88,11 @@ public:
         bool on_floor = false;  // a building floor rather than terrain
     };
     // The surface a character with feet at `y` stands on at (x, z): the
-    // highest floor or terrain at most `step_up` above its feet. If nothing
-    // is that low, the terrain (which then pushes it up, as on a hillside).
+    // highest floor or terrain at most `step_up` above its feet. The terrain
+    // doesn't count where it's cut away. If nothing is that low: the terrain
+    // if it's a little above the feet (which then pushes it up, as on a
+    // hillside), else (deep under it, or through a hole) a height of -1e9:
+    // falling.
     Ground ground_at(double x, double z, double y, double step_up) const;
 
     // Pushes a character's body (an upright cylinder of `radius` and

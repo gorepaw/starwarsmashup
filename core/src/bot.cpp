@@ -141,8 +141,10 @@ Vec3 Bot::steer(Vec3 position, Vec3 destination, double now) {
         replan_at_ = now + 4 + random() * 2;
         earliest_plan_ = now + 0.5;
     }
-    // On past corners it has reached, or can cut to the one after.
-    while (corner_ + 1 < path_.size() && horizontal_distance(position, path_[corner_]) < 0.6) {
+    // On past corners it has reached (at their height: a corner at the foot
+    // of a drop isn't reached from the top), or can cut to the one after.
+    while (corner_ + 1 < path_.size() && horizontal_distance(position, path_[corner_]) < 0.6 &&
+           std::abs(position.y - path_[corner_].y) < 1.5) {
         ++corner_;
     }
     if (now >= next_look_ && corner_ + 1 < path_.size()) {
@@ -153,6 +155,19 @@ Vec3 Bot::steer(Vec3 position, Vec3 destination, double now) {
     }
     if (corner_ >= path_.size()) {
         return destination;  // no route: straight at it
+    }
+    // Over a corner at the foot of a drop, still up top: on the way it was
+    // going, over the edge.
+    const Vec3 corner = path_[corner_];
+    if (horizontal_distance(position, corner) < 0.6 && position.y - corner.y >= 1.5) {
+        const Vec3 before = corner_ > 0 ? path_[corner_ - 1] : position;
+        Vec3 along{corner.x - before.x, 0, corner.z - before.z};
+        if (along.length() < 0.1 && corner_ + 1 < path_.size()) {
+            along = {path_[corner_ + 1].x - corner.x, 0, path_[corner_ + 1].z - corner.z};
+        }
+        if (along.length() > 1e-6) {
+            return corner + along * (1.0 / along.length());
+        }
     }
     // The last corner is the reachable spot nearest the destination.
     return corner_ + 1 == path_.size() && horizontal_distance(path_.back(), destination) < 0.5 ? destination

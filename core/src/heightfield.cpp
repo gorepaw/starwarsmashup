@@ -1,9 +1,11 @@
 #include "swm/core/heightfield.h"
 
 #include <algorithm>
+#include <cmath>
 #include <cstring>
 #include <fstream>
 #include <iterator>
+#include <sstream>
 #include <stdexcept>
 #include <string>
 
@@ -62,6 +64,33 @@ Vec3 Heightfield::normal_at(double x, double z) const {
     return n * (1 / n.length());
 }
 
+bool TerrainCut::contains(Vec3 point) const {
+    for (const auto& [nx, ny, nz, d] : planes) {
+        if (nx * point.x + ny * point.y + nz * point.z + d > 0) {
+            return false;
+        }
+    }
+    return !planes.empty();
+}
+
+bool Heightfield::cut_at(double x, double z) const {
+    if (cuts_.empty()) {
+        return false;
+    }
+    const Vec3 surface{x, height_at(x, z), z};
+    for (const TerrainCut& cut : cuts_) {
+        const Vec3 d = surface - cut.center;
+        if (d.x * d.x + d.z * d.z <= cut.radius * cut.radius && cut.contains(surface)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+double Heightfield::lowest() const {
+    return heights_.empty() ? 0.0 : double(*std::min_element(heights_.begin(), heights_.end()));
+}
+
 Vec3 Heightfield::clamp(Vec3 position) const {
     if (empty()) {
         return position;
@@ -101,8 +130,30 @@ Heightfield load_bake(const std::filesystem::path& prefix) {
     const int samples = int(json_number(json, "samples"));
     std::vector<float> heights(raw.size() / sizeof(float));
     std::memcpy(heights.data(), raw.data(), heights.size() * sizeof(float));
-    return {samples, json_number(json, "spacing"), json_number(json, "origin_x"), json_number(json, "origin_z"),
-            std::move(heights)};
+    Heightfield field{samples, json_number(json, "spacing"), json_number(json, "origin_x"),
+                      json_number(json, "origin_z"), std::move(heights)};
+    if (std::ifstream in(prefix.string() + ".cuts"); in) {
+        std::vector<TerrainCut> cuts;
+        for (std::string line; std::getline(in, line);) {
+            if (line.empty() || line[0] == '#') {
+                continue;
+            }
+            std::istringstream fields(line);
+            TerrainCut cut;
+            if (!(fields >> cut.center.x >> cut.center.y >> cut.center.z >> cut.radius)) {
+                throw std::runtime_error(prefix.string() + ".cuts: bad line \"" + line + "\"");
+            }
+            for (std::array<double, 4> plane; fields >> plane[0] >> plane[1] >> plane[2] >> plane[3];) {
+                cut.planes.push_back(plane);
+            }
+            // A little slack: the sphere bounds the volume, the surface may
+            // touch its edge.
+            cut.radius += 0.5;
+            cuts.push_back(std::move(cut));
+        }
+        field.set_cuts(std::move(cuts));
+    }
+    return field;
 }
 
 } // namespace swm::core

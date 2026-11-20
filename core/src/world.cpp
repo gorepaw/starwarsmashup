@@ -426,7 +426,8 @@ World::Ground World::ground_at(double x, double z, double y, double step_up) con
     Ground best;
     bool found = false;
     const double terrain = terrain_.height_at(x, z);
-    if (terrain <= reach) {
+    const bool cut = terrain_.cut_at(x, z);
+    if (terrain <= reach && !cut) {
         best = {terrain, terrain_.normal_at(x, z), false};
         found = true;
     }
@@ -479,7 +480,12 @@ World::Ground World::ground_at(double x, double z, double y, double step_up) con
         }
     });
     if (!found) {
-        best = {terrain, terrain_.normal_at(x, z), false};
+        // A little under the terrain: back up onto it. Deep under it (in a
+        // cave or a bunker, over a seam in its floor) or through a hole in
+        // it with nothing below: falling.
+        constexpr double resurface = 2;
+        best = cut || terrain - y > resurface ? Ground{-1e9, {0, 1, 0}, false}
+                                              : Ground{terrain, terrain_.normal_at(x, z), false};
     }
     return best;
 }
@@ -496,7 +502,7 @@ std::optional<double> World::raycast(Vec3 a, Vec3 b) const {
     // Terrain: march in steps of at most a meter, then bisect the crossing.
     const auto below = [&](double t) {
         const Vec3 p = a + d * t;
-        return p.y < terrain_.height_at(p.x, p.z);
+        return p.y < terrain_.height_at(p.x, p.z) && !terrain_.cut_at(p.x, p.z);
     };
     if (!below(0)) {
         const int steps = std::max(1, int(std::ceil(d.length())));

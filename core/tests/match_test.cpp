@@ -71,6 +71,34 @@ void test_battlefield_file() {
     CHECK(mapped.barriers.size() == 1 && mapped.barriers[0].corners[1] == Vec3(-3, 0, 1));
     CHECK(mapped.barriers[0].contains({-2, 0, 1.5}) && !mapped.barriers[0].contains({-2, 0, 2.5}));
 
+    // A boundary (a triangle: x + z < 100 in Battlefront's coordinates) and
+    // a death region, a box turned a quarter: its x half size (2) runs
+    // along z, its z half size (4) along x.
+    std::ofstream(dir / "maps" / "b_conquest.ini") << "[map]\nName = b\nBounds = -512 -512 512 512\n"
+                                                      "Boundary = 0 0 100 0 0 100\n"
+                                                      "DeathRegion = box 10 0 20 2 1 4 0 0 1 0 1 0 -1 0 0\n\n"
+                                                      "[post]\nName = CP1\nPosition = 10 10\nOwner = 1\n"
+                                                      "Altitude = -6 -1\nSpawnPoint = 12 12 -5\nSpawnPoint = 8 8 -5\n\n"
+                                                      "[post]\nName = CP2\nPosition = 30 30\nOwner = 2\n";
+    std::ofstream(dir / "bounded.ini") << "[battlefield]\nName = Ridge\nMap = maps/b_conquest.ini\n"
+                                          "[team]\nName = Rebellion\nLoadout = loadouts/trooper.ini\n"
+                                          "[team]\nName = Empire\nLoadout = loadouts/trooper.ini\n";
+    const Battlefield bounded = load_battlefield(dir / "bounded.ini");
+    // The bounds shrink to the boundary; game x runs the other way.
+    CHECK(bounded.boundaries.size() == 1 && bounded.min_x == -100 && bounded.max_x == 0 && bounded.min_z == 0 &&
+          bounded.max_z == 100);
+    CHECK(bounded.contains({-10, 0, 10}) && bounded.contains({-49, 0, 49}) && !bounded.contains({-60, 0, 60}));
+    CHECK(bounded.death_regions.size() == 1 && bounded.death_regions[0].center == Vec3(-10, 0, 20));
+    CHECK(bounded.deadly({-13.5, 0, 20}) && !bounded.deadly({-10, 0, 23.5}) && bounded.deadly({-10, 0, 21.5}));
+    // Feet below it, or the body in it; not standing on top of it.
+    CHECK(bounded.deadly({-10, -1.5, 20}) && !bounded.deadly({-10, 1.5, 20}));
+    // A post in a cellar: its middle height, taken from within it and not
+    // from the ground over it; its spawn points' heights.
+    const CommandPost& cellar = bounded.posts[0];
+    CHECK(cellar.position == Vec3(-10, -3.5, 10) && cellar.contains({-10, -6, 12}) && !cellar.contains({-10, 0, 12}));
+    CHECK(cellar.spawn_heights && cellar.spawn_points[0] == Vec3(-12, -5, 12) && !bounded.posts[1].spawn_heights);
+    CHECK(bounded.posts[1].contains({-30, 50, 30}));  // no altitude: any height
+
     std::ofstream(dir / "bad.ini") << "[battlefield]\n[team]\nName = A\nLoadout = loadouts/missing.ini\n";
     bool threw = false;
     try {
@@ -314,6 +342,30 @@ void add_wall(MapCollision& collision, Vec3 low, Vec3 high) {
 
 // Bots on both teams play a match to the end, finding their way around
 // walls between the posts.
+// A soldier who runs into a death region dies there at once.
+void test_death_region() {
+    Battlefield battlefield = three_posts();
+    battlefield.death_regions.push_back({.center = {-45, 0, 0}, .size = {3, 2, 30}});
+    battlefield.warmup = 60;
+    Field field(battlefield);
+    GameClient& a = field.join("a");
+    field.run(0.5);
+    a.request_spawn(0, 0);
+    field.run(0.5);
+    CHECK(a.alive());
+    bool died = false;
+    double seconds = 0;
+    field.run(4, [&] {
+        a.set_input({.forward = 1, .yaw = float(-std::numbers::pi / 2)});
+        if (!died && !a.alive()) {
+            died = true;
+            CHECK(a.predicted().position.x > -49);
+        }
+        seconds += died ? 0 : dt;
+    });
+    CHECK(died && a.self().deaths == 1 && seconds < 3);
+}
+
 void test_bots_play_a_match() {
     Battlefield battlefield = three_posts();
     battlefield.posts.insert(battlefield.posts.begin() + 1, CommandPost{.name = "Inner west", .position = {-30, 0, 10}});
@@ -371,6 +423,7 @@ int main() {
     test_capture();
     test_tickets_run_out();
     test_match_server();
+    test_death_region();
     test_bots_play_a_match();
     return swm::test::finish("match_test");
 }

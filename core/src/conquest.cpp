@@ -74,6 +74,13 @@ void read_posts(Battlefield& field, const Ini& ini, const std::string& where) {
         post.capture_time = std::max(0.1, s.number("CaptureTime", post.capture_time));
         post.spawn_radius = s.number("SpawnRadius", post.spawn_radius);
         post.capturable = s.number("Capturable", 1) != 0;
+        if (const auto altitude = s.get("Altitude")) {
+            std::istringstream fields(*altitude);
+            if (!(fields >> post.low >> post.high) || post.low > post.high) {
+                throw std::runtime_error(where + ": post " + post.name + ": Altitude is \"low high\"");
+            }
+            post.position.y = (post.low + post.high) / 2;
+        }
         if (const auto owner = s.get("Owner"); owner && !owner->empty()) {
             for (size_t t = 0; t < field.teams.size(); ++t) {
                 if (iequals(*owner, field.teams[t].name) || *owner == std::to_string(t + 1)) {
@@ -84,20 +91,111 @@ void read_posts(Battlefield& field, const Ini& ini, const std::string& where) {
                 throw std::runtime_error(where + ": post " + post.name + " has unknown Owner " + *owner);
             }
         }
+        size_t heights = 0;
         for (const auto& [key, value] : s.values) {
             if (iequals(key, "SpawnPoint")) {
-                post.spawn_points.push_back(source_point(value, where + ": post " + post.name + " SpawnPoint"));
+                Vec3 point = source_point(value, where + ": post " + post.name + " SpawnPoint");
+                std::istringstream fields(value);
+                double x = 0, z = 0, y = 0;
+                if (fields >> x >> z >> y) {
+                    point.y = y;
+                    ++heights;
+                }
+                post.spawn_points.push_back(point);
             }
         }
+        post.spawn_heights = heights > 0 && heights == post.spawn_points.size();
         field.posts.push_back(post);
     }
 }
 
+// Boundary = x1 z1 x2 z2 ...: a polygon, in source-world coordinates.
+// DeathRegion = shape x y z sx sy sz m00 m01 ... m22: in source-world
+// coordinates, its rotation's rows.
+void read_regions(Battlefield& field, const Ini::Section& section, const std::string& where) {
+    for (const auto& [key, value] : section.values) {
+        if (iequals(key, "Boundary")) {
+            std::istringstream fields(value);
+            std::vector<Vec3> polygon;
+            double x = 0, z = 0;
+            while (fields >> x >> z) {
+                polygon.push_back({-x, 0, z});
+            }
+            if (polygon.size() < 3) {
+                throw std::runtime_error(where + ": Boundary is \"x1 z1 x2 z2 x3 z3 ...\", got \"" + value + "\"");
+            }
+            field.boundaries.push_back(std::move(polygon));
+        } else if (iequals(key, "DeathRegion")) {
+            std::istringstream fields(value);
+            std::string shape;
+            DeathRegion region;
+            std::array<double, 9> m{};
+            bool ok = bool(fields >> shape >> region.center.x >> region.center.y >> region.center.z >> region.size.x >>
+                           region.size.y >> region.size.z);
+            for (double& entry : m) {
+                ok = ok && bool(fields >> entry);
+            }
+            if (iequals(shape, "sphere")) {
+                region.shape = DeathRegion::Shape::sphere;
+            } else if (iequals(shape, "cylinder")) {
+                region.shape = DeathRegion::Shape::cylinder;
+            } else if (!iequals(shape, "box")) {
+                ok = false;
+            }
+            if (!ok) {
+                throw std::runtime_error(where + ": DeathRegion is \"box|sphere|cylinder x y z sx sy sz\" and 9 "
+                                                 "rotation numbers, got \"" + value + "\"");
+            }
+            // Mirrored like every source point (x negated): the rotation is
+            // conjugated by the mirror.
+            region.center.x = -region.center.x;
+            const double sign[3] = {-1, 1, 1};
+            for (size_t row = 0; row < 3; ++row) {
+                for (size_t column = 0; column < 3; ++column) {
+                    region.basis[row * 3 + column] = sign[row] * sign[column] * m[row * 3 + column];
+                }
+            }
+            field.death_regions.push_back(region);
+        }
+    }
+}
+
+// Inside a polygon (x, z), by the even-odd rule.
+bool inside_polygon(const std::vector<Vec3>& polygon, Vec3 point) {
+    bool inside = false;
+    for (size_t i = 0, j = polygon.size() - 1; i < polygon.size(); j = i++) {
+        const Vec3 a = polygon[i], b = polygon[j];
+        if ((a.z > point.z) != (b.z > point.z) && point.x < (b.x - a.x) * (point.z - a.z) / (b.z - a.z) + a.x) {
+            inside = !inside;
+        }
+    }
+    return inside;
+}
+
 } // namespace
 
+bool DeathRegion::contains(Vec3 point) const {
+    // Into the region's own axes: the basis's columns.
+    const Vec3 d = point - center;
+    const double x = basis[0] * d.x + basis[3] * d.y + basis[6] * d.z;
+    const double y = basis[1] * d.x + basis[4] * d.y + basis[7] * d.z;
+    const double z = basis[2] * d.x + basis[5] * d.y + basis[8] * d.z;
+    switch (shape) {
+    case Shape::sphere:
+        return x * x + y * y + z * z <= size.x * size.x;
+    case Shape::cylinder:
+        return x * x + z * z <= size.x * size.x && std::abs(y) <= size.y;
+    case Shape::box:
+        break;
+    }
+    return std::abs(x) <= size.x && std::abs(y) <= size.y && std::abs(z) <= size.z;
+}
+
 bool CommandPost::contains(Vec3 point) const {
+    // Feet a little out of the region's height still count.
+    constexpr double slack = 0.5;
     const double dx = point.x - position.x, dz = point.z - position.z;
-    return dx * dx + dz * dz <= radius * radius;
+    return dx * dx + dz * dz <= radius * radius && point.y >= low - slack && point.y <= high + slack;
 }
 
 bool Barrier::contains(Vec3 point) const {
@@ -112,7 +210,19 @@ bool Barrier::contains(Vec3 point) const {
 }
 
 bool Battlefield::contains(Vec3 point) const {
-    return point.x >= min_x && point.x <= max_x && point.z >= min_z && point.z <= max_z;
+    if (point.x < min_x || point.x > max_x || point.z < min_z || point.z > max_z) {
+        return false;
+    }
+    return boundaries.empty() || std::any_of(boundaries.begin(), boundaries.end(),
+                                             [&](const std::vector<Vec3>& polygon) { return inside_polygon(polygon, point); });
+}
+
+bool Battlefield::deadly(Vec3 feet) const {
+    // The middle of the body: a soldier falling into a shallow region dies
+    // as it lands.
+    const Vec3 body = feet + Vec3{0, 0.9, 0};
+    return std::any_of(death_regions.begin(), death_regions.end(),
+                       [&](const DeathRegion& region) { return region.contains(feet) || region.contains(body); });
 }
 
 Vec3 Battlefield::center() const {
@@ -184,11 +294,29 @@ Battlefield load_battlefield(const std::filesystem::path& path) {
                 field.terrain = map_path.parent_path() / *terrain;
             }
             read_barriers(field, *about, map_path.string());
+            read_regions(field, *about, map_path.string());
         }
         read_posts(field, map_ini, map_path.string());
     }
     read_posts(field, ini, where);
     read_barriers(field, *main, where);
+    read_regions(field, *main, where);
+    // The bounds shrink to the boundaries'.
+    if (!field.boundaries.empty()) {
+        double x0 = 1e18, z0 = 1e18, x1 = -1e18, z1 = -1e18;
+        for (const auto& polygon : field.boundaries) {
+            for (const Vec3& p : polygon) {
+                x0 = std::min(x0, p.x);
+                z0 = std::min(z0, p.z);
+                x1 = std::max(x1, p.x);
+                z1 = std::max(z1, p.z);
+            }
+        }
+        field.min_x = std::max(field.min_x, x0);
+        field.min_z = std::max(field.min_z, z0);
+        field.max_x = std::min(field.max_x, x1);
+        field.max_z = std::min(field.max_z, z1);
+    }
     if (field.posts.empty()) {
         throw std::runtime_error(where + ": no [post] sections");
     }

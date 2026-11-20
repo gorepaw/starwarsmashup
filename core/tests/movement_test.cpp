@@ -1,6 +1,7 @@
 // Heightfield sampling and character movement on synthetic terrain.
 
 #include <filesystem>
+#include <fstream>
 #include <numbers>
 
 #include "swm/core/heightfield.h"
@@ -332,6 +333,51 @@ void test_map_collision() {
     CHECK(loaded_world.add_map_collision_of(dir / "swm_movement_test_map") == 0);
 }
 
+// A hole cut in the terrain (a terrain cutter): the ground there is whatever
+// is below, shots pass, and the cut is read from a bake's .cuts file.
+void test_terrain_cuts() {
+    Heightfield flat = make_ground([](double, double) { return 0.0; });
+    // A box from x -46..-40, z 45..55, y -5..1: six planes facing out.
+    TerrainCut box{{-43, -2, 50}, 7, {{1, 0, 0, 40}, {-1, 0, 0, -46}, {0, 0, 1, -55}, {0, 0, -1, 45},
+                                      {0, 1, 0, -1}, {0, -1, 0, -5}}};
+    CHECK(box.contains({-43, 0, 50}) && !box.contains({-39, 0, 50}) && !box.contains({-43, 2, 50}));
+    flat.set_cuts({box});
+    CHECK(flat.cut_at(-43, 50) && !flat.cut_at(-50, 50));
+    // A floor under the hole, 3 m down.
+    MapCollision floor;
+    add_box(floor, {-46, -4, 45}, {-40, -3, 55});
+    World world(flat);
+    world.add_map_collision(floor);
+    MoveInput east;
+    east.forward = 127;
+    east.yaw = float(-std::numbers::pi / 2);
+    MoveState start;
+    start.position = {-47, 0, 50};
+    // Stepping east into it, it drops in and stands on the floor.
+    MoveState state = run(run(start, east, world, 8), MoveInput{}, world, 45);
+    CHECK(state.position.x > -46 && state.position.x < -40 && near(state.position.y, -3) && state.grounded);
+    // Shots pass where the terrain is cut, not beside it.
+    CHECK(!world.raycast({-43, 1, 50}, {-43, -1, 50}));
+    CHECK(world.raycast({-50, 1, 50}, {-50, -1, 50}));
+    // With nothing below, a body falls through.
+    World open(flat);
+    MoveState above;
+    above.position = {-43, 0, 50};
+    CHECK(run(above, MoveInput{}, open, 30).position.y < -3);
+
+    // Read from the bake's .cuts file (game space).
+    const auto prefix = std::filesystem::temp_directory_path() / "swm_movement_test_cuts";
+    std::ofstream(prefix.string() + ".json") << "{\"samples\": 2, \"spacing\": 10, \"origin_x\": 0, \"origin_z\": 0}";
+    const float heights[4] = {0, 0, 0, 0};
+    std::ofstream(prefix.string() + ".r32", std::ios::binary).write(reinterpret_cast<const char*>(heights), sizeof heights);
+    std::ofstream(prefix.string() + ".cuts") << "# cuts\n-5 0 5 3  1 0 0 3  -1 0 0 -7  0 0 1 -7  0 0 -1 3  0 1 0 -1  0 -1 0 -1\n";
+    const Heightfield baked = load_bake(prefix);
+    CHECK(baked.cuts().size() == 1 && baked.cut_at(-5, 5) && !baked.cut_at(-1, 1));
+    for (const char* extension : {".json", ".r32", ".cuts"}) {
+        std::filesystem::remove(prefix.string() + extension);
+    }
+}
+
 void test_determinism() {
     const Heightfield hills = make_ground([](double gx, double gz) { return 3 * std::sin(gx * 0.2) * std::cos(gz * 0.15); });
     MoveState a, b;
@@ -357,6 +403,7 @@ int main() {
     test_slopes_and_jumps();
     test_buildings();
     test_map_collision();
+    test_terrain_cuts();
     test_determinism();
     return swm::test::finish("movement_test");
 }

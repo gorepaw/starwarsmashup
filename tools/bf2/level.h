@@ -18,6 +18,15 @@ namespace swm::bf2 {
 // they're read too. Coordinates are Battlefront's (left-handed, Y up, like
 // Galaxies): game x = -x.
 
+// A terrain cutter ("CUTR" in the terrain's "CUTS"): a convex volume where
+// the terrain isn't (a bunker's door into a hill, a pit): a point is inside
+// when n . p + d <= 0 for every plane (n, d). World-layer coordinates.
+struct TerrainCut {
+    std::array<float, 3> center{};  // its bounding sphere
+    float radius = 0;
+    std::vector<std::array<float, 4>> planes;  // (nx, ny, nz, d)
+};
+
 // The terrain: a square grid of heights. Munged terrain is stored as 8x8-cell
 // patches of vertices; heights are read from the vertices on grid points.
 // Each patch also lists the texture layers it uses (up to three), and a
@@ -37,6 +46,7 @@ struct Terrain {
     // summing to 255) and the baked lighting color (RGB).
     std::vector<std::vector<uint8_t>> layer_weights;  // [layer][point]
     std::vector<std::array<uint8_t, 3>> light;
+    std::vector<TerrainCut> cuts;
 
     // Coordinates of grid point (0, 0): the grid is centred on the origin.
     double origin() const { return -cells * unit / 2; }
@@ -56,6 +66,7 @@ ConfigRecord read_config_record(std::span<const uint8_t> data);
 // A world layer's object or region, with its instance properties.
 struct WorldItem {
     std::string layer;
+    uint32_t sublevel = 0;  // the enclosing sublevel's name hash, or 0: a base layer's
     std::string type;   // object class (e.g. "dag1_prop_grandtree"), or region shape ("box", "sphere", "cylinder")
     std::string name;
     std::array<float, 9> rotation{};  // 3x3, its columns as stored (see bf2/model.h)
@@ -72,6 +83,7 @@ struct WorldItem {
 // 8 medium, 16 huge, 32 flyers).
 struct LevelBarrier {
     std::string layer;
+    uint32_t sublevel = 0;  // as WorldItem's
     std::string name;
     std::array<float, 9> rotation{};  // 3x3, its columns as stored
     std::array<float, 3> position{};
@@ -104,6 +116,9 @@ struct LevelLight {
     std::array<float, 3> position{};
     std::array<float, 3> color{1, 1, 1};        // 0..1
     float range = 0;
+    // Baked into the terrain's and props' lighting ("Static"). Otherwise the
+    // engine lights them with it as it draws (Endor's sun, not Dagobah's).
+    bool baked = false;
 };
 
 // The sky ("sky_") and global lighting. Colors are 0..255, as stored.
@@ -160,11 +175,20 @@ struct Level {
     std::vector<LevelPath> paths;
     std::vector<std::string> layers;  // world layer names, in file order
     std::map<std::string, uint32_t> layer_groups;  // layer -> its paths' group
+    // Each sublevel's layers, by the sublevel's name hash, in file order. A
+    // layer can be in several (a game mode's posts shared by two modes).
+    std::vector<std::pair<uint32_t, std::vector<std::string>>> sublevels;
 
-    const WorldItem* region(std::string_view name) const;
+    // A region by the name objects refer to it by (a capture region's,
+    // a script's death region's): its ID or its Name property, ignoring
+    // case. Prefers one in `sublevel` (a hash, or 0: a base layer).
+    const WorldItem* region(std::string_view name, uint32_t sublevel = 0) const;
     const LevelEffect* effect(std::string_view name) const;  // by name, ignoring case
     // A path by name, preferring the one belonging with `layer`.
     const LevelPath* path(std::string_view name, std::string_view layer = {}) const;
+    // A path by name, preferring the one in group `group` (a sublevel's
+    // hash, or a base layer's name hash).
+    const LevelPath* path_in(std::string_view name, uint32_t group) const;
 };
 
 // Reads a map file's tree. Throws std::runtime_error on malformed data.

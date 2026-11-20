@@ -1712,8 +1712,7 @@ func _update_match_hud(delta: float) -> void:
 				if warmup else ""
 
 	var position: Vector3 = own["position"]
-	var inside := position.x >= float(_battlefield["min_x"]) and position.x <= float(_battlefield["max_x"]) \
-			and position.z >= float(_battlefield["min_z"]) and position.z <= float(_battlefield["max_z"])
+	var inside: bool = _client.in_battlefield(position)
 	_outside = 0.0 if inside or not own["alive"] else _outside + delta
 
 	if _spawn_screen != null and (game["phase"] == "ended" or own["life"] == "waiting"):

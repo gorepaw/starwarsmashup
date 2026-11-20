@@ -12,25 +12,49 @@
 
 namespace swm::core {
 
-// A tile's cells, rows along +Z, and the search scratch space for them.
-// `visit` says which search last touched a cell; g, parent and closed are
-// only meaningful when it's the current one.
+// A tile's cells, rows along +Z, and their surfaces: cell i's are
+// [first[i], first[i + 1]), top down. Then the search scratch space for the
+// surfaces: `visit` says which search last touched one; g, parent and closed
+// are only meaningful when it's the current one.
 struct NavGrid::Tile {
     static constexpr int count = tile_size * tile_size;
-    std::array<float, count> height{};
-    std::array<uint8_t, count> flags{};
-    std::array<float, count> g{};
-    std::array<int32_t, count> parent{};
-    std::array<uint32_t, count> visit{};
-    std::array<uint8_t, count> closed{};
+    std::array<uint16_t, count + 1> first{};
+    std::vector<float> height;
+    std::vector<uint8_t> flags;
+    std::vector<uint16_t> cell;  // each surface's cell (its index in the tile)
+    std::vector<float> g;
+    std::vector<int32_t> parent;
+    std::vector<uint32_t> visit;
+    std::vector<uint8_t> closed;
 };
 
 namespace {
+
+// The part of a battlefield the grid needs: where soldiers may be.
+Battlefield area_of(const Battlefield& field) {
+    Battlefield area;
+    area.min_x = field.min_x;
+    area.min_z = field.min_z;
+    area.max_x = field.max_x;
+    area.max_z = field.max_z;
+    area.boundaries = field.boundaries;
+    area.death_regions = field.death_regions;
+    return area;
+}
 
 int local(int x, int z, int size_bits) {
     const int mask = (1 << size_bits) - 1;
     return ((z & mask) << size_bits) | (x & mask);
 }
+
+// How far above the terrain the grid looks for surfaces (an Ewok village's
+// walkways, a bridge).
+constexpr double headroom = 80;
+// How far off the end's height a straight line may arrive.
+constexpr double feet_slack = 0.3;
+// What the grid leaves off a step: cells are coarse, so a lip it takes for
+// a step might be a little higher where a soldier crosses it.
+constexpr double step_margin = 0.1;
 
 } // namespace
 
@@ -38,7 +62,7 @@ NavGrid::NavGrid(const World& world, const Battlefield& field, const MoveParams&
     : NavGrid(world, field, move, Settings{}) {}
 
 NavGrid::NavGrid(const World& world, const Battlefield& field, const MoveParams& move, const Settings& settings)
-    : world_(world), move_(move), settings_(settings), barriers_(field.barriers) {
+    : world_(world), move_(move), settings_(settings), barriers_(field.barriers), area_(area_of(field)) {
     max_rise_ = std::tan(move.max_slope_degrees * std::numbers::pi / 180);
     // The battlefield's bounds, within the terrain (and within reason, for
     // a battlefield without bounds on a world without terrain).
@@ -76,6 +100,24 @@ NavGrid::Tile& NavGrid::tile(int x, int z) const {
     return *slot;
 }
 
+NavGrid::Tile& NavGrid::tile_of(Node node) const {
+    return *tiles_[size_t(node >> node_bits)];  // built: its node was handed out
+}
+
+float NavGrid::height(Node node) const {
+    return tile_of(node).height[size_t(node & ((1 << node_bits) - 1))];
+}
+
+uint8_t NavGrid::flags(Node node) const {
+    return node < 0 ? 0 : tile_of(node).flags[size_t(node & ((1 << node_bits) - 1))];
+}
+
+NavGrid::Cell NavGrid::cell_of(Node node) const {
+    const int index = node >> node_bits;
+    const int i = tile_of(node).cell[size_t(node & ((1 << node_bits) - 1))];
+    return {((index % tiles_x_) << tile_bits) + (i & (tile_size - 1)), ((index / tiles_x_) << tile_bits) + (i >> tile_bits)};
+}
+
 void NavGrid::build(Tile& tile, int tile_x, int tile_z) const {
     const double cell = settings_.cell;
     const double radius = move_.radius + settings_.clearance;
@@ -96,19 +138,28 @@ void NavGrid::build(Tile& tile, int tile_x, int tile_z) const {
             barriers.push_back(&b);
         }
     }
-    for (int lz = 0; lz < tile_size; ++lz) {
-        for (int lx = 0; lx < tile_size; ++lx) {
-            const int x = (tile_x << tile_bits) + lx, z = (tile_z << tile_bits) + lz;
-            const int i = (lz << tile_bits) | lx;
-            if (!inside(x, z)) {
-                continue;
+    for (int i = 0; i < Tile::count; ++i) {
+        tile.first[size_t(i)] = uint16_t(tile.height.size());
+        const int x = (tile_x << tile_bits) + (i & (tile_size - 1)), z = (tile_z << tile_bits) + (i >> tile_bits);
+        if (!inside(x, z)) {
+            continue;
+        }
+        const Vec3 c = center(x, z);
+        const bool on_field = area_.contains(c);
+        bool in_barrier = false;
+        for (const Barrier* b : barriers) {
+            in_barrier = in_barrier || b->contains(c);
+        }
+        // The surfaces from the top down: each the highest below the last
+        // with room for a body over it.
+        double probe = world_.terrain().height_at(c.x, c.z) + headroom;
+        for (int layer = 0; layer < max_layers; ++layer) {
+            const World::Ground ground = world_.ground_at(c.x, c.z, probe, move_.step_up);
+            if (ground.height > probe + move_.step_up + 1e-6 || ground.height < -1e8) {
+                break;  // nothing more below (the terrain's under us, or a hole)
             }
-            const Vec3 c = center(x, z);
-            // The ground at terrain level (a log or a low rock on it counts).
-            const World::Ground ground =
-                world_.ground_at(c.x, c.z, world_.terrain().height_at(c.x, c.z), move_.step_up);
-            tile.height[size_t(i)] = float(ground.height);
-            bool open = ground.on_floor || ground.normal.y >= min_normal_y;
+            bool open = on_field && (ground.on_floor || ground.normal.y >= min_normal_y) &&
+                        !area_.deadly({c.x, ground.height, c.z});
             if (open) {
                 // No wall within the (widened) body...
                 open = !world_.overlaps_walls({c.x, ground.height, c.z}, radius, move_.height, move_.step_up);
@@ -119,55 +170,121 @@ void NavGrid::build(Tile& tile, int tile_x, int tile_z) const {
                 open = !world_.raycast({c.x, ground.height + move_.height, c.z},
                                        {c.x, ground.height + move_.step_up, c.z});
             }
-            uint8_t flags = open ? walkable_bit : 0;
-            for (const Barrier* b : barriers) {
-                if (b->contains(c)) {
-                    flags |= barrier_bit;
-                    break;
-                }
-            }
-            tile.flags[size_t(i)] = flags;
+            tile.height.push_back(float(ground.height));
+            tile.flags.push_back(uint8_t((open ? walkable_bit : 0) | (in_barrier ? barrier_bit : 0)));
+            tile.cell.push_back(uint16_t(i));
+            probe = ground.height - move_.height - move_.step_up;
         }
     }
+    tile.first[Tile::count] = uint16_t(tile.height.size());
+    const size_t nodes = tile.height.size();
+    tile.g.resize(nodes);
+    tile.parent.resize(nodes);
+    tile.visit.assign(nodes, 0);
+    tile.closed.resize(nodes);
 }
 
-uint8_t NavGrid::flags(int x, int z) const {
-    return inside(x, z) ? tile(x, z).flags[size_t(local(x, z, tile_bits))] : 0;
+NavGrid::Node NavGrid::land(int x, int z, float from, Cell source) const {
+    if (!inside(x, z)) {
+        return -1;
+    }
+    const int tx = x >> tile_bits, tz = z >> tile_bits;
+    const Tile& t = tile(x, z);
+    const int i = local(x, z, tile_bits);
+    const double distance = settings_.cell * std::hypot(x - source.x, z - source.z);
+    for (int n = t.first[size_t(i)]; n < t.first[size_t(i) + 1]; ++n) {
+        const double h = double(t.height[size_t(n)]);
+        const double rise = h - double(from);
+        const double step = move_.step_up - step_margin;
+        if (rise < -move_.step_up && distance > 0) {
+            // A drop: over the edge at the height it's leaving (past no
+            // railing or wall), then down.
+            const Vec3 c = center(x, z);
+            if (world_.overlaps_walls({c.x, double(from), c.z}, move_.radius + settings_.clearance, move_.height,
+                                      move_.step_up)) {
+                return -1;
+            }
+        }
+        if (rise <= step + 1e-3) {
+            return Node(((tz * tiles_x_ + tx) << node_bits) | n);  // the highest it can reach
+        }
+        if (rise > step + distance * max_rise_ || distance <= 0) {
+            if (rise < move_.height) {
+                return -1;  // too high to climb, too low to pass under: in the way
+            }
+            continue;  // overhead: it passes under this one
+        }
+        // More than a step: only up a slope, rising toward it (not onto
+        // the side of a ramp or the lip of a ledge). Its height a little
+        // back toward the source says how steeply.
+        constexpr double back = 0.25;
+        const Vec3 c = center(x, z), s = center(source.x, source.z);
+        const double along = back / distance;
+        const World::Ground behind =
+            world_.ground_at(c.x + (s.x - c.x) * along, c.z + (s.z - c.z) * along, h, move_.step_up);
+        const double slope = std::clamp((h - behind.height) / back, 0.0, max_rise_);
+        if (rise <= step + distance * slope + 1e-3) {
+            return Node(((tz * tiles_x_ + tx) << node_bits) | n);
+        }
+        return -1;  // a lip too high to step onto: in the way
+    }
+    return -1;
 }
 
-float NavGrid::height(int x, int z) const {
-    return tile(x, z).height[size_t(local(x, z, tile_bits))];
-}
-
-bool NavGrid::climbable(float from, float to, double distance) const {
-    return double(to) - double(from) <= move_.step_up + distance * max_rise_;
+NavGrid::Node NavGrid::under(Vec3 p) const {
+    // As World::ground_at: at most a step above the feet.
+    const Cell c = cell_at(p);
+    if (!inside(c.x, c.z)) {
+        return -1;
+    }
+    const Tile& t = tile(c.x, c.z);
+    const int i = local(c.x, c.z, tile_bits);
+    const int index = (c.z >> tile_bits) * tiles_x_ + (c.x >> tile_bits);
+    for (int n = t.first[size_t(i)]; n < t.first[size_t(i) + 1]; ++n) {
+        if (double(t.height[size_t(n)]) <= p.y + move_.step_up) {
+            return Node((index << node_bits) | n);
+        }
+    }
+    return -1;
 }
 
 bool NavGrid::walkable(Vec3 point) const {
-    const Cell c = cell_at(point);
-    return (flags(c.x, c.z) & walkable_bit) != 0;
+    return (flags(under(point)) & walkable_bit) != 0;
 }
 
-bool NavGrid::nearest_walkable(Vec3 p, double reach, Cell& out) const {
-    const Cell c = cell_at(p);
-    if (flags(c.x, c.z) & walkable_bit) {
-        out = c;
-        return true;
+NavGrid::Node NavGrid::nearest_walkable(Vec3 p, double reach) const {
+    if (const Node here = under(p); flags(here) & walkable_bit) {
+        return here;
     }
+    const Cell c = cell_at(p);
     const int r = int(std::ceil(reach / settings_.cell));
-    double best = reach * reach;
-    bool found = false;
+    // Horizontal distance, and height off by more than a step counting
+    // double: a surface overhead or far below is a last resort.
+    double best = std::numeric_limits<double>::infinity();
+    Node found = -1;
     for (int z = c.z - r; z <= c.z + r; ++z) {
         for (int x = c.x - r; x <= c.x + r; ++x) {
-            if (!(flags(x, z) & walkable_bit)) {
+            if (!inside(x, z)) {
                 continue;
             }
             const Vec3 q = center(x, z);
             const double d2 = (q.x - p.x) * (q.x - p.x) + (q.z - p.z) * (q.z - p.z);
-            if (d2 <= best) {
-                best = d2;
-                out = {x, z};
-                found = true;
+            if (d2 > reach * reach) {
+                continue;
+            }
+            const Tile& t = tile(x, z);
+            const int i = local(x, z, tile_bits);
+            const int index = (z >> tile_bits) * tiles_x_ + (x >> tile_bits);
+            for (int n = t.first[size_t(i)]; n < t.first[size_t(i) + 1]; ++n) {
+                if (!(t.flags[size_t(n)] & walkable_bit)) {
+                    continue;
+                }
+                const double off = std::max(0.0, std::abs(double(t.height[size_t(n)]) - p.y) - move_.step_up);
+                const double score = d2 + 4 * off * off;
+                if (score < best) {
+                    best = score;
+                    found = Node((index << node_bits) | n);
+                }
             }
         }
     }
@@ -175,155 +292,150 @@ bool NavGrid::nearest_walkable(Vec3 p, double reach, Cell& out) const {
 }
 
 bool NavGrid::clear_line(Vec3 a, Vec3 b) const {
-    Cell previous = cell_at(a);
-    uint8_t previous_flags = flags(previous.x, previous.z);
-    if (!(previous_flags & walkable_bit)) {
+    // From the surface a is on: not one far below (a stands on a ledge's
+    // lip, past its cell's middle, or is in the air).
+    Node previous = under(a);
+    if (!(flags(previous) & walkable_bit) || a.y - double(height(previous)) > move_.step_up + feet_slack) {
         return false;
     }
+    Cell at = cell_at(a);
     const double length = std::hypot(b.x - a.x, b.z - a.z);
     const int steps = std::max(1, int(std::ceil(length / (settings_.cell * 0.5))));
     for (int i = 1; i <= steps; ++i) {
         const double t = double(i) / steps;
         const Cell c = cell_at({a.x + (b.x - a.x) * t, 0, a.z + (b.z - a.z) * t});
-        if (c.x == previous.x && c.z == previous.z) {
+        if (c.x == at.x && c.z == at.z) {
             continue;
         }
-        const uint8_t f = flags(c.x, c.z);
-        if (!(f & walkable_bit) || ((f & barrier_bit) && !(previous_flags & barrier_bit))) {
+        const float from = height(previous);
+        const Node next = land(c.x, c.z, from, at);
+        const uint8_t f = flags(next);
+        if (!(f & walkable_bit) || ((f & barrier_bit) && !(flags(previous) & barrier_bit))) {
             return false;
         }
-        const bool diagonal = c.x != previous.x && c.z != previous.z;
-        if (diagonal && (!(flags(c.x, previous.z) & walkable_bit) || !(flags(previous.x, c.z) & walkable_bit))) {
+        const bool diagonal = c.x != at.x && c.z != at.z;
+        if (diagonal && (!(flags(land(c.x, at.z, from, at)) & walkable_bit) ||
+                         !(flags(land(at.x, c.z, from, at)) & walkable_bit))) {
             return false;
         }
-        const double step = settings_.cell * std::hypot(c.x - previous.x, c.z - previous.z);
-        if (!climbable(height(previous.x, previous.z), height(c.x, c.z), step)) {
-            return false;
-        }
-        previous = c;
-        previous_flags = f;
+        previous = next;
+        at = c;
     }
-    return true;
+    // On b's surface, not over or under it.
+    return std::abs(double(height(previous)) - b.y) <= move_.step_up + feet_slack;
 }
 
 std::vector<Vec3> NavGrid::find_path(Vec3 from, Vec3 to) const {
-    Cell start, goal;
-    if (!nearest_walkable(from, 1.5, start)) {
+    const Node start = nearest_walkable(from, 1.5);
+    if (start < 0) {
         return {};
     }
-    const bool goal_walkable = nearest_walkable(to, 6, goal);
-    if (!goal_walkable) {
-        goal = cell_at(to);
-    }
+    Node goal = nearest_walkable(to, 6);
+    const bool goal_walkable = goal >= 0;
     if (++search_ == 0) {  // the stamps wrapped: forget every old search
         for (auto& t : tiles_) {
             if (t) {
-                t->visit.fill(0);
+                std::fill(t->visit.begin(), t->visit.end(), 0);
             }
         }
         search_ = 1;
     }
     const double cell = settings_.cell;
-    const auto id = [&](int x, int z) { return int32_t(z) * int32_t(width_) + int32_t(x); };
-    const auto estimate = [&](int x, int z) {
+    const Cell goal_cell = goal_walkable ? cell_of(goal) : cell_at(to);
+    const auto estimate = [&](Cell c) {
         // Octile distance, nudged up a hair so ties go toward the goal.
-        const double dx = std::abs(x - goal.x), dz = std::abs(z - goal.z);
+        const double dx = std::abs(c.x - goal_cell.x), dz = std::abs(c.z - goal_cell.z);
         return cell * (std::max(dx, dz) + (std::numbers::sqrt2 - 1) * std::min(dx, dz)) * 1.001;
     };
-    const auto touch = [&](Tile& t, int i) {
-        if (t.visit[size_t(i)] != search_) {
-            t.visit[size_t(i)] = search_;
-            t.g[size_t(i)] = std::numeric_limits<float>::infinity();
-            t.closed[size_t(i)] = 0;
+    const auto slot = [&](Node n) { return size_t(n & ((1 << node_bits) - 1)); };
+    const auto touch = [&](Node n) -> Tile& {
+        Tile& t = tile_of(n);
+        if (t.visit[slot(n)] != search_) {
+            t.visit[slot(n)] = search_;
+            t.g[slot(n)] = std::numeric_limits<float>::infinity();
+            t.closed[slot(n)] = 0;
         }
+        return t;
     };
 
-    using Entry = std::pair<double, int32_t>;  // f, cell id
+    using Entry = std::pair<double, Node>;  // f, surface
     std::priority_queue<Entry, std::vector<Entry>, std::greater<>> open;
     {
-        Tile& t = tile(start.x, start.z);
-        const int i = local(start.x, start.z, tile_bits);
-        touch(t, i);
-        t.g[size_t(i)] = 0;
-        t.parent[size_t(i)] = -1;
-        open.push({estimate(start.x, start.z), id(start.x, start.z)});
+        Tile& t = touch(start);
+        t.g[slot(start)] = 0;
+        t.parent[slot(start)] = -1;
+        open.push({estimate(cell_of(start)), start});
     }
-    const int32_t goal_id = id(goal.x, goal.z);
-    Cell best = start;
-    double best_estimate = estimate(start.x, start.z);
+    Node best = start;
+    double best_estimate = estimate(cell_of(start));
     bool reached = false;
     size_t expansions = 0;
     while (!open.empty()) {
-        const int32_t current = open.top().second;
+        const Node current = open.top().second;
         open.pop();
-        const int x = current % width_, z = current / width_;
-        Tile& t = tile(x, z);
-        const int i = local(x, z, tile_bits);
-        if (t.closed[size_t(i)]) {
+        Tile& t = tile_of(current);
+        if (t.closed[slot(current)]) {
             continue;
         }
-        t.closed[size_t(i)] = 1;
-        if (current == goal_id) {
+        t.closed[slot(current)] = 1;
+        if (current == goal) {
             reached = true;
             break;
         }
-        if (const double e = estimate(x, z); e < best_estimate) {
+        const Cell here = cell_of(current);
+        if (const double e = estimate(here); e < best_estimate) {
             best_estimate = e;
-            best = {x, z};
+            best = current;
         }
         if (++expansions > settings_.max_expansions) {
             break;
         }
-        const float g = t.g[size_t(i)];
-        const float here = t.height[size_t(i)];
+        const float g = t.g[slot(current)];
+        const float level = t.height[slot(current)];
         for (int dz = -1; dz <= 1; ++dz) {
             for (int dx = -1; dx <= 1; ++dx) {
                 if (dx == 0 && dz == 0) {
                     continue;
                 }
-                const int nx = x + dx, nz = z + dz;
-                const uint8_t f = flags(nx, nz);
+                const int nx = here.x + dx, nz = here.z + dz;
+                const bool diagonal = dx != 0 && dz != 0;
+                const double step = diagonal ? cell * std::numbers::sqrt2 : cell;
+                const Node next = land(nx, nz, level, here);
+                const uint8_t f = flags(next);
                 if (!(f & walkable_bit)) {
                     continue;
                 }
-                const bool diagonal = dx != 0 && dz != 0;
                 // No cutting corners past a blocked cell.
-                if (diagonal && (!(flags(nx, z) & walkable_bit) || !(flags(x, nz) & walkable_bit))) {
+                if (diagonal && (!(flags(land(nx, here.z, level, here)) & walkable_bit) ||
+                                 !(flags(land(here.x, nz, level, here)) & walkable_bit))) {
                     continue;
                 }
-                const double step = diagonal ? cell * std::numbers::sqrt2 : cell;
-                Tile& nt = tile(nx, nz);
-                const int ni = local(nx, nz, tile_bits);
-                if (!climbable(here, nt.height[size_t(ni)], step)) {
-                    continue;
-                }
-                touch(nt, ni);
-                if (nt.closed[size_t(ni)]) {
+                Tile& nt = touch(next);
+                if (nt.closed[slot(next)]) {
                     continue;
                 }
                 const double cost = g + step * ((f & barrier_bit) ? settings_.barrier_cost : 1.0);
-                if (cost < nt.g[size_t(ni)]) {
-                    nt.g[size_t(ni)] = float(cost);
-                    nt.parent[size_t(ni)] = current;
-                    open.push({cost + estimate(nx, nz), id(nx, nz)});
+                if (cost < nt.g[slot(next)]) {
+                    nt.g[slot(next)] = float(cost);
+                    nt.parent[slot(next)] = current;
+                    open.push({cost + estimate(Cell{nx, nz}), next});
                 }
             }
         }
     }
 
-    // The cells back from the end, then forward from where we stand.
-    const Cell end = reached ? goal : best;
+    // The surfaces back from the end, then forward from where we stand.
+    const Node end = reached ? goal : best;
     std::vector<Vec3> points;
-    for (int32_t c = id(end.x, end.z); c >= 0;) {
-        const int x = c % width_, z = c / width_;
-        Vec3 p = center(x, z);
-        p.y = height(x, z);
+    for (Node n = end; n >= 0; n = tile_of(n).parent[slot(n)]) {
+        const Cell c = cell_of(n);
+        Vec3 p = center(c.x, c.z);
+        p.y = height(n);
         points.push_back(p);
-        c = tile(x, z).parent[size_t(local(x, z, tile_bits))];
     }
     points.push_back(from);
     std::reverse(points.begin(), points.end());
-    if (reached && goal_walkable && cell_at(to).x == goal.x && cell_at(to).z == goal.z) {
+    if (reached && goal_walkable && cell_at(to).x == goal_cell.x && cell_at(to).z == goal_cell.z) {
         points.back().x = to.x;  // the exact spot, within its cell
         points.back().z = to.z;
     }

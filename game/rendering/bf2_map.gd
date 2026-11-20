@@ -6,6 +6,7 @@
 extends RefCounted
 
 const TERRAIN_SHADER = preload("res://rendering/bf2_terrain.gdshader")
+const SUNLIT_TERRAIN_SHADER = preload("res://rendering/bf2_terrain_sunlit.gdshader")
 const WATER_SHADER = preload("res://rendering/bf2_water.gdshader")
 const FOG_CLOUD_SHADER = preload("res://rendering/bf2_fog_cloud.gdshader")
 const MAX_LAYERS := 8
@@ -41,7 +42,10 @@ static func build_terrain_material(prefix: String, meta: Dictionary) -> Material
 	textures.create_from_images(images)
 
 	var material := ShaderMaterial.new()
-	material.shader = TERRAIN_SHADER
+	# A sun that isn't baked into the lighting lights the terrain as it's drawn.
+	var sun: Dictionary = meta.get("environment", {}).get("sun", {})
+	material.shader = SUNLIT_TERRAIN_SHADER if not sun.is_empty() and not sun.get("baked", true) \
+			else TERRAIN_SHADER
 	material.set_shader_parameter("layers", textures)
 	material.set_shader_parameter("layer_scale", scales)
 	material.set_shader_parameter("layer_count", images.size())
@@ -53,7 +57,44 @@ static func build_terrain_material(prefix: String, meta: Dictionary) -> Material
 	material.set_shader_parameter("map_origin", Vector2(meta["origin_x"], meta["origin_z"]))
 	material.set_shader_parameter("map_spacing", float(meta["spacing"]))
 	material.set_shader_parameter("map_samples", int(meta["samples"]))
+	var cuts := _cuts_texture(prefix)
+	if cuts != null:
+		material.set_shader_parameter("cuts", cuts)
+		material.set_shader_parameter("cut_count", cuts.get_height())
 	return material
+
+
+# The terrain's cuts (<prefix>.cuts, bf2tool export-map: a line per cut, its
+# bounding sphere's center x y z and radius, then its planes' nx ny nz d, game
+# space) as a float texture for the shader: a row per cut, its first texel
+# (center x, center z, radius, plane count), then a texel per plane. Null
+# without cuts.
+static func _cuts_texture(prefix: String) -> ImageTexture:
+	var file := FileAccess.open(prefix + ".cuts", FileAccess.READ)
+	if file == null:
+		return null
+	var rows: Array[PackedFloat32Array] = []
+	var width := 1
+	while not file.eof_reached():
+		var line := file.get_line().strip_edges()
+		if line == "" or line.begins_with("#"):
+			continue
+		var numbers := PackedFloat32Array()
+		for field in line.split(" ", false):
+			numbers.append(float(field))
+		var planes := (numbers.size() - 4) / 4
+		var row := PackedFloat32Array([numbers[0], numbers[2], numbers[3] + 0.5, planes])
+		row.append_array(numbers.slice(4, 4 + planes * 4))
+		rows.append(row)
+		width = maxi(width, 1 + planes)
+	if rows.is_empty():
+		return null
+	var data := PackedFloat32Array()
+	for row in rows:
+		row.resize(width * 4)
+		data.append_array(row)
+	var image := Image.create_from_data(width, rows.size(), false, Image.FORMAT_RGBAF, data.to_byte_array())
+	return ImageTexture.create_from_image(image)
 
 
 # Places every object that has a model; returns how many.

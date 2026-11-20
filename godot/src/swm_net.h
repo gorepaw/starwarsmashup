@@ -101,7 +101,8 @@ public:
     // bolt_speed, bolt_life, bolt_color, bolt_length, bolt_width}].
     godot::Array get_weapons() const;
     double get_max_health() const;
-    // The battlefield: {name, min_x, min_z, max_x, max_z (game space), teams:
+    // The battlefield: {name, min_x, min_z, max_x, max_z (game space),
+    // boundaries: [PackedVector2Array of (x, z)], teams:
     // [{name, loadouts: [{name, max_health, weapons: [names], secondary}]}], posts: [{name,
     // position, radius, capturable}]}; empty outside a match.
     godot::Dictionary get_battlefield() const;
@@ -130,6 +131,9 @@ public:
     // Where along from..to (0..1) the segment first hits the world (terrain,
     // buildings, a map's props), as a shot would; -1 if nothing.
     double raycast(const godot::Vector3& from, const godot::Vector3& to) const;
+    // Whether a point is on the battlefield (its bounds and boundaries);
+    // true outside a match.
+    bool in_battlefield(const godot::Vector3& point) const;
 
 protected:
     static void _bind_methods();

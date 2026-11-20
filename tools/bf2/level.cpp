@@ -1,6 +1,7 @@
 #include "bf2/level.h"
 
 #include <algorithm>
+#include <cctype>
 #include <cmath>
 #include <cstring>
 #include <map>
@@ -49,6 +50,26 @@ Terrain read_terrain(const UcfbNode& tern) {
     const int patch_cells = read<uint16_t>(info->data, 18);
     if (terrain.cells <= 0 || patch_cells <= 0 || terrain.cells % patch_cells != 0 || terrain.unit <= 0) {
         throw std::runtime_error("bf2 level: bad terrain size");
+    }
+    // Cutters: INFO is the plane count, then the bounding sphere's radius and
+    // center; PLNS the planes.
+    if (const UcfbNode* cuts = tern.child("CUTS")) {
+        for (const UcfbNode& cutter : cuts->children) {
+            const UcfbNode* cut_info = cutter.child("INFO");
+            const UcfbNode* planes = cutter.child("PLNS");
+            if (cutter.tag != "CUTR" || cut_info == nullptr || planes == nullptr || cut_info->data.size() < 20) {
+                continue;
+            }
+            TerrainCut cut;
+            const uint32_t count = read<uint32_t>(cut_info->data, 0);
+            cut.radius = read<float>(cut_info->data, 4);
+            cut.center = {read<float>(cut_info->data, 8), read<float>(cut_info->data, 12), read<float>(cut_info->data, 16)};
+            for (uint32_t i = 0; i < count && (i + 1) * 16 <= planes->data.size(); ++i) {
+                cut.planes.push_back({read<float>(planes->data, i * 16), read<float>(planes->data, i * 16 + 4),
+                                      read<float>(planes->data, i * 16 + 8), read<float>(planes->data, i * 16 + 12)});
+            }
+            terrain.cuts.push_back(std::move(cut));
+        }
     }
     if (const UcfbNode* layers = tern.child("LTEX")) {
         for (size_t at = 0; at < layers->data.size();) {
@@ -359,7 +380,7 @@ void read_sky(const UcfbNode& chunk, LevelSky& sky) {
 void read_lights(const UcfbNode& chunk, Level& level) {
     const uint32_t light = odf_hash("Light"), global = odf_hash("GlobalLights");
     const uint32_t type = odf_hash("Type"), rotation = odf_hash("Rotation"), position = odf_hash("Position");
-    const uint32_t color = odf_hash("Color"), range = odf_hash("Range");
+    const uint32_t color = odf_hash("Color"), range = odf_hash("Range"), baked = odf_hash("Static");
     const uint32_t light1 = odf_hash("Light1"), top = odf_hash("Top"), bottom = odf_hash("Bottom");
     for_each_record(chunk, [&](const ConfigRecord& section, const UcfbNode* scope) {
         if (scope == nullptr) {
@@ -382,6 +403,8 @@ void read_lights(const UcfbNode& chunk, Level& level) {
                     l.color = first3(r.numbers);
                 } else if (r.name == range && !r.numbers.empty()) {
                     l.range = r.numbers[0];
+                } else if (r.name == baked) {
+                    l.baked = true;
                 }
             });
             level.lights.push_back(l);
@@ -466,6 +489,7 @@ void read_effects(const UcfbNode& chunk, std::vector<LevelEffect>& effects) {
 void read_tree(const UcfbNode& node, Level& level, uint32_t group) {
     for (const UcfbNode& child : node.children) {
         if (child.tag == "lvl_") {
+            level.sublevels.push_back({child.name_hash, {}});
             read_tree(child, level, child.name_hash);
         } else if (child.tag == "tern" && level.terrain.cells == 0) {
             level.terrain = read_terrain(child);
@@ -478,13 +502,19 @@ void read_tree(const UcfbNode& node, Level& level, uint32_t group) {
             const std::string layer = child.name();
             level.layers.push_back(layer);
             level.layer_groups[layer] = group != 0 ? group : odf_hash(layer);
+            if (group != 0 && !level.sublevels.empty() && level.sublevels.back().first == group) {
+                level.sublevels.back().second.push_back(layer);
+            }
             for (const UcfbNode& item : child.children) {
                 if (item.tag == "inst") {
                     level.objects.push_back(read_item(item, layer));
+                    level.objects.back().sublevel = group;
                 } else if (item.tag == "regn") {
                     level.regions.push_back(read_item(item, layer));
+                    level.regions.back().sublevel = group;
                 } else if (item.tag == "BARR") {
                     level.barriers.push_back(read_barrier(item, layer));
+                    level.barriers.back().sublevel = group;
                 }
             }
         } else if (child.tag == "path") {
@@ -554,13 +584,21 @@ std::string WorldItem::get(std::string_view property) const {
     return value;
 }
 
-const WorldItem* Level::region(std::string_view name) const {
+const WorldItem* Level::region(std::string_view name, uint32_t sublevel) const {
+    const auto same = [](std::string_view a, std::string_view b) {
+        return a.size() == b.size() &&
+               std::equal(a.begin(), a.end(), b.begin(), [](char x, char y) { return std::tolower(x) == std::tolower(y); });
+    };
+    const WorldItem* any = nullptr;
     for (const WorldItem& r : regions) {
-        if (r.name == name) {
-            return &r;
+        if (!name.empty() && (same(r.name, name) || same(r.get("Name"), name))) {
+            if (r.sublevel == sublevel) {
+                return &r;
+            }
+            any = any ? any : &r;
         }
     }
-    return nullptr;
+    return any;
 }
 
 const LevelPath* Level::path(std::string_view name, std::string_view layer) const {
@@ -569,6 +607,19 @@ const LevelPath* Level::path(std::string_view name, std::string_view layer) cons
     for (const LevelPath& p : paths) {
         if (p.name == name) {
             if (group != layer_groups.end() && p.group == group->second) {
+                return &p;
+            }
+            any = any ? any : &p;
+        }
+    }
+    return any;
+}
+
+const LevelPath* Level::path_in(std::string_view name, uint32_t group) const {
+    const LevelPath* any = nullptr;
+    for (const LevelPath& p : paths) {
+        if (p.name == name) {
+            if (p.group == group) {
                 return &p;
             }
             any = any ? any : &p;
