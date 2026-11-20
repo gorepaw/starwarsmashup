@@ -3,6 +3,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <memory>
+#include <unordered_map>
 #include <vector>
 
 #include "swm/core/conquest.h"
@@ -103,6 +104,9 @@ private:
     // (x, z) from cell `source`: the highest it can reach (a step up, or up
     // a slope rising toward it, or any way down). -1 if none.
     Node land(int x, int z, float from, Cell source) const;
+    // Whether a soldier at height `from` in cell `source`, walking toward
+    // the middle of cell (x, z), gets there at `to_height` (remembered).
+    bool walks_up(Cell source, double from, int x, int z, double to_height) const;
     // The surface under feet at p: the highest at most a step above them.
     Node under(Vec3 p) const;
     // The walkable surface nearest p (horizontally, then in height), within
@@ -124,6 +128,7 @@ private:
     int width_ = 0, depth_ = 0;
     int tiles_x_ = 0, tiles_z_ = 0;
     mutable std::vector<std::unique_ptr<Tile>> tiles_;
+    mutable std::unordered_map<uint64_t, bool> climbs_;  // walks_up's answers
     mutable size_t built_ = 0;
     mutable uint32_t search_ = 0;
 };

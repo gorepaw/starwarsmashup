@@ -143,8 +143,12 @@ Vec3 Bot::steer(Vec3 position, Vec3 destination, double now) {
     }
     // On past corners it has reached (at their height: a corner at the foot
     // of a drop isn't reached from the top), or can cut to the one after.
+    // Near one, on only once the way to the next is clear from where it
+    // stands, or it's right there: beside a ramp's foot, it isn't on it.
     while (corner_ + 1 < path_.size() && horizontal_distance(position, path_[corner_]) < 0.6 &&
-           std::abs(position.y - path_[corner_].y) < 1.5) {
+           std::abs(position.y - path_[corner_].y) < 1.5 &&
+           (horizontal_distance(position, path_[corner_]) < 0.2 ||
+            navigation_->clear_line(position, path_[corner_ + 1]))) {
         ++corner_;
     }
     if (now >= next_look_ && corner_ + 1 < path_.size()) {

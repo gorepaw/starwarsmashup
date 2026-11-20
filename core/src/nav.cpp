@@ -6,6 +6,7 @@
 #include <limits>
 #include <numbers>
 #include <queue>
+#include <unordered_map>
 #include <utility>
 
 #include "swm/core/world.h"
@@ -234,12 +235,43 @@ NavGrid::Node NavGrid::land(int x, int z, float from, Cell source) const {
         const World::Ground behind =
             world_.ground_at(c.x + (s.x - c.x) * along, c.z + (s.z - c.z) * along, h, move_.step_up);
         const double slope = std::clamp((h - behind.height) / back, 0.0, max_rise_);
-        if (rise <= step + distance * slope + 1e-3) {
+        // And a soldier really walks up it: between the cells' middles a
+        // coarse mesh (a Wookiee tree's trunk) can be steeper than either.
+        if (rise <= step + distance * slope + 1e-3 && walks_up(source, double(from), x, z, h)) {
             return Node(((tz * tiles_x_ + tx) << node_bits) | n);
         }
         return -1;  // a lip too high to step onto: in the way
     }
     return -1;
+}
+
+bool NavGrid::walks_up(Cell source, double from, int x, int z, double to_height) const {
+    // Remembered by the cells, the way and the starting height (1/16 m).
+    const uint64_t key = (uint64_t(uint16_t(source.x)) << 48) | (uint64_t(uint16_t(source.z)) << 32) |
+                         (uint64_t((x - source.x + 1) * 3 + (z - source.z + 1)) << 28) |
+                         uint64_t(uint32_t(std::lround((from + 4096) * 16)) & 0x0fffffff);
+    if (const auto known = climbs_.find(key); known != climbs_.end()) {
+        return known->second;
+    }
+    Vec3 start = center(source.x, source.z), end = center(x, z);
+    start.y = from;
+    end.y = to_height;
+    MoveState state;
+    state.position = start;
+    state.grounded = true;
+    MoveInput input;
+    input.forward = 127;
+    bool made_it = false;
+    for (int tick = 0; tick < 20 && !made_it; ++tick) {
+        const Vec3 d{end.x - state.position.x, 0, end.z - state.position.z};
+        input.sequence++;
+        input.yaw = float(std::atan2(-d.x, -d.z));
+        state = simulate_move(state, input, world_, move_, 1.0 / 30);
+        made_it = std::hypot(end.x - state.position.x, end.z - state.position.z) < 0.25 &&
+                  std::abs(state.position.y - to_height) < 0.3;
+    }
+    climbs_.emplace(key, made_it);
+    return made_it;
 }
 
 NavGrid::Node NavGrid::under(Vec3 p) const {
@@ -405,7 +437,7 @@ std::vector<Vec3> NavGrid::find_path(Vec3 from, Vec3 to) const {
     const auto estimate = [&](Cell c) {
         // Octile distance, nudged up a hair so ties go toward the goal.
         const double dx = std::abs(c.x - goal_cell.x), dz = std::abs(c.z - goal_cell.z);
-        return cell * (std::max(dx, dz) + (std::numbers::sqrt2 - 1) * std::min(dx, dz)) * 1.001;
+        return cell * (std::max(dx, dz) + (std::numbers::sqrt2 - 1) * std::min(dx, dz)) * 1.3;
     };
     const auto slot = [&](Node n) { return size_t(n & ((1 << node_bits) - 1)); };
 

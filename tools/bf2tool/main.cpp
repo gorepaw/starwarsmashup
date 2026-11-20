@@ -37,7 +37,7 @@ constexpr const char* usage = R"(usage:
   bf2tool odf <file.lvl> [class]
   bf2tool export-loadout <_lvl_pc dir> <side> <soldier class> -o <loadout.ini> [--items <dir>]
   bf2tool export-map <_lvl_pc dir> <map> -o <out dir> [--mode conquest] [--skip <layer>]...
-                     [--death <region>]...
+                     [--death <region>]... [--open <object>]...
   bf2tool export-hud <_lvl_pc dir> -o <out dir>
 )";
 
@@ -381,7 +381,8 @@ std::string json_string(const std::string& text) {
 // file for battlefields (<map>_<mode>.ini), with its boundary and the death
 // regions named by --death (the mission script's AddDeathRegion). Each game
 // mode is a sublevel; other modes' are left out, and so are any --skip
-// layers (e.g. the other era's props).
+// layers (e.g. the other era's props) and --open objects (by name: ones
+// fought open, Kashyyyk's wooden barricades, left out as if destroyed).
 int cmd_export_map(const std::vector<std::string>& args) {
     if (args.size() < 4 || args[2] != "-o") {
         std::cerr << usage;
@@ -392,6 +393,7 @@ int cmd_export_map(const std::vector<std::string>& args) {
     std::string mode = "conquest";
     std::vector<std::string> skipped;
     std::vector<std::string> deaths;
+    std::vector<std::string> opened;
     for (size_t i = 4; i + 1 < args.size(); i += 2) {
         if (args[i] == "--mode") {
             mode = args[i + 1];
@@ -399,6 +401,8 @@ int cmd_export_map(const std::vector<std::string>& args) {
             skipped.push_back(args[i + 1]);
         } else if (args[i] == "--death") {
             deaths.push_back(args[i + 1]);
+        } else if (args[i] == "--open") {
+            opened.push_back(lowercase(args[i + 1]));
         }
     }
     const std::string folder = map.substr(0, 3);
@@ -786,8 +790,13 @@ int cmd_export_map(const std::vector<std::string>& args) {
         std::ofstream json(out_dir / (map + ".objects.json"), std::ios::binary);
         json << "{\n  \"map\": " << json_string(map) << ",\n  \"objects\": [";
         size_t written = 0;
+        size_t left_open = 0;
         for (const WorldItem& object : level.objects) {
             if (!included(object)) {
+                continue;
+            }
+            if (std::find(opened.begin(), opened.end(), lowercase(object.name)) != opened.end()) {
+                ++left_open;
                 continue;
             }
             // The rotation's stored triples are columns; mirroring x negates
@@ -870,8 +879,8 @@ int cmd_export_map(const std::vector<std::string>& args) {
             json << "]}";
         }
         json << "\n  ]\n}\n";
-        std::cerr << std::format("objects: {} of {} placed; {} models, {} textures\n", written, level.objects.size(),
-                                 models.size(), textures.size());
+        std::cerr << std::format("objects: {} of {} placed ({} left open); {} models, {} textures\n", written,
+                                 level.objects.size(), left_open, models.size(), textures.size());
         core::save_map_collision(collision, core::map_collision_path(out_dir / map));
         std::cerr << std::format("collision: {} triangles\n", collision.triangles.size());
     }
