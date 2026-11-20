@@ -95,6 +95,8 @@ const FRIEND_COLOR := Color(0.35, 0.6, 1.0)
 const ENEMY_COLOR := Color(1.0, 0.3, 0.25)
 const NEUTRAL_COLOR := Color(0.9, 0.9, 0.9)
 const POST_BEAM_HEIGHT := 30.0
+const HOLO_LENS_HEIGHT := 0.32  # the command post model's projector lens: its height
+const HOLO_LENS_RADIUS := 0.15  # and radius
 const EXPLOSION_TIME := 0.6   # seconds an explosion's flash lasts
 
 var _client: Object
@@ -132,6 +134,7 @@ var _bolt_materials := {}         # bolt color (html) -> material
 var _bolt_mesh: BoxMesh           # a unit cube, scaled per bolt
 var _battlefield: Dictionary = {} # from SwmClient.get_battlefield; empty outside a match
 var _posts: Array = []            # per command post: {hologram} (its model's), or {material, label} (a beam)
+var _cone_shader: Shader         # the command post holograms' cone (_holo_cone_shader)
 var _spawn_loadout := 0
 var _spawn_post := -1
 var _spawn_requested := false
@@ -1399,7 +1402,59 @@ func _add_hologram(model: Dictionary) -> Dictionary:
 	light.visible = false
 	light.position = model["position"] + Vector3.UP * float(spec["height"])
 	root.add_child(light)
-	return {"pivot": pivot, "images": images, "light": light, "rate": float(spec["rotate_rate"])}
+	# The cone of light the projector throws up to the insignia: from the lens
+	# (the post model's, 0.32 m up, 0.15 m across) widening to the insignia's
+	# size (its models are about 0.65 m wide, scaled by HoloSize). Battlefront
+	# draws it in code, with no model or texture of its own.
+	var height := float(spec["height"]) - HOLO_LENS_HEIGHT
+	var cylinder := CylinderMesh.new()
+	cylinder.bottom_radius = HOLO_LENS_RADIUS
+	cylinder.top_radius = 0.34 * float(spec["size"])
+	cylinder.height = height
+	cylinder.radial_segments = 32
+	cylinder.rings = 1
+	cylinder.cap_top = false
+	cylinder.cap_bottom = false
+	var cone_material := ShaderMaterial.new()
+	cone_material.shader = _holo_cone_shader()
+	cone_material.set_shader_parameter("cone_height", height)
+	var cone := MeshInstance3D.new()
+	cone.mesh = cylinder
+	cone.material_override = cone_material
+	cone.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	cone.visible = false
+	cone.position = model["position"] + Vector3.UP * (HOLO_LENS_HEIGHT + height / 2)
+	root.add_child(cone)
+	return {"pivot": pivot, "images": images, "light": light, "cone": cone, "cone_material": cone_material,
+			"rate": float(spec["rotate_rate"])}
+
+
+# The hologram's cone: faint and see-through, brightest at its edges and low
+# down by the lens, fading toward the insignia, with scan lines rising
+# through it.
+func _holo_cone_shader() -> Shader:
+	if _cone_shader == null:
+		_cone_shader = Shader.new()
+		_cone_shader.code = """
+shader_type spatial;
+render_mode unshaded, blend_add, cull_disabled, depth_draw_never, shadows_disabled;
+uniform vec3 color : source_color = vec3(1.0);
+uniform float strength = 1.0;
+uniform float cone_height = 3.0;
+varying float up;
+void vertex() {
+	up = clamp(VERTEX.y / cone_height + 0.5, 0.0, 1.0);
+}
+void fragment() {
+	float rim = pow(1.0 - abs(dot(normalize(NORMAL), normalize(VIEW))), 2.0);
+	float fade = mix(1.0, 0.15, up) * smoothstep(0.0, 0.06, up) * smoothstep(1.0, 0.85, up);
+	float scan = 0.8 + 0.2 * sin(up * 70.0 - TIME * 6.0);
+	float streaks = 0.85 + 0.15 * sin(UV.x * 6.2832 * 9.0 + TIME * 0.7);
+	ALBEDO = color;
+	ALPHA = clamp((0.12 + 0.5 * rim) * fade * scan * streaks * strength, 0.0, 1.0);
+}
+"""
+	return _cone_shader
 
 
 # The hologram key (HoloImageGeometry's side) for a team: from its icon.
@@ -1421,7 +1476,7 @@ func _arrive() -> void:
 	for post: Dictionary in _posts:
 		var nodes: Array = post.get("nodes", [])
 		if post.has("hologram"):
-			nodes = [post["hologram"]["pivot"], post["hologram"]["light"]]
+			nodes = [post["hologram"]["pivot"], post["hologram"]["light"], post["hologram"]["cone"]]
 		for node: Node in nodes:
 			node.queue_free()
 	_posts.clear()
@@ -1561,6 +1616,10 @@ func _update_hologram(holo: Dictionary, state: Dictionary, own_team: int) -> voi
 	var light: OmniLight3D = holo["light"]
 	light.visible = side != ""
 	light.light_color = color
+	(holo["cone"] as Node3D).visible = side != ""
+	var cone_material: ShaderMaterial = holo["cone_material"]
+	cone_material.set_shader_parameter("color", color)
+	cone_material.set_shader_parameter("strength", flicker)
 
 
 func _team_name(team: int) -> String:
