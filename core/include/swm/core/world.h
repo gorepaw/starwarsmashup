@@ -108,11 +108,19 @@ public:
     // Where along the segment a..b (0..1) it first hits the terrain, a
     // building floor, or a wall, if it does. For shots.
     std::optional<double> raycast(Vec3 a, Vec3 b) const;
+    // Whether something stops a character going straight from a to b: the
+    // terrain, a building, or a map triangle that stops characters, met
+    // from the front (one it's behind, inside a prop, it walks out of).
+    bool walk_blocked(Vec3 a, Vec3 b) const;
+    // Whether a map floor (a gentle triangle facing up that stops
+    // characters) is over (x, z) at a height in (low, high].
+    bool floor_between(double x, double z, double low, double high) const;
 
     Vec3 clamp(Vec3 position) const { return terrain_.clamp(position); }
     const Heightfield& terrain() const { return terrain_; }
 
 private:
+    std::optional<double> cast(Vec3 a, Vec3 b, uint8_t blocks, bool front_only) const;
     struct Floor {
         Vec3 a, b, c;
         double min_x, max_x, min_z, max_z;

@@ -78,6 +78,18 @@ MoveState simulate_move(const MoveState& state, const MoveInput& input, const Wo
     Vec3 position = world.clamp(state.position + next.velocity * dt);
     position = world.resolve_walls(state.position, position, params.radius, params.height, params.step_up,
                                    next.velocity);
+    // Under a floor too high to step onto and too low to duck under: not
+    // into it (unless already under something about head height, inside a
+    // root, say: then out).
+    const double low = state.position.y + params.step_up, high = state.position.y + params.headroom;
+    if ((position.x != state.position.x || position.z != state.position.z) &&
+        world.floor_between(position.x, position.z, low, high) &&
+        !world.floor_between(state.position.x, state.position.z, low,
+                             state.position.y + params.height + params.step_up)) {
+        position.x = state.position.x;
+        position.z = state.position.z;
+        next.velocity.x = next.velocity.z = 0;
+    }
     World::Ground ground = world.ground_at(position.x, position.z, state.position.y, params.step_up);
 
     // Terrain too steep to walk up: stay put horizontally. (Building floors

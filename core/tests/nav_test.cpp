@@ -304,6 +304,23 @@ void test_edges() {
     CHECK(std::hypot(top.x + 80, top.z - 25) < 0.6 && near(top.y, 6.4, 0.05));
 }
 
+void test_inside_a_prop() {
+    // A soldier inside a hollow prop (a root lying on the ground, its faces
+    // all outward): the grid sees no way out, but movement lets it walk out
+    // through a face it's behind, so its route starts straight out.
+    const Heightfield ground = flat();
+    MapCollision props;
+    add_box(props, {-54, 0, 46}, {-46, 2.5, 54});
+    World world(ground);
+    world.add_map_collision(props);
+    const NavGrid grid(world, open_field());
+    const Vec3 inside{-50, 0, 50}, away{-20, 0, 50};
+    const auto out = grid.find_path(inside, away);
+    CHECK(!out.empty() && std::hypot(out.back().x - away.x, out.back().z - away.z) < 0.5);
+    const Vec3 reached = walk(world, out, inside, 10);
+    CHECK(std::hypot(reached.x - away.x, reached.z - away.z) < 0.6);
+}
+
 } // namespace
 
 int main() {
@@ -315,5 +332,6 @@ int main() {
     test_cost();
     test_stacked();
     test_edges();
+    test_inside_a_prop();
     return swm::test::finish("nav_test");
 }

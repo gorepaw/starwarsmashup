@@ -335,6 +335,41 @@ void test_map_collision() {
 
 // A hole cut in the terrain (a terrain cutter): the ground there is whatever
 // is below, shots pass, and the cut is read from a bake's .cuts file.
+// A thin slab over the ground from x -46 to -40 (one quad facing up, no
+// sides), its near edge at `near_y` and far edge at `far_y`.
+MapCollision slab(double near_y, double far_y) {
+    MapCollision collision;
+    const Vec3 a{-46, near_y, 45}, b{-40, far_y, 45}, c{-40, far_y, 55}, d{-46, near_y, 55};
+    collision.triangles.push_back({a, c, b, blocks_characters | blocks_shots});
+    collision.triangles.push_back({a, d, c, blocks_characters | blocks_shots});
+    return collision;
+}
+
+void test_overhead_floors() {
+    const Heightfield flat = make_ground([](double, double) { return 0.0; });
+    MoveInput east;
+    east.forward = 127;
+    east.yaw = float(-std::numbers::pi / 2);
+    MoveState start;
+    start.position = {-50, 0, 50};
+    // One at waist height, too high to step onto: in the way (it doesn't
+    // walk under it, into a root lying on the ground).
+    World waist(flat);
+    waist.add_map_collision(slab(1.0, 1.0));
+    const MoveState stopped = run(start, east, waist, 60);
+    CHECK(stopped.position.x < -46 && stopped.position.x > -46.5 && near(stopped.position.y, 0));
+    // One at head height (a canopy) is walked under.
+    World canopy(flat);
+    canopy.add_map_collision(slab(1.7, 1.7));
+    CHECK(run(start, east, canopy, 60).position.x > -40);
+    // Already under one, coming down to the waist ahead: it walks on out.
+    World sloping(flat);
+    sloping.add_map_collision(slab(2.0, 1.0));
+    MoveState under = start;
+    under.position.x = -45.5;
+    CHECK(run(under, east, sloping, 60).position.x > -40);
+}
+
 void test_terrain_cuts() {
     Heightfield flat = make_ground([](double, double) { return 0.0; });
     // A box from x -46..-40, z 45..55, y -5..1: six planes facing out.
@@ -403,6 +438,7 @@ int main() {
     test_slopes_and_jumps();
     test_buildings();
     test_map_collision();
+    test_overhead_floors();
     test_terrain_cuts();
     test_determinism();
     return swm::test::finish("movement_test");

@@ -95,6 +95,10 @@ struct MoveParams {
     double step_up = 0.5;           // m: highest ledge walked up without jumping
     double radius = 0.3;            // m: body, for walls
     double height = 1.8;            // m
+    // m: it walks under what's at least this high over its feet (a canopy
+    // at head height); a floor lower than that and too high to step onto
+    // (the top of a root lying on the ground) stops it, like a wall.
+    double headroom = 1.5;
 };
 
 // Advances a character by one tick of `dt` seconds through the world

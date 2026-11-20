@@ -491,7 +491,35 @@ World::Ground World::ground_at(double x, double z, double y, double step_up) con
     return best;
 }
 
-std::optional<double> World::raycast(Vec3 a, Vec3 b) const {
+std::optional<double> World::raycast(Vec3 a, Vec3 b) const { return cast(a, b, blocks_shots, false); }
+
+bool World::walk_blocked(Vec3 a, Vec3 b) const { return cast(a, b, blocks_characters, true).has_value(); }
+
+bool World::floor_between(double x, double z, double low, double high) const {
+    const Vec3 p{x, 0, z};
+    bool found = false;
+    for_solids(x, x, z, z, [&](const Solid& s) {
+        if (found || !s.floor || !(s.blocks & blocks_characters) || x < s.min_x || x > s.max_x || z < s.min_z ||
+            z > s.max_z || s.min_y > high) {
+            return;
+        }
+        const double area = cross_xz(s.a, s.b, s.c);
+        if (std::abs(area) < 1e-12) {
+            return;
+        }
+        const double wa = cross_xz(s.b, s.c, p) / area;
+        const double wb = cross_xz(s.c, s.a, p) / area;
+        const double wc = 1 - wa - wb;
+        if (wa < 0 || wb < 0 || wc < 0) {
+            return;
+        }
+        const double height = wa * s.a.y + wb * s.b.y + wc * s.c.y;
+        found = height > low && height <= high;
+    });
+    return found;
+}
+
+std::optional<double> World::cast(Vec3 a, Vec3 b, uint8_t blocks, bool front_only) const {
     std::optional<double> best;
     const auto consider = [&](double t) {
         if (t >= 0 && t <= 1 && (!best || t < *best)) {
@@ -522,7 +550,7 @@ std::optional<double> World::raycast(Vec3 a, Vec3 b) const {
     }
 
     for_solids_along(a, b, [&](const Solid& s) {
-        if (s.blocks & blocks_shots) {
+        if ((s.blocks & blocks) && (!front_only || s.normal.dot(d) < 0)) {
             if (const auto t = segment_triangle(a, d, s.a, s.b, s.c)) {
                 consider(*t);
             }

@@ -18,7 +18,7 @@ class World;
 // a bunker's floor under the hill; a bridge over a river), with room for a
 // body between them. A surface is walkable if a body (a little wider than a
 // character's) fits there: it isn't too steep (with a margin), no wall overlaps it between
-// its knees and head, and nothing hangs over it below head height. From a
+// its knees and head, and nothing hangs over it much below head height. From a
 // surface, a soldier stepping into the next cell lands on the highest
 // surface there it can reach: one at most a step up (or a walkable slope),
 // or any lower one, dropping onto it; it must be walkable. Barriers
@@ -46,6 +46,10 @@ public:
         // may take: bots keep off slopes they'd barely climb.
         double slope_margin = 5;
         size_t max_expansions = 120000;  // cells a search may visit
+        // Shut in where the grid sees no way on (somewhere a soldier got to
+        // that the grid says it can't), a route starts straight out to the
+        // nearest place within this far that leads on.
+        double pocket_reach = 8;  // m
     };
 
     // `world` must outlive the grid. `move` gives the body's size, step and
@@ -104,6 +108,11 @@ private:
     // The walkable surface nearest p (horizontally, then in height), within
     // `reach` meters.
     Node nearest_walkable(Vec3 p, double reach) const;
+    // Walkable surfaces within `reach` of feet at p that a soldier there
+    // could walk straight onto (at most a step up, nothing in the way at
+    // knee or chest height), nearest first; none a search with visit stamp
+    // `except` saw (0: any).
+    std::vector<Node> ways_from(Vec3 p, double reach, uint32_t except) const;
 
     const World& world_;
     MoveParams move_;

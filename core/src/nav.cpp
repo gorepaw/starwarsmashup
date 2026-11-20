@@ -167,7 +167,7 @@ void NavGrid::build(Tile& tile, int tile_x, int tile_z) const {
             if (open) {
                 // ...and nothing over it, between knees and head (inside a
                 // rock or a trunk, under a low branch).
-                open = !world_.raycast({c.x, ground.height + move_.height, c.z},
+                open = !world_.raycast({c.x, ground.height + move_.headroom, c.z},
                                        {c.x, ground.height + move_.step_up, c.z});
             }
             // At an edge: more than a step down within the (widened) body's
@@ -184,7 +184,7 @@ void NavGrid::build(Tile& tile, int tile_x, int tile_z) const {
             tile.flags.push_back(uint8_t((open ? walkable_bit : 0) | (in_barrier ? barrier_bit : 0) |
                                          (edge ? edge_bit : 0)));
             tile.cell.push_back(uint16_t(i));
-            probe = ground.height - move_.height - move_.step_up;
+            probe = ground.height - move_.headroom - move_.step_up;
         }
     }
     tile.first[Tile::count] = uint16_t(tile.height.size());
@@ -220,7 +220,7 @@ NavGrid::Node NavGrid::land(int x, int z, float from, Cell source) const {
             return Node(((tz * tiles_x_ + tx) << node_bits) | n);  // the highest it can reach
         }
         if (rise > step + distance * max_rise_ || distance <= 0) {
-            if (rise < move_.height) {
+            if (rise < move_.headroom) {
                 return -1;  // too high to climb, too low to pass under: in the way
             }
             continue;  // overhead: it passes under this one
@@ -340,21 +340,66 @@ bool NavGrid::clear_line(Vec3 a, Vec3 b) const {
     return std::abs(double(height(previous)) - b.y) <= move_.step_up + feet_slack;
 }
 
+std::vector<NavGrid::Node> NavGrid::ways_from(Vec3 p, double reach, uint32_t except) const {
+    const Cell c = cell_at(p);
+    const int r = int(std::ceil(reach / settings_.cell));
+    std::vector<std::pair<double, Node>> found;
+    for (int z = c.z - r; z <= c.z + r; ++z) {
+        for (int x = c.x - r; x <= c.x + r; ++x) {
+            if (!inside(x, z)) {
+                continue;
+            }
+            const Vec3 q = center(x, z);
+            const double d2 = (q.x - p.x) * (q.x - p.x) + (q.z - p.z) * (q.z - p.z);
+            if (d2 > reach * reach) {
+                continue;
+            }
+            const Tile& t = tile(x, z);
+            const int i = local(x, z, tile_bits);
+            const int index = (z >> tile_bits) * tiles_x_ + (x >> tile_bits);
+            for (int n = t.first[size_t(i)]; n < t.first[size_t(i) + 1]; ++n) {
+                const double h = double(t.height[size_t(n)]);
+                // Not one overhead (the top of the root it's under).
+                if ((t.flags[size_t(n)] & walkable_bit) && (except == 0 || t.visit[size_t(n)] != except) &&
+                    h <= p.y + move_.step_up) {
+                    found.push_back({d2 + 4 * (h - p.y) * (h - p.y), Node((index << node_bits) | n)});
+                }
+            }
+        }
+    }
+    std::sort(found.begin(), found.end());
+    std::vector<Node> out;
+    for (const auto& [score, node] : found) {
+        const Cell nc = cell_of(node);
+        Vec3 q = center(nc.x, nc.z);
+        q.y = height(node);
+        // Nothing in the way: a root's flank, a rock (but out through one
+        // it's inside of, as movement lets it).
+        const auto clear = [&](double up) { return !world_.walk_blocked(p + Vec3{0, up, 0}, q + Vec3{0, up, 0}); };
+        if (clear(0.6) && clear(1.2)) {
+            out.push_back(node);
+        }
+    }
+    return out;
+}
+
 std::vector<Vec3> NavGrid::find_path(Vec3 from, Vec3 to) const {
-    const Node start = nearest_walkable(from, 1.5);
+    // Where it stands on the grid: the surface under it, or, off the grid
+    // (pushed under a root, say), the nearest it can walk straight onto.
+    Node start = under(from);
+    if (!(flags(start) & walkable_bit)) {
+        const std::vector<Node> ways = ways_from(from, 1.5, 0);
+        start = !ways.empty() ? ways.front() : nearest_walkable(from, 1.5);
+    }
+    if (start < 0) {
+        const std::vector<Node> ways = ways_from(from, settings_.pocket_reach, 0);
+        start = !ways.empty() ? ways.front() : -1;
+    }
     if (start < 0) {
         return {};
     }
-    Node goal = nearest_walkable(to, 6);
+    const Node goal = nearest_walkable(to, 6);
     const bool goal_walkable = goal >= 0;
-    if (++search_ == 0) {  // the stamps wrapped: forget every old search
-        for (auto& t : tiles_) {
-            if (t) {
-                std::fill(t->visit.begin(), t->visit.end(), 0);
-            }
-        }
-        search_ = 1;
-    }
     const double cell = settings_.cell;
     const Cell goal_cell = goal_walkable ? cell_of(goal) : cell_at(to);
     const auto estimate = [&](Cell c) {
@@ -363,87 +408,137 @@ std::vector<Vec3> NavGrid::find_path(Vec3 from, Vec3 to) const {
         return cell * (std::max(dx, dz) + (std::numbers::sqrt2 - 1) * std::min(dx, dz)) * 1.001;
     };
     const auto slot = [&](Node n) { return size_t(n & ((1 << node_bits) - 1)); };
-    const auto touch = [&](Node n) -> Tile& {
-        Tile& t = tile_of(n);
-        if (t.visit[slot(n)] != search_) {
-            t.visit[slot(n)] = search_;
-            t.g[slot(n)] = std::numeric_limits<float>::infinity();
-            t.closed[slot(n)] = 0;
+
+    // A* from `origin`: the goal if reached, else the surface nearest it.
+    struct Search {
+        Node end = -1;
+        bool reached = false;
+        bool exhausted = false;  // it saw everything it could reach
+        double left = 0;         // estimate from the end to the goal
+        uint32_t stamp = 0;      // the visit stamp of what it saw
+        size_t expansions = 0;   // surfaces it went on from
+    };
+    const auto search = [&](Node origin) {
+        if (++search_ == 0) {  // the stamps wrapped: forget every old search
+            for (auto& t : tiles_) {
+                if (t) {
+                    std::fill(t->visit.begin(), t->visit.end(), 0);
+                }
+            }
+            search_ = 1;
         }
-        return t;
+        const auto touch = [&](Node n) -> Tile& {
+            Tile& t = tile_of(n);
+            if (t.visit[slot(n)] != search_) {
+                t.visit[slot(n)] = search_;
+                t.g[slot(n)] = std::numeric_limits<float>::infinity();
+                t.closed[slot(n)] = 0;
+            }
+            return t;
+        };
+        using Entry = std::pair<double, Node>;  // f, surface
+        std::priority_queue<Entry, std::vector<Entry>, std::greater<>> open;
+        {
+            Tile& t = touch(origin);
+            t.g[slot(origin)] = 0;
+            t.parent[slot(origin)] = -1;
+            open.push({estimate(cell_of(origin)), origin});
+        }
+        Search result{origin, false, false, estimate(cell_of(origin)), search_};
+        size_t& expansions = result.expansions;
+        while (!open.empty()) {
+            const Node current = open.top().second;
+            open.pop();
+            Tile& t = tile_of(current);
+            if (t.closed[slot(current)]) {
+                continue;
+            }
+            t.closed[slot(current)] = 1;
+            if (current == goal) {
+                result.end = goal;
+                result.reached = true;
+                result.left = 0;
+                return result;
+            }
+            const Cell here = cell_of(current);
+            if (const double e = estimate(here); e < result.left) {
+                result.left = e;
+                result.end = current;
+            }
+            if (++expansions > settings_.max_expansions) {
+                return result;
+            }
+            const float g = t.g[slot(current)];
+            const float level = t.height[slot(current)];
+            for (int dz = -1; dz <= 1; ++dz) {
+                for (int dx = -1; dx <= 1; ++dx) {
+                    if (dx == 0 && dz == 0) {
+                        continue;
+                    }
+                    const int nx = here.x + dx, nz = here.z + dz;
+                    const bool diagonal = dx != 0 && dz != 0;
+                    const double step = diagonal ? cell * std::numbers::sqrt2 : cell;
+                    const Node next = land(nx, nz, level, here);
+                    const uint8_t f = flags(next);
+                    if (!(f & walkable_bit)) {
+                        continue;
+                    }
+                    // No cutting corners past a blocked cell.
+                    if (diagonal && (!(flags(land(nx, here.z, level, here)) & walkable_bit) ||
+                                     !(flags(land(here.x, nz, level, here)) & walkable_bit))) {
+                        continue;
+                    }
+                    Tile& nt = touch(next);
+                    if (nt.closed[slot(next)]) {
+                        continue;
+                    }
+                    const double cost = g + step * ((f & barrier_bit) ? settings_.barrier_cost : 1.0) *
+                                                ((f & edge_bit) ? settings_.edge_cost : 1.0);
+                    if (cost < nt.g[slot(next)]) {
+                        nt.g[slot(next)] = float(cost);
+                        nt.parent[slot(next)] = current;
+                        open.push({cost + estimate(Cell{nx, nz}), next});
+                    }
+                }
+            }
+        }
+        result.exhausted = true;
+        return result;
     };
 
-    using Entry = std::pair<double, Node>;  // f, surface
-    std::priority_queue<Entry, std::vector<Entry>, std::greater<>> open;
-    {
-        Tile& t = touch(start);
-        t.g[slot(start)] = 0;
-        t.parent[slot(start)] = -1;
-        open.push({estimate(cell_of(start)), start});
-    }
-    Node best = start;
-    double best_estimate = estimate(cell_of(start));
-    bool reached = false;
-    size_t expansions = 0;
-    while (!open.empty()) {
-        const Node current = open.top().second;
-        open.pop();
-        Tile& t = tile_of(current);
-        if (t.closed[slot(current)]) {
-            continue;
-        }
-        t.closed[slot(current)] = 1;
-        if (current == goal) {
-            reached = true;
-            break;
-        }
-        const Cell here = cell_of(current);
-        if (const double e = estimate(here); e < best_estimate) {
-            best_estimate = e;
-            best = current;
-        }
-        if (++expansions > settings_.max_expansions) {
-            break;
-        }
-        const float g = t.g[slot(current)];
-        const float level = t.height[slot(current)];
-        for (int dz = -1; dz <= 1; ++dz) {
-            for (int dx = -1; dx <= 1; ++dx) {
-                if (dx == 0 && dz == 0) {
-                    continue;
-                }
-                const int nx = here.x + dx, nz = here.z + dz;
-                const bool diagonal = dx != 0 && dz != 0;
-                const double step = diagonal ? cell * std::numbers::sqrt2 : cell;
-                const Node next = land(nx, nz, level, here);
-                const uint8_t f = flags(next);
-                if (!(f & walkable_bit)) {
-                    continue;
-                }
-                // No cutting corners past a blocked cell.
-                if (diagonal && (!(flags(land(nx, here.z, level, here)) & walkable_bit) ||
-                                 !(flags(land(here.x, nz, level, here)) & walkable_bit))) {
-                    continue;
-                }
-                Tile& nt = touch(next);
-                if (nt.closed[slot(next)]) {
-                    continue;
-                }
-                const double cost = g + step * ((f & barrier_bit) ? settings_.barrier_cost : 1.0) *
-                                            ((f & edge_bit) ? settings_.edge_cost : 1.0);
-                if (cost < nt.g[slot(next)]) {
-                    nt.g[slot(next)] = float(cost);
-                    nt.parent[slot(next)] = current;
-                    open.push({cost + estimate(Cell{nx, nz}), next});
-                }
+    Search found = search(start);
+    // Shut in a small pocket the grid sees no way out of, far from the goal
+    // (a soldier can get where the grid says it can't: under a root it would
+    // brush with its head, say): out to the nearest places nearby that
+    // aren't in the pocket, the first that leads on, straight there first.
+    constexpr size_t pocket_surfaces = 4000;  // 1000 m2 of half-meter cells
+    if (!found.reached && found.exhausted && found.expansions < pocket_surfaces &&
+        found.left > settings_.pocket_reach) {
+        const std::vector<Node> outside = ways_from(from, settings_.pocket_reach, found.stamp);
+        int tried = 0;
+        std::vector<Cell> seen;
+        for (const Node node : outside) {
+            const Cell oc = cell_of(node);
+            // A few, apart (not the same way out twice).
+            if (std::any_of(seen.begin(), seen.end(),
+                            [&](Cell s) { return std::abs(s.x - oc.x) + std::abs(s.z - oc.z) < 6; })) {
+                continue;
+            }
+            seen.push_back(oc);
+            const Search way = search(node);
+            if (way.reached || way.left < found.left) {
+                found = way;
+            }
+            if (found.reached || ++tried >= 4) {
+                break;
             }
         }
     }
 
     // The surfaces back from the end, then forward from where we stand.
-    const Node end = reached ? goal : best;
+    const bool reached = found.reached;
     std::vector<Vec3> points;
-    for (Node n = end; n >= 0; n = tile_of(n).parent[slot(n)]) {
+    for (Node n = found.end; n >= 0; n = tile_of(n).parent[slot(n)]) {
         const Cell c = cell_of(n);
         Vec3 p = center(c.x, c.z);
         p.y = height(n);
