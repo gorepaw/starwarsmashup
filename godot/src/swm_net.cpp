@@ -229,6 +229,11 @@ godot::Dictionary SwmClient::get_battlefield() const {
     out["min_z"] = field.min_z;
     out["max_x"] = field.max_x;
     out["max_z"] = field.max_z;
+    godot::Array minimap;
+    for (const double edge : field.minimap) {
+        minimap.push_back(edge);
+    }
+    out["minimap"] = minimap;  // game x, z under the image's left, top, right, bottom edges; zeros if unset
     godot::Array teams;
     for (const core::Team& team : field.teams) {
         godot::Array loadouts;

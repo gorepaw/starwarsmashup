@@ -14,6 +14,7 @@
 
 #include "bf2/animation.h"
 #include "bf2/hash.h"
+#include "bf2/hud.h"
 #include "bf2/level.h"
 #include "bf2/model_export.h"
 #include "bf2/odf.h"
@@ -35,6 +36,7 @@ constexpr const char* usage = R"(usage:
   bf2tool odf <file.lvl> [class]
   bf2tool export-loadout <_lvl_pc dir> <side> <soldier class> -o <loadout.ini> [--items <dir>]
   bf2tool export-map <_lvl_pc dir> <map> -o <out dir> [--mode conquest] [--skip <layer>]...
+  bf2tool export-hud <_lvl_pc dir> -o <out dir>
 )";
 
 std::vector<uint8_t> read_file(const std::filesystem::path& path);
@@ -500,6 +502,9 @@ int cmd_export_map(const std::vector<std::string>& args) {
         }
         json << "],\n  \"light_map\": " << json_string(map + ".light.png")
              << ",\n  \"detail_texture\": " << json_string(texture_file(terrain.detail_texture));
+        // The HUD's minimap image (<map>_map), north up. Where it lies isn't
+        // stored with it: a battlefield file sets that (Minimap).
+        json << ",\n  \"minimap\": " << json_string(texture_file(map + "_map"));
 
         // The sky and lights. The sun shines along its local +Z (ASSUMPTION),
         // turned by its rotation (w, x, y, z) in the paths' frame: negate z
@@ -792,6 +797,184 @@ int cmd_export_map(const std::vector<std::string>& args) {
     return 0;
 }
 
+void write_hud_node(std::ostream& out, const HudNode& node, int depth) {
+    const std::string indent(size_t(depth) * 2, ' ');
+    out << indent << "{\"keyword\": " << json_string(node.keyword);
+    if (node.has_text) {
+        out << ", \"text\": " << json_string(node.text);
+    }
+    if (!node.values.empty()) {
+        out << ", \"values\": [";
+        for (size_t i = 0; i < node.values.size(); ++i) {
+            out << (i ? ", " : "");
+            if (node.values[i].is_text) {
+                out << json_string(node.values[i].text);
+            } else {
+                out << std::format("{:.6g}", node.values[i].number);
+            }
+        }
+        out << "]";
+    }
+    if (!node.children.empty()) {
+        out << ", \"children\": [\n";
+        for (size_t i = 0; i < node.children.size(); ++i) {
+            write_hud_node(out, node.children[i], depth + 1);
+            out << (i + 1 < node.children.size() ? ",\n" : "\n");
+        }
+        out << indent << "]";
+    }
+    out << "}";
+}
+
+void collect_strings(const HudNode& node, std::set<std::string>& out) {
+    if (node.has_text && !node.text.empty()) {
+        out.insert(lowercase(node.text));
+    }
+    for (const HudNode& child : node.children) {
+        collect_strings(child, out);
+    }
+}
+
+// Writes Battlefront II's HUD for the game's UI: its layouts (hud.json:
+// "layouts", each a tree of elements and properties), its fonts ("fonts":
+// glyph metrics; pages as PNG), and the textures and models the layouts name
+// (textures/, models/ as glTF), plus every texture in common.lvl (the menus'
+// buttons, borders and icons).
+int cmd_export_hud(const std::vector<std::string>& args) {
+    if (args.empty()) {
+        std::cerr << usage;
+        return 2;
+    }
+    const std::filesystem::path lvl_dir = args[0];
+    const std::filesystem::path out_dir = option(args, "-o");
+    if (out_dir.empty()) {
+        std::cerr << usage;
+        return 2;
+    }
+    const std::filesystem::path texture_dir = out_dir / "textures";
+    const std::filesystem::path model_dir = out_dir / "models";
+    std::filesystem::create_directories(texture_dir);
+    std::filesystem::create_directories(model_dir);
+
+    AssetLibrary library;
+    std::vector<std::vector<uint8_t>> bytes;
+    std::vector<UcfbNode> roots;
+    bytes.reserve(3);
+    roots.reserve(3);
+    for (const char* file : {"ingame.lvl", "common.lvl", "core.lvl"}) {
+        bytes.push_back(read_file(lvl_dir / file));
+        library.add(bytes.back());
+        roots.push_back(parse_ucfb(bytes.back()));
+    }
+
+    // Layouts.
+    std::vector<std::pair<std::string, std::vector<HudNode>>> layouts;
+    std::set<std::string> strings;
+    visit_ucfb(roots[0], [&](const UcfbNode& node, int) {
+        if (node.tag != "hud_") {
+            return;
+        }
+        std::vector<HudNode> tree = read_config_tree(node);
+        if (tree.empty()) {
+            return;
+        }
+        for (const HudNode& element : tree) {
+            collect_strings(element, strings);
+        }
+        layouts.emplace_back(tree.front().text, std::move(tree));
+    });
+
+    // Textures and models the layouts name; every texture in common.lvl.
+    std::set<std::string> textures;
+    std::vector<std::string> models;
+    for (const std::string& name : strings) {
+        if (library.texture(name) != nullptr && export_texture(library, name, texture_dir / (name + ".png"))) {
+            textures.insert(name);
+        }
+        if (library.model(name) != nullptr) {
+            const ModelExport written = export_model(library, name, model_dir, texture_dir, textures);
+            if (written.segments > 0) {
+                models.push_back(name);
+            }
+        }
+    }
+    for (const UcfbNode& child : roots[1].children) {
+        if (child.tag == "tex_") {
+            const std::string name = lowercase(child.name());
+            if (export_texture(library, name, texture_dir / (name + ".png"))) {
+                textures.insert(name);
+            }
+        }
+    }
+
+    // Fonts.
+    std::vector<Font> fonts;
+    visit_ucfb(roots[2], [&](const UcfbNode& node, int) {
+        if (node.tag == "font") {
+            fonts.push_back(read_font(node));
+        }
+    });
+
+    // English strings (core.lvl's "english" Locl), by key hash.
+    std::vector<std::pair<uint32_t, std::string>> english;
+    visit_ucfb(roots[2], [&](const UcfbNode& node, int) {
+        if (node.tag == "Locl" && node.name() == "english") {
+            english = read_strings(node);
+        }
+    });
+
+    std::ofstream out(out_dir / "hud.json");
+    out << "{\n\"layouts\": {\n";
+    for (size_t i = 0; i < layouts.size(); ++i) {
+        out << json_string(layouts[i].first) << ": [\n";
+        for (size_t j = 0; j < layouts[i].second.size(); ++j) {
+            write_hud_node(out, layouts[i].second[j], 1);
+            out << (j + 1 < layouts[i].second.size() ? ",\n" : "\n");
+        }
+        out << "]" << (i + 1 < layouts.size() ? ",\n" : "\n");
+    }
+    out << "},\n\"fonts\": {\n";
+    for (size_t i = 0; i < fonts.size(); ++i) {
+        const Font& font = fonts[i];
+        out << json_string(font.name) << ": {\"line_height\": " << font.line_height << ", \"pages\": [";
+        for (size_t p = 0; p < font.pages.size(); ++p) {
+            const std::string page = lowercase(font.pages[p]->name());
+            if (const auto image = read_texture(*font.pages[p])) {
+                swg::write_png(texture_dir / (page + ".png"), *image);
+            }
+            out << (p ? ", " : "") << json_string(page);
+        }
+        out << "],\n  \"glyphs\": [";
+        for (size_t g = 0; g < font.glyphs.size(); ++g) {
+            const FontGlyph& glyph = font.glyphs[g];
+            out << (g ? ",\n    " : "\n    ")
+                << std::format("[{}, {}, {}, {}, {}, {}, {}, {:.6g}, {:.6g}, {:.6g}, {:.6g}]", glyph.character,
+                               glyph.page, glyph.advance, glyph.x_offset, glyph.width, glyph.top,
+                               glyph.bottom, glyph.uv[0], glyph.uv[1], glyph.uv[2], glyph.uv[3]);
+        }
+        out << "]}" << (i + 1 < fonts.size() ? ",\n" : "\n");
+    }
+    out << "},\n\"glyph_fields\": [\"character\", \"page\", \"advance\", \"x_offset\", \"width\", "
+           "\"top\", \"bottom\", \"u0\", \"u1\", \"v0\", \"v1\"],\n\"textures\": [";
+    size_t n = 0;
+    for (const std::string& name : textures) {
+        out << (n++ ? ", " : "") << json_string(name);
+    }
+    out << "],\n\"models\": [";
+    for (size_t i = 0; i < models.size(); ++i) {
+        out << (i ? ", " : "") << json_string(models[i]);
+    }
+    out << "],\n\"strings\": {";
+    for (size_t i = 0; i < english.size(); ++i) {
+        out << (i ? ",\n  " : "\n  ") << std::format("\"{:08x}\": ", english[i].first)
+            << json_string(english[i].second);
+    }
+    out << "\n}\n}\n";
+    std::cout << layouts.size() << " layouts, " << fonts.size() << " fonts, " << textures.size() << " textures, "
+              << models.size() << " models, " << english.size() << " strings\n";
+    return 0;
+}
+
 int cmd_check(const std::vector<std::string>& args) {
     if (args.empty()) {
         std::cerr << usage;
@@ -873,6 +1056,9 @@ int main(int argc, char** argv) {
         }
         if (command == "export-map") {
             return cmd_export_map(args);
+        }
+        if (command == "export-hud") {
+            return cmd_export_hud(args);
         }
     } catch (const std::exception& e) {
         std::cerr << "error: " << e.what() << "\n";

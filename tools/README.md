@@ -95,6 +95,7 @@ bf2tool anims <file.lvl> <bank> [name...]
 bf2tool odf <file.lvl> [class]
 bf2tool export-loadout <_lvl_pc dir> <side> <soldier class> -o <loadout.ini> [--items <dir>]
 bf2tool export-map <_lvl_pc dir> <map> -o <out dir> [--mode conquest] [--skip <layer>]...
+bf2tool export-hud <_lvl_pc dir> -o <out dir>
 ```
 
 Battlefront II munged files (`.lvl`) are `ucfb` chunk trees: `lvl_` sub-levels holding models (`modl`), textures (`tex_`), skeletons (`skel`), animations (`zaa_`/`zaf_`), entity classes (`entc`/`ordc`/`wpnc`/`expc`), and more.
@@ -145,6 +146,16 @@ Battlefront II munged files (`.lvl`) are `ucfb` chunk trees: `lvl_` sub-levels h
   Collision: a `coll` is a model's collision mesh, as vertices (`POSI`) and an AABB tree (`TREE`) whose leaves are convex polygons of vertex indices. A `prim` lists a model's primitives (box: half extents; cylinder: radius and full height along local y; each on a bone). A primitive's name flags what it stops: `p_-so-trunk` stops soldiers and ordnance, and a name without flags stops everything. ASSUMPTION: collision meshes stop both. Textures (`tex_`) store each mip level in one or more Direct3D formats (DXT1/3/5, 32-, 16- and 8-bit); the best one decodable is used.
 
   AI data: a world layer's `BARR` chunks are barriers (`INFO`: `NAME`, `XFRM`, `SIZE` with half extents along local x and z, `FLAG` with the classes kept out: 1 soldiers, 2 hover, 4 small, 8 medium, 16 huge, 32 flyers). The `plan` chunk is the AI's hub graph: `INFO` (hub count, connection count, class count), `NODE` (per hub: a 16-byte name, position, radius, 8 connection slots, then per class a count of tables of one byte per hub) and `ARCS` (per connection: a 16-byte name, from and to hubs, class flags, 4 more bytes). Only barriers are exported; bots plan on their own grid.
+
+- **export-hud**: write Battlefront II's HUD for the game's UI (`game/ui/bf2_hud.gd` draws it). Out comes `hud.json`: its layouts (`layouts`: `hudtransforms`, `1playerhud` ... `4playerhud`, each a tree of elements and properties), its fonts (`fonts`: glyph metrics, pages as PNG), its English strings (`strings`, by key hash) and the textures and models the layouts name (`textures/` as PNG, `models/` as glTF), with every texture in `common.lvl` (the menus' buttons, borders and icons). Game data from your install: write it to `game/imported_assets/hud/`:
+
+  ```powershell
+  bf2tool export-hud "<Battlefront>\GameData\Data\_lvl_pc" -o game\imported_assets\hud
+  ```
+
+  How the HUD is read (`bf2/hud.h`): a `hud_` chunk in `ingame.lvl` is a tree of config records, as world effects are: keywords are hashes of their names, recovered by hashing candidate words (`Group`, `BarBitmap`, `BitmapRect`, `TextFont`, `FadeInTime`, ...; a few remain unknown). A record's values are floats or strings, a string's value being its offset to a block of NUL-terminated strings after the values: `Rect(0.088, 0.111, "Center", "Center", "Viewport")`. Fonts (`font` in `core.lvl`): `HEAD` gives the glyph count and line height, `FBOD` 24 bytes a glyph (character, page, advance, x offset, width, top and bottom rows, then u0 u1 v0 v1), `FTEX` the pages. Strings (`Locl`, one per language): entries of a key hash (FNV-1a of the dotted key, e.g. `common.victoryin`), a size and UTF-16 text.
+
+  `export-map` also writes the map's minimap image (`minimap` in its json: `<map>_map`). Where it lies isn't stored with it; a battlefield file says (`Minimap`). Dagobah's was fitted to its playable outline (the `hell_bush` path), which the image's light area matches.
 
 Animation data uses its own block format inside `BIN_` (byte-reversed tags) and identifies bones and clips by name hash (`bf2/hash.h`). See `bf2/animation.h` for the stream encoding.
 

@@ -64,6 +64,12 @@ const Terrain3DBake = preload("res://tools/terrain3d_bake.gd")
 const SwgBuilding = preload("res://rendering/swg_building.gd")
 const Bf2Map = preload("res://rendering/bf2_map.gd")
 const Soldier = preload("res://rendering/soldier.gd")
+const Bf2Hud = preload("res://ui/bf2_hud.gd")
+const HUD_DIR := "res://imported_assets/hud"  # bf2tool export-hud
+const MAX_ENERGY := 100.0     # core::MoveParams::max_energy
+const TARGET_CONE := 0.035    # radians: a character this close to the crosshair is its target
+const TARGET_RANGE := 150.0
+const SEEN_FIRING := 2.0      # seconds an enemy shows on the minimap after firing
 
 const MOUSE_SENSITIVITY := 0.003
 const CAMERA_DISTANCE := 4.5
@@ -139,6 +145,10 @@ var _kills := 0
 var _deaths := 0
 var _hits := 0
 var _pending_shot := ""
+var _bf2_hud: Bf2Hud              # Battlefront's HUD; null if it isn't exported (the text HUD stands in)
+var _show_stats := false          # F3: network stats
+var _fired := {}                  # entity id -> seconds since it last fired (for the minimap)
+var _map_meta := {}               # the bake's json (its minimap texture)
 var _shot_delay := 0
 
 
@@ -414,6 +424,8 @@ func _on_input(event: InputEvent) -> void:
 			_client.queue(-1)
 		elif not _at_recruiter().is_empty():
 			_client.queue(0 if event.physical_keycode == KEY_F else 1)
+	elif event is InputEventKey and event.pressed and event.physical_keycode == KEY_F3 and not event.echo:
+		_show_stats = not _show_stats
 	elif event is InputEventKey and event.pressed and event.physical_keycode == KEY_V and not event.echo:
 		_first_person = not _first_person
 		_pitch = clampf(_pitch, -1.2, 0.6)
@@ -597,12 +609,165 @@ func _update_hud(delta: float) -> void:
 		var grenades := "" if secondary.is_empty() else " | %s x%d" % [secondary["name"], own["grenades"]]
 		lines.append("health %d / %d | %s: %s%s | energy %d" % [roundi(own["health"]), roundi(_client.get_max_health()),
 				weapon.get("name", "?"), ammo, grenades, roundi(own["energy"])])
+	if _bf2_hud != null:
+		lines.resize(1 if _show_stats else 0)  # Battlefront's HUD shows the rest
+		_update_bf2_hud(delta)
 	_hud.text = "\n".join(lines)
 	_update_match_hud(delta)
 	_hit_flash = maxf(0.0, _hit_flash - delta)
+	_crosshair.visible = _bf2_hud == null
+	_feed.visible = _bf2_hud == null
 	_crosshair.text = "x" if _hit_flash > 0 else "+"
 	_crosshair.modulate = Color(1, 0.3, 0.3) if _hit_flash > 0 else Color.WHITE
 	_feed.text = "\n".join(_feed_lines)
+
+
+# Battlefront's HUD: its events (bindings) from the game's state each frame.
+# Names are the layout's own (player1.*).
+func _update_bf2_hud(delta: float) -> void:
+	for id: int in _fired.keys():
+		_fired[id] = float(_fired[id]) + delta
+	var b := _bf2_hud.bindings
+	b.clear()
+	_bf2_hud.map_markers.clear()
+	_bf2_hud.map_player = {}
+	if not _client.is_spawned():
+		_bf2_hud.queue_redraw()
+		return
+	var own: Dictionary = _client.get_presented()
+	var team := int(own["team"])
+	var game: Dictionary = _client.get_match()
+	var alive := bool(own["alive"]) and str(own.get("life", "alive")) == "alive"
+	if alive:
+		b["player1.weaponsEnable"] = true
+		b["player1.weapon1.reticule.position"] = true
+		b["player1.health"] = true
+		b["player1.healthFraction"] = clampf(float(own["health"]) / maxf(1.0, _client.get_max_health()), 0.0, 1.0)
+		b["player1.energyFraction"] = clampf(float(own["energy"]) / MAX_ENERGY, 0.0, 1.0)
+		var target := _aimed_at(team)
+		var tint := Color8(220, 220, 220)
+		if not target.is_empty():
+			tint = FRIEND_COLOR if team >= 0 and int(target["team"]) == team else ENEMY_COLOR
+		b["player1.weapon1.target.teamColor"] = tint
+		b["player1.weapon1.target.teamColorBright"] = tint.lightened(0.3)
+		if _hit_flash > 0:
+			b["player1.weapon1.target.hit"] = true
+			b["player1.weapon1.target.hitColor"] = Color8(223, 60, 60)
+		var slot: int = own["weapon"]
+		var weapon: Dictionary = _weapons[slot] if slot < _weapons.size() else {}
+		if not weapon.is_empty():
+			b["player1.weapon1.name"] = _display_name(str(weapon["name"]))
+			b["player1.weapon1.change"] = true
+			b["player1.weapon1.mesh"] = str(weapon["name"])
+			if int(weapon.get("rounds_per_clip", 0)) > 0:
+				b["player1.weapon1.totalClipFraction"] = float(own["rounds"]) / float(weapon["rounds_per_clip"])
+				if int(own["reserve"]) < 0:
+					b["player1.weapon1.totalAmmoBullets"] = str(own["rounds"])
+				else:
+					b["player1.weapon1.totalAmmoBullets"] = "%d/%d" % [own["rounds"], own["reserve"]]
+			else:
+				b["player1.weapon1.heat"] = clampf(float(own["heat"]), 0.0, 1.0)
+				b["player1.weapon1.ammoInfinite"] = true
+		var secondary: Dictionary = _client.get_secondary()
+		if not secondary.is_empty():
+			b["player1.weapon2.name"] = _display_name(str(secondary["name"]))
+			b["player1.weapon2.change"] = true
+			b["player1.weapon2.mesh"] = str(secondary["name"])
+			b["player1.weapon2.totalAmmoBullets"] = str(own["grenades"])
+		var position: Vector3 = own["position"]
+		_bf2_hud.map_player = {"position": Vector2(position.x, position.z), "yaw": _yaw if _bot == "" else float(own["yaw"])}
+	if not game.is_empty() and team >= 0:
+		for side in 2:
+			var slot := "player1.team%d" % (1 if side == team else 2)
+			b[slot + ".texture"] = _team_icon(side)
+			b[slot + ".reinforcements"] = ceili(game["tickets"][side])
+		var dominant := int(game.get("dominant", -1))
+		if game["phase"] == "live" and dominant >= 0:
+			b["victorytimer" if dominant == team else "defeattimer"] = ceili(game["victory_left"])
+	_update_minimap(team, game)
+	_bf2_hud.apply_tables()
+	_bf2_hud.queue_redraw()
+
+
+# The minimap: its image where the battlefield file places it, the command
+# posts, your side's soldiers, and enemies seen firing.
+func _update_minimap(team: int, game: Dictionary) -> void:
+	if _bf2_hud.map_player.is_empty() or _battlefield.is_empty():
+		return
+	if _bf2_hud.minimap.is_empty():
+		var file := str(_map_meta.get("minimap", ""))
+		var image := Image.load_from_file(ProjectSettings.globalize_path("res://" + str(_map_meta["dir"]).path_join(file))) \
+				if file != "" else null
+		var edges: Array = _battlefield.get("minimap", [0, 0, 0, 0])
+		if image == null:
+			return
+		if edges.is_empty() or (float(edges[0]) == 0 and float(edges[2]) == 0):
+			# No placement given: the image spans the battlefield's bounds.
+			edges = [_battlefield["min_x"], _battlefield["min_z"], _battlefield["max_x"], _battlefield["max_z"]]
+		_bf2_hud.minimap = {"texture": ImageTexture.create_from_image(image), "left_x": edges[0], "top_z": edges[1],
+				"right_x": edges[2], "bottom_z": edges[3]}
+		_bf2_hud.bindings["player1.map.enable"] = true
+	_bf2_hud.bindings["player1.map.enable"] = true
+	if not game.is_empty():
+		for i in (game["posts"] as Array).size():
+			var post: Dictionary = _battlefield["posts"][i]
+			var at: Vector3 = post["position"]
+			_bf2_hud.map_markers.append({"position": Vector2(at.x, at.z), "kind": "post",
+					"color": _post_color(int(game["posts"][i]["owner"]), team)})
+	for remote: Dictionary in _client.get_remotes():
+		if not bool(remote["alive"]):
+			continue
+		var friend := team >= 0 and int(remote["team"]) == team
+		if not friend and float(_fired.get(int(remote["id"]), 1e9)) > SEEN_FIRING:
+			continue
+		var at: Vector3 = remote["position"]
+		_bf2_hud.map_markers.append({"position": Vector2(at.x, at.z), "kind": "soldier",
+				"color": FRIEND_COLOR if friend else ENEMY_COLOR})
+
+
+# The character nearest the crosshair's line, if one is close to it.
+func _aimed_at(_team: int) -> Dictionary:
+	var from := _camera.global_position
+	var forward := -_camera.global_basis.z
+	var best := {}
+	var best_angle := TARGET_CONE
+	for remote: Dictionary in _client.get_remotes():
+		if not bool(remote["alive"]):
+			continue
+		var to: Vector3 = remote["position"] + Vector3.UP * 1.1 - from
+		var distance := to.length()
+		if distance > TARGET_RANGE or distance < 0.5:
+			continue
+		var angle := forward.angle_to(to)
+		if angle < maxf(best_angle, 0.6 / distance) and angle < best_angle + 0.6 / distance:
+			best = remote
+			best_angle = angle
+	return best
+
+
+func _team_icon(team: int) -> String:
+	var name := str(_battlefield["teams"][team]["name"]).to_lower() if not _battlefield.is_empty() else ""
+	if name.contains("rebel"):
+		return "all_icon"
+	if name.contains("empire") or name.contains("imperial"):
+		return "imp_icon"
+	if name.contains("republic"):
+		return "rep_icon"
+	if name.contains("separatist") or name.contains("cis"):
+		return "cis_icon"
+	return "all_icon" if team == 0 else "imp_icon"
+
+
+# A weapon's name for the HUD from its class (imp_weap_inf_rocket_launcher ->
+# Rocket Launcher). Galaxies weapons will bring their own names.
+static func _display_name(weapon_class: String) -> String:
+	var name := weapon_class
+	for prefix in ["_weap_inf_", "_weap_"]:
+		var at := name.find(prefix)
+		if at >= 0:
+			name = name.substr(at + prefix.length())
+			break
+	return name.replace("thermaldetonator", "thermal_detonator").replace("_", " ").capitalize()
 
 
 # Hit markers and the kill feed.
@@ -629,6 +794,30 @@ func _update_events() -> void:
 					_battlefield["posts"][int(event["victim"])]["name"]])
 		if _feed_lines.size() > 5:
 			_feed_lines.remove_at(0)
+		if _bf2_hud != null and not _feed_lines.is_empty() and event["kind"] in ["kill", "captured", "neutralized"]:
+			_bf2_hud.messages.append({"text": _feed_lines[-1], "age": 0.0,
+					"color": _message_color(event)})
+			if _bf2_hud.messages.size() > 16:
+				_bf2_hud.messages.remove_at(0)
+
+
+# A kill-feed line's color: blue when your side scored, red when the enemy did.
+func _message_color(event: Dictionary) -> Color:
+	var own_team := int(_client.get_presented().get("team", -1)) if _client.is_spawned() else -1
+	var scorer := -1
+	if event["kind"] == "kill":
+		var attacker := int(event["attacker"])
+		if attacker == _client.get_entity_id():
+			scorer = own_team
+		else:
+			for remote: Dictionary in _client.get_remotes():
+				if int(remote["id"]) == attacker:
+					scorer = int(remote["team"])
+	else:
+		scorer = int(event["attacker"])  # captures: the team
+	if scorer < 0 or own_team < 0:
+		return Color8(223, 223, 223)
+	return Color8(80, 140, 255) if scorer == own_team else Color8(223, 60, 60)
 
 
 # The soldier drawn for an entity: yours or another player's; null if none.
@@ -707,6 +896,7 @@ func _bolt_start(bolt: Dictionary) -> Dictionary:
 	var soldier := _soldier_of(owner)
 	if soldier == null or not soldier.model.visible:
 		return {"origin": bolt["position"], "offset": Vector3.ZERO}
+	_fired[owner] = 0.0
 	if owner != _client.get_entity_id():  # own shots animated when predicted
 		if bolt["kind"] == "grenade":
 			soldier.throw()
@@ -858,6 +1048,8 @@ func _add_terrain(bake: String, meta: Dictionary, use_terrain3d: bool) -> void:
 
 
 func _setup_scene(bake: String, meta: Dictionary) -> void:
+	_map_meta = meta.duplicate()
+	_map_meta["dir"] = bake.get_base_dir()
 	var environment := Environment.new()
 	environment.background_mode = Environment.BG_COLOR
 	environment.background_color = Color(0.62, 0.72, 0.85)
@@ -888,6 +1080,11 @@ func _setup_scene(bake: String, meta: Dictionary) -> void:
 	root.add_child(_camera)
 
 	var layer := CanvasLayer.new()
+	_bf2_hud = Bf2Hud.new()
+	if _bf2_hud.load_layout(HUD_DIR):
+		layer.add_child(_bf2_hud)
+	else:
+		_bf2_hud = null
 	_hud = Label.new()
 	_hud.set_anchors_and_offsets_preset(Control.PRESET_BOTTOM_LEFT)
 	_hud.grow_vertical = Control.GROW_DIRECTION_BEGIN
@@ -1184,6 +1381,12 @@ func _update_match_hud(delta: float) -> void:
 		names.append("[color=#%s]%s[/color]" % [_post_color(int(game["posts"][i]["owner"]), team).to_html(false),
 				_battlefield["posts"][i]["name"]])
 	_match_label.text = text + "  ".join(names) + "[/center]"
+	if _bf2_hud != null:
+		# Battlefront's HUD shows the tickets, posts (on the map) and the
+		# victory timer; only the warmup, which Battlefront hasn't, stays.
+		var warmup: bool = game["phase"] == "warmup"
+		_match_label.text = "[center]\n\n\n\n\nWarmup: the match starts in %d s[/center]" % ceili(game["time_left"]) \
+				if warmup else ""
 
 	var position: Vector3 = own["position"]
 	var inside := position.x >= float(_battlefield["min_x"]) and position.x <= float(_battlefield["max_x"]) \

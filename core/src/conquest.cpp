@@ -138,6 +138,14 @@ Battlefield load_battlefield(const std::filesystem::path& path) {
     field.bleed = main->number("Bleed", field.bleed);
     field.out_of_bounds_time = main->number("OutOfBoundsTime", field.out_of_bounds_time);
     field.min_players = size_t(std::max(1.0, main->number("MinPlayers", double(field.min_players))));
+    if (const auto minimap = main->get("Minimap")) {
+        std::istringstream fields(*minimap);
+        double x0 = 0, z0 = 0, x1 = 0, z1 = 0;
+        if (!(fields >> x0 >> z0 >> x1 >> z1) || x0 == x1 || z0 == z1) {
+            throw std::runtime_error(where + ": Minimap is \"left_x top_z right_x bottom_z\"");
+        }
+        field.minimap = {-x0, z0, -x1, z1};  // x runs the other way in game space
+    }
 
     size_t team_count = 0;
     for (const Ini::Section& s : ini.sections()) {

@@ -83,7 +83,7 @@ Combat notes:
 Bots play through a `GameClient`, with a player's controls and view. `swm_server --bots N` connects them over UDP from the server process, and a whole match runs in `match_test`.
 
 **Presentation**
-- [ ] HUD: health, ammo/heat, command-post status, tickets, minimap. All but the minimap, in the dev client (`net_demo.gd`).
+- [x] HUD: Battlefront II's own, drawn from its layout, textures, models and fonts (`bf2tool export-hud`, `game/ui/bf2_hud.gd`): reticle with clip and heat arcs, target color and hit marker; health and stamina bars; weapon panels with names and ammo; reinforcements with the sides' icons; the round minimap (command posts, your side, enemies seen firing); kill messages; victory and defeat timers. F3 shows network stats. Missing: the weapon models in the panels (soldiers all hold the E-11 for now) and the spawn, score and pause screens.
 - [x] Scoreboard and end-of-match screen (dev client: kills, deaths and captures per team)
 - [ ] Battlefront audio: weapons, voice-overs, music
 

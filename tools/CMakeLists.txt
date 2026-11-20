@@ -36,6 +36,7 @@ endforeach()
 # Battlefront II asset library: munged ucfb files.
 add_library(swm_bf2 STATIC
   bf2/animation.cpp
+  bf2/hud.cpp
   bf2/level.cpp
   bf2/model.cpp
   bf2/model_export.cpp
@@ -56,7 +57,7 @@ add_executable(bf2tool bf2tool/main.cpp)
 target_link_libraries(bf2tool PRIVATE swm_bf2)
 swm_target_warnings(bf2tool)
 
-foreach(test animation_test level_test model_test ucfb_test)
+foreach(test animation_test hud_test level_test model_test ucfb_test)
   add_executable(${test} bf2/tests/${test}.cpp)
   target_link_libraries(${test} PRIVATE swm_bf2)
   swm_target_warnings(${test})

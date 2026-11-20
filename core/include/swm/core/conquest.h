@@ -59,6 +59,10 @@ struct Battlefield {
     double bleed = 0.1;            // tickets per second the other team loses, per post of lead
     double out_of_bounds_time = 10;  // seconds outside the bounds before dying
     size_t min_players = 1;        // the warmup waits for this many
+    // Where the HUD's minimap image lies, for drawing: the game-space x and z
+    // under its left, top, right and bottom edges. Unset (all zero): the
+    // client fits the image to the bounds.
+    std::array<double, 4> minimap{};
 
     bool contains(Vec3 point) const;
     Vec3 center() const;
@@ -70,7 +74,9 @@ struct Battlefield {
 // are relative to it. `Map = <file>` takes the bounds, terrain and command
 // posts from a map file written by `bf2tool export-map` (its posts name
 // their starting team by number: 1 is the first [team]), and its barriers
-// (`Barrier = x1 z1 x2 z2 x3 z3 x4 z4`, corners in order). Throws
+// (`Barrier = x1 z1 x2 z2 x3 z3 x4 z4`, corners in order). `Minimap = x0 z0
+// x1 z1` is where the map's minimap image lies: the coordinates under its
+// left, top, right and bottom edges (north up). Throws
 // std::runtime_error if it, a map or a loadout can't be read or makes no
 // sense.
 Battlefield load_battlefield(const std::filesystem::path& path);
