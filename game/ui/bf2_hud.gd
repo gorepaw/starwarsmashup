@@ -35,6 +35,10 @@ const PIXEL_REFERENCE := 480.0   # "Pixels" positions (ASSUMPTION: a 640x480 scr
 const MAP_RADIUS := 0.125        # the small map's radius, in screen heights before its Scale (ASSUMPTION)
 const MAP_RANGE := 90.0          # meters from the player to the small map's edge
 
+# [layout, element name]: added to the layout drawn, at top level.
+const EXTRA_ELEMENTS := [["2playerhud", "player1cpstatus"]]
+const POST_ICON := "hud_flag_icon"   # com_bldg_controlzone's MapTexture
+
 # Element keywords drawn (others, and properties, are skipped).
 const MESSAGE_LIST := "d53e50d7"
 const SEGMENT_BAR := "4b4bf31a"
@@ -55,6 +59,9 @@ var minimap := {}         # {texture, left_x, top_z, right_x, bottom_z} (game sp
 var map_markers: Array = []  # [{position: Vector2 (game x, z), color, kind: "post" | "soldier", label}]
 var map_player := {}      # {position: Vector2, yaw}
 var messages: Array = []  # [{text, color, age}], newest last
+# Our adjustments to Battlefront's placements: element name -> offset, in
+# the 4:3 frame's units (x of 4/3 of the screen height, y of its height).
+var nudges := {}
 
 var art: RefCounted       # Bf2Art: textures, fonts, strings
 var _dir := ""
@@ -72,7 +79,14 @@ func load_layout(dir: String, layout := "1playerhud") -> bool:
 	var data: Dictionary = art.get_meta("data")
 	if not data["layouts"].has(layout):
 		return false
-	_layout = data["layouts"][layout]
+	_layout = data["layouts"][layout].duplicate()
+	# Elements the single-player layout lacks, taken from the per-player
+	# group of the two-player one: the command post capture ring (on the
+	# right, while you're in a post's range).
+	for extra: Array in EXTRA_ELEMENTS:
+		var found := _find(data["layouts"].get(extra[0], []), extra[1])
+		if not found.is_empty():
+			_layout.append(found)
 	for node: Dictionary in data["layouts"].get("hudtransforms", []):
 		_collect_tables(node)
 	set_anchors_preset(Control.PRESET_FULL_RECT)
@@ -175,6 +189,9 @@ func _local(node: Dictionary, top: bool, screen: Vector2) -> Transform2D:
 			position = Vector2(float(v[0]) * screen.x, float(v[1]) * screen.y)
 		else:
 			position = Vector2(float(v[0]) * ASPECT * screen.y, float(v[1]) * screen.y)
+	if nudges.has(str(node.get("text", ""))):
+		var nudge: Vector2 = nudges[str(node["text"])]
+		position += Vector2(nudge.x * ASPECT * screen.y, nudge.y * screen.y)
 	if not event.is_empty() and bindings.get(str(event["text"])) is Vector2:
 		var p: Vector2 = bindings[str(event["text"])]
 		position = Vector2(p.x * screen.x, p.y * screen.y)
@@ -376,6 +393,7 @@ func _map(node: Dictionary, xf: Transform2D, color: Color, z: float, screen: Vec
 		_add(z - 1, func() -> void:
 			draw_set_transform_matrix(cone)
 			draw_mesh(fov["mesh"], fov["texture"], Transform2D(), cone_color))
+	var post_icon := _texture(POST_ICON)
 	for marker: Dictionary in map_markers:
 		var at: Vector2 = to_map.call(marker["position"])
 		if at.length() > radius * 0.95:
@@ -387,8 +405,13 @@ func _map(node: Dictionary, xf: Transform2D, color: Color, z: float, screen: Vec
 		var marker_color: Color = marker["color"]
 		_add(z - 2, func() -> void:
 			draw_set_transform_matrix(xf)
-			draw_circle(at, dot_size * 0.5 + 1.0, Color(0, 0, 0, 0.6 * marker_color.a))
-			draw_circle(at, dot_size * 0.5, marker_color))
+			if big and post_icon != null:
+				# Battlefront's command post icon, in the owner's color.
+				draw_texture_rect(post_icon, Rect2(at - Vector2(dot_size, dot_size) * 0.5, Vector2(dot_size, dot_size)),
+						false, marker_color)
+			else:
+				draw_circle(at, dot_size * 0.5 + 1.0, Color(0, 0, 0, 0.6 * marker_color.a))
+				draw_circle(at, dot_size * 0.5, marker_color))
 	var north := _texture("hud_map_northpointer")
 	if north != null:
 		var direction := Vector2(0, -1).rotated(yaw)
@@ -428,6 +451,17 @@ func _prop(node: Dictionary, keyword: String) -> Dictionary:
 	for child: Dictionary in node.get("children", []):
 		if child["keyword"] == keyword and not child.has("children"):
 			return child
+	return {}
+
+
+# An element anywhere in a tree, by name.
+func _find(nodes: Array, name: String) -> Dictionary:
+	for node: Dictionary in nodes:
+		if str(node.get("text", "")) == name and node.has("children"):
+			return node
+		var found := _find(node.get("children", []), name)
+		if not found.is_empty():
+			return found
 	return {}
 
 

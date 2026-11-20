@@ -155,6 +155,8 @@ Battlefront II munged files (`.lvl`) are `ucfb` chunk trees: `lvl_` sub-levels h
 
   How the HUD is read (`bf2/hud.h`): a `hud_` chunk in `ingame.lvl` is a tree of config records, as world effects are: keywords are hashes of their names, recovered by hashing candidate words (`Group`, `BarBitmap`, `BitmapRect`, `TextFont`, `FadeInTime`, ...; a few remain unknown). A record's values are floats or strings, a string's value being its offset to a block of NUL-terminated strings after the values: `Rect(0.088, 0.111, "Center", "Center", "Viewport")`. Fonts (`font` in `core.lvl`): `HEAD` gives the glyph count and line height, `FBOD` 24 bytes a glyph (character, page, advance, x offset, width, top and bottom rows, then u0 u1 v0 v1), `FTEX` the pages. Strings (`Locl`, one per language): entries of a key hash (FNV-1a of the dotted key, e.g. `common.victoryin`), a size and UTF-16 text.
 
+  `export-map` also writes each command post's hologram with its object (`hologram` in `<map>.objects.json`): the insignia models per side (`HoloImageGeometry`), and the hologram class's (`HoloOdf`) height, size, turn rate, light radius and friendly, enemy and neutral colors, plus the post's map icon (`MapTexture`). Property names were recovered by hashing candidates, as the HUD's were.
+
   `export-map` also writes the map's minimap image (`minimap` in its json: `<map>_map`). Where it lies isn't stored with it; a battlefield file says (`Minimap`). Dagobah's was fitted to its playable outline (the `hell_bush` path), which the image's light area matches.
 
 Animation data uses its own block format inside `BIN_` (byte-reversed tags) and identifies bones and clips by name hash (`bf2/hash.h`). See `bf2/animation.h` for the stream encoding.

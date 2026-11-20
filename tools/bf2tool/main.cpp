@@ -9,6 +9,7 @@
 #include <map>
 #include <set>
 #include <span>
+#include <sstream>
 #include <string>
 #include <vector>
 
@@ -728,9 +729,51 @@ int cmd_export_map(const std::vector<std::string>& args) {
                     }
                 }
             }
+            // A command post's hologram: its owner's insignia floating over it
+            // (HoloOdf, HoloImageGeometry per side), and its minimap icon.
+            std::string hologram;
+            if (library.classes().find(object.type) != nullptr) {
+                const OdfClass resolved = library.classes().resolve(object.type);
+                if (const auto holo_odf = resolved.get("HoloOdf")) {
+                    const OdfClass holo = library.classes().resolve(*holo_odf);
+                    const auto number = [&](std::string_view name, double fallback) {
+                        const auto value = holo.get(name);
+                        return value ? std::atof(value->c_str()) : fallback;
+                    };
+                    const auto color = [&](std::string_view name) {
+                        const std::string value = holo.get(name).value_or("255 255 255");
+                        int r = 255, g = 255, b = 255;
+                        std::istringstream(value) >> r >> g >> b;
+                        return std::format("[{:.3f}, {:.3f}, {:.3f}]", r / 255.0, g / 255.0, b / 255.0);
+                    };
+                    std::string images;
+                    for (const auto& [hash, value] : resolved.properties) {
+                        if (hash != odf_hash("HoloImageGeometry")) {
+                            continue;
+                        }
+                        const size_t space = value.find(' ');
+                        if (space == std::string::npos) {
+                            continue;
+                        }
+                        const std::string file = model_file(value.substr(0, space));
+                        if (!file.empty()) {
+                            images += (images.empty() ? "" : ", ") + json_string(lowercase(value.substr(space + 1))) +
+                                      ": " + json_string(file);
+                        }
+                    }
+                    hologram = std::format(
+                        ", \"hologram\": {{\"images\": {{{}}}, \"height\": {}, \"size\": {}, \"rotate_rate\": {}, "
+                        "\"light_radius\": {}, \"friendly_color\": {}, \"enemy_color\": {}, \"neutral_color\": {}, "
+                        "\"map_texture\": {}, \"map_scale\": {}}}",
+                        images, number("HoloHeight", 3.5), number("HoloSize", 2.5), number("HoloRotateRate", 0.2),
+                        number("HoloLightRadius", 8.0), color("FriendlyColor"), color("EnemyColor"),
+                        color("NeutralColor"), json_string(texture_file(resolved.get("MapTexture").value_or(""))),
+                        std::atof(resolved.get("MapScale").value_or("1").c_str()));
+                }
+            }
             json << (written++ ? ",\n" : "\n") << "    {\"layer\": " << json_string(object.layer)
                  << ", \"class\": " << json_string(object.type) << ", \"name\": " << json_string(object.name)
-                 << ", \"model\": " << json_string(model)
+                 << ", \"model\": " << json_string(model) << hologram
                  << std::format(", \"position\": [{}, {}, {}], \"basis\": [", -object.position[0], object.position[1],
                                 object.position[2]);
             for (size_t i = 0; i < 9; ++i) {

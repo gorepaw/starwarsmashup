@@ -76,6 +76,8 @@ const MAX_ENERGY := 100.0     # core::MoveParams::max_energy
 const TARGET_CONE := 0.035    # radians: a character this close to the crosshair is its target
 const TARGET_RANGE := 150.0
 const SEEN_FIRING := 2.0      # seconds an enemy shows on the minimap after firing
+const AMMO_NUDGE := Vector2(0.025, 0)  # the ammo counts, right of Battlefront's place (4:3 frame units)
+const DISPUTE_COLOR := Color8(240, 220, 30)  # com_holo_controlzone's fifth color (ASSUMPTION: disputed)
 
 const MOUSE_SENSITIVITY := 0.003
 const CAMERA_DISTANCE := 4.5
@@ -130,7 +132,7 @@ var _weapon := 0                  # slot wanted
 var _bolt_materials := {}         # bolt color (html) -> material
 var _bolt_mesh: BoxMesh           # a unit cube, scaled per bolt
 var _battlefield: Dictionary = {} # from SwmClient.get_battlefield; empty outside a match
-var _posts: Array = []            # per command post: {beam, ring, label, material}
+var _posts: Array = []            # per command post: {hologram} (its model's), or {material, label} (a beam)
 var _spawn_loadout := 0
 var _spawn_post := -1
 var _spawn_requested := false
@@ -725,6 +727,8 @@ func _update_bf2_hud(delta: float) -> void:
 		var dominant := int(game.get("dominant", -1))
 		if game["phase"] == "live" and dominant >= 0:
 			b["victorytimer" if dominant == team else "defeattimer"] = ceili(game["victory_left"])
+	if alive and not game.is_empty():
+		_update_capture_ring(own, team, game)
 	_update_minimap(team, game)
 	_bf2_hud.apply_tables()
 	_bf2_hud.queue_redraw()
@@ -795,6 +799,26 @@ func _update_screens() -> void:
 		_score_screen.winner = int(game.get("winner", -1))
 		_score_screen.next_in = float(game.get("time_left", 0.0))
 		_score_screen.queue_redraw()
+
+
+# Battlefront's capture ring (player1cpstatus): shown while you stand in a
+# command post's capture region; it fills with the post's charge in the
+# color of the side it belongs to, its ring yellow while disputed.
+func _update_capture_ring(own: Dictionary, team: int, game: Dictionary) -> void:
+	var at: Vector3 = own["position"]
+	for i in (game["posts"] as Array).size():
+		var post: Dictionary = _battlefield["posts"][i]
+		var center: Vector3 = post["position"]
+		var radius := float(post["radius"])
+		if Vector2(at.x - center.x, at.z - center.z).length_squared() > radius * radius:
+			continue
+		var state: Dictionary = game["posts"][i]
+		var holder := int(state["holder"])
+		var b := _bf2_hud.bindings
+		b["player1.commandPost.charge"] = clampf(float(state["charge"]), 0.0, 1.0) if holder >= 0 else 0.0
+		b["player1.commandPost.color"] = NEUTRAL_COLOR if holder < 0 else (FRIEND_COLOR if holder == team else ENEMY_COLOR)
+		b["player1.commandPost.disputeColor"] = DISPUTE_COLOR if bool(state["contested"]) else Color(0.75, 0.75, 0.75)
+		return
 
 
 # The minimap: its image where the battlefield file places it, the command
@@ -1165,6 +1189,7 @@ func _add_terrain(bake: String, meta: Dictionary, use_terrain3d: bool) -> void:
 func _setup_scene(bake: String, meta: Dictionary) -> void:
 	_map_meta = meta.duplicate()
 	_map_meta["dir"] = bake.get_base_dir()
+	_map_meta["bake"] = bake
 	var environment := Environment.new()
 	environment.background_mode = Environment.BG_COLOR
 	environment.background_color = Color(0.62, 0.72, 0.85)
@@ -1197,6 +1222,9 @@ func _setup_scene(bake: String, meta: Dictionary) -> void:
 	var layer := CanvasLayer.new()
 	_bf2_hud = Bf2Hud.new()
 	if _bf2_hud.load_layout(HUD_DIR):
+		for ammo in ["player1weapon1ammo", "player1weapon2ammo", "player1weapon1ammoInfinite",
+				"player1weapon2ammoInfinite"]:
+			_bf2_hud.nudges[ammo] = AMMO_NUDGE
 		layer.add_child(_bf2_hud)
 		_spawn_screen = SpawnScreen.new(_bf2_hud.art)
 		_spawn_screen.visible = false
@@ -1273,7 +1301,14 @@ func _setup_scene(bake: String, meta: Dictionary) -> void:
 func _add_posts() -> void:
 	if _battlefield.is_empty():
 		return
+	var holograms := _post_models()
 	for post: Dictionary in _battlefield["posts"]:
+		var model: Dictionary = holograms.get(str(post["name"]).to_lower(), {})
+		if not model.is_empty():
+			_posts.append({"hologram": _add_hologram(model)})
+			continue
+		# No Battlefront post here (e.g. a Galaxies test field): a beam, the
+		# capture region's ring and the name.
 		var material := StandardMaterial3D.new()
 		material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
 		material.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
@@ -1310,6 +1345,78 @@ func _add_posts() -> void:
 		_posts.append({"material": material, "label": label, "nodes": [beam, ring, label]})
 
 
+# The map's command post models with a hologram (bf2tool export-map), by
+# name (cp1 ...), which is the post's: {position, hologram}.
+func _post_models() -> Dictionary:
+	var out := {}
+	var path := "res://" + str(_map_meta.get("bake", "")) + ".objects.json"
+	if _map_meta.get("bake", "") == "" or not FileAccess.file_exists(path):
+		return out
+	var data: Variant = JSON.parse_string(FileAccess.get_file_as_string(path))
+	if not data is Dictionary:
+		return out
+	for object: Dictionary in data.get("objects", []):
+		if object.has("hologram"):
+			var at: Array = object["position"]
+			out[str(object["name"]).to_lower()] = {"position": Vector3(at[0], at[1], at[2]), "hologram": object["hologram"]}
+	return out
+
+
+# Battlefront's command post hologram: the holding side's insignia turning
+# over the post's projector, lit in its color (green for yours, red for the
+# enemy's; nothing while neutral), and its light.
+func _add_hologram(model: Dictionary) -> Dictionary:
+	var spec: Dictionary = model["hologram"]
+	var pivot := Node3D.new()
+	pivot.position = model["position"] + Vector3.UP * float(spec["height"])
+	pivot.scale = Vector3.ONE * float(spec["size"])
+	root.add_child(pivot)
+	var images := {}
+	for side: String in spec["images"]:
+		var document := GLTFDocument.new()
+		var state := GLTFState.new()
+		var file := ProjectSettings.globalize_path("res://" + str(_map_meta["dir"]).path_join(spec["images"][side]))
+		if document.append_from_file(file, state) != OK:
+			continue
+		var scene: Node3D = document.generate_scene(state)
+		scene.visible = false
+		pivot.add_child(scene)
+		var materials: Array = []
+		for mesh: MeshInstance3D in scene.find_children("*", "MeshInstance3D", true, false):
+			mesh.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+			for surface in mesh.mesh.get_surface_count():
+				var source := mesh.mesh.surface_get_material(surface) as StandardMaterial3D
+				var glow := source.duplicate() as StandardMaterial3D if source != null else StandardMaterial3D.new()
+				glow.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+				glow.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+				glow.blend_mode = BaseMaterial3D.BLEND_MODE_ADD
+				glow.cull_mode = BaseMaterial3D.CULL_DISABLED
+				glow.no_depth_test = false
+				mesh.set_surface_override_material(surface, glow)
+				materials.append(glow)
+		images[side] = {"node": scene, "materials": materials}
+	var light := OmniLight3D.new()
+	light.omni_range = float(spec["light_radius"])
+	light.light_energy = 0.5
+	light.visible = false
+	light.position = model["position"] + Vector3.UP * float(spec["height"])
+	root.add_child(light)
+	var c: Array = spec["friendly_color"]
+	var e: Array = spec["enemy_color"]
+	return {"pivot": pivot, "images": images, "light": light, "rate": float(spec["rotate_rate"]),
+			"friendly": Color(c[0], c[1], c[2]), "enemy": Color(e[0], e[1], e[2])}
+
+
+# The hologram key (HoloImageGeometry's side) for a team: from its icon.
+func _holo_side(team: int) -> String:
+	match _team_icon(team):
+		"all_icon": return "alliance"
+		"imp_icon": return "empire"
+		"rep_icon": return "republic"
+		"cis_icon": return "cis"
+	return ""
+
+
 # Arrived on another server (a battle, or back at the hub): everything about
 # the last one goes.
 func _arrive() -> void:
@@ -1317,7 +1424,10 @@ func _arrive() -> void:
 		(character["model"] as Node).queue_free()
 	_remotes.clear()
 	for post: Dictionary in _posts:
-		for node: Node in post["nodes"]:
+		var nodes: Array = post.get("nodes", [])
+		if post.has("hologram"):
+			nodes = [post["hologram"]["pivot"], post["hologram"]["light"]]
+		for node: Node in nodes:
 			node.queue_free()
 	_posts.clear()
 	for node: Node in _recruiter_nodes:
@@ -1418,6 +1528,9 @@ func _update_posts(game: Dictionary, own_team: int) -> void:
 		return
 	for i in mini(_posts.size(), (game["posts"] as Array).size()):
 		var state: Dictionary = game["posts"][i]
+		if _posts[i].has("hologram"):
+			_update_hologram(_posts[i]["hologram"], int(state["owner"]), own_team)
+			continue
 		var color := _post_color(int(state["owner"]), own_team)
 		var material: StandardMaterial3D = _posts[i]["material"]
 		material.albedo_color = Color(color, 0.75)
@@ -1429,6 +1542,22 @@ func _update_posts(game: Dictionary, own_team: int) -> void:
 			text += " %d%%" % roundi(float(state["charge"]) * 100)
 		label.text = text
 		label.modulate = color
+
+
+func _update_hologram(holo: Dictionary, owner: int, own_team: int) -> void:
+	var side := _holo_side(owner) if owner >= 0 else ""
+	var color: Color = holo["friendly"] if owner == own_team else holo["enemy"]
+	var flicker := 0.85 + 0.15 * sin(_elapsed * 23.0) * sin(_elapsed * 7.0)
+	(holo["pivot"] as Node3D).rotation.y = _elapsed * float(holo["rate"]) * TAU
+	for key: String in holo["images"]:
+		var image: Dictionary = holo["images"][key]
+		(image["node"] as Node3D).visible = key == side
+		if key == side:
+			for material: StandardMaterial3D in image["materials"]:
+				material.albedo_color = Color(color, 0.55 * flicker)
+	var light: OmniLight3D = holo["light"]
+	light.visible = side != ""
+	light.light_color = color
 
 
 func _team_name(team: int) -> String:

@@ -85,9 +85,12 @@ func _paint_map(box: Rect2) -> void:
 		var r := 11.0 * u
 		if i == post and flash != null:
 			draw_texture_rect(flash, Rect2(at - Vector2(r, r) * 1.9, Vector2(r, r) * 3.8), false, Color(1, 1, 1, 0.9))
-		draw_circle(at, r + 2 * u, Color(0, 0, 0, 0.6))
-		draw_circle(at, r, p["color"])
-		draw_arc(at, r, 0, TAU, 32, Color(1, 1, 1, 0.8), maxf(1.0, 1.5 * u), true)
+		var icon: Texture2D = art.texture("hud_flag_icon")  # the posts' map icon
+		if icon != null:
+			draw_circle(at, r * 0.9, Color(0, 0, 0, 0.5))
+			draw_texture_rect(icon, Rect2(at - Vector2(r, r), Vector2(r, r) * 2), false, p["color"])
+		else:
+			draw_circle(at, r, p["color"])
 		text("gamefont_tiny", str(p["name"]), at + Vector2(0, r + 2 * u), "Center", TEXT)
 		if p.get("ours", false):
 			region(Rect2(at - Vector2(r, r) * 1.6, Vector2(r, r) * 3.2), "post:%d" % i)
