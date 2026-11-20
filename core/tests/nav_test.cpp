@@ -28,8 +28,8 @@ void add_box(MapCollision& collision, Vec3 low, Vec3 high) {
     };
     const int faces[6][4] = {{0, 1, 3, 2}, {4, 6, 7, 5}, {0, 4, 5, 1}, {2, 3, 7, 6}, {0, 2, 6, 4}, {1, 5, 7, 3}};
     for (const auto& f : faces) {
-        collision.triangles.push_back({corner(f[0]), corner(f[1]), corner(f[2])});
-        collision.triangles.push_back({corner(f[0]), corner(f[2]), corner(f[3])});
+        collision.triangles.push_back({corner(f[0]), corner(f[2]), corner(f[1])});
+        collision.triangles.push_back({corner(f[0]), corner(f[3]), corner(f[2])});
     }
 }
 

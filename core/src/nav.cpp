@@ -111,10 +111,7 @@ void NavGrid::build(Tile& tile, int tile_x, int tile_z) const {
             bool open = ground.on_floor || ground.normal.y >= min_normal_y;
             if (open) {
                 // No wall within the (widened) body...
-                const Vec3 feet{c.x, ground.height, c.z};
-                Vec3 velocity;
-                const Vec3 pushed = world_.resolve_walls(feet, feet, radius, move_.height, move_.step_up, velocity);
-                open = std::abs(pushed.x - feet.x) + std::abs(pushed.z - feet.z) < 1e-9;
+                open = !world_.overlaps_walls({c.x, ground.height, c.z}, radius, move_.height, move_.step_up);
             }
             if (open) {
                 // ...and nothing over it, between knees and head (inside a

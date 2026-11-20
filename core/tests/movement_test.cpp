@@ -228,15 +228,15 @@ void test_buildings() {
           loaded.walls[0].b == walled.walls[0].b && near(loaded.walls[0].height, 3));
 }
 
-// An axis-aligned box as 12 triangles.
+// An axis-aligned box as 12 triangles, facing outward (as props do).
 void add_box(MapCollision& collision, Vec3 low, Vec3 high, uint8_t blocks = blocks_characters | blocks_shots) {
     const auto corner = [&](int i) {
         return Vec3{i & 1 ? high.x : low.x, i & 2 ? high.y : low.y, i & 4 ? high.z : low.z};
     };
     const int faces[6][4] = {{0, 1, 3, 2}, {4, 6, 7, 5}, {0, 4, 5, 1}, {2, 3, 7, 6}, {0, 2, 6, 4}, {1, 5, 7, 3}};
     for (const auto& f : faces) {
-        collision.triangles.push_back({corner(f[0]), corner(f[1]), corner(f[2]), blocks});
-        collision.triangles.push_back({corner(f[0]), corner(f[2]), corner(f[3]), blocks});
+        collision.triangles.push_back({corner(f[0]), corner(f[2]), corner(f[1]), blocks});
+        collision.triangles.push_back({corner(f[0]), corner(f[3]), corner(f[2]), blocks});
     }
 }
 
@@ -284,6 +284,26 @@ void test_map_collision() {
     lean_world.add_map_collision(lean);
     state = run(start, east, lean_world, 60);
     CHECK(state.position.x < -45 && state.position.x > -46);
+
+    // A raised log's underside, within a step of the feet, isn't ground: it
+    // doesn't lift a character into the log.
+    MapCollision log;
+    add_box(log, {-46, 0.3, 45}, {-40, 1.2, 55});
+    World log_world(flat);
+    log_world.add_map_collision(log);
+    CHECK(!log_world.ground_at(-43, 50, 0, 0.5).on_floor && near(log_world.ground_at(-43, 50, 0, 0.5).height, 0));
+    CHECK(near(log_world.ground_at(-43, 50, 1.2, 0.5).height, 1.2));  // its top is
+
+    // A character that ends up inside a prop walks out whichever way it
+    // likes, instead of being pinned by faces pushing opposite ways; the
+    // prop still stops it from outside.
+    MoveState inside;
+    inside.position = {-45, 0, 50};
+    CHECK(run(inside, east, crate_world, 30).position.x > -44 + params.radius);
+    MoveInput west = east;
+    west.yaw = float(std::numbers::pi / 2);
+    CHECK(run(inside, west, crate_world, 30).position.x < -46 - params.radius);
+    CHECK(near(run(start, east, crate_world, 60).position.x, -46 - params.radius, 1e-6));
 
     // What a triangle stops: characters only, or shots only.
     MapCollision ghost, glass;

@@ -108,6 +108,51 @@ Vec3 closest_on_segment_xz(Vec3 p, Vec3 q, double x, double z) {
     return {p.x + ex * t, 0, p.z + ez * t};
 }
 
+// Where a body's center stands against a convex polygon seen from above:
+// over it, or else how far from it and its nearest point.
+struct Contact {
+    bool over = false;
+    double distance = 0;
+    Vec3 nearest;
+};
+
+Contact contact_xz(const Vec3* polygon, int n, Vec3 center) {
+    // Over the polygon: every edge turns the same way around the center.
+    Contact out;
+    double turn = 0;
+    bool over = n >= 3;
+    for (int i = 0; i < n && over; ++i) {
+        const double c = cross_xz(polygon[i], polygon[(i + 1) % n], center);
+        if (std::abs(c) < 1e-12) {
+            continue;
+        }
+        over = turn == 0 || (c > 0) == (turn > 0);
+        turn = c;
+    }
+    out.over = over && turn != 0;
+    if (out.over) {
+        return out;
+    }
+    double best = std::numeric_limits<double>::infinity();
+    for (int i = 0; i < n; ++i) {
+        const Vec3 q = closest_on_segment_xz(polygon[i], polygon[(i + 1) % n], center.x, center.z);
+        const double d2 = (q.x - center.x) * (q.x - center.x) + (q.z - center.z) * (q.z - center.z);
+        if (d2 < best) {
+            best = d2;
+            out.nearest = q;
+        }
+    }
+    out.distance = std::sqrt(best);
+    return out;
+}
+
+// The part of a triangle between two heights (a body's knees and head).
+// Returns the vertex count; `slab` holds up to 8.
+int slab_of(const Vec3 (&triangle)[3], double lo, double hi, Vec3* slab) {
+    Vec3 above[8];
+    return clip_height(above, clip_height(triangle, 3, lo, true, above), hi, false, slab);
+}
+
 } // namespace
 
 void save_building_collision(const BuildingCollision& collision, const std::filesystem::path& path) {
@@ -272,14 +317,17 @@ void World::add_map_collision(const MapCollision& collision) {
         if (length < 1e-9 || t.blocks == 0) {
             continue;  // degenerate, or stops nothing
         }
-        Solid s{t.a, t.b, t.c, n * (1 / length), 0, 0, 0, 0, 0, 0, t.blocks, false};
+        Solid s{t.a, t.b, t.c, n * (1 / length), 0, 0, 0, 0, 0, 0, t.blocks, false, false};
         s.min_x = std::min({t.a.x, t.b.x, t.c.x});
         s.max_x = std::max({t.a.x, t.b.x, t.c.x});
         s.min_y = std::min({t.a.y, t.b.y, t.c.y});
         s.max_y = std::max({t.a.y, t.b.y, t.c.y});
         s.min_z = std::min({t.a.z, t.b.z, t.c.z});
         s.max_z = std::max({t.a.z, t.b.z, t.c.z});
-        s.floor = std::abs(s.normal.y) >= walkable_normal_y;
+        // Props' triangles face outward (Battlefront's do): a gentle one
+        // facing down is an underside, not ground to be lifted onto.
+        s.floor = s.normal.y >= walkable_normal_y;
+        s.ceiling = s.normal.y <= -walkable_normal_y;
         solids_.push_back(s);
     }
     // Rebuild the grid over every solid.
@@ -524,6 +572,17 @@ std::optional<double> World::raycast(Vec3 a, Vec3 b) const {
 
 Vec3 World::resolve_walls(Vec3 from, Vec3 position, double radius, double height, double step_up,
                           Vec3& velocity) const {
+    return push_out(from, position, radius, height, step_up, velocity, true);
+}
+
+bool World::overlaps_walls(Vec3 feet, double radius, double height, double step_up) const {
+    Vec3 velocity;
+    const Vec3 pushed = push_out(feet, feet, radius, height, step_up, velocity, false);
+    return std::abs(pushed.x - feet.x) + std::abs(pushed.z - feet.z) >= 1e-9;
+}
+
+Vec3 World::push_out(Vec3 from, Vec3 position, double radius, double height, double step_up, Vec3& velocity,
+                     bool let_out) const {
     // A few passes settle corners where two walls push at once.
     for (int pass = 0; pass < 3; ++pass) {
         bool moved = false;
@@ -585,66 +644,68 @@ Vec3 World::resolve_walls(Vec3 from, Vec3 position, double radius, double height
         // knees (step height) and head, seen from above, pushes the body's
         // circle out: away from its nearest point, or, if the center is over
         // it, across it toward the side the move came from.
+        //
+        // One the body started the move inside of (its center behind the
+        // whole face, which faces outward) doesn't push: a body that
+        // got inside a prop walks out, rather than being pinned by faces
+        // pushing opposite ways. From outside, a body is always in front of
+        // the faces it touches.
         const double lo = position.y + step_up, hi = position.y + height;
+        const Vec3 start{from.x, 0, from.z};
         for_solids(position.x - radius, position.x + radius, position.z - radius, position.z + radius,
                    [&](const Solid& s) {
-            if (s.floor || !(s.blocks & blocks_characters) || s.max_y <= lo || s.min_y >= hi ||
+            if (s.floor || s.ceiling || !(s.blocks & blocks_characters) || s.max_y <= lo || s.min_y >= hi ||
                 position.x + radius < s.min_x || position.x - radius > s.max_x || position.z + radius < s.min_z ||
                 position.z - radius > s.max_z) {
                 return;
             }
             const Vec3 triangle[3] = {s.a, s.b, s.c};
-            Vec3 above[8], slab[8];
-            const int n = clip_height(above, clip_height(triangle, 3, lo, true, above), hi, false, slab);
+            Vec3 slab[8];
+            const int n = slab_of(triangle, lo, hi, slab);
             if (n == 0) {
                 return;
             }
             const Vec3 center{position.x, 0, position.z};
-            // Over the polygon: every edge turns the same way around the center.
-            double turn = 0;
-            bool over = n >= 3;
-            for (int i = 0; i < n && over; ++i) {
-                const double c = cross_xz(slab[i], slab[(i + 1) % n], center);
-                if (std::abs(c) < 1e-12) {
-                    continue;
-                }
-                over = turn == 0 || (c > 0) == (turn > 0);
-                turn = c;
+            const Contact contact = contact_xz(slab, n, center);
+            if (!contact.over && contact.distance >= radius) {
+                return;
             }
-            over = over && turn != 0;
-            double nx = 0, nz = 0, push = 0;
-            double distance = 0;
-            if (!over) {
-                double best = std::numeric_limits<double>::infinity();
-                Vec3 nearest;
-                for (int i = 0; i < n; ++i) {
-                    const Vec3 q = closest_on_segment_xz(slab[i], slab[(i + 1) % n], center.x, center.z);
-                    const double d2 = (q.x - center.x) * (q.x - center.x) + (q.z - center.z) * (q.z - center.z);
-                    if (d2 < best) {
-                        best = d2;
-                        nearest = q;
-                    }
+            Vec3 before[8];
+            const int m = let_out ? slab_of(triangle, from.y + step_up, from.y + height, before) : 0;
+            if (m > 0) {
+                const double flat = std::hypot(s.normal.x, s.normal.z);
+                bool behind = flat > 1e-9;
+                for (int i = 0; i < m && behind; ++i) {
+                    behind = ((start.x - before[i].x) * s.normal.x + (start.z - before[i].z) * s.normal.z) / flat < -1e-6;
                 }
-                distance = std::sqrt(best);
-                if (distance >= radius) {
+                if (behind) {
                     return;
                 }
-                if (distance > 1e-9) {
-                    nx = (center.x - nearest.x) / distance;
-                    nz = (center.z - nearest.z) / distance;
-                    push = radius - distance;
-                }
+            }
+            double nx = 0, nz = 0, push = 0;
+            if (!contact.over && contact.distance > 1e-9) {
+                nx = (center.x - contact.nearest.x) / contact.distance;
+                nz = (center.z - contact.nearest.z) / contact.distance;
+                push = radius - contact.distance;
             }
             if (push == 0) {
                 // Over it (or on it): across, along the triangle's facing,
-                // to the side the move came from.
+                // to the side the move came from: that of the part at the
+                // body's height (a leaning face's corners can be well off
+                // to one side of it).
                 const double flat = std::hypot(s.normal.x, s.normal.z);
                 if (flat < 1e-9) {
                     return;
                 }
                 nx = s.normal.x / flat;
                 nz = s.normal.z / flat;
-                if ((from.x - s.a.x) * nx + (from.z - s.a.z) * nz < 0) {
+                double low = std::numeric_limits<double>::infinity(), high = -low;
+                for (int i = 0; i < n; ++i) {
+                    const double along = slab[i].x * nx + slab[i].z * nz;
+                    low = std::min(low, along);
+                    high = std::max(high, along);
+                }
+                if (from.x * nx + from.z * nz < (low + high) / 2) {
                     nx = -nx;
                     nz = -nz;
                 }

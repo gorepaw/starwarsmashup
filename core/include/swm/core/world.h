@@ -72,9 +72,11 @@ public:
 
     void add_building(const BuildingCollision& collision, const Placement& placement);
 
-    // A map's props. Gentle triangles (up to 50 degrees) that stop characters
-    // are ground they can stand on; steeper ones push them out, like walls.
-    // Shots stop at triangles that stop shots.
+    // A map's props, their triangles facing outward. Gentle triangles (up to
+    // 50 degrees) facing up that stop characters are ground they can stand
+    // on; facing down, undersides, which characters pass; steeper ones push
+    // them out, like walls (except one a character is already deep inside,
+    // which it can walk out of). Shots stop at triangles that stop shots.
     void add_map_collision(const MapCollision& collision);
     // Adds the map collision next to a terrain bake, if there is one; returns
     // its triangle count (0 if none). Throws on a malformed file.
@@ -96,6 +98,9 @@ public:
     // Only x and z change.
     Vec3 resolve_walls(Vec3 from, Vec3 position, double radius, double height, double step_up,
                        Vec3& velocity) const;
+    // Whether any wall overlaps a body standing at `feet` (including props it
+    // would be inside of, which resolve_walls lets it walk out of).
+    bool overlaps_walls(Vec3 feet, double radius, double height, double step_up) const;
 
     // Where along the segment a..b (0..1) it first hits the terrain, a
     // building floor, or a wall, if it does. For shots.
@@ -125,8 +130,13 @@ private:
         Vec3 normal;  // unit
         double min_x, max_x, min_y, max_y, min_z, max_z;
         uint8_t blocks;
-        bool floor;  // gentle enough to stand on
+        bool floor;    // facing up, gentle enough to stand on
+        bool ceiling;  // facing down as gently: an underside, neither ground nor wall
     };
+    // resolve_walls; with let_out false, props the body started inside push too.
+    Vec3 push_out(Vec3 from, Vec3 position, double radius, double height, double step_up, Vec3& velocity,
+                  bool let_out) const;
+
     // Calls visit(solid) for the solids in grid cells overlapping the XZ box
     // (a solid in several cells comes up once per cell).
     template <class Visit>
