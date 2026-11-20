@@ -26,6 +26,8 @@
 #   hud.bindings["player1.health"] = true ...      # each frame, then queue_redraw()
 extends Control
 
+const Bf2Art = preload("res://ui/bf2_art.gd")
+
 const MESH_UNIT := 0.2
 const ASPECT := 4.0 / 3.0
 const FONT_REFERENCE := 600.0
@@ -54,30 +56,25 @@ var map_markers: Array = []  # [{position: Vector2 (game x, z), color, kind: "po
 var map_player := {}      # {position: Vector2, yaw}
 var messages: Array = []  # [{text, color, age}], newest last
 
+var art: RefCounted       # Bf2Art: textures, fonts, strings
 var _dir := ""
 var _layout: Array = []
 var _tables: Array = []   # color tables from hudtransforms
-var _textures := {}
 var _meshes := {}
-var _fonts := {}
-var _strings := {}        # key hash (8 hex digits) -> English text
 var _draws: Array = []    # collected each redraw: [{z, order, call}]
 
 
 func load_layout(dir: String, layout := "1playerhud") -> bool:
 	_dir = dir
-	var path := dir.path_join("hud.json")
-	if not FileAccess.file_exists(path):
+	art = Bf2Art.load_from(dir)
+	if art == null:
 		return false
-	var data: Dictionary = JSON.parse_string(FileAccess.get_file_as_string(path))
+	var data: Dictionary = art.get_meta("data")
 	if not data["layouts"].has(layout):
 		return false
 	_layout = data["layouts"][layout]
 	for node: Dictionary in data["layouts"].get("hudtransforms", []):
 		_collect_tables(node)
-	_strings = data.get("strings", {})
-	for font_name: String in data["fonts"]:
-		_fonts[font_name] = _load_font(data["fonts"][font_name])
 	set_anchors_preset(Control.PRESET_FULL_RECT)
 	mouse_filter = Control.MOUSE_FILTER_IGNORE
 	return true
@@ -269,11 +266,11 @@ func _text(node: Dictionary, xf: Transform2D, color: Color, z: float, screen: Ve
 		else:
 			text = str(value)
 	elif not fixed.is_empty():
-		text = localize(str(fixed["text"]))
+		text = art.localize(str(fixed["text"]))
 	if text == "":
 		return
-	var font: Dictionary = _fonts.get(str(_prop(node, "TextFont").get("text", "gamefont_small")), {})
-	if font.is_empty():
+	var font := str(_prop(node, "TextFont").get("text", "gamefont_small"))
+	if not art.has_font(font):
 		return
 	var scale := screen.y / FONT_REFERENCE
 	var text_scale := _prop(node, "TextScale")
@@ -283,7 +280,7 @@ func _text(node: Dictionary, xf: Transform2D, color: Color, z: float, screen: Ve
 	var shadow := str(_prop(node, "TextStyle").get("text", "")) == "Shadow"
 	_add(z, func() -> void:
 		draw_set_transform_matrix(xf)
-		_draw_string(font, text, Vector2.ZERO, scale, align, color, shadow))
+		art.draw_text(self, font, text, Vector2.ZERO, scale, align, color, shadow))
 
 
 # Battlefront's arcs of segments around the reticle (clip, heat, refire):
@@ -315,13 +312,13 @@ func _segment_bar(node: Dictionary, xf: Transform2D, color: Color, z: float, scr
 
 func _message_list(node: Dictionary, xf: Transform2D, color: Color, z: float, screen: Vector2) -> void:
 	var format := _child(node, "Format")
-	var font: Dictionary = _fonts.get(str(_prop(format, "TextFont").get("text", "gamefont_small")), {})
-	if font.is_empty() or messages.is_empty():
+	var font := str(_prop(format, "TextFont").get("text", "gamefont_small"))
+	if not art.has_font(font) or messages.is_empty():
 		return
 	var lines := int(_value(node, MAX_LINES, 0, 8))
 	var shown := messages.slice(maxi(0, messages.size() - lines))
 	var scale := screen.y / FONT_REFERENCE
-	var step := float(font["line"]) * scale
+	var step: float = art.line_height(font, scale)
 	for i in shown.size():
 		var message: Dictionary = shown[i]
 		var fade := clampf(14.0 - float(message["age"]), 0.0, 1.0)  # out over the last second of 15
@@ -330,7 +327,7 @@ func _message_list(node: Dictionary, xf: Transform2D, color: Color, z: float, sc
 		var at := Vector2(0, i * step)
 		_add(z, func() -> void:
 			draw_set_transform_matrix(xf)
-			_draw_string(font, str(message["text"]), at, scale, "Left", line_color, true))
+			art.draw_text(self, font, str(message["text"]), at, scale, "Left", line_color, true))
 
 
 # The small map: Battlefront's round radar (its map_mask backdrop), turned so
@@ -379,7 +376,6 @@ func _map(node: Dictionary, xf: Transform2D, color: Color, z: float, screen: Vec
 		_add(z - 1, func() -> void:
 			draw_set_transform_matrix(cone)
 			draw_mesh(fov["mesh"], fov["texture"], Transform2D(), cone_color))
-	var dot := _texture("whitecircle")
 	for marker: Dictionary in map_markers:
 		var at: Vector2 = to_map.call(marker["position"])
 		if at.length() > radius * 0.95:
@@ -391,11 +387,8 @@ func _map(node: Dictionary, xf: Transform2D, color: Color, z: float, screen: Vec
 		var marker_color: Color = marker["color"]
 		_add(z - 2, func() -> void:
 			draw_set_transform_matrix(xf)
-			if dot != null:
-				draw_texture_rect(dot, Rect2(at - Vector2(dot_size, dot_size) * 0.5, Vector2(dot_size, dot_size)),
-						false, marker_color)
-			else:
-				draw_circle(at, dot_size * 0.5, marker_color))
+			draw_circle(at, dot_size * 0.5 + 1.0, Color(0, 0, 0, 0.6 * marker_color.a))
+			draw_circle(at, dot_size * 0.5, marker_color))
 	var north := _texture("hud_map_northpointer")
 	if north != null:
 		var direction := Vector2(0, -1).rotated(yaw)
@@ -427,62 +420,6 @@ func _rect(node: Dictionary, keyword: String, screen: Vector2) -> Rect2:
 	origin.x = -s.x * 0.5 if horizontal == "Center" else (-s.x if horizontal == "Right" else 0.0)
 	origin.y = -s.y * 0.5 if vertical == "Center" else (-s.y if vertical == "Bottom" else 0.0)
 	return Rect2(origin, s)
-
-
-func _draw_string(font: Dictionary, text: String, at: Vector2, scale: float, align: String, color: Color,
-		shadow: bool) -> void:
-	var width := 0.0
-	for c in text:
-		var glyph: Array = font["glyphs"].get(c.unicode_at(0), [])
-		width += (float(glyph[2]) if not glyph.is_empty() else 0.0) * scale
-	var x := at.x - (width * 0.5 if align == "Center" else (width if align == "Right" else 0.0))
-	for pass_index in (2 if shadow else 1):
-		var offset := Vector2(1, 1) * maxf(1.0, scale) if shadow and pass_index == 0 else Vector2.ZERO
-		var tone := Color(0, 0, 0, color.a * 0.8) if shadow and pass_index == 0 else color
-		var pen := x
-		for c in text:
-			var glyph: Array = font["glyphs"].get(c.unicode_at(0), [])
-			if glyph.is_empty():
-				continue
-			var page: Texture2D = font["pages"][int(glyph[1])]
-			var page_size := page.get_size()
-			var region := Rect2(float(glyph[7]) * page_size.x, float(glyph[9]) * page_size.y,
-					(float(glyph[8]) - float(glyph[7])) * page_size.x, (float(glyph[10]) - float(glyph[9])) * page_size.y)
-			var rect := Rect2(Vector2(pen + float(glyph[3]) * scale, at.y + float(glyph[5]) * scale) + offset,
-					region.size * scale)
-			draw_texture_rect_region(page, rect, region, tone)
-			pen += float(glyph[2]) * scale
-
-
-# Width of a string in a font, in pixels, at a scale.
-func string_width(font_name: String, text: String, scale := 1.0) -> float:
-	var font: Dictionary = _fonts.get(font_name, {})
-	var width := 0.0
-	for c in text:
-		var glyph: Array = font.get("glyphs", {}).get(c.unicode_at(0), [])
-		width += (float(glyph[2]) if not glyph.is_empty() else 0.0) * scale
-	return width
-
-
-# Draws text in one of Battlefront's fonts (for other screens built on it).
-func draw_bf2_string(font_name: String, text: String, at: Vector2, scale: float, align := "Left",
-		color := Color.WHITE, shadow := true) -> void:
-	var font: Dictionary = _fonts.get(font_name, {})
-	if not font.is_empty():
-		_draw_string(font, text, at, scale, align, color, shadow)
-
-
-func font_line_height(font_name: String) -> float:
-	return float(_fonts.get(font_name, {}).get("line", 16))
-
-
-# Battlefront's text for a key (e.g. "common.victoryin" -> "Victory In"); the
-# key itself if there's none.
-func localize(key: String) -> String:
-	var hash := 2166136261
-	for byte in key.to_lower().to_utf8_buffer():
-		hash = ((hash ^ byte) * 16777619) & 0xffffffff
-	return str(_strings.get("%08x" % hash, key))
 
 
 # --- data -------------------------------------------------------------------
@@ -518,19 +455,8 @@ func _number_event(node: Dictionary, keyword: String, fallback: Variant) -> floa
 	return float(fallback)
 
 
-func texture(name: String) -> Texture2D:
-	return _texture(name)
-
-
 func _texture(name: String) -> Texture2D:
-	if name == "":
-		return null
-	var key := name.to_lower()
-	if not _textures.has(key):
-		var path := ProjectSettings.globalize_path(_dir.path_join("textures").path_join(key + ".png"))
-		var image := Image.load_from_file(path) if FileAccess.file_exists(path) else null
-		_textures[key] = ImageTexture.create_from_image(image) if image != null else null
-	return _textures[key]
+	return art.texture(name)
 
 
 # A HUD model flattened to 2D: Battlefront's models are flat in x, y (y up);
@@ -576,16 +502,6 @@ func _mesh(name: String) -> Dictionary:
 	scene.free()
 	_meshes[key] = {"mesh": mesh, "texture": texture}
 	return _meshes[key]
-
-
-func _load_font(font: Dictionary) -> Dictionary:
-	var pages: Array[Texture2D] = []
-	for page: String in font["pages"]:
-		pages.append(_texture(page))
-	var glyphs := {}
-	for glyph: Array in font["glyphs"]:
-		glyphs[int(glyph[0])] = glyph
-	return {"line": font["line_height"], "pages": pages, "glyphs": glyphs}
 
 
 func _collect_tables(node: Dictionary) -> void:

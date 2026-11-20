@@ -838,8 +838,9 @@ void collect_strings(const HudNode& node, std::set<std::string>& out) {
 // Writes Battlefront II's HUD for the game's UI: its layouts (hud.json:
 // "layouts", each a tree of elements and properties), its fonts ("fonts":
 // glyph metrics; pages as PNG), and the textures and models the layouts name
-// (textures/, models/ as glTF), plus every texture in common.lvl (the menus'
-// buttons, borders and icons).
+// (textures/, models/ as glTF), plus every texture in ingame.lvl and
+// common.lvl (icons, markers, the menus' buttons and borders), and its English
+// strings.
 int cmd_export_hud(const std::vector<std::string>& args) {
     if (args.empty()) {
         std::cerr << usage;
@@ -898,11 +899,15 @@ int cmd_export_hud(const std::vector<std::string>& args) {
             }
         }
     }
-    for (const UcfbNode& child : roots[1].children) {
-        if (child.tag == "tex_") {
-            const std::string name = lowercase(child.name());
-            if (export_texture(library, name, texture_dir / (name + ".png"))) {
-                textures.insert(name);
+    // Every texture of ingame.lvl (icons, markers, the stats screens') and
+    // common.lvl (the menus' art).
+    for (const UcfbNode* root : {&roots[0], &roots[1]}) {
+        for (const UcfbNode& child : root->children) {
+            if (child.tag == "tex_") {
+                const std::string name = lowercase(child.name());
+                if (!textures.contains(name) && export_texture(library, name, texture_dir / (name + ".png"))) {
+                    textures.insert(name);
+                }
             }
         }
     }

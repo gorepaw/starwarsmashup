@@ -44,8 +44,10 @@
 # Controls: WASD to move, mouse to aim, Shift to sprint, Space to jump, left
 # mouse to fire, right mouse to throw a grenade, R to reload, 1 and 2 for
 # weapons, V to switch between third and first person (from your own
-# character's eyes; --first-person starts in it), Esc to free the mouse (Esc
-# again quits). Characters are animated by rendering/soldier.gd. Shots fly as
+# character's eyes; --first-person starts in it), Tab for the scores, Esc for
+# the pause menu (options: mouse, view, display, key bindings; saved in
+# user://settings.cfg). With Battlefront's HUD exported (bf2tool export-hud)
+# the HUD and screens are Battlefront's (game/ui/). Characters are animated by rendering/soldier.gd. Shots fly as
 # bolts, drawn leaving the shooter's muzzle; the server decides what they hit. --bot
 # drives the character instead:
 # "circle" runs in circles, "chase" runs after the nearest enemy and
@@ -65,6 +67,10 @@ const SwgBuilding = preload("res://rendering/swg_building.gd")
 const Bf2Map = preload("res://rendering/bf2_map.gd")
 const Soldier = preload("res://rendering/soldier.gd")
 const Bf2Hud = preload("res://ui/bf2_hud.gd")
+const Settings = preload("res://ui/settings.gd")
+const SpawnScreen = preload("res://ui/spawn_screen.gd")
+const ScoreScreen = preload("res://ui/score_screen.gd")
+const PauseMenu = preload("res://ui/pause_menu.gd")
 const HUD_DIR := "res://imported_assets/hud"  # bf2tool export-hud
 const MAX_ENERGY := 100.0     # core::MoveParams::max_energy
 const TARGET_CONE := 0.035    # radians: a character this close to the crosshair is its target
@@ -146,6 +152,12 @@ var _deaths := 0
 var _hits := 0
 var _pending_shot := ""
 var _bf2_hud: Bf2Hud              # Battlefront's HUD; null if it isn't exported (the text HUD stands in)
+var _settings: Settings
+var _spawn_screen: SpawnScreen    # these three exist with Battlefront's HUD
+var _score_screen: ScoreScreen
+var _pause_menu: PauseMenu
+var _was_choosing := false
+var _view_setting := false         # the options' view when the pause menu opened
 var _show_stats := false          # F3: network stats
 var _fired := {}                  # entity id -> seconds since it last fired (for the minimap)
 var _map_meta := {}               # the bake's json (its minimap texture)
@@ -173,7 +185,9 @@ func _init() -> void:
 	_seconds = float(_option(args, "--seconds", "0"))
 	_shots = _option(args, "--shots", "")
 	_solo = args.has("--solo")
-	_first_person = args.has("--first-person")
+	_settings = Settings.new()
+	_settings.load_file()
+	_first_person = args.has("--first-person") or _settings.first_person
 	var bake_path := _os_path(bake)
 	for point in _option(args, "--route", "").split(";", false):
 		var xz := point.split(",")
@@ -373,13 +387,13 @@ func _controls() -> Dictionary:
 					"fire": distance < BOT_FIRE_RANGE and bool(target["alive"])}
 	if not _mouse_captured:
 		return {"yaw": _yaw, "weapon": _weapon}
-	var forward := float(Input.is_physical_key_pressed(KEY_W)) - float(Input.is_physical_key_pressed(KEY_S))
-	var right := float(Input.is_physical_key_pressed(KEY_D)) - float(Input.is_physical_key_pressed(KEY_A))
+	var forward := Input.get_action_strength("move_forward") - Input.get_action_strength("move_back")
+	var right := Input.get_action_strength("move_right") - Input.get_action_strength("move_left")
 	var aim := _aim()
 	return {"forward": forward, "right": right, "yaw": aim.x, "pitch": aim.y,
-			"sprint": Input.is_physical_key_pressed(KEY_SHIFT), "jump": Input.is_physical_key_pressed(KEY_SPACE),
-			"fire": Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT), "reload": Input.is_physical_key_pressed(KEY_R),
-			"secondary": Input.is_mouse_button_pressed(MOUSE_BUTTON_RIGHT), "weapon": _weapon}
+			"sprint": Input.is_action_pressed("sprint"), "jump": Input.is_action_pressed("jump"),
+			"fire": Input.is_action_pressed("fire"), "reload": Input.is_action_pressed("reload"),
+			"secondary": Input.is_action_pressed("grenade"), "weapon": _weapon}
 
 
 # Yaw and pitch from the character's eyes to where the crosshair (the
@@ -397,15 +411,31 @@ func _aim() -> Vector2:
 func _on_input(event: InputEvent) -> void:
 	if _bot != "":
 		return
+	var escape: bool = event is InputEventKey and event.pressed and not event.echo \
+			and (event as InputEventKey).physical_keycode == KEY_ESCAPE
+	if _pause_menu != null and _pause_menu.visible:
+		if escape and not _pause_menu.is_rebinding():
+			_pause_menu.visible = false
+			_resume()
+		return  # the menu has the input
+	if escape and _pause_menu != null:
+		_capture_mouse(false)
+		_pause_menu.in_match = not _battlefield.is_empty()
+		_view_setting = _settings.first_person
+		_pause_menu.open()
+		return
+	var screen_spawn := _spawn_screen != null and _choosing_spawn()
 	if event is InputEventMouseMotion and _mouse_captured:
 		var motion := event as InputEventMouseMotion
-		_yaw -= motion.relative.x * MOUSE_SENSITIVITY
+		var sensitivity := MOUSE_SENSITIVITY * _settings.mouse_sensitivity
+		_yaw -= motion.relative.x * sensitivity
 		var lowest := -1.35 if _first_person else -1.2
 		var highest := 1.35 if _first_person else 0.6
-		_pitch = clampf(_pitch - motion.relative.y * MOUSE_SENSITIVITY, lowest, highest)
-	elif event is InputEventMouseButton and event.pressed and not _mouse_captured:
+		var up := -1.0 if _settings.invert_mouse else 1.0
+		_pitch = clampf(_pitch - motion.relative.y * sensitivity * up, lowest, highest)
+	elif event is InputEventMouseButton and event.pressed and not _mouse_captured and not screen_spawn:
 		_capture_mouse(true)
-	elif event is InputEventMouseButton and event.pressed and _choosing_spawn():
+	elif event is InputEventMouseButton and event.pressed and _choosing_spawn() and not screen_spawn:
 		_request_spawn()
 	elif event is InputEventKey and event.pressed and _choosing_spawn() and event.physical_keycode != KEY_ESCAPE:
 		var key: int = event.physical_keycode
@@ -426,17 +456,27 @@ func _on_input(event: InputEvent) -> void:
 			_client.queue(0 if event.physical_keycode == KEY_F else 1)
 	elif event is InputEventKey and event.pressed and event.physical_keycode == KEY_F3 and not event.echo:
 		_show_stats = not _show_stats
-	elif event is InputEventKey and event.pressed and event.physical_keycode == KEY_V and not event.echo:
+	elif event.is_action_pressed("toggle_view") and not event.is_echo():
 		_first_person = not _first_person
 		_pitch = clampf(_pitch, -1.2, 0.6)
-	elif event is InputEventKey and event.pressed and event.physical_keycode in [KEY_1, KEY_2]:
-		_weapon = mini(int(event.physical_keycode - KEY_1), _weapons.size() - 1)
+	elif event.is_action_pressed("primary"):
+		_weapon = 0
+	elif event.is_action_pressed("sidearm"):
+		_weapon = mini(1, _weapons.size() - 1)
 	elif event is InputEventKey and event.pressed and event.physical_keycode == KEY_ESCAPE:
 		if _mouse_captured:
 			_capture_mouse(false)
 		else:
 			_leave()
 			quit(0)
+
+
+# Back from the pause menu: settings may have changed.
+func _resume() -> void:
+	if _settings.first_person != _view_setting:
+		_first_person = _settings.first_person  # changed in the options
+	if not (_spawn_screen != null and _choosing_spawn()):
+		_capture_mouse(true)
 
 
 func _capture_mouse(captured: bool) -> void:
@@ -612,6 +652,7 @@ func _update_hud(delta: float) -> void:
 	if _bf2_hud != null:
 		lines.resize(1 if _show_stats else 0)  # Battlefront's HUD shows the rest
 		_update_bf2_hud(delta)
+		_update_screens()
 	_hud.text = "\n".join(lines)
 	_update_match_hud(delta)
 	_hit_flash = maxf(0.0, _hit_flash - delta)
@@ -689,24 +730,91 @@ func _update_bf2_hud(delta: float) -> void:
 	_bf2_hud.queue_redraw()
 
 
+# The spawn and score screens, from the match's state; the camera's field of
+# view from the settings.
+func _update_screens() -> void:
+	_camera.fov = _settings.field_of_view
+	var game: Dictionary = _client.get_match() if _client.is_spawned() else {}
+	var own: Dictionary = _client.get_presented() if _client.is_spawned() else {}
+	var team := int(own.get("team", -1))
+	var choosing: bool = _choosing_spawn() and not game.is_empty() and game["phase"] != "ended"
+	_spawn_screen.visible = choosing and not _pause_menu.visible
+	if choosing and not _was_choosing and _bot == "":
+		_capture_mouse(false)  # to click on the screen
+	elif not choosing and _was_choosing and _bot == "" and not _pause_menu.visible:
+		_capture_mouse(true)
+	_was_choosing = choosing
+	if _spawn_screen.visible:
+		var loadouts: Array = []
+		for entry: Dictionary in _battlefield["teams"][team]["loadouts"]:
+			var weapons: Array = []
+			for weapon: String in entry["weapons"] + ([entry["secondary"]] if entry["secondary"] != "" else []):
+				weapons.append(_display_name(weapon))
+			loadouts.append({"name": _unit_name(str(entry["name"])), "weapons": weapons,
+					"max_health": entry["max_health"]})
+		var posts: Array = []
+		var owned := _owned_posts(game, team)
+		for i in (game["posts"] as Array).size():
+			var at: Vector3 = _battlefield["posts"][i]["position"]
+			posts.append({"name": _battlefield["posts"][i]["name"], "position": Vector2(at.x, at.z),
+					"color": _post_color(int(game["posts"][i]["owner"]), team), "ours": owned.has(i)})
+		_spawn_screen.title = str(_battlefield["name"])
+		_spawn_screen.side = {"name": _team_name(team), "icon": _team_icon(team), "color": FRIEND_COLOR}
+		_spawn_screen.loadouts = loadouts
+		_spawn_screen.loadout = _spawn_loadout
+		_spawn_screen.posts = posts
+		_spawn_screen.post = _spawn_post
+		_spawn_screen.minimap = _bf2_hud.minimap
+		_spawn_screen.waiting = _spawn_requested
+		_spawn_screen.notice = "No reinforcements left" \
+				if game["phase"] == "live" and ceili(game["tickets"][team]) <= 0 else ""
+		_spawn_screen.queue_redraw()
+	var ended: bool = not game.is_empty() and game["phase"] == "ended"
+	_score_screen.visible = not game.is_empty() and team >= 0 and not _pause_menu.visible \
+			and (ended or (Input.is_action_pressed("scores") and _bot == ""))
+	_bf2_hud.visible = not (_pause_menu.visible or _spawn_screen.visible or _score_screen.visible)
+	if _score_screen.visible:
+		var everyone: Array = _client.get_remotes()
+		var me := own.duplicate()
+		me["id"] = _client.get_entity_id()
+		everyone.append(me)
+		var sides: Array = []
+		for side in 2:
+			var players: Array = []
+			for p: Dictionary in everyone:
+				if int(p["team"]) == side:
+					players.append({"name": _who(p["id"]).capitalize() if int(p["id"]) == _client.get_entity_id()
+							else _who(p["id"]), "kills": p["kills"], "deaths": p["deaths"], "captures": p["captures"],
+							"you": int(p["id"]) == _client.get_entity_id()})
+			sides.append({"name": _team_name(side), "icon": _team_icon(side),
+					"color": FRIEND_COLOR if side == team else ENEMY_COLOR, "tickets": game["tickets"][side],
+					"players": players})
+		_score_screen.sides = sides
+		_score_screen.own_team = team
+		_score_screen.ended = ended
+		_score_screen.winner = int(game.get("winner", -1))
+		_score_screen.next_in = float(game.get("time_left", 0.0))
+		_score_screen.queue_redraw()
+
+
 # The minimap: its image where the battlefield file places it, the command
 # posts, your side's soldiers, and enemies seen firing.
 func _update_minimap(team: int, game: Dictionary) -> void:
-	if _bf2_hud.map_player.is_empty() or _battlefield.is_empty():
+	if _battlefield.is_empty():
 		return
-	if _bf2_hud.minimap.is_empty():
-		var file := str(_map_meta.get("minimap", ""))
-		var image := Image.load_from_file(ProjectSettings.globalize_path("res://" + str(_map_meta["dir"]).path_join(file))) \
-				if file != "" else null
+	var file := str(_map_meta.get("minimap", ""))
+	if _bf2_hud.minimap.get("file", "") != file and file != "":
+		var image := Image.load_from_file(ProjectSettings.globalize_path("res://" + str(_map_meta["dir"]).path_join(file)))
 		var edges: Array = _battlefield.get("minimap", [0, 0, 0, 0])
 		if image == null:
 			return
 		if edges.is_empty() or (float(edges[0]) == 0 and float(edges[2]) == 0):
 			# No placement given: the image spans the battlefield's bounds.
 			edges = [_battlefield["min_x"], _battlefield["min_z"], _battlefield["max_x"], _battlefield["max_z"]]
-		_bf2_hud.minimap = {"texture": ImageTexture.create_from_image(image), "left_x": edges[0], "top_z": edges[1],
-				"right_x": edges[2], "bottom_z": edges[3]}
-		_bf2_hud.bindings["player1.map.enable"] = true
+		_bf2_hud.minimap = {"file": file, "texture": ImageTexture.create_from_image(image), "left_x": edges[0],
+				"top_z": edges[1], "right_x": edges[2], "bottom_z": edges[3]}
+	if _bf2_hud.map_player.is_empty():
+		return
 	_bf2_hud.bindings["player1.map.enable"] = true
 	if not game.is_empty():
 		for i in (game["posts"] as Array).size():
@@ -756,6 +864,13 @@ func _team_icon(team: int) -> String:
 	if name.contains("separatist") or name.contains("cis"):
 		return "cis_icon"
 	return "all_icon" if team == 0 else "imp_icon"
+
+
+# A loadout's name for the spawn screen (imp_inf_rifleman -> Rifleman). Test
+# loadouts only: gear, not classes, decides what a soldier is.
+static func _unit_name(loadout: String) -> String:
+	var at := loadout.find("_inf_")
+	return (loadout.substr(at + 5) if at >= 0 else loadout).replace("_", " ").capitalize()
 
 
 # A weapon's name for the HUD from its class (imp_weap_inf_rocket_launcher ->
@@ -1083,6 +1198,20 @@ func _setup_scene(bake: String, meta: Dictionary) -> void:
 	_bf2_hud = Bf2Hud.new()
 	if _bf2_hud.load_layout(HUD_DIR):
 		layer.add_child(_bf2_hud)
+		_spawn_screen = SpawnScreen.new(_bf2_hud.art)
+		_spawn_screen.visible = false
+		_spawn_screen.loadout_chosen.connect(func(i: int) -> void: _spawn_loadout = i)
+		_spawn_screen.post_chosen.connect(func(i: int) -> void: _spawn_post = i)
+		_spawn_screen.spawn_requested.connect(_request_spawn)
+		_score_screen = ScoreScreen.new(_bf2_hud.art)
+		_score_screen.visible = false
+		_pause_menu = PauseMenu.new(_bf2_hud.art)
+		_pause_menu.settings = _settings
+		_pause_menu.visible = false
+		_pause_menu.resumed.connect(_resume)
+		_pause_menu.leave_requested.connect(func() -> void:
+			_leave()
+			quit(0))
 	else:
 		_bf2_hud = null
 	_hud = Label.new()
@@ -1130,6 +1259,9 @@ func _setup_scene(bake: String, meta: Dictionary) -> void:
 	_match_label.add_theme_color_override("font_outline_color", Color.BLACK)
 	_match_label.add_theme_constant_override("outline_size", 4)
 	layer.add_child(_match_label)
+	for screen: Control in [_spawn_screen, _score_screen, _pause_menu]:
+		if screen != null:
+			layer.add_child(screen)
 	root.add_child(layer)
 
 	_bolt_mesh = BoxMesh.new()
@@ -1393,7 +1525,9 @@ func _update_match_hud(delta: float) -> void:
 			and position.z >= float(_battlefield["min_z"]) and position.z <= float(_battlefield["max_z"])
 	_outside = 0.0 if inside or not own["alive"] else _outside + delta
 
-	if game["phase"] == "ended":
+	if _spawn_screen != null and (game["phase"] == "ended" or own["life"] == "waiting"):
+		pass  # the score and spawn screens show these
+	elif game["phase"] == "ended":
 		_center.text = _results(game, team)
 	elif own["life"] == "waiting":
 		_center.text = _spawn_menu(game, team)
