@@ -73,7 +73,7 @@ public:
     void add_building(const BuildingCollision& collision, const Placement& placement);
 
     // A map's props, their triangles facing outward. Gentle triangles (up to
-    // 50 degrees) facing up that stop characters are ground they can stand
+    // 55 degrees) facing up that stop characters are ground they can stand
     // on; facing down, undersides, which characters pass; steeper ones push
     // them out, like walls (except one a character is already deep inside,
     // which it can walk out of). Shots stop at triangles that stop shots.
@@ -84,7 +84,7 @@ public:
 
     struct Ground {
         double height = 0;
-        Vec3 normal{0, 1, 0};
+        Vec3 normal{0, 1, 0};   // a building's floor's: straight up
         bool on_floor = false;  // a building floor rather than terrain
     };
     // The surface a character with feet at `y` stands on at (x, z): the

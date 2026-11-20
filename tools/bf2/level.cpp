@@ -325,6 +325,30 @@ void read_paths(const UcfbNode& chunk, std::vector<LevelPath>& paths) {
     }
 }
 
+// A "bnd_" chunk lists a group's boundaries as config records: Boundary,
+// then a scope of "Path" records, each the hash of a path's name (stored
+// in a number's place).
+void read_boundaries(const UcfbNode& chunk, std::vector<std::pair<uint32_t, uint32_t>>& boundary_paths) {
+    const UcfbNode* name = chunk.child("NAME");
+    const uint32_t group = name && name->data.size() >= 4 ? read<uint32_t>(name->data, 0) : 0;
+    const uint32_t path_hash = odf_hash("Path");
+    for (const UcfbNode& scope : chunk.children) {
+        if (scope.tag != "SCOP") {
+            continue;
+        }
+        for (const UcfbNode& field : scope.children) {
+            if (field.tag != "DATA") {
+                continue;
+            }
+            const ConfigRecord record = read_config_record(field.data);
+            if (record.name == path_hash && record.numbers.size() == 1) {
+                // The bits as stored (past the name and count), not as a float.
+                boundary_paths.push_back({group, read<uint32_t>(field.data, 5)});
+            }
+        }
+    }
+}
+
 // Calls `visit(record, scope)` for each record among a config chunk's (or
 // scope's) children; `scope` is the SCOP right after it, or nullptr.
 template <class Visitor>
@@ -519,6 +543,8 @@ void read_tree(const UcfbNode& node, Level& level, uint32_t group) {
             }
         } else if (child.tag == "path") {
             read_paths(child, level.paths);
+        } else if (child.tag == "bnd_") {
+            read_boundaries(child, level.boundary_paths);
         } else if (child.tag == "sky_") {
             read_sky(child, level.sky);
         } else if (child.tag == "lght") {
@@ -617,8 +643,9 @@ const LevelPath* Level::path(std::string_view name, std::string_view layer) cons
 
 const LevelPath* Level::path_in(std::string_view name, uint32_t group) const {
     const LevelPath* any = nullptr;
+    const uint32_t hash = odf_hash(name);  // ignores case
     for (const LevelPath& p : paths) {
-        if (p.name == name) {
+        if (!name.empty() && odf_hash(p.name) == hash) {
             if (p.group == group) {
                 return &p;
             }

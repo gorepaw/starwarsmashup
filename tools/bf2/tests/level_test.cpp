@@ -235,6 +235,23 @@ Bytes paths(uint32_t group, const std::string& name, float z) {
                                record("Path", name), chunk("SCOP", nodes)}));
 }
 
+// A group's boundaries: a Boundary record, then a scope of Path records,
+// each its path's name hash, stored where a number would be.
+Bytes boundaries(uint32_t group, std::initializer_list<const char*> names) {
+    Bytes name_hash;
+    put(name_hash, group);
+    Bytes scope;
+    for (const char* name : names) {
+        Bytes out;
+        put(out, odf_hash("Path"));
+        put(out, uint8_t(1));
+        put(out, odf_hash(name));
+        const Bytes data = chunk("DATA", out);
+        scope.insert(scope.end(), data.begin(), data.end());
+    }
+    return chunk("bnd_", join({chunk("NAME", name_hash), record("Boundary", {}), chunk("SCOP", scope)}));
+}
+
 // The sky: fog and view ranges in an info scope, the dome's texture and
 // model. The lights: a sun, a lamp (z stored the other way around, like
 // paths), and the global lights naming the sun.
@@ -299,7 +316,8 @@ void test_level() {
                                           barrier()})),
                       sublevel(conquest), sky_and_lights(), effects(),
                       // The same path name in another group, then in the conquest one.
-                      paths(0x0badf00d, "cp1_spawn", -99), paths(conquest, "cp1_spawn", -30)}));
+                      paths(0x0badf00d, "cp1_spawn", -99), paths(conquest, "cp1_spawn", -30),
+                      boundaries(0x0badf00d, {"warning1", "Warning2"})}));
     const Level level = read_level(parse_ucfb(file));
 
     const Terrain& t = level.terrain;
@@ -372,6 +390,16 @@ void test_level() {
     CHECK(spawn && spawn->group == conquest && spawn->nodes.size() == 1);
     CHECK(spawn && spawn->nodes[0].position[0] == 5 && spawn->nodes[0].position[2] == 30);
     CHECK(level.path("cp1_spawn") != nullptr && level.path("nope") == nullptr);
+    // A post names its spawn path in any case (Felucia's "cp1spawn" is its
+    // "CP1Spawn").
+    CHECK(level.path_in("CP1_Spawn", conquest) == spawn && level.path_in("", conquest) == nullptr);
+
+    // The paths the boundaries list, by group.
+    CHECK(level.boundary_paths.size() == 2);
+    if (level.boundary_paths.size() == 2) {
+        CHECK(level.boundary_paths[0] == (std::pair<uint32_t, uint32_t>{0x0badf00d, odf_hash("warning1")}));
+        CHECK(level.boundary_paths[1].second == odf_hash("warning2"));
+    }
 }
 
 } // namespace

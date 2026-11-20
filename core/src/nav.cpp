@@ -63,7 +63,7 @@ NavGrid::NavGrid(const World& world, const Battlefield& field, const MoveParams&
 
 NavGrid::NavGrid(const World& world, const Battlefield& field, const MoveParams& move, const Settings& settings)
     : world_(world), move_(move), settings_(settings), barriers_(field.barriers), area_(area_of(field)) {
-    max_rise_ = std::tan(move.max_slope_degrees * std::numbers::pi / 180);
+    max_rise_ = std::tan(slope_degrees() * std::numbers::pi / 180);
     // The battlefield's bounds, within the terrain (and within reason, for
     // a battlefield without bounds on a world without terrain).
     constexpr double far = 4096;
@@ -121,7 +121,7 @@ NavGrid::Cell NavGrid::cell_of(Node node) const {
 void NavGrid::build(Tile& tile, int tile_x, int tile_z) const {
     const double cell = settings_.cell;
     const double radius = move_.radius + settings_.clearance;
-    const double min_normal_y = std::cos(move_.max_slope_degrees * std::numbers::pi / 180);
+    const double min_normal_y = std::cos(slope_degrees() * std::numbers::pi / 180);
     // The barriers reaching into this tile.
     const double low_x = x0_ + tile_x * tile_size * cell, high_x = low_x + tile_size * cell;
     const double low_z = z0_ + tile_z * tile_size * cell, high_z = low_z + tile_size * cell;
@@ -158,7 +158,7 @@ void NavGrid::build(Tile& tile, int tile_x, int tile_z) const {
             if (ground.height > probe + move_.step_up + 1e-6 || ground.height < -1e8) {
                 break;  // nothing more below (the terrain's under us, or a hole)
             }
-            bool open = on_field && (ground.on_floor || ground.normal.y >= min_normal_y) &&
+            bool open = on_field && ground.normal.y >= min_normal_y &&
                         !area_.deadly({c.x, ground.height, c.z});
             if (open) {
                 // No wall within the (widened) body...
@@ -170,8 +170,19 @@ void NavGrid::build(Tile& tile, int tile_x, int tile_z) const {
                 open = !world_.raycast({c.x, ground.height + move_.height, c.z},
                                        {c.x, ground.height + move_.step_up, c.z});
             }
+            // At an edge: more than a step down within the (widened) body's
+            // reach, all around.
+            bool edge = false;
+            for (int k = 0; open && !edge && k < 8; ++k) {
+                const double angle = k * std::numbers::pi / 4;
+                const World::Ground beside = world_.ground_at(c.x + radius * std::cos(angle),
+                                                              c.z + radius * std::sin(angle), ground.height,
+                                                              move_.step_up);
+                edge = beside.height < ground.height - move_.step_up;
+            }
             tile.height.push_back(float(ground.height));
-            tile.flags.push_back(uint8_t((open ? walkable_bit : 0) | (in_barrier ? barrier_bit : 0)));
+            tile.flags.push_back(uint8_t((open ? walkable_bit : 0) | (in_barrier ? barrier_bit : 0) |
+                                         (edge ? edge_bit : 0)));
             tile.cell.push_back(uint16_t(i));
             probe = ground.height - move_.height - move_.step_up;
         }
@@ -313,6 +324,10 @@ bool NavGrid::clear_line(Vec3 a, Vec3 b) const {
         if (!(f & walkable_bit) || ((f & barrier_bit) && !(flags(previous) & barrier_bit))) {
             return false;
         }
+        // Not along an edge (but onto one, at b).
+        if ((f & edge_bit) && i < steps && !(c.x == cell_at(b).x && c.z == cell_at(b).z)) {
+            return false;
+        }
         const bool diagonal = c.x != at.x && c.z != at.z;
         if (diagonal && (!(flags(land(c.x, at.z, from, at)) & walkable_bit) ||
                          !(flags(land(at.x, c.z, from, at)) & walkable_bit))) {
@@ -414,7 +429,8 @@ std::vector<Vec3> NavGrid::find_path(Vec3 from, Vec3 to) const {
                 if (nt.closed[slot(next)]) {
                     continue;
                 }
-                const double cost = g + step * ((f & barrier_bit) ? settings_.barrier_cost : 1.0);
+                const double cost = g + step * ((f & barrier_bit) ? settings_.barrier_cost : 1.0) *
+                                            ((f & edge_bit) ? settings_.edge_cost : 1.0);
                 if (cost < nt.g[slot(next)]) {
                     nt.g[slot(next)] = float(cost);
                     nt.parent[slot(next)] = current;

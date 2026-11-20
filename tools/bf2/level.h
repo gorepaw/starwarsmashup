@@ -173,6 +173,9 @@ struct Level {
     std::vector<WorldItem> regions;
     std::vector<LevelBarrier> barriers;
     std::vector<LevelPath> paths;
+    // The paths the map's boundaries ("bnd_") name, by group (as paths'):
+    // the playable area is inside any of them. Their names' hashes.
+    std::vector<std::pair<uint32_t, uint32_t>> boundary_paths;
     std::vector<std::string> layers;  // world layer names, in file order
     std::map<std::string, uint32_t> layer_groups;  // layer -> its paths' group
     // Each sublevel's layers, by the sublevel's name hash, in file order. A
@@ -186,8 +189,9 @@ struct Level {
     const LevelEffect* effect(std::string_view name) const;  // by name, ignoring case
     // A path by name, preferring the one belonging with `layer`.
     const LevelPath* path(std::string_view name, std::string_view layer = {}) const;
-    // A path by name, preferring the one in group `group` (a sublevel's
-    // hash, or a base layer's name hash).
+    // A path by name, ignoring case (Felucia's posts' "cp1spawn" is its
+    // "CP1Spawn"), preferring the one in group `group` (a sublevel's hash,
+    // or a base layer's name hash).
     const LevelPath* path_in(std::string_view name, uint32_t group) const;
 };
 

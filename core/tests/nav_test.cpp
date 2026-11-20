@@ -264,6 +264,46 @@ void test_stacked() {
     CHECK(std::hypot(reached.x - inside.x, reached.z - inside.z) < 0.5 && near(reached.y, -4, 0.05));
 }
 
+void test_edges() {
+    // A deck 4 m wide and 3 m up, from z 20 to 80: a route along it from one
+    // end to the other, starting and ending by its east edge, keeps a body's
+    // reach in from the edges on the way.
+    const Heightfield ground = flat();
+    MapCollision props;
+    add_box(props, {-52, 2.7, 20}, {-48, 3, 80});
+    World world(ground);
+    world.add_map_collision(props);
+    const NavGrid grid(world, open_field());
+    const Vec3 start{-48.3, 3, 25}, end{-48.3, 3, 75};
+    const auto along = grid.find_path(start, end);
+    CHECK(sound(grid, along, start) && !along.empty() && near(along.back().y, 3, 0.01));
+    Vec3 from = start, middle{};
+    double longest = 0;
+    for (const Vec3& p : along) {
+        if (const double leg = std::hypot(p.x - from.x, p.z - from.z); leg > longest) {
+            longest = leg;
+            middle = (from + p) * 0.5;
+        }
+        from = p;
+    }
+    CHECK(longest > 30 && middle.x < -48.4 && middle.x > -51.6);
+    const Vec3 reached = walk(world, along, start, 12);
+    CHECK(std::hypot(reached.x - end.x, reached.z - end.z) < 0.6 && near(reached.y, 3, 0.05));
+
+    // A ramp at 52 degrees, onto a ledge: soldiers walk up it (they manage
+    // 55), but routes keep off it (they take 50).
+    MapCollision steep;
+    steep.triangles.push_back({{-70, 0, 20}, {-75, 6.4, 20}, {-75, 6.4, 30}});
+    steep.triangles.push_back({{-70, 0, 20}, {-75, 6.4, 30}, {-70, 0, 30}});
+    add_box(steep, {-85, 6.0, 20}, {-75, 6.4, 30});
+    World ramp_world(ground);
+    ramp_world.add_map_collision(steep);
+    const NavGrid ramp_grid(ramp_world, open_field());
+    CHECK(!ramp_grid.walkable({-72.5, 3.2, 25}) && ramp_grid.walkable({-80, 6.4, 25}));
+    const Vec3 top = walk(ramp_world, {{-80, 6.4, 25}}, {-65, 0, 25}, 5);
+    CHECK(std::hypot(top.x + 80, top.z - 25) < 0.6 && near(top.y, 6.4, 0.05));
+}
+
 } // namespace
 
 int main() {
@@ -274,5 +314,6 @@ int main() {
     test_slopes();
     test_cost();
     test_stacked();
+    test_edges();
     return swm::test::finish("nav_test");
 }

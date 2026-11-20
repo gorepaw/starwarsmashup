@@ -18,8 +18,9 @@ constexpr uint32_t collision_magic = 0x4C434D53;  // "SMCL"
 constexpr uint32_t collision_version = 1;
 constexpr uint32_t map_collision_magic = 0x434D4D53;  // "SMMC"
 constexpr uint32_t map_collision_version = 1;
-// Map triangles at most this steep (50 degrees) are ground.
-const double walkable_normal_y = std::cos(50 * std::numbers::pi / 180);
+// Map triangles at most this steep (55 degrees, as MoveParams') are ground.
+// (Felucia's ramp up to its cliff top has a stretch of 50.2.)
+const double walkable_normal_y = std::cos(55 * std::numbers::pi / 180);
 
 // Building space is small, so floats are plenty on disk. Everyone loads the
 // same file, so everyone gets the same doubles.
@@ -475,7 +476,7 @@ World::Ground World::ground_at(double x, double z, double y, double step_up) con
         }
         const double height = wa * s.a.y + wb * s.b.y + wc * s.c.y;
         if (height <= reach && (!found || height > best.height)) {
-            best = {height, {0, 1, 0}, true};
+            best = {height, s.normal, true};
             found = true;
         }
     });

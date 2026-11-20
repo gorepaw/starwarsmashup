@@ -17,13 +17,16 @@ class World;
 // each with the surfaces stacked in it, top down (the ground; a walkway or
 // a bunker's floor under the hill; a bridge over a river), with room for a
 // body between them. A surface is walkable if a body (a little wider than a
-// character's) fits there: it isn't too steep, no wall overlaps it between
+// character's) fits there: it isn't too steep (with a margin), no wall overlaps it between
 // its knees and head, and nothing hangs over it below head height. From a
 // surface, a soldier stepping into the next cell lands on the highest
 // surface there it can reach: one at most a step up (or a walkable slope),
 // or any lower one, dropping onto it; it must be walkable. Barriers
 // (Battlefront's AI barriers) are walkable but cost more, so paths go around
-// them when that's not a long way. Cells outside the battlefield (its bounds
+// them when that's not a long way. So do surfaces at an edge (a drop within
+// a body's reach: the side of a ramp, a ledge's lip), and straight lines
+// between corners don't run along them, so a bot that strays a little
+// doesn't fall off: routes keep to the middle of a ramp or a walkway. Cells outside the battlefield (its bounds
 // and boundaries) aren't walkable, nor are death regions. Surfaces sealed
 // inside a big solid (the middle of a boulder, a bunker's roof under its
 // hill) look walkable but can't be reached; a search for one ends at the
@@ -38,6 +41,10 @@ public:
         double cell = 0.5;               // m
         double clearance = 0.15;         // m kept from walls, beyond the body's radius
         double barrier_cost = 4;         // a barrier's cells cost this many times their length
+        double edge_cost = 3;            // an edge's cells, likewise
+        // Degrees under the steepest slope a soldier walks up that a route
+        // may take: bots keep off slopes they'd barely climb.
+        double slope_margin = 5;
         size_t max_expansions = 120000;  // cells a search may visit
     };
 
@@ -73,11 +80,13 @@ private:
     static constexpr int tile_size = 1 << tile_bits;
     static constexpr int max_layers = 6;  // surfaces kept per cell, from the top
     static constexpr int node_bits = 13;  // a tile's surfaces: up to 32 x 32 x 6
-    static constexpr uint8_t walkable_bit = 1, barrier_bit = 2;
+    static constexpr uint8_t walkable_bit = 1, barrier_bit = 2, edge_bit = 4;
     // A surface: its tile's index, then its own within the tile.
     using Node = int32_t;
 
     bool inside(int x, int z) const { return x >= 0 && z >= 0 && x < width_ && z < depth_; }
+    // The steepest slope a route takes.
+    double slope_degrees() const { return move_.max_slope_degrees - settings_.slope_margin; }
     Cell cell_at(Vec3 p) const;
     Vec3 center(int x, int z) const;
     Tile& tile(int x, int z) const;  // the tile holding cell (x, z), worked out if it isn't yet

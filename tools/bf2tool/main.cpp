@@ -898,13 +898,23 @@ int cmd_export_map(const std::vector<std::string>& args) {
         ++barriers;
     }
     std::cerr << std::format("barriers: {} of {}\n", barriers, level.barriers.size());
-    // The playable area: boundary paths (named "boundary..."; Polis Massa's
-    // "Boundry1"), each once. A sublevel may repeat its mode's copy.
+    // The playable area: the paths the map's boundaries list (Felucia's are
+    // four overlapping rings, "warning1".."Warning4"), or, in a map listing
+    // none, the paths named "boundary..." (Polis Massa's "Boundry1"). Each
+    // once: a sublevel may repeat its mode's copy.
+    const auto is_boundary = [&](const LevelPath& path) {
+        if (level.boundary_paths.empty()) {
+            const std::string name = lowercase(path.name);
+            return name.starts_with("boundary") || name.starts_with("boundry");
+        }
+        const uint32_t hash = odf_hash(path.name);
+        return std::any_of(level.boundary_paths.begin(), level.boundary_paths.end(), [&](const auto& listed) {
+            return listed.second == hash && (listed.first == path.group || path_groups.contains(listed.first));
+        });
+    };
     std::vector<std::vector<PathNode>> boundaries;
     for (const LevelPath& path : level.paths) {
-        const std::string name = lowercase(path.name);
-        if (!path_groups.contains(path.group) || path.nodes.size() < 3 ||
-            !(name.starts_with("boundary") || name.starts_with("boundry"))) {
+        if (!path_groups.contains(path.group) || path.nodes.size() < 3 || !is_boundary(path)) {
             continue;
         }
         const bool repeat = std::any_of(boundaries.begin(), boundaries.end(), [&](const auto& nodes) {
@@ -914,6 +924,7 @@ int cmd_export_map(const std::vector<std::string>& args) {
         });
         if (!repeat) {
             boundaries.push_back(path.nodes);
+            std::cerr << std::format("boundary: {} ({} points)\n", path.name, path.nodes.size());
             ini << "Boundary =";
             for (const PathNode& node : path.nodes) {
                 ini << std::format(" {:.2f} {:.2f}", node.position[0], node.position[2]);

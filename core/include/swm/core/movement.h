@@ -90,7 +90,7 @@ struct MoveParams {
     double energy_restore_idle = 15; // EnergyRestoreIdle, per second standing still
     double energy_drain_sprint = 20; // EnergyDrainSprint, per second
     double energy_min_sprint = 20;  // EnergyMinSprint: needed to start sprinting
-    double max_slope_degrees = 50;  // steeper ground can't be walked up
+    double max_slope_degrees = 55;  // steeper ground can't be walked up
     double snap_down = 0.6;         // m: grounded characters follow ground this far down per tick
     double step_up = 0.5;           // m: highest ledge walked up without jumping
     double radius = 0.3;            // m: body, for walls
