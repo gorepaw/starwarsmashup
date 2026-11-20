@@ -77,7 +77,6 @@ const TARGET_CONE := 0.035    # radians: a character this close to the crosshair
 const TARGET_RANGE := 150.0
 const SEEN_FIRING := 2.0      # seconds an enemy shows on the minimap after firing
 const AMMO_NUDGE := Vector2(0.025, 0)  # the ammo counts, right of Battlefront's place (4:3 frame units)
-const DISPUTE_COLOR := Color8(240, 220, 30)  # com_holo_controlzone's fifth color (ASSUMPTION: disputed)
 
 const MOUSE_SENSITIVITY := 0.003
 const CAMERA_DISTANCE := 4.5
@@ -817,7 +816,7 @@ func _update_capture_ring(own: Dictionary, team: int, game: Dictionary) -> void:
 		var b := _bf2_hud.bindings
 		b["player1.commandPost.charge"] = clampf(float(state["charge"]), 0.0, 1.0) if holder >= 0 else 0.0
 		b["player1.commandPost.color"] = NEUTRAL_COLOR if holder < 0 else (FRIEND_COLOR if holder == team else ENEMY_COLOR)
-		b["player1.commandPost.disputeColor"] = DISPUTE_COLOR if bool(state["contested"]) else Color(0.75, 0.75, 0.75)
+		b["player1.commandPost.disputeColor"] = NEUTRAL_COLOR if bool(state["contested"]) else Color(0.75, 0.75, 0.75)
 		return
 
 
@@ -1363,8 +1362,7 @@ func _post_models() -> Dictionary:
 
 
 # Battlefront's command post hologram: the holding side's insignia turning
-# over the post's projector, lit in its color (green for yours, red for the
-# enemy's; nothing while neutral), and its light.
+# over the post's projector, and its light (colored by _update_hologram).
 func _add_hologram(model: Dictionary) -> Dictionary:
 	var spec: Dictionary = model["hologram"]
 	var pivot := Node3D.new()
@@ -1401,10 +1399,7 @@ func _add_hologram(model: Dictionary) -> Dictionary:
 	light.visible = false
 	light.position = model["position"] + Vector3.UP * float(spec["height"])
 	root.add_child(light)
-	var c: Array = spec["friendly_color"]
-	var e: Array = spec["enemy_color"]
-	return {"pivot": pivot, "images": images, "light": light, "rate": float(spec["rotate_rate"]),
-			"friendly": Color(c[0], c[1], c[2]), "enemy": Color(e[0], e[1], e[2])}
+	return {"pivot": pivot, "images": images, "light": light, "rate": float(spec["rotate_rate"])}
 
 
 # The hologram key (HoloImageGeometry's side) for a team: from its icon.
@@ -1529,7 +1524,7 @@ func _update_posts(game: Dictionary, own_team: int) -> void:
 	for i in mini(_posts.size(), (game["posts"] as Array).size()):
 		var state: Dictionary = game["posts"][i]
 		if _posts[i].has("hologram"):
-			_update_hologram(_posts[i]["hologram"], int(state["owner"]), own_team)
+			_update_hologram(_posts[i]["hologram"], state, own_team)
 			continue
 		var color := _post_color(int(state["owner"]), own_team)
 		var material: StandardMaterial3D = _posts[i]["material"]
@@ -1544,9 +1539,17 @@ func _update_posts(game: Dictionary, own_team: int) -> void:
 		label.modulate = color
 
 
-func _update_hologram(holo: Dictionary, owner: int, own_team: int) -> void:
-	var side := _holo_side(owner) if owner >= 0 else ""
-	var color: Color = holo["friendly"] if owner == own_team else holo["enemy"]
+# Our colors rather than the hologram class's (green for friends): blue for
+# your side, red for the enemy's, white while neutral or disputed. A neutral
+# post shows the insignia of the side charging it, if any (Battlefront has no
+# neutral image).
+func _update_hologram(holo: Dictionary, state: Dictionary, own_team: int) -> void:
+	var owner := int(state["owner"])
+	var shown := owner if owner >= 0 else int(state["holder"])
+	var side := _holo_side(shown) if shown >= 0 else ""
+	var color := _post_color(owner, own_team)
+	if bool(state["contested"]):
+		color = NEUTRAL_COLOR
 	var flicker := 0.85 + 0.15 * sin(_elapsed * 23.0) * sin(_elapsed * 7.0)
 	(holo["pivot"] as Node3D).rotation.y = _elapsed * float(holo["rate"]) * TAU
 	for key: String in holo["images"]:
