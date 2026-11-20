@@ -30,6 +30,7 @@ MoveState simulate_move(const MoveState& state, const MoveInput& input, const Wo
                         double dt) {
     MoveState next = state;
     next.yaw = input.yaw;
+    next.pitch = input.pitch;
 
     // Wished direction in the input's frame: forward is -Z rotated by yaw.
     const double s = std::sin(double(input.yaw));

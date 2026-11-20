@@ -7,7 +7,7 @@
 #         [--server a.b.c.d:port] [--host <port>] [--db <file>] [--spawn <x> <z>] [--name <name>]
 #         [--building <building.gltf> <x> <y> <z> <yaw>] [--bot circle|chase|route] [--route <x,z;x,z;...>]
 #         [--loadout <file.ini>] [--battlefield <file.ini>] [--bots <n>] [--hub <file.ini>] [--lag <ms>] [--jitter <ms>]
-#         [--loss <0..1>] [--seconds <n>] [--shots <output_prefix>] [--solo] [--terrain3d]
+#         [--loss <0..1>] [--seconds <n>] [--shots <output_prefix>] [--solo] [--terrain3d] [--first-person]
 #
 # Connects to a running server (default 127.0.0.1:7777; see server/ for
 # swm_server), or with --host runs one in this process and joins it; --db
@@ -43,7 +43,10 @@
 #
 # Controls: WASD to move, mouse to aim, Shift to sprint, Space to jump, left
 # mouse to fire, right mouse to throw a grenade, R to reload, 1 and 2 for
-# weapons, Esc to free the mouse (Esc again quits). Shots fly as bolts; the server decides what they hit. --bot
+# weapons, V to switch between third and first person (from your own
+# character's eyes; --first-person starts in it), Esc to free the mouse (Esc
+# again quits). Characters are animated by rendering/soldier.gd. Shots fly as
+# bolts, drawn leaving the shooter's muzzle; the server decides what they hit. --bot
 # drives the character instead:
 # "circle" runs in circles, "chase" runs after the nearest enemy and
 # shoots at it, "conquest" is the C++ bot (core::Bot) playing the match,
@@ -60,18 +63,18 @@ const TerrainTool = preload("res://tools/render_terrain.gd")
 const Terrain3DBake = preload("res://tools/terrain3d_bake.gd")
 const SwgBuilding = preload("res://rendering/swg_building.gd")
 const Bf2Map = preload("res://rendering/bf2_map.gd")
+const Soldier = preload("res://rendering/soldier.gd")
 
-const RUN_ANIMATION := "human_rifle_stand_runforward"
-const IDLE_ANIMATION := "human_rifle_stand_idle_emote_full"
-const ANIMATION_RUN_SPEED := 4.5  # m/s the run cycle matches
 const MOUSE_SENSITIVITY := 0.003
 const CAMERA_DISTANCE := 4.5
 const CAMERA_HEIGHT := 2.0
 const CAMERA_SHOULDER := 0.7  # meters right of the character
 const SHOT_COUNT := 4
 const CAMERA_MIN_DISTANCE := 0.6
+const FIRST_PERSON_FORWARD := 0.12  # m the first-person camera sits in front of the head bone (out of the helmet)
 const EYE_HEIGHT := 1.6       # matches core: shots start here
 const AIM_DISTANCE := 40.0    # the crosshair's ray converges with the shot here
+const MUZZLE_BLEND := 20.0    # m: a drawn bolt leaves the muzzle and joins its true path (from the eye) by here
 const BOT_FIRE_RANGE := 40.0
 const BOLT_GLOW := 6.0        # emission strength; a graphics setting, like everything about bolt looks
 const BOLT_STRETCH := 3.0     # drawn length times LaserLength (Battlefront adds a longer glow), and width times half that
@@ -92,8 +95,9 @@ var _elapsed := 0.0
 var _yaw := 0.0
 var _pitch := -0.2
 var _mouse_captured := false
-var _own: Dictionary = {}       # {model, player}
-var _remotes: Dictionary = {}   # entity id -> {model, player}
+var _own: Dictionary = {}       # {model, soldier}
+var _remotes: Dictionary = {}   # entity id -> {model, soldier, tag}
+var _delta := 0.0
 var _saw_remote := false
 var _solo := false
 var _announced := false
@@ -101,6 +105,7 @@ var _camera: Camera3D
 var _sky_dome: Node3D  # follows the camera
 var _camera_yaw := 0.0
 var _camera_distance := CAMERA_DISTANCE  # pulled in when a wall is behind the character
+var _first_person := false        # V toggles; --first-person starts in it
 var _route: Array[Vector2] = []  # game x, z
 var _route_index := -1
 var _hud: Label
@@ -127,8 +132,9 @@ var _notice := ""
 var _notice_time := 0.0           # seconds left showing it
 var _explosions: Array = []       # [{node, light, age, radius}]
 var _explosions_seen := 0
-var _own_bolts: Array = []        # [{node, velocity, life, gravity}] drawn from predicted shots
+var _own_bolts: Array = []        # [{node, position, velocity, life, origin, offset}] drawn from predicted shots
 var _remote_bolt_nodes: Array[MeshInstance3D] = []
+var _remote_bolt_starts := {}     # bolt id -> {origin, offset}: where it was first seen drawn from
 var _kills := 0
 var _deaths := 0
 var _hits := 0
@@ -157,6 +163,7 @@ func _init() -> void:
 	_seconds = float(_option(args, "--seconds", "0"))
 	_shots = _option(args, "--shots", "")
 	_solo = args.has("--solo")
+	_first_person = args.has("--first-person")
 	var bake_path := _os_path(bake)
 	for point in _option(args, "--route", "").split(";", false):
 		var xz := point.split(",")
@@ -241,6 +248,7 @@ func _init() -> void:
 
 func _process(delta: float) -> bool:
 	_elapsed += delta
+	_delta = delta
 	if _server != null:
 		_server.update()
 	if _bot != "conquest":
@@ -382,7 +390,9 @@ func _on_input(event: InputEvent) -> void:
 	if event is InputEventMouseMotion and _mouse_captured:
 		var motion := event as InputEventMouseMotion
 		_yaw -= motion.relative.x * MOUSE_SENSITIVITY
-		_pitch = clampf(_pitch - motion.relative.y * MOUSE_SENSITIVITY, -1.2, 0.6)
+		var lowest := -1.35 if _first_person else -1.2
+		var highest := 1.35 if _first_person else 0.6
+		_pitch = clampf(_pitch - motion.relative.y * MOUSE_SENSITIVITY, lowest, highest)
 	elif event is InputEventMouseButton and event.pressed and not _mouse_captured:
 		_capture_mouse(true)
 	elif event is InputEventMouseButton and event.pressed and _choosing_spawn():
@@ -404,6 +414,9 @@ func _on_input(event: InputEvent) -> void:
 			_client.queue(-1)
 		elif not _at_recruiter().is_empty():
 			_client.queue(0 if event.physical_keycode == KEY_F else 1)
+	elif event is InputEventKey and event.pressed and event.physical_keycode == KEY_V and not event.echo:
+		_first_person = not _first_person
+		_pitch = clampf(_pitch, -1.2, 0.6)
 	elif event is InputEventKey and event.pressed and event.physical_keycode in [KEY_1, KEY_2]:
 		_weapon = mini(int(event.physical_keycode - KEY_1), _weapons.size() - 1)
 	elif event is InputEventKey and event.pressed and event.physical_keycode == KEY_ESCAPE:
@@ -475,19 +488,7 @@ func _update_remotes(own_team: int) -> void:
 
 
 func _pose(character: Dictionary, state: Dictionary) -> void:
-	var model: Node3D = character["model"]
-	model.visible = bool(state.get("alive", true))  # no death animations yet
-	model.position = state["position"]
-	model.rotation.y = float(state["yaw"]) + PI  # the model faces +Z; yaw 0 faces -Z
-	var player: AnimationPlayer = character["player"]
-	if player == null:
-		return
-	var velocity: Vector3 = state["velocity"]
-	var speed := Vector2(velocity.x, velocity.z).length()
-	var animation := RUN_ANIMATION if speed > 0.5 else IDLE_ANIMATION
-	if player.current_animation != animation and player.has_animation(animation):
-		player.play(animation, 0.15)
-	player.speed_scale = clampf(speed / ANIMATION_RUN_SPEED, 0.6, 1.9) if speed > 0.5 else 1.0
+	(character["soldier"] as Soldier).pose(state, _delta)
 
 
 # Steers through the route's points; starts at the nearest, so a character
@@ -545,6 +546,23 @@ func _camera_pivot(target: Vector3) -> Vector3:
 
 
 func _update_camera(target: Vector3, delta: float) -> void:
+	# First person while alive; dying, the camera pulls out to watch the body.
+	var soldier := _soldier_of(_client.get_entity_id())
+	var from_eyes := _first_person and soldier != null and bool(_client.get_presented()["alive"])
+	if soldier != null:
+		soldier.first_person = from_eyes
+	if from_eyes:
+		# From the eyes, looking where the character aims.
+		if _bot != "":
+			var own: Dictionary = _client.get_presented()
+			_yaw = float(own["yaw"])
+			_pitch = float(own["pitch"])
+		_camera_yaw = _yaw
+		var look := _camera_basis()
+		var flat := Vector3(-sin(_yaw), 0, -cos(_yaw))
+		_camera.global_position = soldier.eye() + flat * FIRST_PERSON_FORWARD
+		_camera.global_basis = look
+		return
 	# Over the shoulder, facing where the character aims (as in Battlefront,
 	# the character always faces the camera's direction). Bots turn sharply,
 	# so their camera follows smoothly.
@@ -592,6 +610,10 @@ func _update_events() -> void:
 	var me: int = _client.get_entity_id()
 	for event: Dictionary in _client.take_events():
 		var mine := int(event["attacker"]) == me
+		if event["kind"] == "hit":
+			var victim := _soldier_of(int(event["victim"]))
+			if victim != null:
+				victim.flinch()
 		if event["kind"] == "hit" and mine:
 			_hits += 1
 			_hit_flash = 0.15
@@ -609,6 +631,15 @@ func _update_events() -> void:
 			_feed_lines.remove_at(0)
 
 
+# The soldier drawn for an entity: yours or another player's; null if none.
+func _soldier_of(id: int) -> Soldier:
+	if id == _client.get_entity_id():
+		return _own.get("soldier")
+	if _remotes.has(id):
+		return _remotes[id].get("soldier")
+	return null
+
+
 func _who(id: int) -> String:
 	return "you" if id == _client.get_entity_id() else "player %d" % id
 
@@ -616,13 +647,24 @@ func _who(id: int) -> String:
 # Bolts: own shots fly from the moment they're fired (predicted), others'
 # come from the server. Only looks: what they hit is the server's call.
 func _update_bolts(delta: float) -> void:
+	var own_soldier := _soldier_of(_client.get_entity_id())
 	for shot: Dictionary in _client.take_shots():
 		var weapon: Dictionary = _weapons[mini(int(shot["weapon"]), _weapons.size() - 1)]
+		var origin: Vector3 = shot["origin"]
+		var offset := Vector3.ZERO
+		if own_soldier != null:
+			if int(shot["weapon"]) >= 2:
+				own_soldier.throw()
+			else:
+				own_soldier.fire()
+			offset = own_soldier.muzzle() - origin
 		for direction: Vector3 in shot["directions"]:
 			var node := _bolt_node(shot)
 			var velocity: Vector3 = direction * float(weapon["bolt_speed"])
-			_place_bolt(node, shot["origin"], velocity)
-			_own_bolts.append({"node": node, "velocity": velocity, "life": float(weapon["bolt_life"])})
+			var bolt := {"node": node, "position": origin, "velocity": velocity, "life": float(weapon["bolt_life"]),
+					"origin": origin, "offset": offset}
+			_place_drawn_bolt(node, bolt)
+			_own_bolts.append(bolt)
 	for i in range(_own_bolts.size() - 1, -1, -1):
 		var bolt: Dictionary = _own_bolts[i]
 		bolt["life"] = float(bolt["life"]) - delta
@@ -632,19 +674,55 @@ func _update_bolts(delta: float) -> void:
 			node.queue_free()
 			_own_bolts.remove_at(i)
 			continue
-		_place_bolt(node, node.position + bolt["velocity"] * delta, bolt["velocity"])
+		bolt["position"] = bolt["position"] + bolt["velocity"] * delta
+		_place_drawn_bolt(node, bolt)
 
 	_update_explosions(delta)
 	var remote: Array = _client.get_bolts()
 	while _remote_bolt_nodes.size() < remote.size():
 		_remote_bolt_nodes.append(_bolt_node(remote[_remote_bolt_nodes.size()]))
+	var seen := {}
 	for i in _remote_bolt_nodes.size():
 		var node := _remote_bolt_nodes[i]
 		node.visible = i < remote.size()
 		if node.visible:
 			var bolt: Dictionary = remote[i]
+			var id := int(bolt["id"])
+			seen[id] = true
+			if not _remote_bolt_starts.has(id):
+				_remote_bolt_starts[id] = _bolt_start(bolt)
 			_style_bolt(node, bolt)
-			_place_bolt(node, bolt["position"], bolt["velocity"])
+			var start: Dictionary = _remote_bolt_starts[id]
+			_place_drawn_bolt(node, {"position": bolt["position"], "velocity": bolt["velocity"],
+					"origin": start["origin"], "offset": start["offset"]})
+	for id: int in _remote_bolt_starts.keys():
+		if not seen.has(id):
+			_remote_bolt_starts.erase(id)
+
+
+# A projectile seen for the first time: its shooter fires (or throws), and it's
+# drawn from that shooter's muzzle. Bolts start at the eye (core::eye_height).
+func _bolt_start(bolt: Dictionary) -> Dictionary:
+	var owner := int(bolt["owner"])
+	var soldier := _soldier_of(owner)
+	if soldier == null or not soldier.model.visible:
+		return {"origin": bolt["position"], "offset": Vector3.ZERO}
+	if owner != _client.get_entity_id():  # own shots animated when predicted
+		if bolt["kind"] == "grenade":
+			soldier.throw()
+		else:
+			soldier.fire()
+	var origin := soldier.model.global_position + Vector3.UP * EYE_HEIGHT
+	return {"origin": origin, "offset": soldier.muzzle() - origin}
+
+
+# Draws a bolt at its true position, shifted toward the muzzle it left: fully
+# at first, none once it's MUZZLE_BLEND from where it was fired.
+func _place_drawn_bolt(node: MeshInstance3D, bolt: Dictionary) -> void:
+	var position: Vector3 = bolt["position"]
+	var travelled := position.distance_to(bolt["origin"])
+	var shift: Vector3 = bolt["offset"] * maxf(0.0, 1.0 - travelled / MUZZLE_BLEND)
+	_place_bolt(node, position + shift, bolt["velocity"])
 
 
 # `look` has the firing weapon's {color, length, width}.
@@ -741,12 +819,7 @@ func _add_character() -> Dictionary:
 		return {}
 	var model: Node3D = document.generate_scene(state)
 	root.add_child(model)
-	var player := model.find_child("AnimationPlayer", true, false) as AnimationPlayer
-	if player != null:
-		for animation_name in [RUN_ANIMATION, IDLE_ANIMATION]:
-			if player.has_animation(animation_name):
-				player.get_animation(animation_name).loop_mode = Animation.LOOP_LINEAR
-	return {"model": model, "player": player}
+	return {"model": model, "soldier": Soldier.new(model)}
 
 
 # Draws a building where the world snapshot places it. Its cell meshes also

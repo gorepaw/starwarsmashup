@@ -55,6 +55,8 @@ Hub notes:
 
 **Combat**
 - [ ] Third-person shooter controller with Battlefront feel: sprint, roll, crouch, zoom. Sprint (with energy), jump and over-the-shoulder aiming are done; roll, crouch and zoom aren't.
+- [x] First-person view (V toggles): from your own character's eyes, its head hidden, so the arms and gun you see are the armor and weapon you carry. Dying pulls the camera out to third person.
+- [x] Soldiers animated with Battlefront's clips: legs run (forward or backward, turned toward a strafe) while the upper body raises the rifle to fire, reloads or throws; the spine bends with the aim pitch (now networked); hits make them flinch, and they fall when killed. Bolts are drawn leaving the shooter's muzzle and join their true path (from the eyes, where the server fires them) within 20 m.
 - [x] Projectile weapons with clips and overheating: blaster bolts fly at their real speed with gravity. Stats come from the player's own Battlefront II files (`bf2tool export-loadout`): the Imperial rifleman's E-11 (60 damage, a shot every 0.166 s, 50-round clips) and pistol (overheats).
 - [x] Grenades and explosives: thermal detonators (right mouse) bounce and explode on a fuse. Rockets accelerate and explode on impact, and mortar shells lob and burst on contact. Explosions do full damage within an inner radius, falling to nothing at the outer one (the thermal detonator: 450 within 4.5 m, nothing past 6.5 m). Weapons carry the ammo Battlefront gives them: spare clips, 2–4 grenades, 7 rockets.
 - [x] Health, damage, death, respawn (400 health, respawn after 5 s at a spawn point)
@@ -63,7 +65,7 @@ Hub notes:
 
 Combat notes:
 - In a match, teammates can't hurt each other (`ServerConfig::friendly_fire`). Outside one, everyone is hostile.
-- Spread uses the weapon's documented values, but how Battlefront combines `SpreadPerShot`, `SpreadThreshold` and `SpreadLimit` is a guess (marked ASSUMPTION in `swm/core/combat.h`). So are a grenade's fuse (an unnamed ordnance property), explosions hurting the thrower, and the linear falloff. Grenades bounce as if off the ground even from walls, explosions aren't blocked by walls, and they don't push. Ammo pickups, headshots and firing animations aren't in yet.
+- Spread uses the weapon's documented values, but how Battlefront combines `SpreadPerShot`, `SpreadThreshold` and `SpreadLimit` is a guess (marked ASSUMPTION in `swm/core/combat.h`). So are a grenade's fuse (an unnamed ordnance property), explosions hurting the thrower, and the linear falloff. Grenades bounce as if off the ground even from walls, explosions aren't blocked by walls, and they don't push. Ammo pickups and headshots aren't in yet. Every soldier holds the E-11 model whatever its weapon, and plays rifle animations.
 - Bolts are cheap on the server (a position and velocity, tested as a line segment each tick). How they look is up to each client: color, length and width come from the weapon's ordnance, scaled by graphics settings.
 
 **Vehicles**

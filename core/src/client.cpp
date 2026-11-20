@@ -30,6 +30,7 @@ MoveState lerp_state(const MoveState& a, const MoveState& b, double t) {
     out.velocity = {lerp(a.velocity.x, b.velocity.x, t), lerp(a.velocity.y, b.velocity.y, t),
                     lerp(a.velocity.z, b.velocity.z, t)};
     out.yaw = lerp_angle(a.yaw, b.yaw, t);
+    out.pitch = float(lerp(a.pitch, b.pitch, t));
     return out;
 }
 

@@ -65,6 +65,7 @@ struct MoveState {
     Vec3 position;
     Vec3 velocity;
     float yaw = 0;
+    float pitch = 0;      // the input's aim, for drawing (where the gun points)
     bool grounded = true;
     double energy = 100;  // spent by sprinting
     bool sprinting = false;

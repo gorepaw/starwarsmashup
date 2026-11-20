@@ -25,6 +25,7 @@ godot::Dictionary to_dictionary(const core::MoveState& state) {
     out["position"] = to_godot(state.position);
     out["velocity"] = to_godot(state.velocity);
     out["yaw"] = double(state.yaw);
+    out["pitch"] = double(state.pitch);
     out["grounded"] = state.grounded;
     out["energy"] = state.energy;
     out["sprinting"] = state.sprinting;
@@ -447,6 +448,7 @@ godot::Array SwmClient::get_bolts() const {
         const auto remotes = client()->remotes();
         for (const core::net::BoltState& bolt : client()->bolts(now())) {
             godot::Dictionary entry;
+            entry["id"] = int64_t(bolt.id);
             entry["owner"] = int64_t(bolt.owner);
             entry["weapon"] = int64_t(bolt.weapon);
             entry["position"] = to_godot(bolt.position);

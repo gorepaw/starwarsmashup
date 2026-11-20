@@ -167,8 +167,8 @@ private:
     void attach_weapon(const std::string& lod_path) {
         const std::string mesh_path = "appearance/" + lod_highest_detail(library_.read(lod_path));
         log_ << "  weapon " << lod_path << " -> " << mesh_path << "\n";
-        const int mesh = assets_.add_static_mesh(parse_static_mesh(library_.read(mesh_path)),
-                                                 std::filesystem::path(mesh_path).stem().string());
+        const StaticMesh static_mesh = parse_static_mesh(library_.read(mesh_path));
+        const int mesh = assets_.add_static_mesh(static_mesh, std::filesystem::path(mesh_path).stem().string());
 
         const int hand = skeleton_.find("hold_r");
         if (hand < 0) {
@@ -176,6 +176,15 @@ private:
         }
         const int weapon_node = add_node({.name = gltf_.meshes.back().name, .mesh = mesh});
         gltf_.nodes[size_t(hand)].children.push_back(weapon_node);
+        // The weapon's hardpoints (e.g. its muzzle) as empty child nodes, so
+        // the client can find where shots leave the barrel.
+        for (const Hardpoint& hardpoint : static_mesh.hardpoints) {
+            const Mat4 m = to_gltf(hardpoint.transform);
+            const int node = add_node({.name = "hp_" + hardpoint.name,
+                                       .translation = Vec3{m.at(0, 3), m.at(1, 3), m.at(2, 3)}});
+            gltf_.nodes[size_t(weapon_node)].children.push_back(node);
+            log_ << "    hardpoint " << hardpoint.name << "\n";
+        }
     }
 
     void add_animation(const AnimationClip& clip) {

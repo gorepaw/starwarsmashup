@@ -34,6 +34,7 @@ void put_state(ByteWriter& out, const MoveState& state) {
     put_vec3(out, state.position);
     put_vec3(out, state.velocity);
     out.put(state.yaw);
+    out.put(state.pitch);
     out.put(uint8_t(state.grounded));
     out.put(state.energy);
     out.put(uint8_t(state.sprinting));
@@ -55,6 +56,7 @@ MoveState get_state(ByteReader& in) {
     state.position = get_vec3(in);
     state.velocity = get_vec3(in);
     state.yaw = in.get<float>();
+    state.pitch = in.get<float>();
     state.grounded = in.get<uint8_t>() != 0;
     state.energy = in.get<double>();
     state.sprinting = in.get<uint8_t>() != 0;
