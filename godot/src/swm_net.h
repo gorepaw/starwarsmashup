@@ -127,7 +127,8 @@ public:
     godot::Dictionary get_player_status() const;
     // {ticks, snapshots, corrections, max_correction, rtt_ms}
     godot::Dictionary get_stats() const;
-    double get_ground_height(double x, double z) const;
+    // The ground at (x, z) under height `below` (by default, the highest).
+    double get_ground_height(double x, double z, double below) const;
     // Where along from..to (0..1) the segment first hits the world (terrain,
     // buildings, a map's props), as a shot would; -1 if nothing.
     double raycast(const godot::Vector3& from, const godot::Vector3& to) const;

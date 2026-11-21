@@ -627,8 +627,10 @@ func _update_camera(target: Vector3, delta: float) -> void:
 	var pivot := _camera_pivot(target)
 	var offset := Vector3(CAMERA_SHOULDER, 0.3, CAMERA_DISTANCE) * (_camera_distance / CAMERA_DISTANCE)
 	var position := pivot + basis * offset
-	# Keep the camera above the ground.
-	position.y = maxf(position.y, _client.get_ground_height(position.x, position.z) + 0.4)
+	# Keep the camera above the ground: the ground under it below the
+	# character's head (in a cave or a base under a hill, its floor, not the
+	# hillside overhead).
+	position.y = maxf(position.y, _client.get_ground_height(position.x, position.z, pivot.y) + 0.4)
 	_camera.global_position = position
 	_camera.look_at(pivot + basis * Vector3(CAMERA_SHOULDER, 0, -10), Vector3.UP)
 

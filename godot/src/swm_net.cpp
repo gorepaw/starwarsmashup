@@ -620,8 +620,18 @@ godot::Dictionary SwmClient::get_stats() const {
     return out;
 }
 
-double SwmClient::get_ground_height(double x, double z) const {
-    return ground_.height_at(x, z);  // terrain only, for keeping a camera above it
+double SwmClient::get_ground_height(double x, double z, double below) const {
+    // For keeping a camera above the ground: the highest surface at (x, z)
+    // under `below` (the terrain where it isn't cut away, buildings, a map's
+    // props), so in a cave or a base under a hill it's the floor there, not
+    // the hillside overhead. Nothing under it: the terrain.
+    if (world_) {
+        const double ground = world_->ground_at(x, z, below, 0).height;
+        if (ground > -1e8) {
+            return ground;
+        }
+    }
+    return ground_.height_at(x, z);
 }
 
 double SwmClient::raycast(const godot::Vector3& from, const godot::Vector3& to) const {
@@ -676,7 +686,8 @@ void SwmClient::_bind_methods() {
     ClassDB::bind_method(D_METHOD("get_presented"), &SwmClient::get_presented);
     ClassDB::bind_method(D_METHOD("get_remotes"), &SwmClient::get_remotes);
     ClassDB::bind_method(D_METHOD("get_stats"), &SwmClient::get_stats);
-    ClassDB::bind_method(D_METHOD("get_ground_height", "x", "z"), &SwmClient::get_ground_height);
+    ClassDB::bind_method(D_METHOD("get_ground_height", "x", "z", "below"), &SwmClient::get_ground_height,
+                         DEFVAL(1e9));
     ClassDB::bind_method(D_METHOD("raycast", "from", "to"), &SwmClient::raycast);
 }
 
