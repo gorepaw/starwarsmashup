@@ -37,9 +37,10 @@
 #
 # --hub hosts a hub (game/hubs/) instead: walk to the war terminal (the
 # yellow pillar) and press F or G to queue for a side, X to leave the queue.
-# When the battle starts you're sent to it, and back to the hub after the
-# results. Joining a hub server (swm_server --hub) works the same. Battles'
-# battlefield files are looked up in game/battlefields/.
+# When the battle starts you're sent to it, on its own map (the hub picks
+# one for each battle), and back to the hub after the results. Joining a hub
+# server (swm_server --hub) works the same. Battles' battlefield files are
+# looked up in game/battlefields/.
 #
 # Controls: WASD to move, mouse to aim, Shift to sprint, Space to jump, left
 # mouse to fire, right mouse to throw a grenade, R to reload, 1 and 2 for
@@ -165,6 +166,11 @@ var _view_setting := false         # the options' view when the pause menu opene
 var _show_stats := false          # F3: network stats
 var _fired := {}                  # entity id -> seconds since it last fired (for the minimap)
 var _map_meta := {}               # the bake's json (its minimap texture)
+var _world: Node3D                # what's drawn of the world: terrain, models, sky, lights
+var _world_bake := ""             # its bake (relative to game/)
+var _start_bake := ""             # the hub's (or the only server's), where --building stands
+var _buildings: Array = []        # [[gltf, Galaxies position, yaw]] from --building
+var _terrain3d := false
 var _shot_delay := 0
 
 
@@ -256,17 +262,18 @@ func _init() -> void:
 		return
 	_battlefield = _client.get_battlefield()
 
-	_add_terrain(bake, meta, args.has("--terrain3d"))
-	if Bf2Map.is_bf2(meta):
-		Bf2Map.add_objects(root, bake)
-	if not building.is_empty() and not _add_building(building[0], building_position, building_yaw):
+	_terrain3d = args.has("--terrain3d")
+	if not building.is_empty():
+		_buildings.append([building[0], building_position, building_yaw])
+	_start_bake = _game_path(_client.get_bake())
+	if not _build_world(_start_bake):
 		quit(1)
 		return
 	_own = _add_character()
 	if _own.is_empty():
 		quit(1)
 		return
-	_setup_scene(bake, meta)
+	_setup_scene()
 	_add_posts()
 	root.window_input.connect(_on_input)
 	DisplayServer.window_set_size(Vector2i(1280, 720))
@@ -1165,7 +1172,7 @@ func _add_building(path: String, galaxies_position: Vector3, yaw_degrees: float)
 	# SWG is left-handed: mirror X, which also reverses the yaw.
 	building.position = Vector3(-galaxies_position.x, galaxies_position.y, galaxies_position.z)
 	building.rotation.y = deg_to_rad(-yaw_degrees)
-	root.add_child(building)
+	_world.add_child(building)
 	for mesh in building.find_children("*_mesh", "MeshInstance3D", true, false):
 		(mesh as MeshInstance3D).create_trimesh_collision()
 	return true
@@ -1175,7 +1182,7 @@ func _add_terrain(bake: String, meta: Dictionary, use_terrain3d: bool) -> void:
 	if meta.get("hidden", false):
 		return  # a map without terrain (aboard a ship): the stand-in ground isn't drawn
 	if use_terrain3d and Terrain3DBake.available():
-		var terrain: Node3D = Terrain3DBake.create(root, bake, meta)
+		var terrain: Node3D = Terrain3DBake.create(_world, bake, meta)
 		terrain.collision_mode = 0  # movement uses the server's heights, not physics
 		return
 	if use_terrain3d:
@@ -1189,13 +1196,36 @@ func _add_terrain(bake: String, meta: Dictionary, use_terrain3d: bool) -> void:
 		mesh.material_override = Bf2Map.build_terrain_material(bake, meta)
 	else:
 		mesh.material_override = TerrainTool.build_material(bake, meta)
-	root.add_child(mesh)
+	_world.add_child(mesh)
 
 
-func _setup_scene(bake: String, meta: Dictionary) -> void:
+# Draws the world on a bake (relative to game/), in place of the one drawn:
+# its terrain, a Battlefront map's models, sky, water and lights, and the
+# buildings placed with --building where they stand (the starting world).
+func _build_world(bake: String) -> bool:
+	var meta: Variant = JSON.parse_string(FileAccess.get_file_as_string(bake + ".json"))
+	if meta == null:
+		printerr("cannot load terrain ", bake)
+		return false
+	if _world != null:
+		root.remove_child(_world)
+		_world.queue_free()
+	_sky_dome = null
+	_world = Node3D.new()
+	_world.name = "World"
+	root.add_child(_world)
+	_world_bake = bake
 	_map_meta = meta.duplicate()
 	_map_meta["dir"] = bake.get_base_dir()
 	_map_meta["bake"] = bake
+	_add_terrain(bake, meta, _terrain3d)
+	if Bf2Map.is_bf2(meta):
+		Bf2Map.add_objects(_world, bake)
+	if bake == _start_bake:
+		for building: Array in _buildings:
+			if not _add_building(building[0], building[1], building[2]):
+				return false
+
 	var environment := Environment.new()
 	environment.background_mode = Environment.BG_COLOR
 	environment.background_color = Color(0.62, 0.72, 0.85)
@@ -1207,18 +1237,22 @@ func _setup_scene(bake: String, meta: Dictionary) -> void:
 	environment.glow_enabled = true  # blaster bolts bloom
 	var world := WorldEnvironment.new()
 	world.environment = environment
-	root.add_child(world)
+	_world.add_child(world)
 
 	var sun := DirectionalLight3D.new()
 	sun.rotation_degrees = Vector3(-50, -40, 0)
 	sun.light_energy = 1.3
 	sun.shadow_enabled = true
-	root.add_child(sun)
+	_world.add_child(sun)
 	if Bf2Map.is_bf2(meta):
-		_sky_dome = Bf2Map.setup_environment(root, bake, meta, environment, sun)
-		Bf2Map.add_water(root, bake, meta, sun)
-		Bf2Map.add_fog_cloud(root, bake, meta)
+		_sky_dome = Bf2Map.setup_environment(_world, bake, meta, environment, sun)
+		Bf2Map.add_water(_world, bake, meta, sun)
+		Bf2Map.add_fog_cloud(_world, bake, meta)
+	return true
 
+
+# The camera, Battlefront's HUD and screens (or the text HUD standing in).
+func _setup_scene() -> void:
 	_camera = Camera3D.new()
 	_camera.fov = 65
 	_camera.near = 0.05
@@ -1494,6 +1528,11 @@ func _arrive() -> void:
 		(bolt["node"] as Node).queue_free()
 	_own_bolts.clear()
 	_battlefield = _client.get_battlefield()
+	# A battle on another map: its world (the client says hello to the
+	# battle's server once this is drawn).
+	var bake := _game_path(_client.get_bake())
+	if bake != _world_bake and not _build_world(bake):
+		printerr("cannot draw ", bake)
 	_add_posts()
 	_spawn_requested = false
 	_notice_id = 0
@@ -1562,8 +1601,10 @@ func _update_hub_hud() -> void:
 	var factions: PackedStringArray = _client.get_factions()
 	var status: Dictionary = _client.get_player_status()
 	if status.get("queue", "none") == "queued" and factions.size() == 2:
-		_match_label.text = "[center]Queued for the %s: %d in the queue, the battle starts in %d s\n[X] leave the queue[/center]" % [
-				factions[int(status["team"])], status["in_queue"], ceili(status["starts_in"])]
+		var where := str(status.get("battlefield", ""))
+		_match_label.text = "[center]Queued for the %s: %d in the queue, the battle%s starts in %d s\n[X] leave the queue[/center]" % [
+				factions[int(status["team"])], status["in_queue"], " on " + where if where != "" else "",
+				ceili(status["starts_in"])]
 		return
 	_match_label.text = ""
 	var terminal := _at_recruiter()
@@ -1786,6 +1827,11 @@ func _spawn(args: PackedStringArray, meta: Dictionary) -> Vector2:
 # Relative paths are relative to the project folder.
 func _os_path(path: String) -> String:
 	return path if path.is_absolute_path() else ProjectSettings.globalize_path("res://" + path)
+
+
+# The other way: a path in game/ relative to it.
+func _game_path(path: String) -> String:
+	return ProjectSettings.localize_path(path).trim_prefix("res://")
 
 
 func _option(args: PackedStringArray, flag: String, fallback: String) -> String:

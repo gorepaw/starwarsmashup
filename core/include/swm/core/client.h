@@ -199,18 +199,24 @@ private:
 // A client that follows the server's transfers, from a hub to a match and
 // back. Each server gets a new GameClient: entity ids and everything else
 // start over, and generation() counts them. `battlefields` finds a match's
-// battlefield by name, for its loadouts. Every server must use the same world
-// for now.
+// battlefield by name, for its loadouts, and `worlds` the world it's fought
+// in (null, or no `worlds`: the hub's, `world`). Back at the hub, the
+// client is in `world` again.
 class ClientSession {
 public:
     using BattlefieldFinder = std::function<std::optional<Battlefield>(const std::string& name)>;
+    using WorldFinder = std::function<std::shared_ptr<const World>(const Battlefield&)>;
 
-    ClientSession(net::Link& link, const World& world, ClientConfig config, BattlefieldFinder battlefields);
+    ClientSession(net::Link& link, const World& world, ClientConfig config, BattlefieldFinder battlefields,
+                  WorldFinder worlds = {});
 
-    // Follows a pending transfer, then updates the client.
+    // Follows a pending transfer (the new client starts on the next call),
+    // or updates the client.
     void update(double now);
     GameClient& client() { return *client_; }
     const GameClient& client() const { return *client_; }
+    // The world the client is in now.
+    const World& world() const { return battle_world_ ? *battle_world_ : world_; }
     int generation() const { return generation_; }
     // Why the last transfer couldn't be followed, if it couldn't.
     const std::string& error() const { return error_; }
@@ -220,6 +226,8 @@ private:
     const World& world_;
     ClientConfig config_;
     BattlefieldFinder battlefields_;
+    WorldFinder worlds_;
+    std::shared_ptr<const World> battle_world_;  // outlives client_, which refers to it
     std::unique_ptr<GameClient> client_;
     int generation_ = 0;
     std::string error_;

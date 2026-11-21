@@ -1,6 +1,7 @@
 // Hubs: hub files, the queue at war terminals, battles launched with bots
 // filling the teams, transfers there and back, and admission by ticket.
 
+#include <cmath>
 #include <filesystem>
 #include <fstream>
 #include <memory>
@@ -30,14 +31,42 @@ void test_hub_file() {
                                                    "[team]\nName = Rebellion\nLoadout = ../loadouts/trooper.ini\n"
                                                    "[post]\nPosition = 0 0\nOwner = Empire\n"
                                                    "[post]\nPosition = 50 0\nOwner = Rebellion\n";
-    std::ofstream(dir / "hub.ini") << "[hub]\nName = Mos Eisley\nBattlefield = fields/dunes.ini\nTeamSize = 4\n"
+    // The Rebellion first here, as on most of Battlefront's maps.
+    std::ofstream(dir / "fields" / "swamp.ini") << "[battlefield]\nName = Swamp\n"
+                                                   "[team]\nName = Rebellion\nLoadout = ../loadouts/trooper.ini\n"
+                                                   "[team]\nName = Empire\nLoadout = ../loadouts/trooper.ini\n"
+                                                   "[post]\nPosition = 0 0\nOwner = Empire\n"
+                                                   "[post]\nPosition = 50 0\nOwner = Rebellion\n";
+    std::ofstream(dir / "fields" / "clones.ini") << "[battlefield]\nName = Arena\n"
+                                                    "[team]\nName = Republic\nLoadout = ../loadouts/trooper.ini\n"
+                                                    "[team]\nName = Separatists\nLoadout = ../loadouts/trooper.ini\n"
+                                                    "[post]\nPosition = 0 0\nOwner = Republic\n"
+                                                    "[post]\nPosition = 50 0\nOwner = Separatists\n";
+    std::ofstream(dir / "hub.ini") << "[hub]\nName = Mos Eisley\nSides = rebellion , Empire\n"
+                                      "Battlefield = fields/dunes.ini\nBattlefield = fields/swamp.ini\nTeamSize = 4\n"
                                       "QueueTime = 7\n\n[recruiter]\nName = War Terminal\nPosition = 3460 -4835\n"
                                       "Radius = 3\n";
     const HubConfig hub = load_hub(dir / "hub.ini");
     CHECK(hub.name == "Mos Eisley" && hub.team_size == 4 && hub.queue_time == 7);
-    CHECK(hub.battlefield.name == "Dunes" && hub.battlefield_id == "dunes");
+    CHECK(hub.sides[0] == "rebellion" && hub.sides[1] == "Empire");
+    CHECK(hub.battlefields.size() == 2 && hub.battlefields[0].field.name == "Dunes" && hub.battlefields[0].id == "dunes");
+    // Each battlefield's teams for the sides, by name.
+    CHECK(hub.battlefields[0].teams == (std::array<int, 2>{1, 0}));
+    CHECK(hub.battlefields[1].id == "swamp" && hub.battlefields[1].teams == (std::array<int, 2>{0, 1}));
     CHECK(hub.recruiters.size() == 1 && hub.recruiters[0].name == "War Terminal" && hub.recruiters[0].radius == 3);
     CHECK(hub.recruiters[0].position == Vec3(-3460, 0, -4835));
+    // Without Sides, the first battlefield's teams; a battlefield without a side's team is refused.
+    std::ofstream(dir / "plain.ini") << "[hub]\nBattlefield = fields/swamp.ini\n[recruiter]\nPosition = 0 0\n";
+    CHECK(load_hub(dir / "plain.ini").sides == (std::array<std::string, 2>{"Rebellion", "Empire"}));
+    std::ofstream(dir / "mixed.ini") << "[hub]\nBattlefield = fields/swamp.ini\nBattlefield = fields/clones.ini\n"
+                                        "[recruiter]\nPosition = 0 0\n";
+    bool refused = false;
+    try {
+        load_hub(dir / "mixed.ini");
+    } catch (const std::runtime_error&) {
+        refused = true;
+    }
+    CHECK(refused);
     std::filesystem::remove_all(dir);
 }
 
@@ -60,11 +89,12 @@ private:
     uint32_t next_client_ = 1000;
 };
 
+// Its teams the other way round from the hub's sides (Empire, Rebellion).
 Battlefield small_field() {
     Battlefield field;
     field.name = "Test Field";
-    field.teams[0] = {"Empire", {Loadout{}}};
-    field.teams[1] = {"Rebellion", {Loadout{}}};
+    field.teams[0] = {"Rebellion", {Loadout{}}};
+    field.teams[1] = {"Empire", {Loadout{}}};
     field.min_x = -100;
     field.max_x = 100;
     field.min_z = -60;
@@ -91,29 +121,44 @@ void test_queue_battle_and_back() {
     HubConfig config;
     config.name = "Test Hub";
     config.recruiters = {{"Terminal", {0, 0, 20}, 4}};
-    config.battlefield = small_field();
-    config.battlefield_id = "test_field";
+    config.sides = {"Empire", "Rebellion"};
+    config.battlefields = {{"test_field", small_field(), teams_for_sides(small_field(), config.sides)}};
     config.team_size = 2;
     config.queue_time = 2;
     config.return_delay = 2;
     Hub hub(hub_server, 1, world, config, network);
+    // The battle is fought in a world of its own: ground 10 m up. The
+    // server's and the clients' are loaded separately, as they would be.
+    Heightfield battle_ground{401, 1.0, -200, -200, std::vector<float>(401 * 401, 10.0f)};
+    int worlds_loaded = 0;
+    hub.load_battle_world = [&](const Battlefield& field) -> std::shared_ptr<const World> {
+        ++worlds_loaded;
+        return field.name == "Test Field" ? std::make_shared<World>(battle_ground) : nullptr;
+    };
     int battles_started = 0;
+    std::string next_battle;
     hub.log = [&](const std::string& line) { battles_started += line.find(": port ") != std::string::npos; };
 
     // Two players, driven by bots: one queues for each side.
     const auto find = [&](const std::string& name) -> std::optional<Battlefield> {
         return name == "test_field" ? std::optional(small_field()) : std::nullopt;
     };
+    int client_worlds = 0;
+    const auto find_world = [&](const Battlefield&) -> std::shared_ptr<const World> {
+        ++client_worlds;
+        return std::make_shared<World>(battle_ground);
+    };
     net::LoopbackLink alice_link{links, {10, 1}};
     net::LoopbackLink bob_link{links, {11, 1}};
-    ClientSession alice(alice_link, world, ClientConfig{.server = {1, 1}, .name = "alice"}, find);
-    ClientSession bob(bob_link, world, ClientConfig{.server = {1, 1}, .name = "bob"}, find);
+    ClientSession alice(alice_link, world, ClientConfig{.server = {1, 1}, .name = "alice"}, find, find_world);
+    ClientSession bob(bob_link, world, ClientConfig{.server = {1, 1}, .name = "bob"}, find, find_world);
     struct Player {
         ClientSession& session;
         int team;
         std::unique_ptr<Bot> bot;
         int generation = -1;
         bool queued = false, fought = false;
+        double battle_height = -1;  // where it stood in the battle
         std::string notice;
     };
     Player players[] = {{alice, 0, nullptr}, {bob, 1, nullptr}};
@@ -130,11 +175,17 @@ void test_queue_battle_and_back() {
                 p.bot = std::make_unique<Bot>(uint64_t(p.team + 7));
                 p.bot->set_queue_team(p.team);
             }
-            p.bot->update(p.session.client(), world, now);
+            p.bot->update(p.session.client(), p.session.world(), now);
             p.session.update(now);
             const GameClient& client = p.session.client();
             p.queued |= client.player_status().queue == net::PlayerStatus::queued;
+            if (!client.player_status().battlefield.empty()) {
+                next_battle = client.player_status().battlefield;
+            }
             p.fought |= client.match().has_value() && client.self().kills + client.self().deaths > 0;
+            if (client.match() && client.self().life == Life::alive) {
+                p.battle_height = client.self().state.position.y;
+            }
             if (!client.player_status().notice.empty()) {
                 p.notice = client.player_status().notice;
             }
@@ -155,16 +206,21 @@ void test_queue_battle_and_back() {
     std::printf("hub: back after %.0f s; alice: \"%s\", bob: \"%s\"\n", now, players[0].notice.c_str(),
                 players[1].notice.c_str());
     // Both queued, went to the same battle, fought, and came back to the hub.
-    CHECK(players[0].queued && players[1].queued && battles_started == 1);
+    CHECK(players[0].queued && players[1].queued && battles_started == 1 && next_battle == "Test Field");
+    // In the battle's world, on the server and the clients; back at the hub, in its own.
+    CHECK(worlds_loaded == 1 && client_worlds == 2);
+    CHECK(std::abs(players[0].battle_height - 10) < 0.01 && std::abs(players[1].battle_height - 10) < 0.01);
+    CHECK(&alice.world() == &world && std::abs(alice.client().self().state.position.y) < 0.01);
     CHECK(alice.generation() == 2 && bob.generation() == 2 && alice.error().empty());
     CHECK(players[0].fought && players[1].fought);
     CHECK(alice.client().status() == GameClient::Status::connected && !alice.client().match());
     CHECK(alice.client().recruiters().size() == 1 && alice.client().factions()[1] == "Rebellion");
-    // Two players and two bots, on their chosen sides; each greeted with the outcome.
+    // Two players and two bots, on their chosen sides (alice the Empire, the
+    // battlefield's second team); each greeted with the outcome.
     CHECK(hub.last_result() && hub.last_result()->players.size() == 4);
     for (const PlayerResult& player : hub.last_result()->players) {
         if (player.name == "alice" || player.name == "bob") {
-            CHECK(player.team == (player.name == "alice" ? 0 : 1));
+            CHECK(player.team == (player.name == "alice" ? 1 : 0));
         }
     }
     CHECK(players[0].notice.find("at Test Field") != std::string::npos);

@@ -1,6 +1,7 @@
 #include "swm/core/hub.h"
 
 #include <algorithm>
+#include <cctype>
 #include <format>
 #include <sstream>
 #include <stdexcept>
@@ -11,6 +12,37 @@
 
 namespace swm::core {
 
+namespace {
+
+bool same_name(std::string_view a, std::string_view b) {
+    return std::equal(a.begin(), a.end(), b.begin(), b.end(),
+                      [](char x, char y) { return std::tolower(uint8_t(x)) == std::tolower(uint8_t(y)); });
+}
+
+std::string trimmed(std::string_view text) {
+    const size_t first = text.find_first_not_of(" \t");
+    const size_t last = text.find_last_not_of(" \t");
+    return first == std::string_view::npos ? std::string() : std::string(text.substr(first, last - first + 1));
+}
+
+} // namespace
+
+std::array<int, 2> teams_for_sides(const Battlefield& field, const std::array<std::string, 2>& sides) {
+    std::array<int, 2> teams{};
+    for (size_t side = 0; side < 2; ++side) {
+        const auto it = std::find_if(field.teams.begin(), field.teams.end(),
+                                     [&](const Team& team) { return same_name(team.name, sides[side]); });
+        if (it == field.teams.end()) {
+            throw std::runtime_error(std::format("{} has no team named {}", field.name, sides[side]));
+        }
+        teams[side] = int(it - field.teams.begin());
+    }
+    if (teams[0] == teams[1]) {
+        throw std::runtime_error(std::format("{}: both sides are its {}", field.name, sides[0]));
+    }
+    return teams;
+}
+
 HubConfig load_hub(const std::filesystem::path& path) {
     const Ini ini = Ini::load(path);
     const std::string where = path.string();
@@ -20,13 +52,34 @@ HubConfig load_hub(const std::filesystem::path& path) {
     }
     HubConfig hub;
     hub.name = main->get("Name").value_or(path.stem().string());
-    const auto battlefield = main->get("Battlefield");
-    if (!battlefield) {
+    for (const auto& [key, value] : main->values) {
+        if (!same_name(key, "Battlefield")) {
+            continue;
+        }
+        const std::filesystem::path battlefield_path = path.parent_path() / value;
+        hub.battlefields.push_back({battlefield_path.stem().string(), load_battlefield(battlefield_path)});
+    }
+    if (hub.battlefields.empty()) {
         throw std::runtime_error(where + ": no Battlefield");
     }
-    const std::filesystem::path battlefield_path = path.parent_path() / *battlefield;
-    hub.battlefield = load_battlefield(battlefield_path);
-    hub.battlefield_id = battlefield_path.stem().string();
+    // Sides = Rebellion, Empire; by default the first battlefield's teams.
+    if (const auto sides = main->get("Sides")) {
+        const size_t comma = sides->find(',');
+        if (comma == std::string::npos) {
+            throw std::runtime_error(where + ": Sides needs two names, separated by a comma");
+        }
+        hub.sides = {trimmed(std::string_view(*sides).substr(0, comma)),
+                     trimmed(std::string_view(*sides).substr(comma + 1))};
+    } else {
+        hub.sides = {hub.battlefields[0].field.teams[0].name, hub.battlefields[0].field.teams[1].name};
+    }
+    for (HubBattlefield& battlefield : hub.battlefields) {
+        try {
+            battlefield.teams = teams_for_sides(battlefield.field, hub.sides);
+        } catch (const std::runtime_error& error) {
+            throw std::runtime_error(where + ": " + error.what());
+        }
+    }
     hub.team_size = std::clamp(int(main->number("TeamSize", hub.team_size)), 1, 32);
     hub.queue_time = std::max(0.0, main->number("QueueTime", hub.queue_time));
     hub.return_delay = std::max(0.0, main->number("ReturnDelay", hub.return_delay));
@@ -71,8 +124,10 @@ Hub::Hub(GameServer& server, uint16_t port, const World& world, HubConfig config
         recruiter.position = world_.clamp(recruiter.position);
         recruiter.position.y = world_.terrain().height_at(recruiter.position.x, recruiter.position.z);
     }
-    server_.set_recruiters(config_.recruiters,
-                           {config_.battlefield.teams[0].name, config_.battlefield.teams[1].name});
+    server_.set_recruiters(config_.recruiters, config_.sides);
+    load_battle_world = [](const Battlefield& field) -> std::shared_ptr<const World> {
+        return field.terrain.empty() ? nullptr : load_world(field.terrain);
+    };
     server_.on_queue = [this](uint32_t entity, int team) { queue(entity, team); };
     server_.on_join = [this](uint32_t entity, const std::string& name) {
         if (auto it = notices_.find(name); it != notices_.end()) {
@@ -104,14 +159,15 @@ void Hub::queue(uint32_t entity, int team) {
     const std::string name = server_.name_of(entity);
     if (team >= 0) {
         queue_.push_back({entity, name, std::min(team, 1), now_});
-        say(std::format("{} queued for the {}", name, config_.battlefield.teams[size_t(std::min(team, 1))].name));
+        say(std::format("{} queued for the {}", name, config_.sides[size_t(std::min(team, 1))]));
     } else {
         say(std::format("{} left the queue", name));
     }
 }
 
-bool Hub::has_room(const Battle& battle, int team) const {
+bool Hub::has_room(const Battle& battle, int side) const {
     const MatchState& match = battle.server->match()->state();
+    const int team = battle.field.teams[size_t(side)];
     return battle.over_since < 0 && match.phase != Phase::ended && battle.players[size_t(team)] < config_.team_size;
 }
 
@@ -132,28 +188,78 @@ void Hub::send(Battle& battle, const Queued& player) {
     while (ticket == 0 || ticket == battle.bot_ticket || battle.tickets.contains(ticket)) {
         ticket = random_();
     }
-    battle.tickets[ticket] = {player.name, player.team};
-    ++battle.soldiers[size_t(player.team)];
-    ++battle.players[size_t(player.team)];
-    server_.transfer(player.entity, net::Transfer{0, battle.port, ticket, config_.battlefield_id});
+    const int team = battle.field.teams[size_t(player.team)];
+    battle.tickets[ticket] = {player.name, team};
+    ++battle.soldiers[size_t(team)];
+    ++battle.players[size_t(team)];
+    server_.transfer(player.entity, net::Transfer{0, battle.port, ticket, battle.field.id});
     if (net::PlayerStatus* status = server_.status(player.entity)) {
         *status = net::PlayerStatus{.notice_id = status->notice_id, .notice = status->notice};
     }
-    say(std::format("sent {} to battle {} for the {}", player.name, battle.id,
-                    config_.battlefield.teams[size_t(player.team)].name));
+    say(std::format("sent {} to battle {} on {} for the {}", player.name, battle.id, battle.field.field.name,
+                    config_.sides[size_t(player.team)]));
+}
+
+void Hub::choose_next() {
+    if (config_.battlefields.empty()) {
+        return;
+    }
+    // Not the last battle's again, when there's another.
+    std::vector<size_t> choices;
+    for (size_t i = 0; i < config_.battlefields.size(); ++i) {
+        if (config_.battlefields.size() == 1 || config_.battlefields[i].id != last_battlefield_) {
+            choices.push_back(i);
+        }
+    }
+    Next next;
+    next.battlefield = choices[std::uniform_int_distribution<size_t>(0, choices.size() - 1)(random_)];
+    const HubBattlefield& chosen = config_.battlefields[next.battlefield];
+    if (const auto it = worlds_.find(chosen.id); it != worlds_.end() && !it->second.expired()) {
+        std::promise<std::shared_ptr<const World>> loaded;
+        loaded.set_value(it->second.lock());
+        next.world = loaded.get_future().share();
+    } else {
+        next.world = std::async(std::launch::async, load_battle_world, chosen.field).share();
+    }
+    say(std::format("next battle on {}", chosen.field.name));
+    next_ = std::move(next);
+}
+
+bool Hub::next_ready() {
+    if (!next_ || next_->world.wait_for(std::chrono::seconds(0)) != std::future_status::ready) {
+        return false;
+    }
+    try {
+        next_->world.get();
+        return true;
+    } catch (const std::exception& error) {
+        // Off the list; the queue waits for another.
+        say(std::format("can't load {}: {}", config_.battlefields[next_->battlefield].field.name, error.what()));
+        config_.battlefields.erase(config_.battlefields.begin() + std::ptrdiff_t(next_->battlefield));
+        next_.reset();
+        return false;
+    }
 }
 
 void Hub::start_battle() {
     auto battle = std::make_unique<Battle>();
     Battle* b = battle.get();
+    b->field = config_.battlefields[next_->battlefield];
+    b->world = next_->world.get();
+    next_.reset();
+    last_battlefield_ = b->field.id;
+    if (b->world) {
+        worlds_[b->field.id] = b->world;
+    }
+    const World& world = b->world ? *b->world : world_;
     b->id = next_battle_++;
     b->link = network_.open_server(b->port);
     b->bot_ticket = random_() | 1;
     b->last_player = now_;
     ServerConfig config;
-    config.battlefield = config_.battlefield;
+    config.battlefield = b->field.field;
     config.single_match = true;
-    b->server = std::make_unique<GameServer>(*b->link, world_, config);
+    b->server = std::make_unique<GameServer>(*b->link, world, config);
     b->server->log = [this, id = b->id](const std::string& line) { say(std::format("battle {}: {}", id, line)); };
     // Players with their ticket, on their side; bots wherever there's room.
     b->server->admit = [b](const std::string& name, uint64_t ticket) -> std::optional<int> {
@@ -195,10 +301,10 @@ void Hub::start_battle() {
     const int bots = std::max(0, 2 * config_.team_size - b->players[0] - b->players[1]);
     ClientConfig bot_config;
     bot_config.server = network_.local(b->port);
-    bot_config.battlefield = config_.battlefield;
+    bot_config.battlefield = b->field.field;
     bot_config.ticket = b->bot_ticket;
-    b->bots = std::make_unique<BotPlayers>(bots, world_, bot_config, [this] { return network_.open_client(); });
-    say(std::format("battle {} on {}: port {}, {} players, {} bots", b->id, config_.battlefield.name, b->port,
+    b->bots = std::make_unique<BotPlayers>(bots, world, bot_config, [this] { return network_.open_client(); });
+    say(std::format("battle {} on {}: port {}, {} players, {} bots", b->id, b->field.field.name, b->port,
                     b->players[0] + b->players[1], bots));
     battles_.push_back(std::move(battle));
 }
@@ -219,7 +325,10 @@ void Hub::update(double now) {
             queue_.push_back(player);
         }
     }
-    if (!queue_.empty() && now - queue_.front().since >= config_.queue_time) {
+    if (!queue_.empty() && !next_) {
+        choose_next();
+    }
+    if (!queue_.empty() && now - queue_.front().since >= config_.queue_time && next_ready()) {
         start_battle();
     }
     for (const Queued& player : queue_) {
@@ -228,6 +337,7 @@ void Hub::update(double now) {
             status->team = int8_t(player.team);
             status->in_queue = uint16_t(queue_.size());
             status->starts_in = float(std::max(0.0, config_.queue_time - (now - queue_.front().since)));
+            status->battlefield = next_ ? config_.battlefields[next_->battlefield].field.name : std::string();
         }
     }
 

@@ -234,6 +234,7 @@ struct Encoder {
         out.put(m.you.team);
         out.put(m.you.in_queue);
         out.put(m.you.starts_in);
+        out.put_string(m.you.battlefield);
         out.put(m.you.notice_id);
         out.put_string(m.you.notice);
     }
@@ -388,6 +389,7 @@ Message decode(std::span<const uint8_t> packet) {
         m.you.team = get_team(in);
         m.you.in_queue = in.get<uint16_t>();
         m.you.starts_in = in.get<float>();
+        m.you.battlefield = in.get_string();
         m.you.notice_id = in.get<uint16_t>();
         m.you.notice = in.get_string();
         message = std::move(m);

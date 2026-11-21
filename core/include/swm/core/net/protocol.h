@@ -17,7 +17,7 @@ namespace swm::core::net {
 // Every packet starts with a magic number, the protocol version and a message
 // type. Peers drop packets with another version. Bump it on any wire change.
 inline constexpr uint16_t protocol_magic = 0x4D53;  // "SM"
-inline constexpr uint16_t protocol_version = 7;
+inline constexpr uint16_t protocol_version = 8;
 
 // Client -> server, repeated until a Welcome or Refused arrives. The name
 // picks the saved character (there are no accounts yet). A match server
@@ -72,6 +72,7 @@ struct PlayerStatus {
     int8_t team = -1;          // queued for
     uint16_t in_queue = 0;     // players queued for the next battle
     float starts_in = 0;       // seconds until it starts
+    std::string battlefield;   // where it's fought (its name)
     uint16_t notice_id = 0;    // changes with each new notice
     std::string notice;        // e.g. how the last battle went
 

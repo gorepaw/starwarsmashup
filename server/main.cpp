@@ -194,8 +194,8 @@ int main(int argc, char** argv) {
         std::unique_ptr<swm::core::Hub> hub;
         if (!hub_file.empty()) {
             swm::core::HubConfig hub_config = swm::core::load_hub(hub_file);
-            std::cout << std::format("hub {}: {} war terminal(s), battles on {}, {} per team\n", hub_config.name,
-                                     hub_config.recruiters.size(), hub_config.battlefield.name, hub_config.team_size);
+            std::cout << std::format("hub {}: {} war terminal(s), battles on {} battlefields, {} per team\n", hub_config.name,
+                                     hub_config.recruiters.size(), hub_config.battlefields.size(), hub_config.team_size);
             hub = std::make_unique<swm::core::Hub>(server, link.port(), world, std::move(hub_config), hub_network);
             hub->log = server.log;
         }

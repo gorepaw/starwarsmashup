@@ -212,6 +212,7 @@ godot::Dictionary SwmClient::get_player_status() const {
         out["team"] = int64_t(status.team);
         out["in_queue"] = int64_t(status.in_queue);
         out["starts_in"] = double(status.starts_in);
+        out["battlefield"] = godot::String::utf8(status.battlefield.c_str());
         out["notice_id"] = int64_t(status.notice_id);
         out["notice"] = godot::String::utf8(status.notice.c_str());
     }
@@ -272,8 +273,8 @@ godot::Dictionary SwmClient::get_battlefield() const {
         godot::Dictionary entry;
         entry["name"] = godot::String::utf8(post.name.c_str());
         core::Vec3 position = post.position;
-        if (world_) {
-            position.y = world_->terrain().height_at(position.x, position.z);
+        if (world()) {
+            position.y = world()->terrain().height_at(position.x, position.z);
         }
         entry["position"] = to_godot(position);
         entry["radius"] = post.radius;
@@ -335,6 +336,7 @@ godot::Error SwmClient::start(const godot::String& server, const godot::String& 
     try {
         ground_ = core::load_bake(to_std(bake_prefix));
         world_ = make_world(ground_, to_std(bake_prefix), buildings_);
+        bake_ = to_std(bake_prefix);
         udp_ = std::make_unique<core::net::UdpLink>();
     } catch (const std::exception& error) {
         godot::UtilityFunctions::push_error("SwmClient: ", error.what());
@@ -359,7 +361,11 @@ godot::Error SwmClient::start(const godot::String& server, const godot::String& 
             return std::nullopt;
         }
     };
-    session_ = std::make_unique<core::ClientSession>(*link, *world_, config, find_battlefield);
+    // And the world it's fought in: its map's, or ours when it names none.
+    auto find_world = [](const core::Battlefield& field) -> std::shared_ptr<const core::World> {
+        return field.terrain.empty() ? nullptr : core::load_world(field.terrain);
+    };
+    session_ = std::make_unique<core::ClientSession>(*link, *world_, config, find_battlefield, find_world);
     return godot::OK;
 }
 
@@ -395,10 +401,10 @@ void SwmClient::update() {
             }
             // Its way around the battlefield, worked out as it goes.
             if (!navigation_ && battlefield()) {
-                navigation_ = std::make_shared<core::NavGrid>(*world_, *battlefield());
+                navigation_ = std::make_shared<core::NavGrid>(*world(), *battlefield());
                 bot_->set_navigation(navigation_);
             }
-            bot_->update(*client(), *world_, now());
+            bot_->update(*client(), *world(), now());
         }
         session_->update(now());
     }
@@ -620,25 +626,30 @@ godot::Dictionary SwmClient::get_stats() const {
     return out;
 }
 
+godot::String SwmClient::get_bake() const {
+    if (battlefield() && !battlefield()->terrain.empty() && session_ && &session_->world() != world_.get()) {
+        return godot::String::utf8(battlefield()->terrain.generic_string().c_str());
+    }
+    return godot::String::utf8(bake_.c_str());
+}
+
 double SwmClient::get_ground_height(double x, double z, double below) const {
     // For keeping a camera above the ground: the highest surface at (x, z)
     // under `below` (the terrain where it isn't cut away, buildings, a map's
     // props), so in a cave or a base under a hill it's the floor there, not
     // the hillside overhead. Nothing under it: the terrain.
-    if (world_) {
-        const double ground = world_->ground_at(x, z, below, 0).height;
-        if (ground > -1e8) {
-            return ground;
-        }
+    if (!world()) {
+        return 0;
     }
-    return ground_.height_at(x, z);
+    const double ground = world()->ground_at(x, z, below, 0).height;
+    return ground > -1e8 ? ground : world()->terrain().height_at(x, z);
 }
 
 double SwmClient::raycast(const godot::Vector3& from, const godot::Vector3& to) const {
-    if (!world_) {
+    if (!world()) {
         return -1;
     }
-    const auto t = world_->raycast({from.x, from.y, from.z}, {to.x, to.y, to.z});
+    const auto t = world()->raycast({from.x, from.y, from.z}, {to.x, to.y, to.z});
     return t ? *t : -1;
 }
 
@@ -660,6 +671,7 @@ void SwmClient::_bind_methods() {
     ClassDB::bind_method(D_METHOD("set_bot", "enabled"), &SwmClient::set_bot);
     ClassDB::bind_method(D_METHOD("set_battlefield_dir", "path"), &SwmClient::set_battlefield_dir);
     ClassDB::bind_method(D_METHOD("get_generation"), &SwmClient::get_generation);
+    ClassDB::bind_method(D_METHOD("get_bake"), &SwmClient::get_bake);
     ClassDB::bind_method(D_METHOD("get_session_error"), &SwmClient::get_session_error);
     ClassDB::bind_method(D_METHOD("get_recruiters"), &SwmClient::get_recruiters);
     ClassDB::bind_method(D_METHOD("get_factions"), &SwmClient::get_factions);

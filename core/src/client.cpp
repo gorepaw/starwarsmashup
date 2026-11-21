@@ -362,9 +362,10 @@ std::vector<GameClient::Remote> GameClient::remotes() const {
     return out;
 }
 
-ClientSession::ClientSession(net::Link& link, const World& world, ClientConfig config, BattlefieldFinder battlefields)
+ClientSession::ClientSession(net::Link& link, const World& world, ClientConfig config, BattlefieldFinder battlefields,
+                             WorldFinder worlds)
     : link_(link), world_(world), config_(std::move(config)), battlefields_(std::move(battlefields)),
-      client_(std::make_unique<GameClient>(link_, world_, config_)) {}
+      worlds_(std::move(worlds)), client_(std::make_unique<GameClient>(link_, world_, config_)) {}
 
 void ClientSession::update(double now) {
     if (client_->status() == GameClient::Status::transferring) {
@@ -381,9 +382,22 @@ void ClientSession::update(double now) {
                 error_ = "no battlefield file named " + transfer.battlefield;
             }
         }
+        std::shared_ptr<const World> world;
+        if (error_.empty() && next.battlefield && worlds_) {
+            try {
+                world = worlds_(*next.battlefield);
+            } catch (const std::exception& e) {
+                error_ = "can't load the world of " + transfer.battlefield + ": " + e.what();
+            }
+        }
         if (error_.empty()) {
-            client_ = std::make_unique<GameClient>(link_, world_, next);
+            client_ = std::make_unique<GameClient>(link_, world ? *world : world_, next);
+            battle_world_ = std::move(world);  // after: the old client referred to the old one
             ++generation_;
+            // It says hello on the next update: whoever draws the world can
+            // load it first (seconds, maybe) without the new server timing
+            // us out.
+            return;
         }
     }
     client_->update(now);

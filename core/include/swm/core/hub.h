@@ -3,6 +3,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <functional>
+#include <future>
 #include <map>
 #include <memory>
 #include <random>
@@ -19,20 +20,34 @@ namespace swm::core {
 
 class World;
 
+// A battlefield a hub's battles can be fought on.
+struct HubBattlefield {
+    std::string id;                  // the file's name without .ini: clients load the same file
+    Battlefield field;
+    std::array<int, 2> teams{0, 1};  // the battlefield's team for each of the hub's sides
+};
+
 struct HubConfig {
     std::string name = "Hub";
     std::vector<net::Recruiter> recruiters;
-    Battlefield battlefield;     // where its battles are fought
-    std::string battlefield_id;  // the battlefield file's name without .ini: clients load the same file
+    // The sides players queue for. Each battlefield has teams by these
+    // names, in either order (Battlefront's team 1 attacks on some maps).
+    std::array<std::string, 2> sides;
+    std::vector<HubBattlefield> battlefields;  // each battle is on one, at random
     int team_size = 8;           // soldiers per team; bots fill the places players don't
     double queue_time = 10;      // seconds from the first player queueing to the battle starting
     double return_delay = 5;     // seconds after a battle's results before it closes
 };
 
-// Reads a hub file (see game/hubs/): its war terminals (Galaxies x z) and
-// the battlefield file it launches battles on, relative to it. Throws
-// std::runtime_error if it, or the battlefield, can't be read.
+// Reads a hub file (see game/hubs/): its war terminals (Galaxies x z), the
+// sides, and the battlefield files it launches battles on (Battlefield =,
+// repeated), relative to it. Throws std::runtime_error if it, or a
+// battlefield, can't be read, or a battlefield has no team for a side.
 HubConfig load_hub(const std::filesystem::path& path);
+
+// Which of a battlefield's teams is each side (by name, ignoring case).
+// Throws std::runtime_error if one isn't there.
+std::array<int, 2> teams_for_sides(const Battlefield& field, const std::array<std::string, 2>& sides);
 
 // How a hub opens sockets for the battle servers it launches and their
 // bots: UDP on this machine, or in-memory links in tests.
@@ -54,8 +69,10 @@ public:
 };
 
 // A hub: an open-world server (Mos Eisley) whose war terminals queue players
-// for battles. When the first player in the queue has waited `queue_time`,
-// the hub launches a battle server (a single-match GameServer, in this
+// for battles. When the first player queues, the hub picks the next battle's
+// battlefield (at random, not the last one again) and loads its world in the
+// background. Once that player has waited `queue_time` and the world is
+// loaded, it launches a battle server (a single-match GameServer, in this
 // process for now) with bots filling the teams, and transfers the queued
 // players to it with tickets; later players join it while it's on. When the
 // match's results have shown, everyone is transferred back and greeted with
@@ -76,6 +93,11 @@ public:
     const std::optional<MatchResult>& last_result() const { return last_result_; }
 
     std::function<void(const std::string&)> log;
+    // Loads the world a battle on a battlefield is fought in, on another
+    // thread; null for the hub's own. By default: the battlefield's terrain
+    // bake and the map collision next to it (load_world), or the hub's own
+    // world when it names none.
+    std::function<std::shared_ptr<const World>(const Battlefield&)> load_battle_world;
 
 private:
     struct Queued {
@@ -85,6 +107,8 @@ private:
         double since = 0;
     };
     struct Battle {
+        std::shared_ptr<const World> world;  // null: the hub's; outlives the server and bots below
+        HubBattlefield field;
         int id = 0;
         uint16_t port = 0;
         std::unique_ptr<net::Link> link;
@@ -97,11 +121,18 @@ private:
         double over_since = -1;
         double last_player = 0;  // when a player was last connected
     };
+    // The next battle's battlefield, and its world loading.
+    struct Next {
+        size_t battlefield = 0;
+        std::shared_future<std::shared_ptr<const World>> world;
+    };
 
     void queue(uint32_t entity, int team);
+    void choose_next();
+    bool next_ready();
     void start_battle();
     void send(Battle& battle, const Queued& player);
-    bool has_room(const Battle& battle, int team) const;
+    bool has_room(const Battle& battle, int side) const;
     bool players_connected(const Battle& battle) const;
     void say(const std::string& text) const;
 
@@ -112,6 +143,9 @@ private:
     HubNetwork& network_;
     std::vector<Queued> queue_;
     std::vector<std::unique_ptr<Battle>> battles_;
+    std::optional<Next> next_;  // after config_: its loading refers to a battlefield there
+    std::string last_battlefield_;
+    std::map<std::string, std::weak_ptr<const World>> worlds_;  // battlefield id -> loaded world
     std::map<std::string, std::string> notices_;  // player -> how their battle went, for when they're back
     std::optional<MatchResult> last_result_;
     std::mt19937_64 random_{std::random_device{}()};

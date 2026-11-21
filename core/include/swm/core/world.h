@@ -3,6 +3,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <limits>
+#include <memory>
 #include <optional>
 #include <vector>
 
@@ -179,5 +180,10 @@ private:
     int grid_w_ = 0, grid_h_ = 0;
     std::vector<std::vector<uint32_t>> grid_;  // solid indices per cell, rows along +Z
 };
+
+// A world on a bake (swgtool bake-terrain, or bf2tool export-map) with the
+// map collision next to it, owning its terrain. Throws std::runtime_error if
+// the bake can't be read.
+std::shared_ptr<const World> load_world(const std::filesystem::path& bake);
 
 } // namespace swm::core

@@ -123,8 +123,12 @@ public:
     godot::PackedStringArray get_factions() const;
     // Queue for a battle on a side (0 or 1) at a war terminal; -1 leaves the queue.
     void queue(int64_t team);
-    // {queue ("none" or "queued"), team, in_queue, starts_in, notice_id, notice}.
+    // {queue ("none" or "queued"), team, in_queue, starts_in, battlefield
+    // (the next battle's name), notice_id, notice}.
     godot::Dictionary get_player_status() const;
+    // The terrain bake (prefix) of the world the client is in now: a
+    // battle's own (its battlefield's map), or the one start() was given.
+    godot::String get_bake() const;
     // {ticks, snapshots, corrections, max_correction, rtt_ms}
     godot::Dictionary get_stats() const;
     // The ground at (x, z) under height `below` (by default, the highest).
@@ -142,6 +146,8 @@ protected:
 private:
     double now() const;
     core::GameClient* client() const { return session_ ? &session_->client() : nullptr; }
+    // The world the client is in now (see get_bake()).
+    const core::World* world() const { return session_ ? &session_->world() : world_.get(); }
     const std::optional<core::Battlefield>& battlefield() const;
     const core::Loadout& loadout() const;
     // An entity's loadout, by team and loadout index.
@@ -157,7 +163,8 @@ private:
     std::unique_ptr<core::Bot> bot_;
     int bot_generation_ = 0;
     std::shared_ptr<const core::NavGrid> navigation_;  // the bot's, for the current battlefield
-    std::unique_ptr<core::World> world_;
+    std::string bake_;
+    std::unique_ptr<core::World> world_;  // the hub's (or the only server's)
     std::unique_ptr<core::net::UdpLink> udp_;
     std::unique_ptr<core::net::ImpairedLink> impaired_;
     std::unique_ptr<core::ClientSession> session_;

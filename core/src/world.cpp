@@ -815,4 +815,15 @@ Vec3 World::push_out(Vec3 from, Vec3 position, double radius, double height, dou
     return position;
 }
 
+std::shared_ptr<const World> load_world(const std::filesystem::path& bake) {
+    struct Owned {
+        Heightfield ground;
+        World world;
+        explicit Owned(Heightfield g) : ground(std::move(g)), world(ground) {}
+    };
+    auto owned = std::make_shared<Owned>(load_bake(bake));
+    owned->world.add_map_collision_of(bake);
+    return std::shared_ptr<const World>(owned, &owned->world);
+}
+
 } // namespace swm::core
