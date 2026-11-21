@@ -835,11 +835,22 @@ int cmd_export_map(const std::vector<std::string>& args) {
             // collision, placed in game space.
             std::string model;
             if (library.classes().find(object.type) != nullptr) {
-                if (const auto geometry = library.classes().resolve(object.type).get("GeometryName")) {
+                const OdfClass resolved = library.classes().resolve(object.type);
+                if (const auto geometry = resolved.get("GeometryName")) {
                     model = model_file(*geometry);
-                    auto shape = shapes.find(lowercase(*geometry));
+                    // By model and what the class says its soldiers and
+                    // ordnance meet.
+                    const CollisionUse use = collision_use(resolved);
+                    std::string key = lowercase(*geometry);
+                    for (const auto& names : {use.soldiers, use.ordnance}) {
+                        key += '|';
+                        for (const std::string& name : names.value_or(std::vector<std::string>{"*"})) {
+                            key += name + ',';
+                        }
+                    }
+                    auto shape = shapes.find(key);
                     if (shape == shapes.end()) {
-                        shape = shapes.emplace(lowercase(*geometry), model_collision(library, *geometry)).first;
+                        shape = shapes.emplace(key, model_collision(library, *geometry, use)).first;
                     }
                     const auto place = [&](const std::array<float, 3>& p) {
                         const double x = -p[0], y = p[1], z = p[2];

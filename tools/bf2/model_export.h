@@ -4,6 +4,7 @@
 #include <filesystem>
 #include <map>
 #include <memory>
+#include <optional>
 #include <ostream>
 #include <set>
 #include <string>
@@ -72,7 +73,17 @@ struct CollisionTriangle {
     bool soldiers = true;
     bool ordnance = true;
 };
-std::vector<CollisionTriangle> model_collision(const AssetLibrary& library, std::string_view model);
+// What soldiers and ordnance meet, as a class lists it (SoldierCollision,
+// OrdnanceCollision: "collisionmesh" or primitives' names, lowercase); a
+// kind its class doesn't list meets the mesh and the primitives whose flags
+// stop it. Naboo's buildings list their boxes for vehicles only, and the
+// mesh for soldiers and ordnance: floors inside the boxes are walked on.
+struct CollisionUse {
+    std::optional<std::vector<std::string>> soldiers, ordnance;
+};
+CollisionUse collision_use(const OdfClass& resolved);
+std::vector<CollisionTriangle> model_collision(const AssetLibrary& library, std::string_view model,
+                                               const CollisionUse& use = {});
 
 // Writes a texture as a PNG. False if the library doesn't have it or no
 // stored format can be decoded.

@@ -181,7 +181,12 @@ Bytes collision() {
                                            primitive("p_crate", "child", 4, 0.5f, 0.5f, 0.5f),
                                            primitive("p_-so-trunk", "root", 2, 0.3f, 4, 0),
                                            primitive("p_-v-wall", "root", 4, 1, 1, 1)}));
-    return join({coll, prim});
+    // A prop with primitives only: a crate stopping everything, and a ramp
+    // for vehicles (flags without the leading dash).
+    const Bytes crate = chunk("prim", join({chunk("INFO", join({text("test_crate"), words({2})})),
+                                            primitive("p_crate", "root", 4, 0.5f, 0.5f, 0.5f),
+                                            primitive("p_v-ramp", "root", 4, 2, 1, 2)}));
+    return join({coll, prim, crate});
 }
 
 void test_collision() {
@@ -200,21 +205,45 @@ void test_collision() {
     CHECK(crate.stops('s') && crate.stops('o') && crate.stops('v'));  // no flags: everything
     CHECK(prims.primitives[1].stops('s') && prims.primitives[1].stops('o') && !prims.primitives[1].stops('v'));
     CHECK(!prims.primitives[2].stops('s') && !prims.primitives[2].stops('o'));
+    CHECK(!crate.flags() && prims.primitives[1].flags() == "so");
+    CollisionPrimitive named;
+    for (const char* none : {"p_set_piece", "p_vehicle", "p_ollision", "p_-", "p_cube1"}) {
+        named.name = none;
+        CHECK(!named.flags());
+    }
+    named.name = "p_so-collision";  // Geonosis's hangar
+    CHECK(named.flags() == "so" && named.stops('s') && !named.stops('v'));
 
     AssetLibrary library;
     library.add(file);
     CHECK(library.collision_mesh("TEST_PROP") && library.collision_primitives("test_prop"));
     const std::vector<CollisionTriangle> triangles = model_collision(library, "test_prop");
-    CHECK(triangles.size() == 3 + 12 + 48);  // mesh, box, 12-sided cylinder (sides and caps)
-    // The crate: 1 m up from "child" (at (2, 2, 3), turned 90 degrees about y).
+    CHECK(triangles.size() == 3 + 12 + 48);  // mesh, crate, 12-sided cylinder (sides and caps)
+    // A class listing what its soldiers and ordnance meet (Naboo's
+    // buildings: the mesh; their boxes are for vehicles).
+    OdfClass building;
+    building.properties = {{odf_hash("VehicleCollision"), "p_crate"},
+                           {odf_hash("SoldierCollision"), "CollisionMesh"},
+                           {odf_hash("OrdnanceCollision"), "CollisionMesh"},
+                           {odf_hash("OrdnanceCollision"), "p_-so-trunk"}};
+    const CollisionUse use = collision_use(building);
+    CHECK(use.soldiers == std::vector<std::string>{"collisionmesh"});
+    CHECK(use.ordnance == (std::vector<std::string>{"collisionmesh", "p_-so-trunk"}));
+    const std::vector<CollisionTriangle> listed = model_collision(library, "test_prop", use);
+    CHECK(listed.size() == 3 + 48);  // the mesh and the trunk; not the crate
+    CHECK(listed[0].soldiers && listed[0].ordnance && !listed[3].soldiers && listed[3].ordnance);
+    // Without a mesh, the crate stops everything: 1 m up from the root.
+    const std::vector<CollisionTriangle> alone = model_collision(library, "test_crate");
+    CHECK(alone.size() == 12);
     float low = 1e9f, high = -1e9f;
-    for (size_t i = 3; i < 15; ++i) {
-        for (const auto& p : {triangles[i].a, triangles[i].b, triangles[i].c}) {
+    for (const auto& t : alone) {
+        for (const auto& p : {t.a, t.b, t.c}) {
             low = std::min(low, p[1]);
             high = std::max(high, p[1]);
         }
+        CHECK(t.soldiers && t.ordnance);
     }
-    CHECK(low == 2.5f && high == 3.5f);
+    CHECK(low == 0.5f && high == 1.5f);
     // The trunk is 4 m tall, centered 1 m up: -1..3.
     low = 1e9f;
     for (size_t i = 15; i < triangles.size(); ++i) {

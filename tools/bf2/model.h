@@ -112,6 +112,8 @@ struct CollisionPrimitive {
     std::array<float, 3> size{};
 
     bool stops(char kind) const;  // kind: 's', 'v', 'b', 'o' or 't'
+    // The flags in its name, if it has any.
+    std::optional<std::string> flags() const;
 };
 
 struct CollisionPrimitives {

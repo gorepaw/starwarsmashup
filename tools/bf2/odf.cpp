@@ -54,6 +54,8 @@ constexpr std::array known_names = {
     "SkeletonName", "AnimatorName", "CollisionScale", "ControlSpeed", "AimerPitchLimits", "AimerYawLimits",
     "UnitType", "GeometryLowRes", "HealthType", "DropItemClass", "DropItemProbability", "NextDropItem",
     "HurtSound", "DeathSound", "ChunkSound", "FoleyFXGroup", "VOSound", "PointsToUnlock", "IconTexture",
+    "SoldierCollision", "OrdnanceCollision", "VehicleCollision", "BuildingCollision", "TargetableCollision",
+    "TerrainCollision", "FlyerCollision",
 };
 
 const std::map<uint32_t, std::string_view>& name_table() {

@@ -253,14 +253,27 @@ Transform Skeleton::model_transform(const std::string& bone) const {
     return transform;
 }
 
-bool CollisionPrimitive::stops(char kind) const {
-    // "p_-so-name": the flags sit between the first two dashes after "p_".
-    if (name.size() < 3 || name[2] != '-') {
-        return true;
+std::optional<std::string> CollisionPrimitive::flags() const {
+    // "p_-so-name", or "p_so-name" (Geonosis's hangar): flag letters after
+    // "p_" up to a dash. Anything else ("p_crate", "p_set_piece") has none.
+    if (name.size() < 3) {
+        return std::nullopt;
     }
-    const size_t end = name.find('-', 3);
-    const std::string flags = name.substr(3, end == std::string::npos ? std::string::npos : end - 3);
-    return flags.find(kind) != std::string::npos;
+    const size_t start = name[2] == '-' ? 3 : 2;
+    const size_t end = name.find('-', start);
+    if (end == std::string::npos || end == start) {
+        return std::nullopt;
+    }
+    const std::string flags = name.substr(start, end - start);
+    if (flags.find_first_not_of("svbot") != std::string::npos) {
+        return std::nullopt;
+    }
+    return flags;
+}
+
+bool CollisionPrimitive::stops(char kind) const {
+    const std::optional<std::string> f = flags();
+    return !f || f->find(kind) != std::string::npos;  // no flags: everything
 }
 
 // "coll": NAME (the model), NODE (its bone), INFO (vertex, node, leaf and

@@ -172,6 +172,15 @@ void NavGrid::build(Tile& tile, int tile_x, int tile_z) const {
                 open = !world_.raycast({c.x, ground.height + move_.headroom, c.z},
                                        {c.x, ground.height + move_.step_up, c.z});
             }
+            // ...nor anywhere a soldier's middle passes going on to the next
+            // cells: movement stops one stepping under a floor too high to
+            // step onto and too low to duck under (a rail's coping along
+            // Naboo's terraces, narrower than a cell).
+            for (int k = 0; open && k < 8; ++k) {
+                const double angle = k * std::numbers::pi / 4, r = cell * 0.6;
+                open = !world_.floor_between(c.x + r * std::cos(angle), c.z + r * std::sin(angle),
+                                             ground.height + move_.step_up, ground.height + move_.headroom);
+            }
             if (open) {
                 // ...and not shut inside a model (the ground under a stepped
                 // pyramid): no one gets in, and a way that drops in from its

@@ -249,6 +249,34 @@ void test_backward() {
     CHECK(std::hypot(reached.x - goal.x, reached.z - goal.z) < 0.6);
 }
 
+// A knee-high rail's coping (Naboo's terraces): a flat top 0.8 m up on two
+// sloping undersides, narrower than a cell. Movement won't take a soldier
+// under it or over it (it's no step), so routes go round its end.
+void test_coping() {
+    const Heightfield ground = flat();
+    MapCollision rail;
+    const Vec3 a0{-50.1, 0.8, 30}, a1{-49.8, 0.8, 30}, b0{-50.1, 0.8, 70}, b1{-49.8, 0.8, 70};
+    const Vec3 r0{-49.95, 0.6, 30}, r1{-49.95, 0.6, 70};
+    rail.triangles.push_back({a0, b1, a1});  // the top, facing up
+    rail.triangles.push_back({a0, b0, b1});
+    rail.triangles.push_back({a0, a1, r0});  // ends
+    rail.triangles.push_back({b0, r1, b1});
+    rail.triangles.push_back({a0, r0, r1});  // undersides, facing down
+    rail.triangles.push_back({a0, r1, b0});
+    rail.triangles.push_back({a1, r1, r0});
+    rail.triangles.push_back({a1, b1, r1});
+    World world(ground);
+    world.add_map_collision(rail);
+    CHECK(world.floor_between(-49.95, 50, 0.5, 1.5) && !world.floor_between(-49.6, 50, 0.5, 1.5));
+    const NavGrid grid(world, open_field());
+    CHECK(!grid.walkable({-49.75, 0, 50}) && !grid.walkable({-50.25, 0, 50}) && grid.walkable({-48.75, 0, 50}));
+    const Vec3 from{-45, 0, 50}, to{-55, 0, 50};
+    const auto path = grid.find_path(from, to);
+    CHECK(sound(grid, path, from) && !path.empty() && near(path.back().x, to.x) && length(path, from) > 40);
+    const Vec3 reached = walk(world, path, from, 20);
+    CHECK(std::hypot(reached.x - to.x, reached.z - to.z) < 0.6);
+}
+
 // Surfaces stacked in a cell: a deck 3 m up, reached by a ramp, with open
 // ground under it; and a cellar under the terrain, reached through a hole
 // cut in it (like Endor's bunker).
@@ -385,5 +413,6 @@ int main() {
     test_edges();
     test_inside_a_prop();
     test_backward();
+    test_coping();
     return swm::test::finish("nav_test");
 }

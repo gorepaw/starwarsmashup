@@ -1,5 +1,6 @@
 #include "bf2/model_export.h"
 
+#include <algorithm>
 #include <cctype>
 #include <cmath>
 #include <cstring>
@@ -139,23 +140,49 @@ std::vector<std::array<Point, 3>> tessellate(const CollisionPrimitive& primitive
 
 } // namespace
 
-std::vector<CollisionTriangle> model_collision(const AssetLibrary& library, std::string_view model) {
+CollisionUse collision_use(const OdfClass& resolved) {
+    CollisionUse use;
+    const auto collect = [&](std::string_view key, std::optional<std::vector<std::string>>& names) {
+        for (const auto& [hash, value] : resolved.properties) {
+            if (hash == odf_hash(key)) {
+                if (!names) {
+                    names.emplace();
+                }
+                names->push_back(lowercase(value));
+            }
+        }
+    };
+    collect("SoldierCollision", use.soldiers);
+    collect("OrdnanceCollision", use.ordnance);
+    return use;
+}
+
+std::vector<CollisionTriangle> model_collision(const AssetLibrary& library, std::string_view model,
+                                               const CollisionUse& use) {
     std::vector<CollisionTriangle> out;
+    const auto listed = [](const std::optional<std::vector<std::string>>& names, const std::string& name) {
+        return std::find(names->begin(), names->end(), name) != names->end();
+    };
     Skeleton skeleton;
     if (const UcfbNode* skel = library.skeleton(model)) {
         skeleton = read_skeleton(*skel);
     }
-    if (const UcfbNode* coll = library.collision_mesh(model)) {
+    const bool mesh_soldiers = !use.soldiers || listed(use.soldiers, "collisionmesh");
+    const bool mesh_ordnance = !use.ordnance || listed(use.ordnance, "collisionmesh");
+    const UcfbNode* coll = library.collision_mesh(model);
+    if (coll != nullptr && (mesh_soldiers || mesh_ordnance)) {
         const CollisionMesh mesh = read_collision_mesh(*coll);
         const Transform bone = skeleton.model_transform(mesh.bone);
         for (const auto& t : mesh.triangles) {
             out.push_back({bone.apply(mesh.vertices[t[0]]), bone.apply(mesh.vertices[t[1]]),
-                           bone.apply(mesh.vertices[t[2]]), true, true});
+                           bone.apply(mesh.vertices[t[2]]), mesh_soldiers, mesh_ordnance});
         }
     }
     if (const UcfbNode* prim = library.collision_primitives(model)) {
         for (const CollisionPrimitive& primitive : read_collision_primitives(*prim).primitives) {
-            const bool soldiers = primitive.stops('s'), ordnance = primitive.stops('o');
+            const std::string name = lowercase(primitive.name);
+            const bool soldiers = use.soldiers ? listed(use.soldiers, name) : primitive.stops('s');
+            const bool ordnance = use.ordnance ? listed(use.ordnance, name) : primitive.stops('o');
             if (!soldiers && !ordnance) {
                 continue;
             }
