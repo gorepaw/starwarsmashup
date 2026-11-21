@@ -3,6 +3,7 @@
 
 #include <cmath>
 #include <cstdio>
+#include <stdexcept>
 #include <cstring>
 #include <string>
 #include <vector>
@@ -404,8 +405,25 @@ void test_level() {
 
 } // namespace
 
+// Aboard a ship (Tantive IV): a terrain chunk with only a name, no grid.
+void test_no_terrain() {
+    const Bytes file = chunk("ucfb", join({chunk("tern", chunk("NAME", text("tan1"))),
+                                           chunk("wrld", chunk("NAME", text("tan1")))}));
+    const Level level = read_level(parse_ucfb(file));
+    CHECK(level.terrain.name == "tan1" && level.terrain.cells == 0 && level.terrain.heights.empty());
+    // No terrain chunk at all is still an error.
+    bool threw = false;
+    try {
+        read_level(parse_ucfb(chunk("ucfb", chunk("wrld", chunk("NAME", text("x"))))));
+    } catch (const std::runtime_error&) {
+        threw = true;
+    }
+    CHECK(threw);
+}
+
 int main() {
     test_level();
+    test_no_terrain();
     if (failures == 0) {
         std::printf("level_test: all passed\n");
     }

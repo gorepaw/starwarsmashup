@@ -430,7 +430,29 @@ int cmd_export_map(const std::vector<std::string>& args) {
         library.add(read_file(ingame));
     }
     std::filesystem::create_directories(out_dir);
-    const Terrain& terrain = level.terrain;
+    // A map without terrain (aboard Tantive IV): a flat stand-in under
+    // everything, the game's ground to fall to, not drawn (`hidden` in the
+    // json), with a death region over it (below).
+    const bool no_terrain = level.terrain.cells == 0;
+    Terrain stand_in;
+    double fall_y = 0;
+    if (no_terrain) {
+        double reach = 0, low = 1e9;
+        for (const WorldItem& object : level.objects) {
+            reach = std::max({reach, std::abs(double(object.position[0])), std::abs(double(object.position[2]))});
+            low = std::min(low, double(object.position[1]));
+        }
+        stand_in.name = map;
+        stand_in.unit = 8;
+        stand_in.cells = std::max(8, int(std::ceil((reach + 64) * 2 / stand_in.unit / 8)) * 8);
+        fall_y = (low < 1e8 ? low : 0) - 60;
+        const size_t points = size_t(stand_in.cells + 1) * size_t(stand_in.cells + 1);
+        stand_in.heights.assign(points, float(fall_y));
+        stand_in.light.assign(points, {128, 128, 128});
+        std::cerr << std::format("terrain: none; a stand-in {} m square at {:.1f} m\n", stand_in.cells * stand_in.unit,
+                                 fall_y);
+    }
+    const Terrain& terrain = no_terrain ? stand_in : level.terrain;
     const int samples = terrain.cells + 1;
     const std::filesystem::path texture_dir = out_dir / "textures";
     const std::filesystem::path model_dir = out_dir / "models";
@@ -523,7 +545,7 @@ int cmd_export_map(const std::vector<std::string>& args) {
         json << "{\n  \"source\": " << json_string(map + ".lvl (Battlefront II)") << ",\n  \"samples\": " << samples
              << ",\n  \"spacing\": " << terrain.unit << ",\n  \"origin_x\": " << terrain.origin_x()
              << ",\n  \"origin_z\": " << terrain.origin_z() << ",\n  \"min_height\": " << *low
-             << ",\n  \"max_height\": " << *high
+             << ",\n  \"max_height\": " << *high << (no_terrain ? ",\n  \"hidden\": true" : "")
              << ",\n  \"format\": \"float32 little-endian, row-major, rows along +Z\",\n  \"texture_layers\": [";
         for (size_t i = 0; i < terrain.texture_layers.size(); ++i) {
             json << (i ? ", " : "") << json_string(terrain.texture_layers[i]);
@@ -1014,6 +1036,13 @@ int cmd_export_map(const std::vector<std::string>& args) {
             }
         }
         ini << "\n";
+        ++death_regions;
+    }
+    if (no_terrain) {
+        // Off the ship: falling to the stand-in ground, through this.
+        const double half = terrain.cells * terrain.unit / 2;
+        ini << std::format("DeathRegion = box 0 {:.2f} 0 {:.2f} 20 {:.2f} 1 0 0 0 1 0 0 0 1\n", fall_y + 20, half,
+                           half);
         ++death_regions;
     }
     std::cerr << std::format("boundaries: {}; death regions: {} ({} named)\n", boundaries.size(), death_regions,

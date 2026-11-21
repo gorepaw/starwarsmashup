@@ -1170,6 +1170,8 @@ func _add_building(path: String, galaxies_position: Vector3, yaw_degrees: float)
 
 
 func _add_terrain(bake: String, meta: Dictionary, use_terrain3d: bool) -> void:
+	if meta.get("hidden", false):
+		return  # a map without terrain (aboard a ship): the stand-in ground isn't drawn
 	if use_terrain3d and Terrain3DBake.available():
 		var terrain: Node3D = Terrain3DBake.create(root, bake, meta)
 		terrain.collision_mode = 0  # movement uses the server's heights, not physics

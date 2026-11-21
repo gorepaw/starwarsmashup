@@ -42,6 +42,9 @@ Terrain read_terrain(const UcfbNode& tern) {
     terrain.name = tern.name();
     const UcfbNode* info = tern.child("INFO");
     const UcfbNode* patches = tern.child("PCHS");
+    if (info == nullptr && patches == nullptr) {
+        return terrain;  // none: a map aboard a ship (Tantive IV's), cells 0
+    }
     if (info == nullptr || patches == nullptr) {
         throw std::runtime_error("bf2 level: terrain without INFO or PCHS");
     }
@@ -680,7 +683,7 @@ ConfigRecord read_config_record(std::span<const uint8_t> data) {
 Level read_level(const UcfbNode& root) {
     Level level;
     read_tree(root, level, 0);
-    if (level.terrain.cells == 0) {
+    if (level.terrain.cells == 0 && level.terrain.name.empty()) {  // a ship's has a name, no grid
         throw std::runtime_error("bf2 level: no terrain (tern) chunk");
     }
     return level;

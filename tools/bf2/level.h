@@ -33,7 +33,7 @@ struct TerrainCut {
 // compressed copy of its vertices carries their weights.
 struct Terrain {
     std::string name;
-    int cells = 0;              // per side
+    int cells = 0;              // per side; 0: the map has none (aboard a ship)
     double unit = 1;            // meters per cell
     std::vector<float> heights; // (cells + 1)^2, rows along +Z, x fastest
     int missing = 0;            // grid points no patch vertex covered (holes); filled from neighbours

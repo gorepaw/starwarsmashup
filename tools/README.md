@@ -137,6 +137,8 @@ Battlefront II munged files (`.lvl`) are `ucfb` chunk trees: `lvl_` sub-levels h
   - every object's collision, placed, as one triangle file (`<map>.collision`, `core::MapCollision`), each triangle marked for what it stops: characters, shots or both. The server and clients load it next to the bake;
   - a game mode's command posts as a map file for battlefields (`<map>_conquest.ini`: starting teams, capture regions and spawn points), with the map's AI barriers that stop soldiers (`Barrier = `, four corners), which bots avoid where they can.
 
+  A map without terrain (aboard Tantive IV: its `tern` chunk is just a name) gets a flat stand-in ground 60 m under its lowest object, square around everything, marked `hidden` in the json (the client doesn't draw it), with a death region over it in the map file for whoever falls off.
+
   Other game modes' layers are left out, and so is any `--skip` layer, e.g. the other era's props. What the mode's mission script changes comes as options, read off the script (compiled Lua 5.0 in `mission.lvl`, its numbers 4-byte floats): `--death <region>` for each `AddDeathRegion`, `--open <object>` for each `KillObject` (left out, and a command post with it; also objects fought open, Kashyyyk's barricades), `--team <post>=<n>` for each `SetObjectTeam` and `--disable <barrier>` for each `DisableBarriers`. Hoth's conquest, for one, hands CP3 and CP6 to the Empire (on Hoth, team 1), removes CP7 and turns off the walkers' and bombers' barriers; `game/battlefields/hoth.ini` has its command line. Game data from your install: write it to `game/imported_assets/maps/`. Dagobah:
 
   ```powershell
