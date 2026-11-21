@@ -396,6 +396,25 @@ void test_damage_region() {
     CHECK(!a.alive() && a.self().deaths == 1);
 }
 
+// A spawn point a little under its floor (one of Utapau's, a meter down)
+// puts a soldier on the floor, not under it.
+void test_spawn_under_floor() {
+    Battlefield battlefield = three_posts();
+    battlefield.posts[0].spawn_points = {{-60, 3, 0}};
+    battlefield.posts[0].spawn_heights = true;
+    battlefield.warmup = 60;
+    Field field(battlefield);
+    MapCollision deck;
+    add_wall(deck, {-65, 3.7, -5}, {-55, 4, 5});
+    field.world.add_map_collision(deck);
+    GameClient& a = field.join("a");
+    field.run(0.5);
+    a.request_spawn(0, 0);
+    field.run(0.5);
+    std::printf("spawned a meter under a deck at 4 m: feet at %.2f\n", a.predicted().position.y);
+    CHECK(a.alive() && near(a.predicted().position.y, 4, 0.01));
+}
+
 void test_bots_play_a_match() {
     Battlefield battlefield = three_posts();
     battlefield.posts.insert(battlefield.posts.begin() + 1, CommandPost{.name = "Inner west", .position = {-30, 0, 10}});
@@ -465,6 +484,7 @@ int main() {
     test_match_server();
     test_death_region();
     test_damage_region();
+    test_spawn_under_floor();
     test_bots_play_a_match();
     return swm::test::finish("match_test");
 }

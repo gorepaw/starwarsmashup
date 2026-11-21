@@ -239,6 +239,12 @@ NavGrid::Node NavGrid::land(int x, int z, float from, Cell source) const {
                                       move_.step_up)) {
                 return -1;
             }
+            // Not onto an edge: a soldier dropping carries on a little, and
+            // off a ledge's lip (Utapau's walkway under a deck's slanting
+            // edge, a hand's breadth wide where the route dropped).
+            if (t.flags[size_t(n)] & edge_bit) {
+                return -1;
+            }
             // Through a gap a body falls through: on past the cell's middle,
             // and to either side, nothing to stand on at the height it
             // leaves (a crack between Kamino's walkway and a pod's floor,
@@ -249,6 +255,20 @@ NavGrid::Node NavGrid::land(int x, int z, float from, Cell source) const {
             for (const Vec3 off : {on, Vec3{-on.z, 0, on.x}, Vec3{on.z, 0, -on.x}}) {
                 const Vec3 p = c + off * move_.radius;
                 if (world_.ground_at(p.x, p.z, double(from), move_.step_up).height >= double(from) - move_.step_up) {
+                    return -1;
+                }
+            }
+            // Room to land short of a deadly edge: falling, a soldier carries
+            // on the way it went, the further the longer it falls (off a
+            // deck's slanting edge onto Utapau's walkway, a meter short of its
+            // far lip, it went over into the pit). On over a lower safe place
+            // is no harm (Felucia's hillsides).
+            const double room = 0.5 + 0.2 * (double(from) - h);
+            for (double ahead = 0.5; ahead <= room + 1e-9; ahead += 0.5) {
+                const Vec3 p = c + on * ahead;
+                const World::Ground beyond = world_.ground_at(p.x, p.z, h, move_.step_up);
+                if (beyond.height < h - move_.step_up &&
+                    (beyond.height < -1e8 || area_.harmful({p.x, beyond.height, p.z}))) {
                     return -1;
                 }
             }
@@ -479,8 +499,24 @@ bool NavGrid::leads_back(Vec3 from, Vec3 landing) const {
     if (leads_back_.count(key) != 0) {
         return true;
     }
+    // Back to where it stands, on its own level: not the surface nearest
+    // it, which at a walkway's edge can be the roof it would drop onto.
+    Vec3 back = from;
+    bool level = false;
+    for (const Node n : ways_from(from, 1.5, 0)) {
+        if (double(height(n)) >= from.y - move_.step_up) {
+            const Cell b = cell_of(n);
+            back = center(b.x, b.z);
+            back.y = height(n);
+            level = true;
+            break;
+        }
+    }
+    if (!level) {
+        return true;  // nothing to go by
+    }
     bool shut_in = false;
-    route(landing, from, &shut_in);
+    route(landing, back, &shut_in);
     if (!shut_in) {
         leads_back_.emplace(key, true);
     }

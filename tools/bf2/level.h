@@ -129,6 +129,7 @@ struct LevelLight {
 // The sky ("sky_") and global lighting. Colors are 0..255, as stored.
 struct LevelSky {
     std::array<float, 3> fog_color{};
+    bool fog = false;  // FogColor given (Utapau's sky has none: no fog over its pit)
     std::vector<float> near_scene_range;  // as stored: (20, 30, 60, 80) on Dagobah
     std::string dome_texture;
     std::vector<std::string> dome_models;

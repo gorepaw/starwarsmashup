@@ -443,6 +443,16 @@ void test_seams() {
     World world(deep);
     world.add_map_collision(deck);
     CHECK(world.ground_at(-43, 50, 10, 0.5).height < 0 && near(world.support_at(-43, 50, 10, 0.5).height, 10));
+    // A seam where a ramp's foot meets a walkway more than a step over the
+    // feet (Utapau's): on the lower side; but not on a side that is itself
+    // more than a step up.
+    MapCollision walkway;
+    add_box(walkway, {-60, 9.7, 40}, {-43.15, 10, 60});
+    add_box(walkway, {-42.85, 10.3, 40}, {-30, 10.6, 60});
+    World step(deep);
+    step.add_map_collision(walkway);
+    CHECK(near(step.support_at(-43, 50, 10, 0.5).height, 10));
+    CHECK(step.support_at(-43, 50, 9.4, 0.5).height < 0);
 }
 
 void test_determinism() {

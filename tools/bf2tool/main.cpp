@@ -619,7 +619,8 @@ int cmd_export_map(const std::vector<std::string>& args) {
         // turned by its rotation (w, x, y, z) in the paths' frame: negate z
         // for the world layers', then x for the game's.
         const LevelSky& sky = level.sky;
-        json << ",\n  \"environment\": {\n    \"fog_color\": " << color(sky.fog_color, 1 / 255.0f)
+        json << ",\n  \"environment\": {\n    \"fog\": " << (sky.fog ? "true" : "false")
+             << ",\n    \"fog_color\": " << color(sky.fog_color, 1 / 255.0f)
              << ",\n    \"near_scene_range\": [";
         for (size_t i = 0; i < sky.near_scene_range.size(); ++i) {
             json << (i ? ", " : "") << sky.near_scene_range[i];

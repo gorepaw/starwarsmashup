@@ -520,8 +520,10 @@ void GameServer::spawn_at_post(Client& client, size_t loadout_index, size_t post
     const Loadout& loadout = loadout_of(client);
     client.stats = stats_for(loadout, config_.base_stats);
     // (A spawn point over a seam in the floor, one of Mygeeto's CP2's: on
-    // the floor both sides of it.)
-    position.y = world_.support_at(position.x, position.z, from, client.stats.move.step_up).height;
+    // the floor both sides of it.) A spawn point a little under its floor
+    // (one of Utapau's, a meter down) is on it: looking from a meter up.
+    constexpr double spawn_lift = 1;
+    position.y = world_.support_at(position.x, position.z, from + spawn_lift, client.stats.move.step_up).height;
 
     client.state = MoveState{};
     client.state.position = position;

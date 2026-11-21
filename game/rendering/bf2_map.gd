@@ -143,9 +143,10 @@ static func setup_environment(parent: Node, prefix: String, meta: Dictionary, en
 	environment.ambient_light_color = _color(env["ambient_top"]).lerp(_color(env["ambient_bottom"]), 0.5)
 	environment.ambient_light_energy = 1.0
 	# ASSUMPTION: the near scene range's last two values (60 and 80 m on
-	# Dagobah) are where the view fades out.
+	# Dagobah) are where the view fades out. A sky with no fog color has no
+	# fog (Utapau's: the far side of its pit stays in view).
 	var ranges: Array = env.get("near_scene_range", [])
-	environment.fog_enabled = true
+	environment.fog_enabled = env.get("fog", true)
 	environment.fog_mode = Environment.FOG_MODE_DEPTH
 	environment.fog_light_color = fog
 	environment.fog_density = 1.0

@@ -500,15 +500,17 @@ World::Ground World::support_at(double x, double z, double y, double step_up, do
         return middle;  // standing (or nearly): no seam to look over
     }
     // Over a hole or a drop: the floor both sides of it, across any of four
-    // ways, a step or more over what's under the middle.
+    // ways, a step or more over what's under the middle. The higher side
+    // may be more than a step up (a seam where a ramp meets a walkway, on
+    // Utapau, the walkway a little over the ramp's top), the lower not.
     Ground best = middle;
     for (int k = 0; k < 4; ++k) {
         const double angle = k * std::numbers::pi / 4;
         const double dx = std::cos(angle) * seam, dz = std::sin(angle) * seam;
-        const Ground one = ground_at(x + dx, z + dz, y, step_up);
-        const Ground other = ground_at(x - dx, z - dz, y, step_up);
+        const Ground one = ground_at(x + dx, z + dz, y + step_up, step_up);
+        const Ground other = ground_at(x - dx, z - dz, y + step_up, step_up);
         const Ground& lower = one.height < other.height ? one : other;
-        if (lower.height > best.height + step_up) {
+        if (lower.height <= y + step_up && lower.height > best.height + step_up) {
             best = lower;
         }
     }

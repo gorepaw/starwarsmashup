@@ -340,7 +340,7 @@ void test_level() {
     CHECK(t.light[12 * 17 + 13] == (std::array<uint8_t, 3>{255, 255, 255}));
 
     const LevelSky& sky = level.sky;
-    CHECK(sky.fog_color == (std::array<float, 3>{95, 111, 126}) && sky.near_scene_range.size() == 4);
+    CHECK(sky.fog && sky.fog_color == (std::array<float, 3>{95, 111, 126}) && sky.near_scene_range.size() == 4);
     CHECK(sky.dome_texture == "test_sky" && sky.dome_models == (std::vector<std::string>{"test_dome"}));
     CHECK(sky.sun == "sun" && sky.back == "back" && sky.ambient_top[2] == 127 && sky.ambient_bottom[0] == 70);
     CHECK(level.lights.size() == 2 && level.lights[0].name == "sun" && level.lights[0].type == 1);

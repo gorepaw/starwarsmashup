@@ -387,6 +387,7 @@ void read_sky(const UcfbNode& chunk, LevelSky& sky) {
         for_each_record(*scope, [&](const ConfigRecord& record, const UcfbNode* inner) {
             if (record.name == fog_color) {
                 sky.fog_color = first3(record.numbers);
+                sky.fog = true;
             } else if (record.name == near_range) {
                 sky.near_scene_range = record.numbers;
             } else if (section.name == dome_info && record.name == texture) {
