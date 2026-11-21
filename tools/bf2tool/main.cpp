@@ -528,9 +528,21 @@ int cmd_export_map(const std::vector<std::string>& args) {
         }
         json << "],\n  \"light_map\": " << json_string(map + ".light.png")
              << ",\n  \"detail_texture\": " << json_string(texture_file(terrain.detail_texture));
-        // The HUD's minimap image (<map>_map), north up. Where it lies isn't
-        // stored with it: a battlefield file sets that (Minimap).
-        json << ",\n  \"minimap\": " << json_string(texture_file(map + "_map"));
+        // The HUD's minimap image, north up: <map>_map, or named for the
+        // map's world layers (Yavin's yavin1_map, its layers yavin1_*).
+        // Where it lies isn't stored with it: a battlefield file sets that
+        // (Minimap).
+        std::string minimap = map + "_map";
+        for (const std::string& layer : level.layers) {
+            if (library.texture(lowercase(minimap)) != nullptr) {
+                break;
+            }
+            minimap = layer.substr(0, layer.find('_')) + "_map";
+        }
+        if (library.texture(lowercase(minimap)) == nullptr) {
+            minimap = map + "_map";
+        }
+        json << ",\n  \"minimap\": " << json_string(texture_file(minimap));
 
         // The sky and lights. The sun shines along its local +Z (ASSUMPTION),
         // turned by its rotation (w, x, y, z) in the paths' frame: negate z

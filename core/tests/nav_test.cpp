@@ -319,6 +319,20 @@ void test_inside_a_prop() {
     CHECK(!out.empty() && std::hypot(out.back().x - away.x, out.back().z - away.z) < 0.5);
     const Vec3 reached = walk(world, out, inside, 10);
     CHECK(std::hypot(reached.x - away.x, reached.z - away.z) < 0.6);
+
+    // The ground inside is no place to stand (Yavin's minitemple): a route
+    // there ends outside it, beside it.
+    CHECK(world.inside_solid({-50, 1, 50}, 40));
+    CHECK(!world.inside_solid({-44, 1, 50}, 40));
+    CHECK(!world.inside_solid({-50, 3, 50}, 40));  // on top
+    CHECK(!grid.walkable(inside));
+    const auto in = grid.find_path(away, inside);
+    CHECK(!in.empty());
+    if (!in.empty()) {
+        const Vec3 end = in.back();
+        CHECK(std::abs(end.x + 50) > 4 || std::abs(end.z - 50) > 4);
+        CHECK(std::hypot(end.x + 50, end.z - 50) < 6);
+    }
 }
 
 } // namespace

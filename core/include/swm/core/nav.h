@@ -51,6 +51,8 @@ public:
         // that the grid says it can't), a route starts straight out to the
         // nearest place within this far that leads on.
         double pocket_reach = 8;  // m
+        // How far around a cell to look for the model it may be shut in.
+        double inside_reach = 40;  // m
     };
 
     // `world` must outlive the grid. `move` gives the body's size, step and

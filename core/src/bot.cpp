@@ -129,6 +129,20 @@ void Bot::choose_objective(const GameClient& client, double now) {
     next_objective_ = now + 4 + random() * 4;
 }
 
+double drop_pace(Vec3 position, const std::vector<Vec3>& path, size_t corner) {
+    constexpr double ahead = 2;  // m along the route
+    double along = 0;
+    Vec3 last = position;
+    for (size_t k = corner; k < path.size() && along <= ahead; ++k) {
+        along += horizontal_distance(last, path[k]);
+        if (last.y - path[k].y >= 1.5) {
+            return std::clamp(along / ahead, 0.3, 1.0);
+        }
+        last = path[k];
+    }
+    return 1;
+}
+
 Vec3 Bot::steer(Vec3 position, Vec3 destination, double now) {
     if (!navigation_) {
         return destination;
@@ -157,12 +171,17 @@ Vec3 Bot::steer(Vec3 position, Vec3 destination, double now) {
             ++corner_;
         }
     }
+    pace_ = 1;
     if (corner_ >= path_.size()) {
         return destination;  // no route: straight at it
     }
+    // Coming to a drop (within a couple of meters along the route), slowly:
+    // off the edge at a run, a soldier lands meters past its foot (off a
+    // narrow ledge, Yavin's temple roof's).
+    pace_ = drop_pace(position, path_, corner_);
+    const Vec3 corner = path_[corner_];
     // Over a corner at the foot of a drop, still up top: on the way it was
     // going, over the edge.
-    const Vec3 corner = path_[corner_];
     if (horizontal_distance(position, corner) < 0.6 && position.y - corner.y >= 1.5) {
         const Vec3 before = corner_ > 0 ? path_[corner_ - 1] : position;
         Vec3 along{corner.x - before.x, 0, corner.z - before.z};
@@ -258,7 +277,7 @@ void Bot::update(GameClient& client, const World& world, double now) {
             const Vec3 toward = steer(me.position, *destination, now);
             const Vec3 d{toward.x - me.position.x, 0, toward.z - me.position.z};
             if (d.length() > 1e-3) {
-                move = d * (1 / d.length());
+                move = d * (pace_ / d.length());
             }
         }
     }
@@ -304,7 +323,7 @@ void Bot::update(GameClient& client, const World& world, double now) {
         if (move.length() > 0) {
             controls.yaw = yaw_toward(move);
         }
-        controls.sprint = to_go > 25;
+        controls.sprint = to_go > 25 && pace_ >= 1;
         const WeaponState& clip = me.combat.weapons[me.combat.weapon];
         controls.reload = weapon.rounds_per_clip > 0 && clip.rounds < weapon.rounds_per_clip / 2;
     }

@@ -171,6 +171,12 @@ void NavGrid::build(Tile& tile, int tile_x, int tile_z) const {
                 open = !world_.raycast({c.x, ground.height + move_.headroom, c.z},
                                        {c.x, ground.height + move_.step_up, c.z});
             }
+            if (open) {
+                // ...and not shut inside a model (the ground under a stepped
+                // pyramid): no one gets in, and a way that drops in from its
+                // top lands on it instead.
+                open = !world_.inside_solid({c.x, ground.height + 1, c.z}, settings_.inside_reach);
+            }
             // At an edge: more than a step down within the (widened) body's
             // reach, all around.
             bool edge = false;

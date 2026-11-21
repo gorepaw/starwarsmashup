@@ -157,7 +157,7 @@ Battlefront II munged files (`.lvl`) are `ucfb` chunk trees: `lvl_` sub-levels h
 
   `export-map` also writes each command post's hologram with its object (`hologram` in `<map>.objects.json`): the insignia models per side (`HoloImageGeometry`), and the hologram class's (`HoloOdf`) height, size, turn rate, light radius and friendly, enemy and neutral colors, plus the post's map icon (`MapTexture`). Property names were recovered by hashing candidates, as the HUD's were.
 
-  `export-map` also writes the map's minimap image (`minimap` in its json: `<map>_map`). Where it lies isn't stored with it; a battlefield file says (`Minimap`). Dagobah's was fitted to its playable outline (the `hell_bush` path), which the image's light area matches.
+  `export-map` also writes the map's minimap image (`minimap` in its json: `<map>_map`, or named for the map's world layers: Yavin's `yavin1_map`). Where it lies isn't stored with it; a battlefield file says (`Minimap`). Dagobah's was fitted to its playable outline (the `hell_bush` path), which the image's light area matches.
 
 Animation data uses its own block format inside `BIN_` (byte-reversed tags) and identifies bones and clips by name hash (`bf2/hash.h`). See `bf2/animation.h` for the stream encoding.
 

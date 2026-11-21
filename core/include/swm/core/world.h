@@ -115,6 +115,12 @@ public:
     // Whether a map floor (a gentle triangle facing up that stops
     // characters) is over (x, z) at a height in (low, high].
     bool floor_between(double x, double z, double low, double high) const;
+    // Whether `point` is shut inside a map model: looking up and level all
+    // around (within `reach`), the first triangle stopping characters is
+    // met from behind every way. Models are skins, solid only from outside;
+    // the ground inside one (Yavin's minitemple, a stepped pyramid) is no
+    // place to stand.
+    bool inside_solid(Vec3 point, double reach) const;
 
     Vec3 clamp(Vec3 position) const { return terrain_.clamp(position); }
     const Heightfield& terrain() const { return terrain_; }

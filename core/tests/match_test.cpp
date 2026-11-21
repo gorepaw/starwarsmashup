@@ -418,7 +418,17 @@ void test_bots_play_a_match() {
 
 } // namespace
 
+// Bots come to a drop slowly, to land near its foot (off a narrow ledge).
+void test_drop_pace() {
+    const std::vector<Vec3> path{{0, 10, 0}, {3, 10, 0}, {3.5, 7, 0}, {10, 7, 0}};
+    CHECK(std::abs(drop_pace({-5, 10, 0}, path, 0) - 1.0) < 1e-9);   // far from it
+    CHECK(std::abs(drop_pace({2, 10, 0}, path, 1) - 0.75) < 1e-9);   // 1.5 m along the route
+    CHECK(std::abs(drop_pace({3.3, 10, 0}, path, 2) - 0.3) < 1e-9);  // at the edge: slowest
+    CHECK(std::abs(drop_pace({4, 7, 0}, path, 3) - 1.0) < 1e-9);     // down: on at a run
+}
+
 int main() {
+    test_drop_pace();
     test_battlefield_file();
     test_capture();
     test_tickets_run_out();

@@ -20,6 +20,11 @@ struct BotSkill {
     double fire_range = 60;    // m
 };
 
+// How fast (of full speed) to go from `position` heading for `path[corner]`:
+// slower within a couple of meters along the route of a drop, so as to land
+// near its foot (off the edge at a run, a soldier lands meters past it).
+double drop_pace(Vec3 position, const std::vector<Vec3>& path, size_t corner);
+
 // A simple soldier that plays through a GameClient, with the same controls
 // and the same view of the world a player has. In a match it spawns at the
 // post nearest the fighting, runs to the nearest post its team doesn't hold
@@ -55,7 +60,7 @@ private:
     void choose_objective(const GameClient& client, double now);
     // Where to head now on the way to `destination`: the next corner of its
     // route (planned again when the destination moves, when it's stuck, and
-    // now and then), or the destination itself without a grid.
+    // now and then), or the destination itself without a grid. Sets pace_.
     Vec3 steer(Vec3 position, Vec3 destination, double now);
 
     uint64_t rng_;
@@ -82,6 +87,7 @@ private:
     double replan_at_ = 0;     // plans again then (sooner if the destination moves)
     double earliest_plan_ = 0;  // but not before then
     double next_look_ = 0;     // checks then whether the corner after next is in a straight line
+    double pace_ = 1;          // of full speed: slower coming to a drop (drop_pace)
 };
 
 // Bots connected to a server like players, each with its own UDP socket,

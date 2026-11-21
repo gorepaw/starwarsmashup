@@ -495,6 +495,29 @@ std::optional<double> World::raycast(Vec3 a, Vec3 b) const { return cast(a, b, b
 
 bool World::walk_blocked(Vec3 a, Vec3 b) const { return cast(a, b, blocks_characters, true).has_value(); }
 
+bool World::inside_solid(Vec3 point, double reach) const {
+    // Up first (cheap: in the open nothing's over it), then level all around.
+    for (int k = -1; k < 8; ++k) {
+        const double angle = k * std::numbers::pi / 4;
+        const Vec3 d = k < 0 ? Vec3{0, reach, 0} : Vec3{reach * std::cos(angle), 0, reach * std::sin(angle)};
+        double nearest = 2;
+        bool behind = false;
+        for_solids_along(point, point + d, [&](const Solid& s) {
+            if (!(s.blocks & blocks_characters)) {
+                return;
+            }
+            if (const auto t = segment_triangle(point, d, s.a, s.b, s.c); t && *t >= 0 && *t <= 1 && *t < nearest) {
+                nearest = *t;
+                behind = s.normal.dot(d) > 0;
+            }
+        });
+        if (nearest > 1 || !behind) {
+            return false;
+        }
+    }
+    return true;
+}
+
 bool World::floor_between(double x, double z, double low, double high) const {
     const Vec3 p{x, 0, z};
     bool found = false;
