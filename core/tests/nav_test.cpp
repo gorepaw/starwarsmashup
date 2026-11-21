@@ -93,6 +93,8 @@ void test_open_ground() {
     // Nothing in the way: one straight leg, to the exact spot.
     CHECK(path.size() == 1 && near(path[0].x, to.x) && near(path[0].z, to.z) && near(path[0].y, 0));
     CHECK(grid.walkable(from) && grid.clear_line(from, to));
+    // Ground in a height range: there between -1 and 1, not between 2 and 3.
+    CHECK(grid.walkable_between(-50, 50, -1, 1) && !grid.walkable_between(-50, 50, 2, 3));
     // Outside the bounds: nowhere.
     CHECK(!grid.walkable({-50, 0, 120}) && grid.find_path({-50, 0, 120}, to).empty());
     CHECK(grid.tiles_built() > 0 && grid.tiles_built() < 64);  // only where it looked

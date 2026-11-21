@@ -858,7 +858,10 @@ int cmd_export_map(const std::vector<std::string>& args) {
                                           basis[3] * x + basis[4] * y + basis[5] * z + object.position[1],
                                           basis[6] * x + basis[7] * y + basis[8] * z + object.position[2]};
                     };
-                    for (const CollisionTriangle& t : shape->second) {
+                    // Doors (class "door": Polis Massa's) open as soldiers
+                    // come; until they move here, they're left open.
+                    const bool door = lowercase(resolved.base) == "door";
+                    for (const CollisionTriangle& t : door ? std::vector<CollisionTriangle>{} : shape->second) {
                         collision.triangles.push_back(
                             {place(t.a), place(t.b), place(t.c),
                              uint8_t((t.soldiers ? core::blocks_characters : 0) | (t.ordnance ? core::blocks_shots : 0))});

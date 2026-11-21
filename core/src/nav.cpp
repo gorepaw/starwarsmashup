@@ -315,6 +315,11 @@ bool NavGrid::walkable(Vec3 point) const {
     return (flags(under(point)) & walkable_bit) != 0;
 }
 
+bool NavGrid::walkable_between(double x, double z, double low, double high) const {
+    const Node node = under({x, high, z});
+    return (flags(node) & walkable_bit) != 0 && double(height(node)) >= low;
+}
+
 NavGrid::Node NavGrid::nearest_walkable(Vec3 p, double reach) const {
     if (const Node here = under(p); flags(here) & walkable_bit) {
         return here;

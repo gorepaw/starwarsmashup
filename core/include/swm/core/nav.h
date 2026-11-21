@@ -76,6 +76,9 @@ public:
     bool clear_line(Vec3 a, Vec3 b) const;
     // Whether the surface under feet at `point` is walkable.
     bool walkable(Vec3 point) const;
+    // Whether there's walkable ground at (x, z) between heights low and high
+    // (the highest surface up to a step over high).
+    bool walkable_between(double x, double z, double low, double high) const;
     // Tiles worked out so far.
     size_t tiles_built() const { return built_; }
 

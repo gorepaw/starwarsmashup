@@ -121,10 +121,28 @@ void Bot::choose_objective(const GameClient& client, double now) {
     if (best < 0) {
         best = int(random() * double(match.posts.size())) % int(match.posts.size());
     }
-    if (best != objective_) {
+    // In the post it's after already, now and then somewhere else in it: one
+    // spot held for good, a post's defenders and attackers can stand either
+    // side of a pillar and never meet (Tantive IV's CP4).
+    const bool inside = best == objective_ &&
+                        horizontal_distance(me, field.posts[size_t(best)].position) < field.posts[size_t(best)].radius;
+    if (best != objective_ || (inside && random() < 0.5)) {
         objective_ = best;
-        const double angle = random() * 2 * std::numbers::pi;
-        offset_ = Vec3{std::cos(angle), 0, std::sin(angle)} * (random() * field.posts[size_t(best)].radius * 0.6);
+        // Somewhere in the post, on ground within its reach in height: not
+        // in the rock beside a post in a cave (Polis Massa's CP3), where the
+        // ground nearest is the hillside over it.
+        const CommandPost& post = field.posts[size_t(best)];
+        offset_ = {};
+        for (int attempt = 0; attempt < 6; ++attempt) {
+            const double angle = random() * 2 * std::numbers::pi;
+            const Vec3 offset = Vec3{std::cos(angle), 0, std::sin(angle)} * (random() * post.radius * 0.6);
+            const Vec3 spot = post.position + offset;
+            if (!navigation_ || post.high > 1e8 ||
+                navigation_->walkable_between(spot.x, spot.z, post.low - 0.5, post.high)) {
+                offset_ = offset;
+                break;
+            }
+        }
     }
     next_objective_ = now + 4 + random() * 4;
 }
@@ -150,6 +168,11 @@ Vec3 Bot::steer(Vec3 position, Vec3 destination, double now) {
     const bool moved = path_.empty() || horizontal_distance(destination, path_goal_) > 2;
     if ((moved || now >= replan_at_) && now >= earliest_plan_) {
         path_ = navigation_->find_path(position, destination);
+        // Its spot in the post out of reach (on a ledge, behind a wall): the
+        // post's middle next time, not standing at the nearest place for good.
+        if (path_.empty() || horizontal_distance(path_.back(), destination) > 3) {
+            offset_ = {};
+        }
         corner_ = 0;
         path_goal_ = destination;
         replan_at_ = now + 4 + random() * 2;
@@ -272,7 +295,14 @@ void Bot::update(GameClient& client, const World& world, double now) {
     Vec3 move;
     double to_go = 0;
     if (destination) {
-        to_go = horizontal_distance(*destination, me.position);
+        // Over or under a post (on the hillside over Polis Massa's CP3, in
+        // its cave) isn't there yet.
+        double off_height = 0;
+        if (in_match) {
+            const CommandPost& post = client.config().battlefield->posts[size_t(objective_)];
+            off_height = std::max({0.0, post.low - 0.5 - me.position.y, me.position.y - post.high});
+        }
+        to_go = horizontal_distance(*destination, me.position) + off_height;
         if (to_go > 1.5) {
             const Vec3 toward = steer(me.position, *destination, now);
             const Vec3 d{toward.x - me.position.x, 0, toward.z - me.position.z};
