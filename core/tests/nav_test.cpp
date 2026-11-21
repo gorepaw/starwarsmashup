@@ -402,6 +402,67 @@ void test_inside_a_prop() {
     }
 }
 
+void test_high_and_deadly() {
+    // A deck 100 m over the terrain (a map without terrain: the Death Star,
+    // its floors far over the ground no one sees): on the grid.
+    const Heightfield ground = flat();
+    MapCollision high;
+    add_box(high, {-60, 99.7, 40}, {-40, 100, 60});
+    World high_world(ground);
+    high_world.add_map_collision(high);
+    const NavGrid high_grid(high_world, open_field());
+    CHECK(high_grid.walkable_between(-50, 50, 99, 101) && high_grid.walkable_between(-50, 50, -1, 1));
+
+    // A deck 10 m up with no way down but dropping off it, through a thin
+    // death region all around (the Death Star's over a chasm's floor): the
+    // ground beside it is safe to stand on, but no route falls to it.
+    MapCollision deck;
+    add_box(deck, {-60, 9.7, 40}, {-40, 10, 60});
+    World world(ground);
+    world.add_map_collision(deck);
+    Battlefield field = open_field();
+    field.death_regions.push_back({DeathRegion::Shape::box, {-50, 4.5, 50}, {20, 0.5, 20}});
+    const NavGrid grid(world, field);
+    CHECK(grid.walkable({-35, 0, 50}) && grid.walkable({-50, 10, 50}));
+    const auto down = grid.find_path({-50, 10, 50}, {-35, 0, 50});
+    CHECK(!down.empty() && down.back().y > 9);
+    // Without it, off the edge.
+    const NavGrid open(world, open_field());
+    const auto off = open.find_path({-50, 10, 50}, {-35, 0, 50});
+    CHECK(!off.empty() && near(off.back().y, 0, 0.01) && std::hypot(off.back().x + 35, off.back().z - 50) < 0.5);
+}
+
+void test_pit() {
+    // A pen walled in 6 m high, a deck 4 m up over its east side (up a ramp
+    // from the east): a soldier drops into it off the deck's edge, and can't
+    // climb back out (the ring round the Death Star's reactor's column,
+    // under its catwalks). A route to a spot inside it ends up on the deck,
+    // as near as it gets without going in.
+    const Heightfield ground = flat();
+    MapCollision props;
+    add_box(props, {-70.5, 0, 44.5}, {-70, 6, 55.5});   // west wall
+    add_box(props, {-70, 0, 44.5}, {-50, 6, 45});       // south
+    add_box(props, {-70, 0, 55}, {-50, 6, 55.5});       // north
+    add_box(props, {-50.5, 0, 44.5}, {-50, 3.6, 55.5});  // east, under the deck
+    add_box(props, {-58, 3.7, 45}, {-40, 4, 55});        // the deck, over the pen's east side
+    props.triangles.push_back({{-30, 0, 45}, {-40, 4, 45}, {-40, 4, 55}});  // its ramp
+    props.triangles.push_back({{-30, 0, 45}, {-40, 4, 55}, {-30, 0, 55}});
+    World world(ground);
+    world.add_map_collision(props);
+    const NavGrid grid(world, open_field());
+    const Vec3 from{-20, 0, 50}, inside{-65, 0, 50};
+    CHECK(grid.walkable(inside) && grid.walkable_between(-45, 50, 3.5, 4.5));
+    const auto path = grid.find_path(from, inside);
+    CHECK(!path.empty());
+    if (!path.empty()) {
+        std::printf("to the pen: ends (%.2f %.2f %.2f)\n", path.back().x, path.back().y, path.back().z);
+        CHECK(near(path.back().y, 4, 0.01) && path.back().x > -58.5 && std::hypot(path.back().x + 58, path.back().z - 50) < 2);
+    }
+    // From inside, it gets nowhere.
+    const auto out = grid.find_path(inside, from);
+    CHECK(out.empty() || std::hypot(out.back().x - from.x, out.back().z - from.z) > 20);
+}
+
 } // namespace
 
 int main() {
@@ -416,5 +477,7 @@ int main() {
     test_inside_a_prop();
     test_backward();
     test_coping();
+    test_high_and_deadly();
+    test_pit();
     return swm::test::finish("nav_test");
 }

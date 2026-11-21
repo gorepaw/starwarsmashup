@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include <filesystem>
+#include <limits>
 #include <optional>
 #include <vector>
 
@@ -123,6 +124,8 @@ public:
     bool inside_solid(Vec3 point, double reach) const;
 
     Vec3 clamp(Vec3 position) const { return terrain_.clamp(position); }
+    // The highest point of any building or map triangle (-inf with none).
+    double top() const { return top_; }
     const Heightfield& terrain() const { return terrain_; }
 
 private:
@@ -165,6 +168,7 @@ private:
     const Heightfield& terrain_;
     std::vector<Building> buildings_;
     std::vector<Solid> solids_;
+    double top_ = -std::numeric_limits<double>::infinity();
     static constexpr double grid_cell_ = 4;  // meters
     double grid_x0_ = 0, grid_z0_ = 0;
     int grid_w_ = 0, grid_h_ = 0;

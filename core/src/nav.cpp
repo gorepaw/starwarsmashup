@@ -154,7 +154,9 @@ void NavGrid::build(Tile& tile, int tile_x, int tile_z) const {
         }
         // The surfaces from the top down: each the highest below the last
         // with room for a body over it.
-        double probe = world_.terrain().height_at(c.x, c.z) + headroom;
+        // From well over the terrain, or over everything built (a map without
+        // terrain, its ground out of sight far below: the Death Star).
+        double probe = std::max(world_.terrain().height_at(c.x, c.z) + headroom, world_.top() + move_.step_up);
         for (int layer = 0; layer < max_layers; ++layer) {
             const World::Ground ground = world_.ground_at(c.x, c.z, probe, move_.step_up);
             if (ground.height > probe + move_.step_up + 1e-6 || ground.height < -1e8) {
@@ -235,6 +237,14 @@ NavGrid::Node NavGrid::land(int x, int z, float from, Cell source) const {
             if (world_.overlaps_walls({c.x, double(from), c.z}, move_.radius + settings_.clearance, move_.height,
                                       move_.step_up)) {
                 return -1;
+            }
+            // Nor through a death region on the way down (the Death Star's
+            // thin one over a chasm's floor, a lower floor beside it): it
+            // falls through anything lower too.
+            for (double y = h; y < double(from); y += 0.5) {
+                if (area_.deadly({c.x, y, c.z})) {
+                    return -1;
+                }
             }
         }
         if (rise <= step + 1e-3) {
@@ -494,7 +504,7 @@ std::vector<Vec3> NavGrid::find_path(Vec3 from, Vec3 to) const {
         size_t expansions = 0;   // surfaces it went on from
         Node origin = -1;
     };
-    const auto search = [&](Node origin, const Target& target, bool backward) {
+    const auto search = [&](Node origin, const Target& target, bool backward, size_t limit) {
         if (++search_ == 0) {  // the stamps wrapped: forget every old search
             for (auto& t : tiles_) {
                 if (t) {
@@ -542,7 +552,7 @@ std::vector<Vec3> NavGrid::find_path(Vec3 from, Vec3 to) const {
                 result.left = e;
                 result.end = current;
             }
-            if (++expansions > settings_.max_expansions) {
+            if (++expansions > limit) {
                 return result;
             }
             const float g = t.g[slot(current)];
@@ -616,7 +626,7 @@ std::vector<Vec3> NavGrid::find_path(Vec3 from, Vec3 to) const {
         return result;
     };
 
-    Search found = search(start, to_goal, false);
+    Search found = search(start, to_goal, false, settings_.max_expansions);
     // Shut in a small pocket the grid sees no way out of, far from the goal
     // (a soldier can get where the grid says it can't: under a root it would
     // brush with its head, say): out to the nearest places nearby that
@@ -635,7 +645,7 @@ std::vector<Vec3> NavGrid::find_path(Vec3 from, Vec3 to) const {
                 continue;
             }
             seen.push_back(oc);
-            const Search way = search(node, to_goal, false);
+            const Search way = search(node, to_goal, false, settings_.max_expansions);
             if (way.reached || way.left < found.left) {
                 found = way;
             }
@@ -644,8 +654,57 @@ std::vector<Vec3> NavGrid::find_path(Vec3 from, Vec3 to) const {
             }
         }
     }
+    // The surfaces back from the end (read before another search writes
+    // over their parents).
+    const auto chain = [&](Node end) {
+        std::vector<Node> nodes;
+        for (Node n = end; n >= 0; n = tile_of(n).parent[slot(n)]) {
+            nodes.push_back(n);
+        }
+        return nodes;
+    };
+    std::vector<Node> back_from_end = chain(found.end);
+    // Not to the bottom of a pit with no way out (the ring round the Death
+    // Star's reactor's column, a drop down from its catwalks, inside CP4):
+    // dropping on the way, if all a search from where it ends sees is a
+    // small pocket without the way back, it ends at the surface nearest the
+    // goal the first search saw outside it (their parents untouched: the
+    // pocket leads nowhere else).
+    bool pocketed = false;
+    const bool drops = std::adjacent_find(back_from_end.begin(), back_from_end.end(), [&](Node child, Node parent) {
+                           return double(height(parent)) - double(height(child)) > move_.step_up;
+                       }) != back_from_end.end();
+    if (drops && found.end != found.origin) {
+        const Node origin = found.origin;
+        const Search back =
+            search(found.end, Target{origin, cell_of(origin), double(height(origin))}, false, pocket_surfaces);
+        if (!back.reached && back.exhausted) {
+            Node best = -1;
+            double nearest = std::numeric_limits<double>::infinity();
+            for (size_t index = 0; index < tiles_.size(); ++index) {
+                const Tile* t = tiles_[index].get();
+                for (size_t n = 0; t != nullptr && n < t->visit.size(); ++n) {
+                    if (t->visit[n] == found.stamp && t->closed[n]) {
+                        const Node node = Node((int(index) << node_bits) | int(n));
+                        const double e = estimate(to_goal, cell_of(node), double(t->height[n]));
+                        if (e < nearest) {
+                            nearest = e;
+                            best = node;
+                        }
+                    }
+                }
+            }
+            if (best >= 0) {
+                found.end = best;
+                found.left = nearest;
+                found.reached = false;
+                pocketed = true;
+                back_from_end = chain(best);
+            }
+        }
+    }
 
-    // The surfaces back from the end, then forward from where we stand.
+    // Those surfaces, then forward from where we stand.
     const auto point = [&](Node n) {
         const Cell c = cell_of(n);
         Vec3 p = center(c.x, c.z);
@@ -654,7 +713,7 @@ std::vector<Vec3> NavGrid::find_path(Vec3 from, Vec3 to) const {
     };
     bool reached = found.reached;
     std::vector<Vec3> points;
-    for (Node n = found.end; n >= 0; n = tile_of(n).parent[slot(n)]) {
+    for (const Node n : back_from_end) {
         points.push_back(point(n));
     }
     points.push_back(from);
@@ -663,9 +722,10 @@ std::vector<Vec3> NavGrid::find_path(Vec3 from, Vec3 to) const {
     // set out. Searching toward a goal under a hill (Hoth's hangar) covers
     // the hill first, all of it near the goal as the crow flies; back from
     // the goal, the search keeps to the tunnels it's in, out to the open.
-    if (!found.reached && !found.exhausted && goal_walkable) {
+    if (!found.reached && !found.exhausted && goal_walkable && !pocketed) {
         const Node origin = found.origin;
-        if (search(goal, Target{origin, cell_of(origin), double(height(origin))}, true).reached) {
+        const Target back_to{origin, cell_of(origin), double(height(origin))};
+        if (search(goal, back_to, true, settings_.max_expansions).reached) {
             reached = true;
             points.assign(1, from);
             for (Node n = origin; n >= 0; n = tile_of(n).parent[slot(n)]) {

@@ -284,6 +284,7 @@ void World::add_building(const BuildingCollision& collision, const Placement& pl
         building.max_x = std::max(building.max_x, v.x);
         building.min_z = std::min(building.min_z, v.z);
         building.max_z = std::max(building.max_z, v.z);
+        top_ = std::max(top_, v.y);
     };
     for (const auto& source : collision.floors) {
         Floor floor{transform(placement, source.a), transform(placement, source.b), transform(placement, source.c),
@@ -304,6 +305,7 @@ void World::add_building(const BuildingCollision& collision, const Placement& pl
         Wall wall{transform(placement, source.a), transform(placement, source.b), 0, 0};
         wall.bottom = std::min(wall.a.y, wall.b.y);
         wall.top = std::max(wall.a.y, wall.b.y) + source.height;
+        top_ = std::max(top_, wall.top);
         grow(wall.a);
         grow(wall.b);
         building.walls.push_back(wall);
@@ -325,6 +327,7 @@ void World::add_map_collision(const MapCollision& collision) {
         s.max_y = std::max({t.a.y, t.b.y, t.c.y});
         s.min_z = std::min({t.a.z, t.b.z, t.c.z});
         s.max_z = std::max({t.a.z, t.b.z, t.c.z});
+        top_ = std::max(top_, s.max_y);
         // Props' triangles face outward (Battlefront's do): a gentle one
         // facing down is an underside, not ground to be lifted onto.
         s.floor = s.normal.y >= walkable_normal_y;

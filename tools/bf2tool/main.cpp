@@ -38,6 +38,7 @@ constexpr const char* usage = R"(usage:
   bf2tool export-loadout <_lvl_pc dir> <side> <soldier class> -o <loadout.ini> [--items <dir>]
   bf2tool export-map <_lvl_pc dir> <map> -o <out dir> [--mode conquest] [--skip <layer>]...
                      [--death <region>]... [--open <object>]... [--team <post>=<n>]... [--disable <barrier>]...
+                     [--drop-boundary <path>]...
   bf2tool export-hud <_lvl_pc dir> -o <out dir>
 )";
 
@@ -386,6 +387,9 @@ std::string json_string(const std::string& text) {
 // KillObject: left out as if destroyed, and a command post with them). Like
 // the script, --team <post>=<n> sets a post's starting team (SetObjectTeam)
 // and --disable <name> drops the AI barriers of that name (DisableBarriers).
+// --drop-boundary <path> leaves a boundary path out (the Death Star's cuts
+// through the station's south end, where two of its posts are; sealed,
+// with its falls death regions, it needs none).
 int cmd_export_map(const std::vector<std::string>& args) {
     if (args.size() < 4 || args[2] != "-o") {
         std::cerr << usage;
@@ -398,6 +402,7 @@ int cmd_export_map(const std::vector<std::string>& args) {
     std::vector<std::string> deaths;
     std::vector<std::string> opened;
     std::vector<std::string> disabled;
+    std::vector<std::string> dropped_boundaries;
     std::map<std::string, std::string> teams;  // post name (lowercase) -> team
     for (size_t i = 4; i + 1 < args.size(); i += 2) {
         if (args[i] == "--mode") {
@@ -410,6 +415,8 @@ int cmd_export_map(const std::vector<std::string>& args) {
             opened.push_back(lowercase(args[i + 1]));
         } else if (args[i] == "--disable") {
             disabled.push_back(lowercase(args[i + 1]));
+        } else if (args[i] == "--drop-boundary") {
+            dropped_boundaries.push_back(lowercase(args[i + 1]));
         } else if (args[i] == "--team") {
             const size_t eq = args[i + 1].find('=');
             if (eq == std::string::npos) {
@@ -997,6 +1004,11 @@ int cmd_export_map(const std::vector<std::string>& args) {
     std::vector<std::vector<PathNode>> boundaries;
     for (const LevelPath& path : level.paths) {
         if (!path_groups.contains(path.group) || path.nodes.size() < 3 || !is_boundary(path)) {
+            continue;
+        }
+        if (std::find(dropped_boundaries.begin(), dropped_boundaries.end(), lowercase(path.name)) !=
+            dropped_boundaries.end()) {
+            std::cerr << std::format("boundary: {} left out\n", path.name);
             continue;
         }
         const bool repeat = std::any_of(boundaries.begin(), boundaries.end(), [&](const auto& nodes) {

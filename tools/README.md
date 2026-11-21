@@ -96,6 +96,7 @@ bf2tool odf <file.lvl> [class]
 bf2tool export-loadout <_lvl_pc dir> <side> <soldier class> -o <loadout.ini> [--items <dir>]
 bf2tool export-map <_lvl_pc dir> <map> -o <out dir> [--mode conquest] [--skip <layer>]...
                    [--death <region>]... [--open <object>]... [--team <post>=<n>]... [--disable <barrier>]...
+                   [--drop-boundary <path>]...
 bf2tool export-hud <_lvl_pc dir> -o <out dir>
 ```
 
@@ -139,7 +140,7 @@ Battlefront II munged files (`.lvl`) are `ucfb` chunk trees: `lvl_` sub-levels h
 
   A map without terrain (aboard Tantive IV: its `tern` chunk is just a name) gets a flat stand-in ground 60 m under its lowest object, square around everything, marked `hidden` in the json (the client doesn't draw it), with a death region over it in the map file for whoever falls off.
 
-  Other game modes' layers are left out, and so is any `--skip` layer, e.g. the other era's props. What the mode's mission script changes comes as options, read off the script (compiled Lua 5.0 in `mission.lvl`, its numbers 4-byte floats): `--death <region>` for each `AddDeathRegion`, `--open <object>` for each `KillObject` (left out, and a command post with it; also objects fought open, Kashyyyk's barricades), `--team <post>=<n>` for each `SetObjectTeam` and `--disable <barrier>` for each `DisableBarriers`. Hoth's conquest, for one, hands CP3 and CP6 to the Empire (on Hoth, team 1), removes CP7 and turns off the walkers' and bombers' barriers; `game/battlefields/hoth.ini` has its command line. Game data from your install: write it to `game/imported_assets/maps/`. Dagobah:
+  Other game modes' layers are left out, and so is any `--skip` layer, e.g. the other era's props. What the mode's mission script changes comes as options, read off the script (compiled Lua 5.0 in `mission.lvl`, its numbers 4-byte floats): `--death <region>` for each `AddDeathRegion`, `--open <object>` for each `KillObject` (left out, and a command post with it; also objects fought open, Kashyyyk's barricades), `--team <post>=<n>` for each `SetObjectTeam` and `--disable <barrier>` for each `DisableBarriers`. `--drop-boundary <path>` leaves a boundary path out: the Death Star's cuts through the station's south end, where two of its posts are; sealed, with its falls death regions, it needs none. Hoth's conquest, for one, hands CP3 and CP6 to the Empire (on Hoth, team 1), removes CP7 and turns off the walkers' and bombers' barriers; `game/battlefields/hoth.ini` has its command line. Game data from your install: write it to `game/imported_assets/maps/`. Dagobah:
 
   ```powershell
   bf2tool export-map "<Battlefront>\GameData\Data\_lvl_pc" dag1 -o game\imported_assets\maps\dag1 --skip dag1_gunship

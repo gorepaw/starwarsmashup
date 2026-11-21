@@ -22,6 +22,53 @@ double yaw_toward(Vec3 d) {
     return std::atan2(-d.x, -d.z);
 }
 
+// Whether going along `move` from `feet` takes it over a deadly edge, up to
+// `reach` on (what a soldier slides on stopping, a meter and a half and more
+// at a run; less where its route turns, at a catwalk's corner; more for a
+// jump):
+// no ground below, or a fall onto or through a death region (a catwalk's
+// edge over the Death Star's reactor pit, its hub's bridge without rails,
+// the thin one over a lower floor by CP5). A fall onto safe ground is no
+// edge: soldiers come to no harm (off a Kashyyyk platform, into a dip on
+// Endor's forest floor).
+bool over_edge(const World& world, const Battlefield* field, Vec3 feet, Vec3 move, double step_up,
+               double reach = 1.5) {
+    const double length = std::hypot(move.x, move.z);
+    if (length < 1e-6) {
+        return false;
+    }
+    constexpr double climb = 1.5;  // m up per m on: a ramp as steep as soldiers walk up (55 degrees)
+    // m: a gap soldiers walk over (between the Death Star's hub's disc and
+    // bridge); a wider one, a hole (a door's slot in Tantive IV's doorways)
+    constexpr double crack = 0.4;
+    const auto hole = [&](double along) {
+        const Vec3 p = feet + Vec3{move.x, 0, move.z} * (along / length);
+        const double ground = world.ground_at(p.x, p.z, feet.y + climb * along, step_up).height;
+        if (ground < -1e8) {
+            return true;
+        }
+        // From the ground up (a pit's floor deadly at once), under a body's
+        // middle apart (Battlefield::deadly looks there too); the ground on
+        // the level too (into Tantive IV's turbine).
+        for (double y = ground; field != nullptr; y += 0.9) {
+            if (field->deadly({p.x, y, p.z})) {
+                return true;
+            }
+            if (y + 0.9 >= feet.y) {
+                break;
+            }
+        }
+        return false;
+    };
+    for (double on = 0.5; on < reach + 0.5; on += 0.5) {
+        const double along = std::min(on, reach);
+        if (hole(along) && hole(along + crack)) {
+            return true;
+        }
+    }
+    return false;
+}
+
 } // namespace
 
 Bot::Bot(uint64_t seed, BotSkill skill) : rng_(seed * 0x9E3779B97F4A7C15ull + 1), skill_(skill) {
@@ -215,7 +262,13 @@ Vec3 Bot::steer(Vec3 position, Vec3 destination, double now) {
             return corner + along * (1.0 / along.length());
         }
     }
-    // The last corner is the reachable spot nearest the destination.
+    // The last corner is the reachable spot nearest the destination: there,
+    // short of it (by the reactor's pit, CP3 out on a pillar in it), it
+    // stays, not to and fro over it at a run.
+    if (corner_ + 1 == path_.size() && horizontal_distance(path_.back(), destination) >= 0.5 &&
+        horizontal_distance(position, path_.back()) < 0.4) {
+        return position;
+    }
     return corner_ + 1 == path_.size() && horizontal_distance(path_.back(), destination) < 0.5 ? destination
                                                                                                  : path_[corner_];
 }
@@ -235,6 +288,8 @@ void Bot::update(GameClient& client, const World& world, double now) {
             choose_spawn(client);
         }
         objective_ = -1;
+        slow_since_ = -1;  // a new life isn't stuck
+        unstick_until_ = 0;
         target_ = 0;
         path_.clear();
         client.set_input(controls);
@@ -294,6 +349,7 @@ void Bot::update(GameClient& client, const World& world, double now) {
     // Movement in the world, then in the frame of where it faces.
     Vec3 move;
     double to_go = 0;
+    double route_reach = 0;  // to where it's headed on its route
     if (destination) {
         // Over or under a post (on the hillside over Polis Massa's CP3, in
         // its cave) isn't there yet.
@@ -306,11 +362,13 @@ void Bot::update(GameClient& client, const World& world, double now) {
         if (to_go > 1.5) {
             const Vec3 toward = steer(me.position, *destination, now);
             const Vec3 d{toward.x - me.position.x, 0, toward.z - me.position.z};
+            route_reach = d.length();
             if (d.length() > 1e-3) {
                 move = d * (pace_ / d.length());
             }
         }
     }
+    const Vec3 route_move = move;
     if (now >= next_strafe_) {
         strafe_ = random() < 0.5 ? -1 : 1;
         next_strafe_ = now + 0.8 + random() * 1.5;
@@ -358,8 +416,29 @@ void Bot::update(GameClient& client, const World& world, double now) {
         controls.reload = weapon.rounds_per_clip > 0 && clip.rounds < weapon.rounds_per_clip / 2;
     }
 
-    // Stuck against something: jump and sidestep for a moment.
+    // Not over a deadly edge: not with a sidestep in a fight (off the Death
+    // Star's catwalks and bridges). Along its route alone, then, the other
+    // way next sidestep. Its route cutting over one too (pushed off it, from
+    // beside a ramp down, the straight way to its foot cuts over the
+    // reactor's pit): standing, and a new route from there.
+    // Looking further on at speed: sprinting, it slides on meters stopping
+    // (down a ramp into the Death Star's thin death region by CP5).
+    const double step_up = client.character_stats().move.step_up;
+    const Battlefield* field = in_match ? &*client.config().battlefield : nullptr;
     const double speed = std::hypot(me.velocity.x, me.velocity.z);
+    const double stopping = 1.5 + 0.2 * speed;
+    if (over_edge(world, field, me.position, move, step_up, stopping)) {
+        strafe_ = -strafe_;
+        move = over_edge(world, field, me.position, route_move, step_up, std::min(stopping, route_reach + 0.3))
+                   ? Vec3{}
+                   : route_move;
+        if (move.length() == 0) {
+            replan_at_ = now;
+        }
+    }
+
+    // Stuck against something: jump and sidestep for a moment; not over a
+    // deadly edge, nor up beside one (straight on, then, if that's clear).
     const bool wants_to_move = move.length() > 0.1;
     if (wants_to_move && speed < 1.0 && me.grounded) {
         if (slow_since_ < 0) {
@@ -373,9 +452,15 @@ void Bot::update(GameClient& client, const World& world, double now) {
         slow_since_ = -1;
     }
     if (now < unstick_until_) {
-        controls.jump = true;
         const double s = std::sin(controls.yaw), c = std::cos(controls.yaw);
-        move = move + Vec3{c, 0, -s} * strafe_;
+        const Vec3 aside = move + Vec3{c, 0, -s} * strafe_;
+        constexpr double leap = 3;  // m a jump carries it
+        if (!over_edge(world, field, me.position, move, step_up, leap)) {
+            controls.jump = true;
+            if (!over_edge(world, field, me.position, aside, step_up, leap)) {
+                move = aside;
+            }
+        }
     }
 
     const double s = std::sin(controls.yaw), c = std::cos(controls.yaw);
