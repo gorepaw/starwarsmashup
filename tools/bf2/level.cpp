@@ -380,6 +380,8 @@ void read_sky(const UcfbNode& chunk, LevelSky& sky) {
     const uint32_t fog_color = odf_hash("FogColor"), near_range = odf_hash("NearSceneRange");
     const uint32_t dome_info = odf_hash("DomeInfo"), texture = odf_hash("Texture");
     const uint32_t dome_model = odf_hash("DomeModel"), geometry = odf_hash("Geometry");
+    const uint32_t offset = odf_hash("Offset"), movement_scale = odf_hash("MovementScale");
+    const uint32_t rotation_speed = odf_hash("RotationSpeed");
     for_each_record(chunk, [&](const ConfigRecord& section, const UcfbNode* scope) {
         if (scope == nullptr) {
             return;
@@ -393,11 +395,21 @@ void read_sky(const UcfbNode& chunk, LevelSky& sky) {
             } else if (section.name == dome_info && record.name == texture) {
                 sky.dome_texture = record.text;
             } else if (section.name == dome_info && record.name == dome_model && inner != nullptr) {
+                SkyDomeModel dome;
                 for_each_record(*inner, [&](const ConfigRecord& model, const UcfbNode*) {
-                    if (model.name == geometry && !model.text.empty()) {
-                        sky.dome_models.push_back(model.text);
+                    if (model.name == geometry) {
+                        dome.geometry = model.text;
+                    } else if (model.name == offset && !model.numbers.empty()) {
+                        dome.offset = model.numbers[0];
+                    } else if (model.name == movement_scale && !model.numbers.empty()) {
+                        dome.movement_scale = model.numbers[0];
+                    } else if (model.name == rotation_speed && !model.numbers.empty()) {
+                        dome.rotation_speed = model.numbers[0];
                     }
                 });
+                if (!dome.geometry.empty()) {  // (one of Geonosis's names none)
+                    sky.dome_models.push_back(dome);
+                }
             }
         });
     });

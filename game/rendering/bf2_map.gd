@@ -11,7 +11,14 @@ const WATER_SHADER = preload("res://rendering/bf2_water.gdshader")
 const FOG_CLOUD_SHADER = preload("res://rendering/bf2_fog_cloud.gdshader")
 const MAX_LAYERS := 8
 const LAYER_SIZE := 512
-const SKY_DOME_SCALE := 150.0  # Battlefront draws its few-meter dome at infinity
+# Battlefront draws its sky's models (a few meters across, or hundreds:
+# Mygeeto's) around the camera at infinity, each over the one before. Here
+# the dome is SKY_DOME_RADIUS away and each later model a little nearer,
+# every one scaled to its own size: about the camera, that changes nothing
+# of how it looks.
+const SKY_DOME_RADIUS := 3000.0  # m, within the camera's far plane
+const SKY_LAYER_STEP := 0.04     # each later model this much nearer
+const SKY_FIRST_PRIORITY := -120  # drawn before the map's other blended surfaces
 
 
 static func is_bf2(meta: Dictionary) -> bool:
@@ -179,25 +186,62 @@ static func setup_environment(parent: Node, prefix: String, meta: Dictionary, en
 		omni.omni_range = float(light["range"])
 		parent.add_child(omni)
 
-	var dome_path: String = env.get("sky_dome", "")
-	if dome_path == "":
+	# The dome and the models drawn with it (Hoth's mountains, Endor's
+	# Death Star, Kashyyyk's clouds); older exports name only the dome.
+	var models: Array = env.get("sky_domes", [])
+	if models.is_empty() and env.get("sky_dome", "") != "":
+		models = [{"model": env["sky_dome"]}]
+	var sky := Node3D.new()
+	sky.name = "Sky"
+	var layer := 0
+	for entry: Dictionary in models:
+		var path: String = entry.get("model", "")
+		var model := _load_model(_dir(prefix).path_join(path)) if path != "" else null
+		if model == null:
+			continue
+		var reach := 0.0
+		for mesh: MeshInstance3D in model.find_children("*", "MeshInstance3D", true, false):
+			mesh.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+			var box := mesh.transform * mesh.mesh.get_aabb()
+			for corner in 8:
+				reach = maxf(reach, box.get_endpoint(corner).length())
+			for surface in mesh.mesh.get_surface_count():
+				var material := mesh.get_active_material(surface) as BaseMaterial3D
+				if material != null:
+					material = material.duplicate() as BaseMaterial3D
+					material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+					material.disable_fog = true
+					material.cull_mode = BaseMaterial3D.CULL_DISABLED
+					# Each over the ones before, in order, as Battlefront
+					# layers them (Yavin's clouds over its gas giant over
+					# the dome), whatever their sizes; none hiding the
+					# next, and the map in front of them all.
+					material.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+					material.depth_draw_mode = BaseMaterial3D.DEPTH_DRAW_DISABLED
+					material.render_priority = SKY_FIRST_PRIORITY + layer
+					mesh.set_surface_override_material(surface, material)
+		if reach <= 0.0:
+			continue
+		# With no fog, under the dome's lower edge (Utapau's, 8 degrees up)
+		# is its horizon's color, not black.
+		if layer == 0 and not environment.fog_enabled:
+			var horizon := _horizon_color(model)
+			if horizon.a > 0.0:
+				environment.background_color = Color(horizon, 1.0)
+		model.scale = Vector3.ONE * (SKY_DOME_RADIUS * (1.0 - SKY_LAYER_STEP * layer) / reach)
+		sky.add_child(model)
+		layer += 1
+		# Turning (drifting clouds): ASSUMPTION, RotationSpeed in turns a
+		# second (Kashyyyk's 0.004: a turn in some four minutes).
+		var speed := float(entry.get("rotation_speed", 0.0))
+		if speed > 0.0:
+			var turn := model.create_tween().set_loops()
+			turn.tween_property(model, "rotation:y", TAU, 1.0 / speed).from(0.0)
+	if sky.get_child_count() == 0:
+		sky.free()
 		return null
-	var dome := _load_model(_dir(prefix).path_join(dome_path))
-	if dome == null:
-		return null
-	for mesh: MeshInstance3D in dome.find_children("*", "MeshInstance3D", true, false):
-		mesh.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
-		for surface in mesh.mesh.get_surface_count():
-			var material := mesh.get_active_material(surface) as BaseMaterial3D
-			if material != null:
-				material = material.duplicate() as BaseMaterial3D
-				material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
-				material.disable_fog = true
-				material.cull_mode = BaseMaterial3D.CULL_DISABLED
-				mesh.set_surface_override_material(surface, material)
-	dome.scale = Vector3.ONE * SKY_DOME_SCALE
-	parent.add_child(dome)
-	return dome
+	parent.add_child(sky)
+	return sky
 
 
 # The map's water: one mesh of flat rectangles per surface, drawn with the
@@ -343,6 +387,40 @@ static func _texture(path: String) -> Texture2D:
 
 static func _dir(prefix: String) -> String:
 	return prefix.replace("\\", "/").get_base_dir()
+
+
+# The color of a dome's texture along its lowest edge: the average over its
+# lowest vertices' texture coordinates. Alpha 0 if there's none to read.
+static func _horizon_color(dome: Node3D) -> Color:
+	var lowest := INF
+	var uvs: Array[Vector2] = []
+	var image: Image = null
+	for mesh: MeshInstance3D in dome.find_children("*", "MeshInstance3D", true, false):
+		for surface in mesh.mesh.get_surface_count():
+			var material := mesh.get_active_material(surface) as BaseMaterial3D
+			if material == null or material.albedo_texture == null:
+				continue
+			var arrays := mesh.mesh.surface_get_arrays(surface)
+			var points: PackedVector3Array = arrays[Mesh.ARRAY_VERTEX]
+			var coords: PackedVector2Array = arrays[Mesh.ARRAY_TEX_UV]
+			for i in mini(points.size(), coords.size()):
+				var y := (mesh.transform * points[i]).y
+				if y < lowest - 1e-4:
+					lowest = y
+					uvs.clear()
+					image = material.albedo_texture.get_image()
+				if absf(y - lowest) <= 1e-4:
+					uvs.append(coords[i])
+	if image == null or uvs.is_empty():
+		return Color(0, 0, 0, 0)
+	if image.is_compressed():
+		image.decompress()
+	var sum := Color(0, 0, 0, 0)
+	for uv in uvs:
+		var x := clampi(int(fposmod(uv.x, 1.0) * image.get_width()), 0, image.get_width() - 1)
+		var y := clampi(int(clampf(uv.y, 0.0, 1.0) * image.get_height()), 0, image.get_height() - 1)
+		sum += image.get_pixel(x, y)
+	return Color(sum.r / uvs.size(), sum.g / uvs.size(), sum.b / uvs.size(), 1.0)
 
 
 static func _color(values: Array) -> Color:

@@ -262,7 +262,11 @@ Bytes sky_and_lights() {
                       chunk("SCOP", join({record("FogColor", {95, 111, 126}), record("NearSceneRange", {20, 30, 60, 80})})),
                       record("DomeInfo", {}),
                       chunk("SCOP", join({record("Texture", "test_sky"), record("DomeModel", {}),
-                                          chunk("SCOP", record("Geometry", "test_dome"))}))}));
+                                          chunk("SCOP", record("Geometry", "test_dome")), record("DomeModel", {}),
+                                          chunk("SCOP", join({record("Geometry", "test_mountains"),
+                                                              record("Offset", {80}),
+                                                              record("MovementScale", {0.995f}),
+                                                              record("RotationSpeed", {0.004f, 0, 1, 0})}))}))}));
     const Bytes lights = chunk(
         "lght",
         join({chunk("NAME", Bytes(4, 0)), record("Light", "sun", {1}),
@@ -341,7 +345,11 @@ void test_level() {
 
     const LevelSky& sky = level.sky;
     CHECK(sky.fog && sky.fog_color == (std::array<float, 3>{95, 111, 126}) && sky.near_scene_range.size() == 4);
-    CHECK(sky.dome_texture == "test_sky" && sky.dome_models == (std::vector<std::string>{"test_dome"}));
+    CHECK(sky.dome_texture == "test_sky" && sky.dome_models.size() == 2 && sky.dome_models[0].geometry == "test_dome");
+    CHECK(sky.dome_models[0].offset == 0 && sky.dome_models[0].movement_scale == 1);
+    CHECK(sky.dome_models[1].geometry == "test_mountains" && sky.dome_models[1].offset == 80 &&
+          std::abs(sky.dome_models[1].movement_scale - 0.995f) < 1e-6f &&
+          std::abs(sky.dome_models[1].rotation_speed - 0.004f) < 1e-6f);
     CHECK(sky.sun == "sun" && sky.back == "back" && sky.ambient_top[2] == 127 && sky.ambient_bottom[0] == 70);
     CHECK(level.lights.size() == 2 && level.lights[0].name == "sun" && level.lights[0].type == 1);
     CHECK(level.lights[0].rotation[2] == -0.5f && level.lights[0].color[1] == 0.5f);

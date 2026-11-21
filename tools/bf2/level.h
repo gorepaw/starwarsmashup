@@ -127,12 +127,22 @@ struct LevelLight {
 };
 
 // The sky ("sky_") and global lighting. Colors are 0..255, as stored.
+// One of a sky's dome models: the dome itself, or more drawn with it at
+// infinity (Hoth's mountains, Endor's Death Star, Yavin's gas giant,
+// Kashyyyk's drifting clouds).
+struct SkyDomeModel {
+    std::string geometry;
+    float offset = 0;          // Offset: how far down it's drawn (Hoth's mountains, 80)
+    float movement_scale = 1;  // MovementScale: how far it follows the camera (0.995)
+    float rotation_speed = 0;  // RotationSpeed's first: turns a second about +Y (clouds, 0.004)
+};
+
 struct LevelSky {
     std::array<float, 3> fog_color{};
     bool fog = false;  // FogColor given (Utapau's sky has none: no fog over its pit)
     std::vector<float> near_scene_range;  // as stored: (20, 30, 60, 80) on Dagobah
     std::string dome_texture;
-    std::vector<std::string> dome_models;
+    std::vector<SkyDomeModel> dome_models;  // in order; the first is the dome
     std::array<float, 3> ambient_top{}, ambient_bottom{};  // hemisphere ambient light
     std::string sun;   // the global light's name (GlobalLights' Light1)
     std::string back;  // a second global light's (Light2): Coruscant's "BACK", lighting soldiers with no ambient

@@ -627,8 +627,19 @@ int cmd_export_map(const std::vector<std::string>& args) {
         }
         json << "],\n    \"ambient_top\": " << color(sky.ambient_top, 1 / 255.0f)
              << ",\n    \"ambient_bottom\": " << color(sky.ambient_bottom, 1 / 255.0f);
+        // The dome, and the models drawn with it: each with how far down,
+        // how far it follows the camera and how fast it turns.
         if (!sky.dome_models.empty()) {
-            json << ",\n    \"sky_dome\": " << json_string(model_file(sky.dome_models[0]));
+            json << ",\n    \"sky_dome\": " << json_string(model_file(sky.dome_models[0].geometry));
+            json << ",\n    \"sky_domes\": [";
+            for (size_t i = 0; i < sky.dome_models.size(); ++i) {
+                const SkyDomeModel& dome = sky.dome_models[i];
+                json << (i ? ", " : "")
+                     << std::format("{{\"model\": {}, \"offset\": {}, \"movement_scale\": {}, \"rotation_speed\": {}}}",
+                                    json_string(model_file(dome.geometry)), dome.offset, dome.movement_scale,
+                                    dome.rotation_speed);
+            }
+            json << "]";
         }
         const LevelLight* sun = nullptr;
         for (const LevelLight& l : level.lights) {
