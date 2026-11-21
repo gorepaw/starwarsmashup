@@ -31,9 +31,10 @@ double yaw_toward(Vec3 d) {
 // the thin one over a lower floor by CP5) or a damage region (into
 // Mustafar's lava). A fall onto safe ground is no
 // edge: soldiers come to no harm (off a Kashyyyk platform, into a dip on
-// Endor's forest floor).
-bool over_edge(const World& world, const Battlefield* field, Vec3 feet, Vec3 move, double step_up,
-               double reach = 1.5) {
+// Endor's forest floor); unless there's no way back from it (off a Kamino
+// walkway onto the pod roofs under it, which lead nowhere).
+bool over_edge(const World& world, const Battlefield* field, const NavGrid* nav, Vec3 feet, Vec3 move,
+               double step_up, double reach = 1.5) {
     const double length = std::hypot(move.x, move.z);
     if (length < 1e-6) {
         return false;
@@ -46,6 +47,11 @@ bool over_edge(const World& world, const Battlefield* field, Vec3 feet, Vec3 mov
         const Vec3 p = feet + Vec3{move.x, 0, move.z} * (along / length);
         const double ground = world.ground_at(p.x, p.z, feet.y + climb * along, step_up).height;
         if (ground < -1e8) {
+            return true;
+        }
+        // Lower than a slope down goes: a drop.
+        if (nav != nullptr && ground < feet.y - step_up - climb * along &&
+            !nav->leads_back(feet, {p.x, ground, p.z})) {
             return true;
         }
         // From the ground up (a pit's floor deadly at once), under a body's
@@ -227,6 +233,7 @@ Vec3 Bot::steer(Vec3 position, Vec3 destination, double now) {
         }
         corner_ = 0;
         path_goal_ = destination;
+        path_from_ = position;
         replan_at_ = now + 4 + random() * 2;
         earliest_plan_ = now + 0.5;
     }
@@ -240,11 +247,28 @@ Vec3 Bot::steer(Vec3 position, Vec3 destination, double now) {
             navigation_->clear_line(position, path_[corner_ + 1]))) {
         ++corner_;
     }
-    if (now >= next_look_ && corner_ + 1 < path_.size()) {
+    // The nearest place on its leg of the route (from the corner before to
+    // the one it's after).
+    const auto on_leg = [&]() {
+        const Vec3 from = corner_ > 0 ? path_[corner_ - 1] : path_from_;
+        const Vec3 to = path_[corner_];
+        const Vec3 leg{to.x - from.x, 0, to.z - from.z};
+        const double length2 = leg.x * leg.x + leg.z * leg.z;
+        const double t =
+            length2 < 1e-9 ? 1 : std::clamp(((position.x - from.x) * leg.x + (position.z - from.z) * leg.z) / length2,
+                                            0.0, 1.0);
+        return Vec3{from.x + leg.x * t, from.y + (to.y - from.y) * t, from.z + leg.z * t};
+    };
+    if (now >= next_look_) {
         next_look_ = now + 0.25;
-        if (navigation_->clear_line(position, path_[corner_ + 1])) {
+        if (corner_ + 1 < path_.size() && navigation_->clear_line(position, path_[corner_ + 1])) {
             ++corner_;
         }
+        // Off its leg (pushed aside in a fight), its own line to the corner
+        // not clear: back onto the leg first, not straight across (beside
+        // Kamino's tube bridges, down a pod's roof into the sea).
+        rejoin_ = corner_ < path_.size() && horizontal_distance(position, on_leg()) > 1 &&
+                  !navigation_->clear_line(position, path_[corner_]);
     }
     pace_ = 1;
     if (corner_ >= path_.size()) {
@@ -255,6 +279,13 @@ Vec3 Bot::steer(Vec3 position, Vec3 destination, double now) {
     // narrow ledge, Yavin's temple roof's).
     pace_ = drop_pace(position, path_, corner_);
     const Vec3 corner = path_[corner_];
+    if (rejoin_) {
+        // Onto the leg, a meter on toward the corner.
+        const Vec3 on = on_leg();
+        Vec3 ahead{corner.x - on.x, 0, corner.z - on.z};
+        const double left = ahead.length();
+        return left > 1 ? on + ahead * (1 / left) : corner;
+    }
     // Over a corner at the foot of a drop, still up top: on the way it was
     // going, over the edge.
     if (horizontal_distance(position, corner) < 0.6 && position.y - corner.y >= 1.5) {
@@ -438,9 +469,10 @@ void Bot::update(GameClient& client, const World& world, double now) {
     const Battlefield* field = in_match ? &*client.config().battlefield : nullptr;
     const double speed = std::hypot(me.velocity.x, me.velocity.z);
     const double stopping = 1.5 + 0.2 * speed;
-    if (over_edge(world, field, me.position, move, step_up, stopping)) {
+    const NavGrid* nav = in_match ? navigation_.get() : nullptr;
+    if (over_edge(world, field, nav, me.position, move, step_up, stopping)) {
         strafe_ = -strafe_;
-        move = over_edge(world, field, me.position, route_move, step_up, std::min(stopping, route_reach + 0.3))
+        move = over_edge(world, field, nav, me.position, route_move, step_up, std::min(stopping, route_reach + 0.3))
                    ? Vec3{}
                    : route_move;
         if (move.length() == 0) {
@@ -466,9 +498,9 @@ void Bot::update(GameClient& client, const World& world, double now) {
         const double s = std::sin(controls.yaw), c = std::cos(controls.yaw);
         const Vec3 aside = move + Vec3{c, 0, -s} * strafe_;
         constexpr double leap = 3;  // m a jump carries it
-        if (!over_edge(world, field, me.position, move, step_up, leap)) {
+        if (!over_edge(world, field, nav, me.position, move, step_up, leap)) {
             controls.jump = true;
-            if (!over_edge(world, field, me.position, aside, step_up, leap)) {
+            if (!over_edge(world, field, nav, me.position, aside, step_up, leap)) {
                 move = aside;
             }
         }

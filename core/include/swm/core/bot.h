@@ -85,6 +85,8 @@ private:
     std::vector<Vec3> path_;
     size_t corner_ = 0;
     Vec3 path_goal_;
+    Vec3 path_from_;           // where the route was planned from: its first leg's start
+    bool rejoin_ = false;      // off its leg, its own way to the corner not clear: back onto the leg
     double replan_at_ = 0;     // plans again then (sooner if the destination moves)
     double earliest_plan_ = 0;  // but not before then
     double next_look_ = 0;     // checks then whether the corner after next is in a straight line

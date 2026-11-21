@@ -79,6 +79,10 @@ public:
     // Whether there's walkable ground at (x, z) between heights low and high
     // (the highest surface up to a step over high).
     bool walkable_between(double x, double z, double low, double high) const;
+    // Whether a soldier with feet at `from` who drops to `landing` can walk
+    // back from there (off a walkway onto Kamino's pod roofs, no way up from
+    // them: no). Remembered: a pocket once found is known in all of it.
+    bool leads_back(Vec3 from, Vec3 landing) const;
     // Tiles worked out so far.
     size_t tiles_built() const { return built_; }
 
@@ -92,6 +96,7 @@ private:
     static constexpr int max_layers = 6;  // surfaces kept per cell, from the top
     static constexpr int node_bits = 13;  // a tile's surfaces: up to 32 x 32 x 6
     static constexpr uint8_t walkable_bit = 1, barrier_bit = 2, edge_bit = 4;
+    static constexpr uint8_t pocket_bit = 8;  // found shut in, no way out to where soldiers came from
     // A surface: its tile's index, then its own within the tile.
     using Node = int32_t;
 
@@ -123,6 +128,9 @@ private:
     // knee or chest height), nearest first; none a search with visit stamp
     // `except` saw (0: any).
     std::vector<Node> ways_from(Vec3 p, double reach, uint32_t except) const;
+    // find_path; with `shut_in`, only whether its first search saw all it
+    // could reach without getting there (marking all that a pocket).
+    std::vector<Vec3> route(Vec3 from, Vec3 to, bool* shut_in) const;
 
     const World& world_;
     MoveParams move_;
@@ -135,6 +143,7 @@ private:
     int tiles_x_ = 0, tiles_z_ = 0;
     mutable std::vector<std::unique_ptr<Tile>> tiles_;
     mutable std::unordered_map<uint64_t, bool> climbs_;  // walks_up's answers
+    mutable std::unordered_map<uint64_t, bool> leads_back_;  // landings found to lead back, by 2 m square and height
     mutable size_t built_ = 0;
     mutable uint32_t search_ = 0;
 };

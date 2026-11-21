@@ -239,6 +239,19 @@ NavGrid::Node NavGrid::land(int x, int z, float from, Cell source) const {
                                       move_.step_up)) {
                 return -1;
             }
+            // Through a gap a body falls through: on past the cell's middle,
+            // and to either side, nothing to stand on at the height it
+            // leaves (a crack between Kamino's walkway and a pod's floor,
+            // narrower than a soldier, is no way down).
+            const Vec3 s = center(source.x, source.z);
+            const double run = std::hypot(c.x - s.x, c.z - s.z);
+            const Vec3 on{(c.x - s.x) / run, 0, (c.z - s.z) / run};
+            for (const Vec3 off : {on, Vec3{-on.z, 0, on.x}, Vec3{on.z, 0, -on.x}}) {
+                const Vec3 p = c + off * move_.radius;
+                if (world_.ground_at(p.x, p.z, double(from), move_.step_up).height >= double(from) - move_.step_up) {
+                    return -1;
+                }
+            }
             // Nor through a death region on the way down (the Death Star's
             // thin one over a chasm's floor, a lower floor beside it), nor a
             // damage region (Mustafar's lava): it falls through anything
@@ -452,7 +465,33 @@ std::vector<NavGrid::Node> NavGrid::ways_from(Vec3 p, double reach, uint32_t exc
     return out;
 }
 
+bool NavGrid::leads_back(Vec3 from, Vec3 landing) const {
+    const Node up = under(from), down = under(landing);
+    if (up < 0 || down < 0 || (flags(up) & pocket_bit)) {
+        return true;  // nothing to go by; or in a pocket already: anywhere in it
+    }
+    if (flags(down) & pocket_bit) {
+        return false;
+    }
+    const Cell c = cell_of(down);
+    const uint64_t key = (uint64_t(uint32_t(c.x >> 2)) << 40) | (uint64_t(uint32_t(c.z >> 2)) << 20) |
+                         uint64_t(uint32_t(int(std::floor(height(down))) + 100000) & 0xfffff);
+    if (leads_back_.count(key) != 0) {
+        return true;
+    }
+    bool shut_in = false;
+    route(landing, from, &shut_in);
+    if (!shut_in) {
+        leads_back_.emplace(key, true);
+    }
+    return !shut_in;
+}
+
 std::vector<Vec3> NavGrid::find_path(Vec3 from, Vec3 to) const {
+    return route(from, to, nullptr);
+}
+
+std::vector<Vec3> NavGrid::route(Vec3 from, Vec3 to, bool* shut_in) const {
     // Where it stands on the grid: the surface under it, or, off the grid
     // (pushed under a root, say), the nearest it can walk straight onto.
     Node start = under(from);
@@ -629,6 +668,20 @@ std::vector<Vec3> NavGrid::find_path(Vec3 from, Vec3 to) const {
     };
 
     Search found = search(start, to_goal, false, settings_.max_expansions);
+    if (shut_in != nullptr) {
+        // All it saw, closed under walking on, without the goal: a pocket
+        // (any way out of it leads into it).
+        *shut_in = !found.reached && found.exhausted;
+        for (size_t index = 0; index < tiles_.size() && *shut_in; ++index) {
+            Tile* t = tiles_[index].get();
+            for (size_t n = 0; t != nullptr && n < t->visit.size(); ++n) {
+                if (t->visit[n] == found.stamp && t->closed[n]) {
+                    t->flags[n] |= pocket_bit;
+                }
+            }
+        }
+        return {};
+    }
     // Shut in a small pocket the grid sees no way out of, far from the goal
     // (a soldier can get where the grid says it can't: under a root it would
     // brush with its head, say): out to the nearest places nearby that

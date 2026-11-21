@@ -7,6 +7,7 @@
 #include <fstream>
 #include <iostream>
 #include <map>
+#include <tuple>
 #include <set>
 #include <span>
 #include <sstream>
@@ -38,7 +39,7 @@ constexpr const char* usage = R"(usage:
   bf2tool export-loadout <_lvl_pc dir> <side> <soldier class> -o <loadout.ini> [--items <dir>]
   bf2tool export-map <_lvl_pc dir> <map> -o <out dir> [--mode conquest] [--skip <layer>]...
                      [--death <region>]... [--open <object>]... [--team <post>=<n>]... [--disable <barrier>]...
-                     [--drop-boundary <path>]...
+                     [--drop-boundary <path>]... [--set <object>.<property>=<value>]...
   bf2tool export-hud <_lvl_pc dir> -o <out dir>
 )";
 
@@ -404,6 +405,9 @@ int cmd_export_map(const std::vector<std::string>& args) {
     std::vector<std::string> disabled;
     std::vector<std::string> dropped_boundaries;
     std::map<std::string, std::string> teams;  // post name (lowercase) -> team
+    // object name (lowercase) -> property, value: the mission script's
+    // SetProperty (a door's IsLocked, a post's SpawnPath or CaptureRegion)
+    std::vector<std::tuple<std::string, std::string, std::string>> sets;
     for (size_t i = 4; i + 1 < args.size(); i += 2) {
         if (args[i] == "--mode") {
             mode = args[i + 1];
@@ -424,11 +428,33 @@ int cmd_export_map(const std::vector<std::string>& args) {
                 return 2;
             }
             teams[lowercase(args[i + 1].substr(0, eq))] = args[i + 1].substr(eq + 1);
+        } else if (args[i] == "--set") {
+            const std::string& set = args[i + 1];
+            const size_t dot = set.find('.'), eq = set.find('=');
+            if (dot == std::string::npos || eq == std::string::npos || eq < dot) {
+                std::cerr << usage;
+                return 2;
+            }
+            sets.emplace_back(lowercase(set.substr(0, dot)), set.substr(dot + 1, eq - dot - 1), set.substr(eq + 1));
         }
     }
     const std::string folder = map.substr(0, 3);
     std::vector<uint8_t> bytes = read_file(std::filesystem::path(args[0]) / folder / (map + ".lvl"));
-    const Level level = read_level(parse_ucfb(bytes));
+    Level level = read_level(parse_ucfb(bytes));
+    // What the mission script sets, over what the map says (the last value
+    // of a property is the one read).
+    for (const auto& [name, property, value] : sets) {
+        size_t found = 0;
+        for (WorldItem& object : level.objects) {
+            if (lowercase(object.name) == name) {
+                object.properties.emplace_back(odf_hash(property), value);
+                ++found;
+            }
+        }
+        if (found == 0) {
+            std::cerr << std::format("set: no object {}\n", name);
+        }
+    }
     // Models and textures: the map's own, then the shared props' (ingame.lvl).
     AssetLibrary library;
     library.add(std::move(bytes));
@@ -443,6 +469,8 @@ int cmd_export_map(const std::vector<std::string>& args) {
     const bool no_terrain = level.terrain.cells == 0;
     Terrain stand_in;
     double fall_y = 0;
+    // The water's rectangles (Battlefront x0 z0 x1 z1) and heights.
+    std::vector<std::array<double, 5>> water_boxes;
     if (no_terrain) {
         double reach = 0, low = 1e9;
         for (const WorldItem& object : level.objects) {
@@ -759,6 +787,7 @@ int cmd_export_map(const std::vector<std::string>& args) {
                         continue;
                     }
                     json << (written++ ? ", " : "") << std::format("[{}, {}, {}, {}]", -x1, z0, -x0, z1);
+                    water_boxes.push_back({x0, z0, x1, z1, double(surface.height)});
                 }
                 json << "]}";
                 rectangles += written;
@@ -860,6 +889,7 @@ int cmd_export_map(const std::vector<std::string>& args) {
         json << "{\n  \"map\": " << json_string(map) << ",\n  \"objects\": [";
         size_t written = 0;
         size_t left_open = 0;
+        size_t doors_open = 0, doors_shut = 0;
         for (const WorldItem& object : level.objects) {
             if (!included(object)) {
                 continue;
@@ -900,9 +930,16 @@ int cmd_export_map(const std::vector<std::string>& args) {
                                           basis[6] * x + basis[7] * y + basis[8] * z + object.position[2]};
                     };
                     // Doors (class "door": Polis Massa's) open as soldiers
-                    // come; until they move here, they're left open.
+                    // come; until they move here, they're left open. Not a
+                    // locked one (IsLocked, as Kamino's mission script sets
+                    // some of its pod rooms' doors): shut.
+                    const bool locked = std::atof(object.get("IsLocked").c_str()) != 0;
                     const bool door = lowercase(resolved.base) == "door";
-                    for (const CollisionTriangle& t : door ? std::vector<CollisionTriangle>{} : shape->second) {
+                    if (door) {
+                        ++(locked ? doors_shut : doors_open);
+                    }
+                    for (const CollisionTriangle& t :
+                         door && !locked ? std::vector<CollisionTriangle>{} : shape->second) {
                         collision.triangles.push_back(
                             {place(t.a), place(t.b), place(t.c),
                              uint8_t((t.soldiers ? core::blocks_characters : 0) | (t.ordnance ? core::blocks_shots : 0))});
@@ -965,7 +1002,8 @@ int cmd_export_map(const std::vector<std::string>& args) {
         std::cerr << std::format("objects: {} of {} placed ({} left open); {} models, {} textures\n", written,
                                  level.objects.size(), left_open, models.size(), textures.size());
         core::save_map_collision(collision, core::map_collision_path(out_dir / map));
-        std::cerr << std::format("collision: {} triangles\n", collision.triangles.size());
+        std::cerr << std::format("collision: {} triangles; doors: {} open, {} locked shut\n",
+                                 collision.triangles.size(), doors_open, doors_shut);
     }
 
     // The mode's command posts: capture regions, starting teams, spawn points.
@@ -1109,6 +1147,19 @@ int cmd_export_map(const std::vector<std::string>& args) {
         ini << std::format("DeathRegion = box 0 {:.2f} 0 {:.2f} 20 {:.2f} 1 0 0 0 1 0 0 0 1\n", fall_y + 20, half,
                            half);
         ++death_regions;
+        // Its water, with nothing under it but the stand-in (Kamino's sea):
+        // soldiers die once they're under it. ASSUMPTION: as in Battlefront,
+        // where they drown; 2 m down, so a pool soldiers stand in (Jabba's
+        // rancor pit's, half a meter) is waded.
+        for (const auto& [x0, z0, x1, z1, height] : water_boxes) {
+            const double top = height - 2;
+            if (top > fall_y) {
+                ini << std::format("DeathRegion = box {:.2f} {:.2f} {:.2f} {:.2f} {:.2f} {:.2f} 1 0 0 0 1 0 0 0 1\n",
+                                   (x0 + x1) / 2, (top + fall_y) / 2, (z0 + z1) / 2, (x1 - x0) / 2, (top - fall_y) / 2,
+                                   (z1 - z0) / 2);
+                ++death_regions;
+            }
+        }
     }
     std::cerr << std::format("boundaries: {}; death regions: {} ({} named); damage regions: {}\n", boundaries.size(),
                              death_regions, deaths.size(), damage_regions);

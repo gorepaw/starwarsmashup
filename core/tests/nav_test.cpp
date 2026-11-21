@@ -440,6 +440,40 @@ void test_high_and_deadly() {
     CHECK(!into.empty() && into.back().y > 9);
 }
 
+// Where a route drops from a deck 5 m up to the ground under it: the x of
+// the first corner on the ground.
+double drop_x(const std::vector<Vec3>& path) {
+    for (const Vec3& p : path) {
+        if (p.y < 1) {
+            return p.x;
+        }
+    }
+    return 1e9;
+}
+
+void test_crack() {
+    // A deck 5 m up, split down the middle by a slit narrower than a body
+    // (a crack between Kamino's walkway and a pod's floor): no way down
+    // there; off the deck's edge instead. Through a hole 2 m wide, yes.
+    // (Each around a cell's middle, x -50.25: the grid sees the ground
+    // there.)
+    const Heightfield ground = flat();
+    const auto route = [&](double gap) {
+        MapCollision deck;
+        add_box(deck, {-60, 4.7, 40}, {-50.25 - gap / 2, 5, 60});
+        add_box(deck, {-50.25 + gap / 2, 4.7, 40}, {-40, 5, 60});
+        World world(ground);
+        world.add_map_collision(deck);
+        const NavGrid grid(world, open_field());
+        return grid.find_path({-55, 5, 50}, {-50.25, 0, 50.25});
+    };
+    const auto slit = route(0.3);
+    const auto hole = route(2);
+    std::printf("down through a slit: at x %.2f; a hole: at x %.2f\n", drop_x(slit), drop_x(hole));
+    CHECK(!slit.empty() && std::abs(drop_x(slit) + 50.25) > 5);
+    CHECK(!hole.empty() && std::abs(drop_x(hole) + 50.25) < 1.5);
+}
+
 void test_pit() {
     // A pen walled in 6 m high, a deck 4 m up over its east side (up a ramp
     // from the east): a soldier drops into it off the deck's edge, and can't
@@ -469,6 +503,14 @@ void test_pit() {
     // From inside, it gets nowhere.
     const auto out = grid.find_path(inside, from);
     CHECK(out.empty() || std::hypot(out.back().x - from.x, out.back().z - from.z) > 20);
+    // Off the deck into the pen: no way back (twice: the second known from
+    // the first); off its north side outside the pen: back up the ramp.
+    // Inside the pen already, anywhere in it.
+    const Vec3 deck{-55, 4, 50};
+    CHECK(!grid.leads_back(deck, {-60, 0, 50}));
+    CHECK(!grid.leads_back(deck, {-66, 0, 47}));
+    CHECK(grid.leads_back({-45, 4, 54.5}, {-45, 0, 57}));
+    CHECK(grid.leads_back(inside, {-60, 0, 48}));
 }
 
 } // namespace
@@ -486,6 +528,7 @@ int main() {
     test_backward();
     test_coping();
     test_high_and_deadly();
+    test_crack();
     test_pit();
     return swm::test::finish("nav_test");
 }
