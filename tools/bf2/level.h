@@ -48,8 +48,13 @@ struct Terrain {
     std::vector<std::array<uint8_t, 3>> light;
     std::vector<TerrainCut> cuts;
 
-    // Coordinates of grid point (0, 0): the grid is centred on the origin.
-    double origin() const { return -cells * unit / 2; }
+    // Battlefront x and z of grid point (0, 0). The grid is centred on the
+    // origin in x but lies one cell further along +z: placed that way, the
+    // maps' path nodes stand on it (on Endor 187 of 219 within 10 cm, against
+    // 85 centred) and their rocks, posts and barriers sit on it, on every map
+    // with terrain.
+    double origin_x() const { return -cells * unit / 2; }
+    double origin_z() const { return -cells * unit / 2 + unit; }
 };
 
 // One record of a munged config ("DATA" chunk): a name hash, a value count,

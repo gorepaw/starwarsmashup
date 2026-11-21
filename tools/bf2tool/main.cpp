@@ -507,8 +507,8 @@ int cmd_export_map(const std::vector<std::string>& args) {
         };
         std::ofstream json(out_dir / (map + ".json"), std::ios::binary);
         json << "{\n  \"source\": " << json_string(map + ".lvl (Battlefront II)") << ",\n  \"samples\": " << samples
-             << ",\n  \"spacing\": " << terrain.unit << ",\n  \"origin_x\": " << terrain.origin()
-             << ",\n  \"origin_z\": " << terrain.origin() << ",\n  \"min_height\": " << *low
+             << ",\n  \"spacing\": " << terrain.unit << ",\n  \"origin_x\": " << terrain.origin_x()
+             << ",\n  \"origin_z\": " << terrain.origin_z() << ",\n  \"min_height\": " << *low
              << ",\n  \"max_height\": " << *high
              << ",\n  \"format\": \"float32 little-endian, row-major, rows along +Z\",\n  \"texture_layers\": [";
         for (size_t i = 0; i < terrain.texture_layers.size(); ++i) {
@@ -633,7 +633,9 @@ int cmd_export_map(const std::vector<std::string>& args) {
             json << "],\n    \"normal_map_rate\": "
                  << (normals != nullptr && normals->numbers.size() >= 2 ? normals->numbers[1] : 0.0f);
             json << ",\n    \"surfaces\": [";
-            const double low_x = terrain.origin(), high_x = -terrain.origin();
+            const double extent = terrain.cells * terrain.unit;
+            const double low_x = terrain.origin_x(), high_x = low_x + extent;
+            const double low_z = terrain.origin_z(), high_z = low_z + extent;
             for (size_t layer = 0; layer < water.layers.size(); ++layer) {
                 const WaterLayer& surface = water.layers[layer];
                 // Runs per row as [first, last] columns, then rows merged
@@ -683,9 +685,9 @@ int cmd_export_map(const std::vector<std::string>& args) {
                     // Battlefront x and z, clipped to the terrain; game x = -x.
                     const double x0 = std::max(low_x, double(water.origin[0]) + run.first * double(water.cell_size));
                     const double x1 = std::min(high_x, double(water.origin[0]) + (run.last + 1) * double(water.cell_size));
-                    const double z0 = std::max(low_x, double(water.origin[1]) + run.row_first * double(water.cell_size));
+                    const double z0 = std::max(low_z, double(water.origin[1]) + run.row_first * double(water.cell_size));
                     const double z1 =
-                        std::min(high_x, double(water.origin[1]) + (run.row_last + 1) * double(water.cell_size));
+                        std::min(high_z, double(water.origin[1]) + (run.row_last + 1) * double(water.cell_size));
                     if (x0 >= x1 || z0 >= z1) {
                         continue;
                     }
@@ -887,12 +889,13 @@ int cmd_export_map(const std::vector<std::string>& args) {
 
     // The mode's command posts: capture regions, starting teams, spawn points.
     std::ofstream ini(out_dir / (map + "_" + mode + ".ini"), std::ios::binary);
-    const double edge = terrain.origin();
+    const double edge_x = terrain.origin_x(), edge_z = terrain.origin_z();
+    const double extent = terrain.cells * terrain.unit;
     ini << "; " << map << "'s " << mode << " (" << mode_layers
         << "), written by bf2tool export-map from your own Battlefront II install.\n"
            "; Game data: don't commit or share it. Positions are Battlefront coordinates (x z).\n\n[map]\nName = "
         << map << "\nTerrain = " << map << "\n"
-        << std::format("Bounds = {} {} {} {}\n", edge, edge, -edge, -edge);
+        << std::format("Bounds = {} {} {} {}\n", edge_x, edge_z, edge_x + extent, edge_z + extent);
     // The AI barriers that stop soldiers: places bots keep out of when they can.
     size_t barriers = 0;
     for (const LevelBarrier& barrier : level.barriers) {

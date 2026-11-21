@@ -321,7 +321,7 @@ void test_level() {
     const Level level = read_level(parse_ucfb(file));
 
     const Terrain& t = level.terrain;
-    CHECK(t.name == "test" && t.cells == 16 && t.unit == 2 && t.origin() == -16);
+    CHECK(t.name == "test" && t.cells == 16 && t.unit == 2 && t.origin_x() == -16 && t.origin_z() == -14);
     CHECK(t.texture_layers.size() == 2 && t.texture_layers[1] == "mud");
     CHECK(t.heights.size() == 17 * 17 && t.missing == 1);
     CHECK(t.heights[5 * 17 + 3] == 8 && t.heights[16 * 17 + 16] == 32);
