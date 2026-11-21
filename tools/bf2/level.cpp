@@ -408,7 +408,8 @@ void read_lights(const UcfbNode& chunk, Level& level) {
     const uint32_t light = odf_hash("Light"), global = odf_hash("GlobalLights");
     const uint32_t type = odf_hash("Type"), rotation = odf_hash("Rotation"), position = odf_hash("Position");
     const uint32_t color = odf_hash("Color"), range = odf_hash("Range"), baked = odf_hash("Static");
-    const uint32_t light1 = odf_hash("Light1"), top = odf_hash("Top"), bottom = odf_hash("Bottom");
+    const uint32_t light1 = odf_hash("Light1"), light2 = odf_hash("Light2"), top = odf_hash("Top"),
+                   bottom = odf_hash("Bottom");
     for_each_record(chunk, [&](const ConfigRecord& section, const UcfbNode* scope) {
         if (scope == nullptr) {
             return;
@@ -439,6 +440,8 @@ void read_lights(const UcfbNode& chunk, Level& level) {
             for_each_record(*scope, [&](const ConfigRecord& r, const UcfbNode*) {
                 if (r.name == light1) {
                     level.sky.sun = r.text;
+                } else if (r.name == light2) {
+                    level.sky.back = r.text;
                 } else if (r.name == top) {
                     level.sky.ambient_top = first3(r.numbers);
                 } else if (r.name == bottom) {

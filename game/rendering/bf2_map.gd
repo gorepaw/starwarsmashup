@@ -159,6 +159,18 @@ static func setup_environment(parent: Node, prefix: String, meta: Dictionary, en
 		sun.basis = Basis.looking_at(direction, Vector3.UP if absf(direction.y) < 0.99 else Vector3.FORWARD)
 		sun.light_color = _color(env["sun"]["color"])
 		sun.light_energy = 1.5
+	# The second global light, on soldiers and the like (the map's own models
+	# carry their baked light): Coruscant's temple has no ambient, and out of
+	# the sun its soldiers are lit by this one alone. No shadows, as in
+	# Battlefront.
+	if env.has("back"):
+		var back := DirectionalLight3D.new()
+		var along := _vector(env["back"]["direction"])
+		back.basis = Basis.looking_at(along, Vector3.UP if absf(along.y) < 0.99 else Vector3.FORWARD)
+		back.light_color = _color(env["back"]["color"])
+		back.light_energy = 1.5
+		back.shadow_enabled = false
+		parent.add_child(back)
 	for light: Dictionary in env.get("lights", []):
 		var omni := OmniLight3D.new()
 		omni.position = _vector(light["position"])

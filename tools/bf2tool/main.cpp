@@ -607,13 +607,25 @@ int cmd_export_map(const std::vector<std::string>& args) {
                 sun = &l;
             }
         }
-        if (sun != nullptr) {
-            const auto [w, x, y, z] = sun->rotation;
+        const auto direction = [](const LevelLight& l) {
+            const auto [w, x, y, z] = l.rotation;
             // q * (0, 0, 1) * q^-1: the rotation matrix's third column.
             const std::array<float, 3> along{2 * (x * z + w * y), 2 * (y * z - w * x), 1 - 2 * (x * x + y * y)};
-            json << std::format(",\n    \"sun\": {{\"direction\": [{:.4f}, {:.4f}, {:.4f}], \"color\": {}, "
-                                "\"baked\": {}}}",
-                                -along[0], along[1], -along[2], color(sun->color, 1), sun->baked ? "true" : "false");
+            return std::format("[{:.4f}, {:.4f}, {:.4f}]", -along[0], along[1], -along[2]);
+        };
+        if (sun != nullptr) {
+            json << std::format(",\n    \"sun\": {{\"direction\": {}, \"color\": {}, \"baked\": {}}}", direction(*sun),
+                                color(sun->color, 1), sun->baked ? "true" : "false");
+        }
+        // The second global light (Light2), on what the baked light isn't:
+        // soldiers. Coruscant's temple has no ambient light; its "BACK" light
+        // is what shows soldiers indoors, out of the sun.
+        for (const LevelLight& l : level.lights) {
+            if (l.type == 1 && &l != sun && !sky.back.empty() && lowercase(l.name) == lowercase(sky.back)) {
+                json << std::format(",\n    \"back\": {{\"direction\": {}, \"color\": {}}}", direction(l),
+                                    color(l.color, 1));
+                break;
+            }
         }
         json << ",\n    \"lights\": [";
         size_t lights = 0;

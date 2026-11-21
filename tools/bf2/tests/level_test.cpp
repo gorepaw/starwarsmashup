@@ -271,7 +271,7 @@ Bytes sky_and_lights() {
               record("Light", "lamp", {1}),
               chunk("SCOP", join({record("Position", {1, 2, 3}), record("Type", {2}), record("Range", {5})})),
               record("GlobalLights", {}),
-              chunk("SCOP", join({record("Light1", "sun"), record("Top", {101, 114, 127}),
+              chunk("SCOP", join({record("Light1", "sun"), record("Light2", "back"), record("Top", {101, 114, 127}),
                                   record("Bottom", {70, 90, 115})}))}));
     return join({sky, lights});
 }
@@ -342,7 +342,7 @@ void test_level() {
     const LevelSky& sky = level.sky;
     CHECK(sky.fog_color == (std::array<float, 3>{95, 111, 126}) && sky.near_scene_range.size() == 4);
     CHECK(sky.dome_texture == "test_sky" && sky.dome_models == (std::vector<std::string>{"test_dome"}));
-    CHECK(sky.sun == "sun" && sky.ambient_top[2] == 127 && sky.ambient_bottom[0] == 70);
+    CHECK(sky.sun == "sun" && sky.back == "back" && sky.ambient_top[2] == 127 && sky.ambient_bottom[0] == 70);
     CHECK(level.lights.size() == 2 && level.lights[0].name == "sun" && level.lights[0].type == 1);
     CHECK(level.lights[0].rotation[2] == -0.5f && level.lights[0].color[1] == 0.5f);
     CHECK(level.lights[1].name == "lamp" && level.lights[1].type == 2 && level.lights[1].range == 5);

@@ -133,7 +133,8 @@ struct LevelSky {
     std::string dome_texture;
     std::vector<std::string> dome_models;
     std::array<float, 3> ambient_top{}, ambient_bottom{};  // hemisphere ambient light
-    std::string sun;  // the global light's name (GlobalLights' Light1)
+    std::string sun;   // the global light's name (GlobalLights' Light1)
+    std::string back;  // a second global light's (Light2): Coruscant's "BACK", lighting soldiers with no ambient
 };
 
 // Water ("WATR" in the terrain): a grid of square cells centred on the map,
