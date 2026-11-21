@@ -37,7 +37,7 @@ constexpr const char* usage = R"(usage:
   bf2tool odf <file.lvl> [class]
   bf2tool export-loadout <_lvl_pc dir> <side> <soldier class> -o <loadout.ini> [--items <dir>]
   bf2tool export-map <_lvl_pc dir> <map> -o <out dir> [--mode conquest] [--skip <layer>]...
-                     [--death <region>]... [--open <object>]...
+                     [--death <region>]... [--open <object>]... [--team <post>=<n>]... [--disable <barrier>]...
   bf2tool export-hud <_lvl_pc dir> -o <out dir>
 )";
 
@@ -382,7 +382,10 @@ std::string json_string(const std::string& text) {
 // regions named by --death (the mission script's AddDeathRegion). Each game
 // mode is a sublevel; other modes' are left out, and so are any --skip
 // layers (e.g. the other era's props) and --open objects (by name: ones
-// fought open, Kashyyyk's wooden barricades, left out as if destroyed).
+// fought open, Kashyyyk's wooden barricades, or killed by the mission script,
+// KillObject: left out as if destroyed, and a command post with them). Like
+// the script, --team <post>=<n> sets a post's starting team (SetObjectTeam)
+// and --disable <name> drops the AI barriers of that name (DisableBarriers).
 int cmd_export_map(const std::vector<std::string>& args) {
     if (args.size() < 4 || args[2] != "-o") {
         std::cerr << usage;
@@ -394,6 +397,8 @@ int cmd_export_map(const std::vector<std::string>& args) {
     std::vector<std::string> skipped;
     std::vector<std::string> deaths;
     std::vector<std::string> opened;
+    std::vector<std::string> disabled;
+    std::map<std::string, std::string> teams;  // post name (lowercase) -> team
     for (size_t i = 4; i + 1 < args.size(); i += 2) {
         if (args[i] == "--mode") {
             mode = args[i + 1];
@@ -403,6 +408,15 @@ int cmd_export_map(const std::vector<std::string>& args) {
             deaths.push_back(args[i + 1]);
         } else if (args[i] == "--open") {
             opened.push_back(lowercase(args[i + 1]));
+        } else if (args[i] == "--disable") {
+            disabled.push_back(lowercase(args[i + 1]));
+        } else if (args[i] == "--team") {
+            const size_t eq = args[i + 1].find('=');
+            if (eq == std::string::npos) {
+                std::cerr << usage;
+                return 2;
+            }
+            teams[lowercase(args[i + 1].substr(0, eq))] = args[i + 1].substr(eq + 1);
         }
     }
     const std::string folder = map.substr(0, 3);
@@ -911,7 +925,8 @@ int cmd_export_map(const std::vector<std::string>& args) {
     // The AI barriers that stop soldiers: places bots keep out of when they can.
     size_t barriers = 0;
     for (const LevelBarrier& barrier : level.barriers) {
-        if (!included(barrier) || !(barrier.flags & 1)) {
+        if (!included(barrier) || !(barrier.flags & 1) ||
+            std::find(disabled.begin(), disabled.end(), lowercase(barrier.name)) != disabled.end()) {
             continue;
         }
         ini << "Barrier =";
@@ -922,6 +937,13 @@ int cmd_export_map(const std::vector<std::string>& args) {
         ++barriers;
     }
     std::cerr << std::format("barriers: {} of {}\n", barriers, level.barriers.size());
+    if (std::getenv("BF2_BARRIERS")) {
+        for (const LevelBarrier& barrier : level.barriers) {
+            std::cerr << std::format("  barrier {} ({}, flags {}) at {:.0f} {:.0f}, {:.0f} x {:.0f}\n", barrier.name,
+                                     barrier.layer, barrier.flags, barrier.position[0], barrier.position[2],
+                                     barrier.half_size[0] * 2, barrier.half_size[1] * 2);
+        }
+    }
     // The playable area: the paths the map's boundaries list (Felucia's are
     // four overlapping rings, "warning1".."Warning4"), or, in a map listing
     // none, the paths named "boundary..." (Polis Massa's "Boundry1"). Each
@@ -984,7 +1006,8 @@ int cmd_export_map(const std::vector<std::string>& args) {
                              deaths.size());
     int posts = 0;
     for (const WorldItem& object : level.objects) {
-        if (object.sublevel != mode_sublevel || object.get("CaptureRegion").empty()) {
+        if (object.sublevel != mode_sublevel || object.get("CaptureRegion").empty() ||
+            std::find(opened.begin(), opened.end(), lowercase(object.name)) != opened.end()) {
             continue;
         }
         const WorldItem* capture = level.region(object.get("CaptureRegion"), mode_sublevel);
@@ -1002,7 +1025,11 @@ int cmd_export_map(const std::vector<std::string>& args) {
             ini << std::format("Altitude = {:.2f} {:.2f}\n", std::min(capture->position[1] - half, post_y - 0.5),
                                std::max(capture->position[1] + half, post_y + 2.0));
         }
-        if (const std::string team = object.get("Team"); team == "1" || team == "2") {
+        std::string team = object.get("Team");
+        if (const auto set = teams.find(lowercase(object.name)); set != teams.end()) {
+            team = set->second;
+        }
+        if (team == "1" || team == "2") {
             ini << "Owner = " << team << "\n";
         }
         if (const LevelPath* spawns = level.path_in(object.get("SpawnPath"), mode_sublevel)) {

@@ -24,7 +24,8 @@ class World;
 // surface there it can reach: one at most a step up (or a walkable slope),
 // or any lower one, dropping onto it; it must be walkable. Barriers
 // (Battlefront's AI barriers) are walkable but cost more, so paths go around
-// them when that's not a long way. So do surfaces at an edge (a drop within
+// them when that's not a long way (unless a route starts or ends in one: a
+// post inside it). So do surfaces at an edge (a drop within
 // a body's reach: the side of a ramp, a ledge's lip), and straight lines
 // between corners don't run along them, so a bot that strays a little
 // doesn't fall off: routes keep to the middle of a ramp or a walkway. Cells outside the battlefield (its bounds

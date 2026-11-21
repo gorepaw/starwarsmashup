@@ -173,6 +173,16 @@ void test_barriers() {
     const NavGrid fenced(world, field);
     const auto across = fenced.find_path(from, {-70, 0, 50});
     CHECK(!across.empty() && near(across.back().x, -70) && near(across.back().z, 50));
+
+    // A post deep inside a barrier (Hoth's CP3): the way in, and out, is
+    // straight through it, not round to the side nearest the post.
+    field.barriers[0] = {{Vec3{-40, 0, 30}, Vec3{-80, 0, 30}, Vec3{-80, 0, 70}, Vec3{-40, 0, 70}}};
+    const NavGrid deep(world, field);
+    const Vec3 post{-75, 0, 50};
+    const auto in = deep.find_path(from, post);
+    CHECK(!in.empty() && near(in.back().x, post.x) && near(in.back().z, post.z) && length(in, from) < 50);
+    const auto out = deep.find_path(post, from);
+    CHECK(!out.empty() && near(out.back().x, from.x) && near(out.back().z, from.z) && length(out, post) < 50);
 }
 
 void test_slopes() {
@@ -210,6 +220,30 @@ void test_cost() {
     CHECK(sound(grid, path, from) && !path.empty() && near(path.back().x, to.x) && near(path.back().z, to.z));
     std::printf("maze: %zu corners, %.0f m, %zu tiles\n", path.size(), length(path, from), grid.tiles_built());
     CHECK(length(path, from) > 9 * 60);
+}
+
+// A goal in a room whose door faces away, and a search too short to cover
+// everything outside the room on the near side (Hoth's hangar, under a
+// hill): back from the goal, out of the door and round, it gets there.
+void test_backward() {
+    const Heightfield ground = flat();
+    MapCollision walls;
+    add_box(walls, {-60.5, 0, 40}, {-60, 3, 60});    // facing the start
+    add_box(walls, {-80, 0, 39.5}, {-60, 3, 40});    // sides
+    add_box(walls, {-80, 0, 60}, {-60, 3, 60.5});
+    add_box(walls, {-80.5, 0, 40}, {-80, 3, 48});    // the far wall, its door
+    add_box(walls, {-80.5, 0, 52}, {-80, 3, 60});    // at z 48..52
+    World world(ground);
+    world.add_map_collision(walls);
+    NavGrid::Settings settings;
+    settings.max_expansions = 6000;
+    const NavGrid grid(world, open_field(), MoveParams{}, settings);
+    const Vec3 from{-10, 0, 50}, goal{-70, 0, 50};
+    const auto path = grid.find_path(from, goal);
+    CHECK(sound(grid, path, from) && !path.empty() && near(path.back().x, goal.x) && near(path.back().z, goal.z));
+    std::printf("into the room: %zu corners, %.0f m\n", path.size(), length(path, from));
+    const Vec3 reached = walk(world, path, from, 30);
+    CHECK(std::hypot(reached.x - goal.x, reached.z - goal.z) < 0.6);
 }
 
 // Surfaces stacked in a cell: a deck 3 m up, reached by a ramp, with open
@@ -347,5 +381,6 @@ int main() {
     test_stacked();
     test_edges();
     test_inside_a_prop();
+    test_backward();
     return swm::test::finish("nav_test");
 }

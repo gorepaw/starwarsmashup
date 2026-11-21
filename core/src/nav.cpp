@@ -440,14 +440,32 @@ std::vector<Vec3> NavGrid::find_path(Vec3 from, Vec3 to) const {
     const bool goal_walkable = goal >= 0;
     const double cell = settings_.cell;
     const Cell goal_cell = goal_walkable ? cell_of(goal) : cell_at(to);
-    const auto estimate = [&](Cell c) {
-        // Octile distance, nudged up a hair so ties go toward the goal.
-        const double dx = std::abs(c.x - goal_cell.x), dz = std::abs(c.z - goal_cell.z);
-        return cell * (std::max(dx, dz) + (std::numbers::sqrt2 - 1) * std::min(dx, dz)) * 1.3;
-    };
+    // Into or out of a barrier (from or to a post inside one: Hoth's CP3),
+    // its cells are the way, not a way to keep off: a search costing them
+    // more spreads wide first, and runs out before it gets in or out.
+    const double barrier_cost =
+        (flags(start) & barrier_bit) || (flags(goal) & barrier_bit) ? 1.0 : settings_.barrier_cost;
     const auto slot = [&](Node n) { return size_t(n & ((1 << node_bits) - 1)); };
+    // Where a search is headed.
+    struct Target {
+        Node node;
+        Cell cell;
+        double height;
+    };
+    const Target to_goal{goal, goal_cell, goal_walkable ? double(height(goal)) : to.y};
+    const auto estimate = [&](const Target& target, Cell c, double h) {
+        // Octile distance, nudged up a hair so ties go toward the target; at
+        // least the climb or drop to it (a search that can't get there ends
+        // beside it, not on the hill over it).
+        const double dx = std::abs(c.x - target.cell.x), dz = std::abs(c.z - target.cell.z);
+        const double across = cell * (std::max(dx, dz) + (std::numbers::sqrt2 - 1) * std::min(dx, dz));
+        return std::max(across, std::abs(h - target.height)) * 1.3;
+    };
 
-    // A* from `origin`: the goal if reached, else the surface nearest it.
+    // A* from `origin` to the target: it if reached, else the surface nearest
+    // it. Backward, it goes against the way soldiers walk (from a surface to
+    // those that step onto it), and each surface's parent is the next one on
+    // toward the origin.
     struct Search {
         Node end = -1;
         bool reached = false;
@@ -455,8 +473,9 @@ std::vector<Vec3> NavGrid::find_path(Vec3 from, Vec3 to) const {
         double left = 0;         // estimate from the end to the goal
         uint32_t stamp = 0;      // the visit stamp of what it saw
         size_t expansions = 0;   // surfaces it went on from
+        Node origin = -1;
     };
-    const auto search = [&](Node origin) {
+    const auto search = [&](Node origin, const Target& target, bool backward) {
         if (++search_ == 0) {  // the stamps wrapped: forget every old search
             for (auto& t : tiles_) {
                 if (t) {
@@ -480,9 +499,10 @@ std::vector<Vec3> NavGrid::find_path(Vec3 from, Vec3 to) const {
             Tile& t = touch(origin);
             t.g[slot(origin)] = 0;
             t.parent[slot(origin)] = -1;
-            open.push({estimate(cell_of(origin)), origin});
+            open.push({estimate(target, cell_of(origin), height(origin)), origin});
         }
-        Search result{origin, false, false, estimate(cell_of(origin)), search_};
+        Search result{origin, false, false, estimate(target, cell_of(origin), height(origin)), search_};
+        result.origin = origin;
         size_t& expansions = result.expansions;
         while (!open.empty()) {
             const Node current = open.top().second;
@@ -492,14 +512,14 @@ std::vector<Vec3> NavGrid::find_path(Vec3 from, Vec3 to) const {
                 continue;
             }
             t.closed[slot(current)] = 1;
-            if (current == goal) {
-                result.end = goal;
+            if (current == target.node) {
+                result.end = current;
                 result.reached = true;
                 result.left = 0;
                 return result;
             }
             const Cell here = cell_of(current);
-            if (const double e = estimate(here); e < result.left) {
+            if (const double e = estimate(target, here, t.height[slot(current)]); e < result.left) {
                 result.left = e;
                 result.end = current;
             }
@@ -508,7 +528,50 @@ std::vector<Vec3> NavGrid::find_path(Vec3 from, Vec3 to) const {
             }
             const float g = t.g[slot(current)];
             const float level = t.height[slot(current)];
-            for (int dz = -1; dz <= 1; ++dz) {
+            const auto reach = [&](Node next, Node parent, Cell at, double step, uint8_t entered) {
+                Tile& nt = touch(next);
+                if (nt.closed[slot(next)]) {
+                    return;
+                }
+                const double cost = g + step * ((entered & barrier_bit) ? barrier_cost : 1.0) *
+                                            ((entered & edge_bit) ? settings_.edge_cost : 1.0);
+                if (cost < nt.g[slot(next)]) {
+                    nt.g[slot(next)] = float(cost);
+                    nt.parent[slot(next)] = parent;
+                    open.push({cost + estimate(target, at, nt.height[slot(next)]), next});
+                }
+            };
+            for (int dz = -1; dz <= 1 && backward; ++dz) {
+                for (int dx = -1; dx <= 1; ++dx) {
+                    // The surfaces beside it that step onto it.
+                    const int px = here.x + dx, pz = here.z + dz;
+                    if ((dx == 0 && dz == 0) || !inside(px, pz)) {
+                        continue;
+                    }
+                    const bool diagonal = dx != 0 && dz != 0;
+                    const double step = diagonal ? cell * std::numbers::sqrt2 : cell;
+                    const Tile& pt = tile(px, pz);
+                    const int i = local(px, pz, tile_bits);
+                    const int index = (pz >> tile_bits) * tiles_x_ + (px >> tile_bits);
+                    for (int n = pt.first[size_t(i)]; n < pt.first[size_t(i) + 1]; ++n) {
+                        if (!(pt.flags[size_t(n)] & walkable_bit)) {
+                            continue;
+                        }
+                        const Node previous = Node((index << node_bits) | n);
+                        const float there = pt.height[size_t(n)];
+                        const Cell source{px, pz};
+                        if (land(here.x, here.z, there, source) != current) {
+                            continue;
+                        }
+                        if (diagonal && (!(flags(land(here.x, pz, there, source)) & walkable_bit) ||
+                                         !(flags(land(px, here.z, there, source)) & walkable_bit))) {
+                            continue;
+                        }
+                        reach(previous, current, source, step, flags(current));
+                    }
+                }
+            }
+            for (int dz = -1; dz <= 1 && !backward; ++dz) {
                 for (int dx = -1; dx <= 1; ++dx) {
                     if (dx == 0 && dz == 0) {
                         continue;
@@ -526,17 +589,7 @@ std::vector<Vec3> NavGrid::find_path(Vec3 from, Vec3 to) const {
                                      !(flags(land(here.x, nz, level, here)) & walkable_bit))) {
                         continue;
                     }
-                    Tile& nt = touch(next);
-                    if (nt.closed[slot(next)]) {
-                        continue;
-                    }
-                    const double cost = g + step * ((f & barrier_bit) ? settings_.barrier_cost : 1.0) *
-                                                ((f & edge_bit) ? settings_.edge_cost : 1.0);
-                    if (cost < nt.g[slot(next)]) {
-                        nt.g[slot(next)] = float(cost);
-                        nt.parent[slot(next)] = current;
-                        open.push({cost + estimate(Cell{nx, nz}), next});
-                    }
+                    reach(next, current, Cell{nx, nz}, step, f);
                 }
             }
         }
@@ -544,7 +597,7 @@ std::vector<Vec3> NavGrid::find_path(Vec3 from, Vec3 to) const {
         return result;
     };
 
-    Search found = search(start);
+    Search found = search(start, to_goal, false);
     // Shut in a small pocket the grid sees no way out of, far from the goal
     // (a soldier can get where the grid says it can't: under a root it would
     // brush with its head, say): out to the nearest places nearby that
@@ -563,7 +616,7 @@ std::vector<Vec3> NavGrid::find_path(Vec3 from, Vec3 to) const {
                 continue;
             }
             seen.push_back(oc);
-            const Search way = search(node);
+            const Search way = search(node, to_goal, false);
             if (way.reached || way.left < found.left) {
                 found = way;
             }
@@ -574,16 +627,33 @@ std::vector<Vec3> NavGrid::find_path(Vec3 from, Vec3 to) const {
     }
 
     // The surfaces back from the end, then forward from where we stand.
-    const bool reached = found.reached;
-    std::vector<Vec3> points;
-    for (Node n = found.end; n >= 0; n = tile_of(n).parent[slot(n)]) {
+    const auto point = [&](Node n) {
         const Cell c = cell_of(n);
         Vec3 p = center(c.x, c.z);
         p.y = height(n);
-        points.push_back(p);
+        return p;
+    };
+    bool reached = found.reached;
+    std::vector<Vec3> points;
+    for (Node n = found.end; n >= 0; n = tile_of(n).parent[slot(n)]) {
+        points.push_back(point(n));
     }
     points.push_back(from);
     std::reverse(points.begin(), points.end());
+    // Out of time on the way (not shut in): back from the goal to where it
+    // set out. Searching toward a goal under a hill (Hoth's hangar) covers
+    // the hill first, all of it near the goal as the crow flies; back from
+    // the goal, the search keeps to the tunnels it's in, out to the open.
+    if (!found.reached && !found.exhausted && goal_walkable) {
+        const Node origin = found.origin;
+        if (search(goal, Target{origin, cell_of(origin), double(height(origin))}, true).reached) {
+            reached = true;
+            points.assign(1, from);
+            for (Node n = origin; n >= 0; n = tile_of(n).parent[slot(n)]) {
+                points.push_back(point(n));
+            }
+        }
+    }
     if (reached && goal_walkable && cell_at(to).x == goal_cell.x && cell_at(to).z == goal_cell.z) {
         points.back().x = to.x;  // the exact spot, within its cell
         points.back().z = to.z;
