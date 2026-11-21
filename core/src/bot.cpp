@@ -148,6 +148,7 @@ void Bot::choose_spawn(GameClient& client) {
     if (best >= 0) {
         client.request_spawn(int(loadout), best);
         requested_ = true;
+        spawn_post_ = best;
     }
 }
 
@@ -320,6 +321,13 @@ void Bot::update(GameClient& client, const World& world, double now) {
     const bool in_match = match.has_value() && client.config().battlefield.has_value();
     const net::EntityState& self = client.self();
     if (self.life != Life::alive) {
+        // The post it asked for lost while it waited: another. (The server
+        // holds a request until its post can be spawned at; one of Mos
+        // Eisley's Imperials waited four and a half minutes for CP2.)
+        if (requested_ && in_match && spawn_post_ >= 0 && size_t(spawn_post_) < match->posts.size() &&
+            match->posts[size_t(spawn_post_)].owner != self.team) {
+            requested_ = false;
+        }
         if (in_match && self.life == Life::waiting && !requested_ && match->phase != Phase::ended) {
             choose_spawn(client);
         }

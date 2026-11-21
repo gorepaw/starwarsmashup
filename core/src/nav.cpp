@@ -272,6 +272,18 @@ NavGrid::Node NavGrid::land(int x, int z, float from, Cell source) const {
                     return -1;
                 }
             }
+            // Nor beside something to land on partway down: falling, a
+            // soldier drifts onto it (off a Mos Eisley roof into the street,
+            // a dome's steep flank beside it, where it stuck).
+            constexpr double catch_reach = 0.6;  // m around where it lands
+            for (int k = 0; k < 8; ++k) {
+                const double angle = k * std::numbers::pi / 4;
+                const Vec3 p = c + Vec3{std::cos(angle), 0, std::sin(angle)} * catch_reach;
+                const double g = world_.ground_at(p.x, p.z, double(from) - move_.step_up, move_.step_up).height;
+                if (g > h + move_.step_up && g < double(from) - move_.step_up) {
+                    return -1;
+                }
+            }
             // Nor through a death region on the way down (the Death Star's
             // thin one over a chasm's floor, a lower floor beside it), nor a
             // damage region (Mustafar's lava): it falls through anything

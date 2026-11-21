@@ -66,6 +66,7 @@ private:
     uint64_t rng_;
     BotSkill skill_;
     bool requested_ = false;  // asked to spawn since it last died
+    int spawn_post_ = -1;     // the post it asked to spawn at
     int objective_ = -1;
     Vec3 offset_;            // where in the post it stands
     Vec3 home_;              // the post's console (or middle), from its middle: where a spot out of reach gives way to
