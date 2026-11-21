@@ -413,6 +413,38 @@ void test_terrain_cuts() {
     }
 }
 
+// A body standing over a seam in a floor narrower than itself (one in
+// Mygeeto's, under a spawn point) stands on the floor both sides of it;
+// over a wider gap, or just past a ledge's edge, it falls.
+void test_seams() {
+    const Heightfield deep = make_ground([](double, double) { return -50.0; });
+    const auto stand = [&](double gap, Vec3 at) {
+        MapCollision deck;
+        add_box(deck, {-60, 9.7, 40}, {-43 - gap / 2, 10, 60});
+        add_box(deck, {-43 + gap / 2, 9.7, 40}, {-30, 10, 60});
+        World world(deep);
+        world.add_map_collision(deck);
+        MoveState state;
+        state.position = at;
+        state.grounded = true;
+        return run(state, MoveInput{}, world, 30);
+    };
+    const MoveState seam = stand(0.3, {-43, 10, 50});
+    const MoveState gap = stand(1, {-43, 10, 50});
+    const MoveState ledge = stand(0.3, {-29.9, 10, 50});
+    std::printf("over a seam: y %.2f; a gap: y %.2f; past a ledge: y %.2f\n", seam.position.y, gap.position.y,
+                ledge.position.y);
+    CHECK(near(seam.position.y, 10, 0.01) && seam.grounded);
+    CHECK(gap.position.y < 9 && ledge.position.y < 9);
+    // Where the support is: under a seam's middle, the floor beside it.
+    MapCollision deck;
+    add_box(deck, {-60, 9.7, 40}, {-43.15, 10, 60});
+    add_box(deck, {-42.85, 9.7, 40}, {-30, 10, 60});
+    World world(deep);
+    world.add_map_collision(deck);
+    CHECK(world.ground_at(-43, 50, 10, 0.5).height < 0 && near(world.support_at(-43, 50, 10, 0.5).height, 10));
+}
+
 void test_determinism() {
     const Heightfield hills = make_ground([](double gx, double gz) { return 3 * std::sin(gx * 0.2) * std::cos(gz * 0.15); });
     MoveState a, b;
@@ -440,6 +472,7 @@ int main() {
     test_map_collision();
     test_overhead_floors();
     test_terrain_cuts();
+    test_seams();
     test_determinism();
     return swm::test::finish("movement_test");
 }

@@ -95,6 +95,11 @@ public:
     // hillside), else (deep under it, or through a hole) a height of -1e9:
     // falling.
     Ground ground_at(double x, double z, double y, double step_up) const;
+    // What a body stands on there: the ground under its middle, or, over a
+    // seam narrower than a body (one in Mygeeto's floor, under a spawn
+    // point), the floor on both sides of it, `seam` off either way. Past a
+    // ledge's edge, with floor on one side only, the ground under its middle.
+    Ground support_at(double x, double z, double y, double step_up, double seam = 0.25) const;
 
     // Pushes a character's body (an upright cylinder of `radius` and
     // `height`, feet at position.y) out of the walls it overlaps after moving

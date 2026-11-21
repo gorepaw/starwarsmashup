@@ -494,6 +494,27 @@ World::Ground World::ground_at(double x, double z, double y, double step_up) con
     return best;
 }
 
+World::Ground World::support_at(double x, double z, double y, double step_up, double seam) const {
+    const Ground middle = ground_at(x, z, y, step_up);
+    if (middle.height >= y - step_up) {
+        return middle;  // standing (or nearly): no seam to look over
+    }
+    // Over a hole or a drop: the floor both sides of it, across any of four
+    // ways, a step or more over what's under the middle.
+    Ground best = middle;
+    for (int k = 0; k < 4; ++k) {
+        const double angle = k * std::numbers::pi / 4;
+        const double dx = std::cos(angle) * seam, dz = std::sin(angle) * seam;
+        const Ground one = ground_at(x + dx, z + dz, y, step_up);
+        const Ground other = ground_at(x - dx, z - dz, y, step_up);
+        const Ground& lower = one.height < other.height ? one : other;
+        if (lower.height > best.height + step_up) {
+            best = lower;
+        }
+    }
+    return best;
+}
+
 std::optional<double> World::raycast(Vec3 a, Vec3 b) const { return cast(a, b, blocks_shots, false); }
 
 bool World::walk_blocked(Vec3 a, Vec3 b) const { return cast(a, b, blocks_characters, true).has_value(); }

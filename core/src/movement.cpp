@@ -90,7 +90,9 @@ MoveState simulate_move(const MoveState& state, const MoveInput& input, const Wo
         position.z = state.position.z;
         next.velocity.x = next.velocity.z = 0;
     }
-    World::Ground ground = world.ground_at(position.x, position.z, state.position.y, params.step_up);
+    // Over a seam narrower than a body (in Mygeeto's floor), on the floor
+    // both sides of it.
+    World::Ground ground = world.support_at(position.x, position.z, state.position.y, params.step_up);
 
     // Terrain too steep to walk up: stay put horizontally. (Building floors
     // are walkable by definition; their stairs are ramps.)
@@ -99,7 +101,7 @@ MoveState simulate_move(const MoveState& state, const MoveInput& input, const Wo
         position.x = state.position.x;
         position.z = state.position.z;
         next.velocity.x = next.velocity.z = 0;
-        ground = world.ground_at(position.x, position.z, state.position.y, params.step_up);
+        ground = world.support_at(position.x, position.z, state.position.y, params.step_up);
     }
     const double floor = ground.height;
 
