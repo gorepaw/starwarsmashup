@@ -1062,6 +1062,47 @@ int cmd_export_map(const std::vector<std::string>& args) {
         ini << "\n";
         ++death_regions;
     }
+    // Damage regions: the map's own, always on (no script adds them): a
+    // region whose class is "damageregion damagerate=<n> personscale=<n>
+    // ...", hurting soldiers in it by damagerate times personscale a second
+    // (the scales default to 1). Mustafar's lava, some 1000 a second; the
+    // heat near it, 50.
+    size_t damage_regions = 0;
+    for (const WorldItem& region : level.regions) {
+        std::istringstream words(lowercase(region.name));
+        std::string word;
+        if (!included(region) || !(words >> word) || word != "damageregion") {
+            continue;
+        }
+        double rate = 0, scale = 1;
+        while (words >> word) {
+            const size_t equals = word.find('=');
+            if (equals == std::string::npos) {
+                continue;
+            }
+            const std::string key = word.substr(0, equals);
+            const double value = std::atof(word.c_str() + equals + 1);
+            if (key == "damagerate") {
+                rate = value;
+            } else if (key == "personscale") {
+                scale = value;
+            }
+        }
+        if (rate * scale <= 0) {
+            continue;
+        }
+        const auto& r = region.rotation;  // stored columns
+        ini << std::format("DamageRegion = {:g} {} {:.2f} {:.2f} {:.2f} {:.2f} {:.2f} {:.2f}", rate * scale, region.type,
+                           region.position[0], region.position[1], region.position[2], region.size[0], region.size[1],
+                           region.size[2]);
+        for (int row = 0; row < 3; ++row) {
+            for (int column = 0; column < 3; ++column) {
+                ini << std::format(" {:.4f}", r[size_t(column * 3 + row)]);
+            }
+        }
+        ini << "\n";
+        ++damage_regions;
+    }
     if (no_terrain) {
         // Off the ship: falling to the stand-in ground, through this.
         const double half = terrain.cells * terrain.unit / 2;
@@ -1069,8 +1110,8 @@ int cmd_export_map(const std::vector<std::string>& args) {
                            half);
         ++death_regions;
     }
-    std::cerr << std::format("boundaries: {}; death regions: {} ({} named)\n", boundaries.size(), death_regions,
-                             deaths.size());
+    std::cerr << std::format("boundaries: {}; death regions: {} ({} named); damage regions: {}\n", boundaries.size(),
+                             death_regions, deaths.size(), damage_regions);
     int posts = 0;
     for (const WorldItem& object : level.objects) {
         if (object.sublevel != mode_sublevel || object.get("CaptureRegion").empty() ||
@@ -1080,7 +1121,11 @@ int cmd_export_map(const std::vector<std::string>& args) {
         const WorldItem* capture = level.region(object.get("CaptureRegion"), mode_sublevel);
         const auto& at = capture ? capture->position : object.position;
         ini << "\n[post]\nName = " << (object.get("Label").empty() ? object.name : object.get("Label")) << "\n"
-            << std::format("Position = {:.2f} {:.2f}\n", at[0], at[2]);
+            << std::format("Position = {:.2f} {:.2f}\n", at[0], at[2])
+            // The post object itself (its console), on the floor the post
+            // is fought over.
+            << std::format("Console = {:.2f} {:.2f} {:.2f}\n", object.position[0], object.position[2],
+                           object.position[1]);
         if (capture != nullptr) {
             // ASSUMPTION: a capture cylinder's SIZE x is its radius.
             ini << std::format("Radius = {:.2f}\n", std::max(capture->size[0], capture->size[2]));

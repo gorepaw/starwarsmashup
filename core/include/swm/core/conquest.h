@@ -3,6 +3,7 @@
 #include <array>
 #include <cstdint>
 #include <filesystem>
+#include <optional>
 #include <span>
 #include <string>
 #include <vector>
@@ -31,6 +32,11 @@ struct CommandPost {
     // it (on the hill over a bunker) don't count. The position's y is its
     // middle.
     double low = -1e9, high = 1e9;
+    // Where its console stands (Battlefront's post object), game space, if
+    // the map says: on the floor the post is fought over. Its middle can be
+    // nowhere to stand (Mustafar's CP5, out over the lava past a wall), and
+    // its middle height nearer a roof no one reaches than that floor.
+    std::optional<Vec3> console;
 
     bool contains(Vec3 point) const;
 };
@@ -59,6 +65,14 @@ struct DeathRegion {
     bool contains(Vec3 point) const;
 };
 
+// A region that hurts the soldiers in it, `rate` health a second, whatever
+// their armor (Battlefront's damage regions, always on: Mustafar's lava,
+// the vacuum round Polis Massa's halls, some of Felucia's plants).
+struct DamageRegion {
+    DeathRegion where;  // its shape and place, as a death region's
+    double rate = 0;
+};
+
 struct Team {
     std::string name;
     // Loadouts its soldiers can spawn with: a stand-in for testing until the
@@ -76,6 +90,7 @@ struct Battlefield {
     // any of these polygons (game space, x and z). None: all of the bounds.
     std::vector<std::vector<Vec3>> boundaries;
     std::vector<DeathRegion> death_regions;
+    std::vector<DamageRegion> damage_regions;
     std::array<Team, 2> teams;
     std::vector<CommandPost> posts;
     std::vector<Barrier> barriers;
@@ -96,12 +111,18 @@ struct Battlefield {
     bool contains(Vec3 point) const;
     // Whether a soldier standing at `feet` is in a death region.
     bool deadly(Vec3 feet) const;
+    // How much health a second a soldier standing at `feet` loses to damage
+    // regions (feet or body in them, as for death regions).
+    double damage_rate(Vec3 feet) const;
+    // Somewhere not to be: deadly, or hurting. Bots keep out.
+    bool harmful(Vec3 feet) const { return deadly(feet) || damage_rate(feet) > 0; }
     Vec3 center() const;
 };
 
 // Reads a battlefield file (see game/battlefields/). A post's `Altitude = low
 // high` bounds its capture region in height, and its spawn points may give
-// their heights (`SpawnPoint = x z y`). Positions in it are
+// their heights (`SpawnPoint = x z y`), as does its console's place
+// (`Console = x z y`). Positions in it are
 // source-world coordinates (x z): Galaxies', as the snapshot tools print
 // them, or Battlefront's (both are left-handed: game x = -x). Loadout files
 // are relative to it. `Map = <file>` takes the bounds, terrain and command
@@ -110,7 +131,9 @@ struct Battlefield {
 // (`Barrier = x1 z1 x2 z2 x3 z3 x4 z4`, corners in order), boundaries
 // (`Boundary = x1 z1 x2 z2 ...`, a polygon; the bounds shrink to fit them)
 // and death regions (`DeathRegion = box|sphere|cylinder x y z sx sy sz` and
-// the rotation's rows, 9 numbers, as Battlefront stores them). `Minimap = x0 z0
+// the rotation's rows, 9 numbers, as Battlefront stores them), and damage
+// regions (`DamageRegion = <health a second>` and a death region's shape,
+// place and rotation). `Minimap = x0 z0
 // x1 z1` is where the map's minimap image lies: the coordinates under its
 // left, top, right and bottom edges (north up). Throws
 // std::runtime_error if it, a map or a loadout can't be read or makes no

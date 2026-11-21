@@ -91,6 +91,15 @@ void read_posts(Battlefield& field, const Ini& ini, const std::string& where) {
                 throw std::runtime_error(where + ": post " + post.name + " has unknown Owner " + *owner);
             }
         }
+        if (const auto console = s.get("Console")) {
+            post.console = source_point(*console, where + ": post " + post.name + " Console");
+            std::istringstream fields(*console);
+            double x = 0, z = 0, y = 0;
+            if (!(fields >> x >> z >> y)) {
+                throw std::runtime_error(where + ": post " + post.name + ": Console is \"x z y\"");
+            }
+            post.console->y = y;
+        }
         size_t heights = 0;
         for (const auto& [key, value] : s.values) {
             if (iequals(key, "SpawnPoint")) {
@@ -111,7 +120,8 @@ void read_posts(Battlefield& field, const Ini& ini, const std::string& where) {
 
 // Boundary = x1 z1 x2 z2 ...: a polygon, in source-world coordinates.
 // DeathRegion = shape x y z sx sy sz m00 m01 ... m22: in source-world
-// coordinates, its rotation's rows.
+// coordinates, its rotation's rows. DamageRegion = rate shape x y z ...: the
+// same, hurting `rate` health a second.
 void read_regions(Battlefield& field, const Ini::Section& section, const std::string& where) {
     for (const auto& [key, value] : section.values) {
         if (iequals(key, "Boundary")) {
@@ -125,12 +135,15 @@ void read_regions(Battlefield& field, const Ini::Section& section, const std::st
                 throw std::runtime_error(where + ": Boundary is \"x1 z1 x2 z2 x3 z3 ...\", got \"" + value + "\"");
             }
             field.boundaries.push_back(std::move(polygon));
-        } else if (iequals(key, "DeathRegion")) {
+        } else if (iequals(key, "DeathRegion") || iequals(key, "DamageRegion")) {
             std::istringstream fields(value);
+            const bool damage = iequals(key, "DamageRegion");
+            double rate = 0;
             std::string shape;
             DeathRegion region;
             std::array<double, 9> m{};
-            bool ok = bool(fields >> shape >> region.center.x >> region.center.y >> region.center.z >> region.size.x >>
+            bool ok = (!damage || (fields >> rate && rate > 0)) &&
+                      bool(fields >> shape >> region.center.x >> region.center.y >> region.center.z >> region.size.x >>
                            region.size.y >> region.size.z);
             for (double& entry : m) {
                 ok = ok && bool(fields >> entry);
@@ -143,8 +156,9 @@ void read_regions(Battlefield& field, const Ini::Section& section, const std::st
                 ok = false;
             }
             if (!ok) {
-                throw std::runtime_error(where + ": DeathRegion is \"box|sphere|cylinder x y z sx sy sz\" and 9 "
-                                                 "rotation numbers, got \"" + value + "\"");
+                throw std::runtime_error(where + ": " + key + " is " + (damage ? "\"rate " : "\"") +
+                                         "box|sphere|cylinder x y z sx sy sz\" and 9 rotation numbers, got \"" + value +
+                                         "\"");
             }
             // Mirrored like every source point (x negated): the rotation is
             // conjugated by the mirror.
@@ -155,7 +169,11 @@ void read_regions(Battlefield& field, const Ini::Section& section, const std::st
                     region.basis[row * 3 + column] = sign[row] * sign[column] * m[row * 3 + column];
                 }
             }
-            field.death_regions.push_back(region);
+            if (damage) {
+                field.damage_regions.push_back({region, rate});
+            } else {
+                field.death_regions.push_back(region);
+            }
         }
     }
 }
@@ -223,6 +241,17 @@ bool Battlefield::deadly(Vec3 feet) const {
     const Vec3 body = feet + Vec3{0, 0.9, 0};
     return std::any_of(death_regions.begin(), death_regions.end(),
                        [&](const DeathRegion& region) { return region.contains(feet) || region.contains(body); });
+}
+
+double Battlefield::damage_rate(Vec3 feet) const {
+    const Vec3 body = feet + Vec3{0, 0.9, 0};
+    double rate = 0;
+    for (const DamageRegion& region : damage_regions) {
+        if (region.where.contains(feet) || region.where.contains(body)) {
+            rate += region.rate;
+        }
+    }
+    return rate;
 }
 
 Vec3 Battlefield::center() const {

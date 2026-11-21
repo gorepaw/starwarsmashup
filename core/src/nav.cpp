@@ -40,6 +40,7 @@ Battlefield area_of(const Battlefield& field) {
     area.max_z = field.max_z;
     area.boundaries = field.boundaries;
     area.death_regions = field.death_regions;
+    area.damage_regions = field.damage_regions;
     return area;
 }
 
@@ -163,7 +164,7 @@ void NavGrid::build(Tile& tile, int tile_x, int tile_z) const {
                 break;  // nothing more below (the terrain's under us, or a hole)
             }
             bool open = on_field && ground.normal.y >= min_normal_y &&
-                        !area_.deadly({c.x, ground.height, c.z});
+                        !area_.harmful({c.x, ground.height, c.z});
             if (open) {
                 // No wall within the (widened) body...
                 open = !world_.overlaps_walls({c.x, ground.height, c.z}, radius, move_.height, move_.step_up);
@@ -239,10 +240,11 @@ NavGrid::Node NavGrid::land(int x, int z, float from, Cell source) const {
                 return -1;
             }
             // Nor through a death region on the way down (the Death Star's
-            // thin one over a chasm's floor, a lower floor beside it): it
-            // falls through anything lower too.
+            // thin one over a chasm's floor, a lower floor beside it), nor a
+            // damage region (Mustafar's lava): it falls through anything
+            // lower too.
             for (double y = h; y < double(from); y += 0.5) {
-                if (area_.deadly({c.x, y, c.z})) {
+                if (area_.harmful({c.x, y, c.z})) {
                     return -1;
                 }
             }

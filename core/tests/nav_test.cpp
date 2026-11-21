@@ -430,6 +430,14 @@ void test_high_and_deadly() {
     const NavGrid open(world, open_field());
     const auto off = open.find_path({-50, 10, 50}, {-35, 0, 50});
     CHECK(!off.empty() && near(off.back().y, 0, 0.01) && std::hypot(off.back().x + 35, off.back().z - 50) < 0.5);
+    // A damage region there instead (Mustafar's lava): no way either; and
+    // no standing on the ground in it.
+    Battlefield hot = open_field();
+    hot.damage_regions.push_back({{DeathRegion::Shape::box, {-50, 0.5, 50}, {20, 5, 20}}, 1000});
+    const NavGrid hot_grid(world, hot);
+    CHECK(!hot_grid.walkable({-35, 0, 50}) && hot_grid.walkable({-50, 10, 50}) && hot_grid.walkable({-25, 0, 50}));
+    const auto into = hot_grid.find_path({-50, 10, 50}, {-25, 0, 50});
+    CHECK(!into.empty() && into.back().y > 9);
 }
 
 void test_pit() {

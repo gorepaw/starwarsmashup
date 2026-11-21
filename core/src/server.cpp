@@ -402,6 +402,17 @@ void GameServer::run_match() {
             kill(client, 0);
             continue;
         }
+        // Damage regions hurt so much a second, armor or not (Mustafar's
+        // lava, at once).
+        if (client.life == Life::alive) {
+            if (const double rate = field.damage_rate(client.state.position); rate > 0) {
+                client.health = std::max(0.0, client.health - rate * dt);
+                if (client.health <= 0) {
+                    kill(client, 0);
+                    continue;
+                }
+            }
+        }
         // Leaving the battlefield kills, after a warning.
         if (client.life == Life::alive && !field.contains(client.state.position)) {
             client.outside += dt;

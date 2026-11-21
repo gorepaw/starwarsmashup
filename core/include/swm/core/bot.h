@@ -68,6 +68,7 @@ private:
     bool requested_ = false;  // asked to spawn since it last died
     int objective_ = -1;
     Vec3 offset_;            // where in the post it stands
+    Vec3 home_;              // the post's console (or middle), from its middle: where a spot out of reach gives way to
     double next_objective_ = 0;
     uint32_t target_ = 0;
     double target_since_ = 0;

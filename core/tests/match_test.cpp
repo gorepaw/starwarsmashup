@@ -54,7 +54,7 @@ void test_battlefield_file() {
     std::filesystem::create_directories(dir / "maps");
     std::ofstream(dir / "maps" / "m_conquest.ini") << "[map]\nName = m\nTerrain = m\nBounds = -512 -512 512 512\n"
                                                       "Barrier = 1 1 3 1 3 2 1 2\n\n"
-                                                      "[post]\nName = CP1\nPosition = 35 141\nRadius = 8\nOwner = 2\n"
+                                                      "[post]\nName = CP1\nPosition = 35 141\nConsole = 33 140 4.5\nRadius = 8\nOwner = 2\n"
                                                       "SpawnPoint = 23 145\nSpawnPoint = 12 146\n\n"
                                                       "[post]\nName = CP3\nPosition = 22 -120\nOwner = 1\n\n"
                                                       "[post]\nName = CP2\nPosition = 74 -9\n";
@@ -67,6 +67,8 @@ void test_battlefield_file() {
     CHECK(mapped.posts[0].owner == 1 && mapped.posts[1].owner == 0 && mapped.posts[2].owner == -1);
     CHECK(mapped.posts[0].spawn_points.size() == 2 && mapped.posts[0].spawn_points[1] == Vec3(-12, 0, 146));
     CHECK(mapped.posts[0].position == Vec3(-35, 0, 141) && mapped.posts[2].spawn_points.empty());
+    // Its console's place, x the other way; none for the others.
+    CHECK(mapped.posts[0].console == Vec3(-33, 4.5, 140) && !mapped.posts[1].console);
     // Its barrier, with x the other way.
     CHECK(mapped.barriers.size() == 1 && mapped.barriers[0].corners[1] == Vec3(-3, 0, 1));
     CHECK(mapped.barriers[0].contains({-2, 0, 1.5}) && !mapped.barriers[0].contains({-2, 0, 2.5}));
@@ -76,7 +78,8 @@ void test_battlefield_file() {
     // along z, its z half size (4) along x.
     std::ofstream(dir / "maps" / "b_conquest.ini") << "[map]\nName = b\nBounds = -512 -512 512 512\n"
                                                       "Boundary = 0 0 100 0 0 100\n"
-                                                      "DeathRegion = box 10 0 20 2 1 4 0 0 1 0 1 0 -1 0 0\n\n"
+                                                      "DeathRegion = box 10 0 20 2 1 4 0 0 1 0 1 0 -1 0 0\n"
+                                                      "DamageRegion = 50 sphere 40 0 40 3 3 3 1 0 0 0 1 0 0 0 1\n\n"
                                                       "[post]\nName = CP1\nPosition = 10 10\nOwner = 1\n"
                                                       "Altitude = -6 -1\nSpawnPoint = 12 12 -5\nSpawnPoint = 8 8 -5\n\n"
                                                       "[post]\nName = CP2\nPosition = 30 30\nOwner = 2\n";
@@ -92,6 +95,13 @@ void test_battlefield_file() {
     CHECK(bounded.deadly({-13.5, 0, 20}) && !bounded.deadly({-10, 0, 23.5}) && bounded.deadly({-10, 0, 21.5}));
     // Feet below it, or the body in it; not standing on top of it.
     CHECK(bounded.deadly({-10, -1.5, 20}) && !bounded.deadly({-10, 1.5, 20}));
+    // A damage region (game x the other way): it hurts, it doesn't kill;
+    // bots keep out of it as out of a death region.
+    CHECK(bounded.damage_regions.size() == 1 && bounded.damage_regions[0].rate == 50);
+    CHECK(bounded.damage_rate({-40, 0, 40}) == 50 && bounded.damage_rate({-40, 2.5, 40}) == 50 &&
+          bounded.damage_rate({40, 0, 40}) == 0 && bounded.damage_rate({-40, 0, 44}) == 0);
+    CHECK(!bounded.deadly({-40, 0, 40}) && bounded.harmful({-40, 0, 40}) && bounded.harmful({-10, 0, 20}) &&
+          !bounded.harmful({-20, 0, 20}));
     // A post in a cellar: its middle height, taken from within it and not
     // from the ground over it; its spawn points' heights.
     const CommandPost& cellar = bounded.posts[0];
@@ -366,6 +376,26 @@ void test_death_region() {
     CHECK(died && a.self().deaths == 1 && seconds < 3);
 }
 
+// A soldier standing in a damage region loses health at its rate, and dies
+// once it's gone; not at once.
+void test_damage_region() {
+    Battlefield battlefield = three_posts();
+    battlefield.damage_regions.push_back({{.center = {-60, 0, 0}, .size = {15, 2, 15}}, 100});
+    battlefield.warmup = 60;
+    Field field(battlefield);
+    GameClient& a = field.join("a");
+    field.run(0.5);
+    a.request_spawn(0, 0);
+    field.run(0.2);
+    CHECK(a.alive());
+    const double before = a.health();
+    field.run(1);
+    std::printf("damage region: %.0f health, then %.0f a second later\n", before, a.health());
+    CHECK(a.alive() && near(before - a.health(), 100, 10));
+    field.run(4);
+    CHECK(!a.alive() && a.self().deaths == 1);
+}
+
 void test_bots_play_a_match() {
     Battlefield battlefield = three_posts();
     battlefield.posts.insert(battlefield.posts.begin() + 1, CommandPost{.name = "Inner west", .position = {-30, 0, 10}});
@@ -434,6 +464,7 @@ int main() {
     test_tickets_run_out();
     test_match_server();
     test_death_region();
+    test_damage_region();
     test_bots_play_a_match();
     return swm::test::finish("match_test");
 }

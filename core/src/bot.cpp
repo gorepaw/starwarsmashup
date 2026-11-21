@@ -28,7 +28,8 @@ double yaw_toward(Vec3 d) {
 // jump):
 // no ground below, or a fall onto or through a death region (a catwalk's
 // edge over the Death Star's reactor pit, its hub's bridge without rails,
-// the thin one over a lower floor by CP5). A fall onto safe ground is no
+// the thin one over a lower floor by CP5) or a damage region (into
+// Mustafar's lava). A fall onto safe ground is no
 // edge: soldiers come to no harm (off a Kashyyyk platform, into a dip on
 // Endor's forest floor).
 bool over_edge(const World& world, const Battlefield* field, Vec3 feet, Vec3 move, double step_up,
@@ -51,7 +52,7 @@ bool over_edge(const World& world, const Battlefield* field, Vec3 feet, Vec3 mov
         // middle apart (Battlefield::deadly looks there too); the ground on
         // the level too (into Tantive IV's turbine).
         for (double y = ground; field != nullptr; y += 0.9) {
-            if (field->deadly({p.x, y, p.z})) {
+            if (field->harmful({p.x, y, p.z})) {
                 return true;
             }
             if (y + 0.9 >= feet.y) {
@@ -179,7 +180,10 @@ void Bot::choose_objective(const GameClient& client, double now) {
         // in the rock beside a post in a cave (Polis Massa's CP3), where the
         // ground nearest is the hillside over it.
         const CommandPost& post = field.posts[size_t(best)];
-        offset_ = {};
+        // Its console, where the map gives it (its middle can be nowhere to
+        // stand: Mustafar's CP5, out over the lava past a wall).
+        home_ = post.console ? Vec3{post.console->x - post.position.x, 0, post.console->z - post.position.z} : Vec3{};
+        offset_ = home_;
         for (int attempt = 0; attempt < 6; ++attempt) {
             const double angle = random() * 2 * std::numbers::pi;
             const Vec3 offset = Vec3{std::cos(angle), 0, std::sin(angle)} * (random() * post.radius * 0.6);
@@ -216,9 +220,10 @@ Vec3 Bot::steer(Vec3 position, Vec3 destination, double now) {
     if ((moved || now >= replan_at_) && now >= earliest_plan_) {
         path_ = navigation_->find_path(position, destination);
         // Its spot in the post out of reach (on a ledge, behind a wall): the
-        // post's middle next time, not standing at the nearest place for good.
+        // post's console (or middle) next time, not standing at the nearest
+        // place for good.
         if (path_.empty() || horizontal_distance(path_.back(), destination) > 3) {
-            offset_ = {};
+            offset_ = home_;
         }
         corner_ = 0;
         path_goal_ = destination;
@@ -315,7 +320,13 @@ void Bot::update(GameClient& client, const World& world, double now) {
         if (objective_ < 0 || now >= next_objective_) {
             choose_objective(client, now);
         }
-        destination = client.config().battlefield->posts[size_t(objective_)].position + offset_;
+        // At the height of the post's console where the map gives it: the
+        // floor the post is fought over, not a roof nearer its middle height.
+        const CommandPost& post = client.config().battlefield->posts[size_t(objective_)];
+        destination = post.position + offset_;
+        if (post.console) {
+            destination->y = post.console->y;
+        }
     }
 
     // Whom to shoot: the nearest enemy in range and in sight.
