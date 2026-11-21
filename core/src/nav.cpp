@@ -123,6 +123,7 @@ void NavGrid::build(Tile& tile, int tile_x, int tile_z) const {
     const double cell = settings_.cell;
     const double radius = move_.radius + settings_.clearance;
     const double min_normal_y = std::cos(slope_degrees() * std::numbers::pi / 180);
+    const double steepest_y = std::cos(move_.max_slope_degrees * std::numbers::pi / 180);  // movement's
     // The barriers reaching into this tile.
     const double low_x = x0_ + tile_x * tile_size * cell, high_x = low_x + tile_size * cell;
     const double low_z = z0_ + tile_z * tile_size * cell, high_z = low_z + tile_size * cell;
@@ -178,14 +179,18 @@ void NavGrid::build(Tile& tile, int tile_x, int tile_z) const {
                 open = !world_.inside_solid({c.x, ground.height + 1, c.z}, settings_.inside_reach);
             }
             // At an edge: more than a step down within the (widened) body's
-            // reach, all around.
+            // reach, all around. And no ground there rising steeper than a
+            // soldier walks up: movement stops one stepping onto it, as one
+            // straying off a route at the foot of a hillside does (by
+            // Geonosis's hangar door).
             bool edge = false;
-            for (int k = 0; open && !edge && k < 8; ++k) {
+            for (int k = 0; open && k < 8; ++k) {
                 const double angle = k * std::numbers::pi / 4;
                 const World::Ground beside = world_.ground_at(c.x + radius * std::cos(angle),
                                                               c.z + radius * std::sin(angle), ground.height,
                                                               move_.step_up);
-                edge = beside.height < ground.height - move_.step_up;
+                edge = edge || beside.height < ground.height - move_.step_up;
+                open = beside.on_floor || beside.height <= ground.height || beside.normal.y >= steepest_y;
             }
             tile.height.push_back(float(ground.height));
             tile.flags.push_back(uint8_t((open ? walkable_bit : 0) | (in_barrier ? barrier_bit : 0) |

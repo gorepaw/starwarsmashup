@@ -198,6 +198,9 @@ void test_slopes() {
     const World world(hill);
     const NavGrid grid(world, open_field());
     CHECK(!grid.walkable({-42.5, 0, 50}));
+    // Flat ground at the hill's foot, but the hill within a body's reach: a
+    // soldier straying there stops against it (Geonosis's hangar door).
+    CHECK(grid.walkable({-39.25, 0, 50}) && !grid.walkable({-39.75, 0, 50}));
     CHECK(!grid.clear_line({-30, 0, 50}, {-60, 10, 50}));
     const auto up = grid.find_path({-30, 0, 50}, {-60, 10, 50});
     CHECK(!up.empty() && up.back().x > -41);  // gets as near as it can, at the foot

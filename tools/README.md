@@ -122,6 +122,15 @@ Battlefront II munged files (`.lvl`) are `ucfb` chunk trees: `lvl_` sub-levels h
 
   (The Rebel officer's kit has no supported weapons, so it fails and isn't used. Weapons shared between kits, like pistols and thermal detonators, are one item each: the last kit exported sets their spare ammo.)
 
+  The Clone Wars battlefields (`game/battlefields/geonosis.ini`) use the Republic's and the Separatists' kits:
+
+  ```powershell
+  foreach ($class in "ep2_rifleman", "ep2_rocketeer", "ep2_sniper", "ep2_engineer", "ep3_officer", "ep2_jettrooper") {
+    bf2tool export-loadout "<Battlefront>\GameData\Data\_lvl_pc" rep "rep_inf_$class" -o "game\imported_assets\loadouts\rep_inf_$class.ini" }
+  foreach ($class in "rifleman", "rocketeer", "sniper", "engineer", "officer") {
+    bf2tool export-loadout "<Battlefront>\GameData\Data\_lvl_pc" cis "cis_inf_$class" -o "game\imported_assets\loadouts\cis_inf_$class.ini" }
+  ```
+
 - **export-map**: write a Battlefront II map (`<map>.lvl`, e.g. `dag1`) for the game. Out come:
   - its terrain as a heightfield bake (`<map>.r32`/`.json`, the format `swgtool bake-terrain` writes), with its texture layers (`terrain_layers`: texture and tiling), their weights (`<map>.splat0.png`: RGBA = four layers' weights per sample), its baked lighting (`<map>.light.png`), the sky, fog, fog cloud and lights (`environment`), and its water (`water`: each layer's height and its surface as rectangles in game space, with the look: textures, animated normal maps, colors, fresnel);
   - every object's placement in game space and its model (`<map>.objects.json`, models in `models/` as glTF in game space, textures in `textures/` as PNG). Models come from the map's file, then `ingame.lvl` for shared props like command posts;
