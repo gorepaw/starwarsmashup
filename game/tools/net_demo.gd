@@ -31,12 +31,17 @@
 # and a command post your team holds (Q/E), and spawn with Space or a click.
 # Posts show as beams: blue yours, red the enemy's, white neutral.
 #
+# A city exported with swgtool export-city next to the bake (its buildings,
+# walls and props, and a hub's war terminals) is drawn with it; the server
+# and client collide with it through the bake's collision file.
+#
 # A Battlefront II map exported with bf2tool export-map is a bake too: pass
 # its prefix (e.g. imported_assets/maps/dag1/dag1) and it's drawn with its
 # terrain textures, models, sky, fog and lights (rendering/bf2_map.gd).
 #
-# --hub hosts a hub (game/hubs/) instead: walk to the war terminal (the
-# yellow pillar) and press F or G to queue for a side, X to leave the queue.
+# --hub hosts a hub (game/hubs/) instead: walk to the war terminal (its
+# name over it; a yellow pillar if the city isn't exported) and press F or
+# G to queue for a side, X to leave the queue.
 # When the battle starts you're sent to it, on its own map (the hub picks
 # one for each battle), and back to the hub after the results. Joining a hub
 # server (swm_server --hub) works the same. Battles' battlefield files are
@@ -66,6 +71,7 @@ const TerrainTool = preload("res://tools/render_terrain.gd")
 const Terrain3DBake = preload("res://tools/terrain3d_bake.gd")
 const SwgBuilding = preload("res://rendering/swg_building.gd")
 const Bf2Map = preload("res://rendering/bf2_map.gd")
+const SwgCity = preload("res://rendering/swg_city.gd")
 const Soldier = preload("res://rendering/soldier.gd")
 const Bf2Hud = preload("res://ui/bf2_hud.gd")
 const Settings = preload("res://ui/settings.gd")
@@ -1221,6 +1227,8 @@ func _build_world(bake: String) -> bool:
 	_add_terrain(bake, meta, _terrain3d)
 	if Bf2Map.is_bf2(meta):
 		Bf2Map.add_objects(_world, bake)
+	elif SwgCity.has_city(bake):
+		SwgCity.add_objects(_world, bake)  # a city's buildings and props (swgtool export-city)
 	if bake == _start_bake:
 		for building: Array in _buildings:
 			if not _add_building(building[0], building[1], building[2]):
@@ -1539,13 +1547,20 @@ func _arrive() -> void:
 	print("transferred to ", "the battle on " + str(_battlefield["name"]) if not _battlefield.is_empty() else "the hub")
 
 
-# War terminals: a yellow pillar, its name, and a ring where you can queue.
+# War terminals: its name and a ring where you can queue, and a yellow
+# pillar where the city has no terminal standing there (export-city --hub).
 func _add_recruiters() -> void:
 	var material := StandardMaterial3D.new()
 	material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
 	material.albedo_color = Color(1.0, 0.8, 0.25)
+	var terminals: Array[Vector3] = []
+	for node: Node in _world.get_children():
+		if node.has_meta("recruiter"):
+			terminals.append((node as Node3D).position)
 	for recruiter: Dictionary in _client.get_recruiters():
 		var position: Vector3 = recruiter["position"]
+		var drawn := terminals.any(func(at: Vector3) -> bool:
+			return Vector2(at.x - position.x, at.z - position.z).length() < 1.5)
 		var pillar := MeshInstance3D.new()
 		var box := BoxMesh.new()
 		box.size = Vector3(0.6, 2.2, 0.6)
@@ -1569,6 +1584,9 @@ func _add_recruiters() -> void:
 		label.modulate = material.albedo_color
 		label.position = position + Vector3.UP * 3.2
 		for node: Node3D in [pillar, ring, label]:
+			if node == pillar and drawn:
+				node.free()
+				continue
 			root.add_child(node)
 			_recruiter_nodes.append(node)
 

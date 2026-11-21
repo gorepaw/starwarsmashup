@@ -21,6 +21,7 @@
 #include "swg/appearance.h"
 #include "swg/building_export.h"
 #include "swg/character_export.h"
+#include "swg/city_export.h"
 #include "swg/gltf_assets.h"
 #include "swg/iff.h"
 #include "swg/image.h"
@@ -41,7 +42,7 @@ constexpr const char* usage = R"(usage:
   swgtool manifest <dir> --name <name> --source <text> -o <out.tsv>
   swgtool coverage <manifest.tsv> <dir> [--missing <out.tsv>]
   swgtool groups <manifest.tsv> [--list <group>]
-  swgtool iff <archive.tre> <path>
+  swgtool iff <archive.tre|dir> <path>
   swgtool iff-check <dir>
   swgtool export-character <dir> <out_dir> --name <name> --sat <path.sat>... [--weapon <path.lod>]
                            [--bf2-lvl <ingame.lvl> --bf2-bank <bank> --anim <name>...]
@@ -51,6 +52,7 @@ constexpr const char* usage = R"(usage:
   swgtool export-building <dir> <out_dir> --pob <path.pob> --name <name>
   swgtool pob-check <dir>
   swgtool snapshot <dir> <path.ws> [--match <text>] [--near <x> <z> <radius>]
+  swgtool export-city <dir> <bake_prefix> --snapshot <path.ws> --center <x> <z> --radius <m> [--hub <hub.ini>]
 )";
 
 // Returns the value following `flag` in args, or an empty string.
@@ -337,8 +339,17 @@ void print_iff_tree(const std::vector<IffNode>& nodes, int depth) {
         for (size_t i = 0; i < node.data.size() && i < 16; ++i) {
             preview += std::format("{:02x} ", node.data[i]);
         }
-        std::cout << std::format("{}{} {:>8}  {}{}\n", indent, node.tag, node.data.size(), preview,
-                                 node.data.size() > 16 ? "..." : "");
+        // And as text, where it's mostly text (template parameters, file names).
+        std::string text;
+        size_t printable = 0;
+        for (size_t i = 0; i < node.data.size() && i < 96; ++i) {
+            const uint8_t c = node.data[i];
+            printable += c >= 32 && c < 127;
+            text += c >= 32 && c < 127 ? char(c) : '.';
+        }
+        const bool show_text = !text.empty() && printable * 2 >= text.size();
+        std::cout << std::format("{}{} {:>8}  {}{}{}{}\n", indent, node.tag, node.data.size(), preview,
+                                 node.data.size() > 16 ? "..." : "", show_text ? "  " : "", show_text ? text : "");
     }
 }
 
@@ -346,6 +357,11 @@ int cmd_iff(const std::vector<std::string>& args) {
     if (args.size() < 2) {
         std::cerr << usage;
         return 2;
+    }
+    if (std::filesystem::is_directory(args[0])) {
+        TreLibrary library(args[0]);
+        print_iff_tree(parse_iff(library.read(normalize_path(args[1]))), 0);
+        return 0;
     }
     TreArchive tre(args[0]);
     const std::string wanted = normalize_path(args[1]);
@@ -710,6 +726,25 @@ int cmd_pob_check(const std::vector<std::string>& args) {
     return failed == 0 ? 0 : 1;
 }
 
+int cmd_export_city(const std::vector<std::string>& args) {
+    const auto center = std::find(args.begin(), args.end(), "--center");
+    if (args.size() < 2 || option(args, "--snapshot").empty() || option(args, "--radius").empty() ||
+        center == args.end() || center + 2 >= args.end()) {
+        std::cerr << usage;
+        return 2;
+    }
+    TreLibrary library(args[0]);
+    CityExport city;
+    city.bake = args[1];
+    city.snapshot = option(args, "--snapshot");
+    city.center_x = std::stod(*(center + 1));
+    city.center_z = std::stod(*(center + 2));
+    city.radius = std::stod(option(args, "--radius"));
+    city.hub = option(args, "--hub");
+    export_city(library, city, std::cout);
+    return 0;
+}
+
 int cmd_snapshot(const std::vector<std::string>& args) {
     if (args.size() < 2) {
         std::cerr << usage;
@@ -790,6 +825,9 @@ int main(int argc, char** argv) {
         }
         if (command == "snapshot") {
             return cmd_snapshot(args);
+        }
+        if (command == "export-city") {
+            return cmd_export_city(args);
         }
     } catch (const std::exception& e) {
         std::cerr << "error: " << e.what() << "\n";

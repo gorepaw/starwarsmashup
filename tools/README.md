@@ -19,7 +19,7 @@ swgtool list <archive.tre>
 swgtool manifest <dir> --name <name> --source <text> -o <out.tsv>
 swgtool coverage <manifest.tsv> <dir> [--missing <out.tsv>]
 swgtool groups <manifest.tsv> [--list <group>]
-swgtool iff <archive.tre> <path>
+swgtool iff <archive.tre|dir> <path>
 swgtool iff-check <dir>
 swgtool export-character <dir> <out_dir> --name <name> --sat <path.sat>... [--weapon <path.lod>]
                          [--bf2-lvl <ingame.lvl> --bf2-bank <bank> --anim <name>...]
@@ -29,6 +29,7 @@ swgtool terrain-trace <dir> --trn <path.trn> --at <x> <z>
 swgtool export-building <dir> <out_dir> --pob <path.pob> --name <name>
 swgtool pob-check <dir>
 swgtool snapshot <dir> <path.ws> [--match <text>] [--near <x> <z> <radius>]
+swgtool export-city <dir> <bake_prefix> --snapshot <path.ws> --center <x> <z> --radius <m> [--hub <hub.ini>]
 ```
 
 - **list**: print every file in a TRE archive (uncompressed size, stored size, compressed flag, path).
@@ -36,7 +37,7 @@ swgtool snapshot <dir> <path.ws> [--match <text>] [--near <x> <z> <radius>]
 - **coverage**: compare an install against a reference manifest. For each reference file it reports `matched` (byte-identical at the same path), `moved` (identical, but only under another path), `changed` (path exists, contents differ), or `absent`, plus a per-folder breakdown and a count of install files that aren't in the reference.
 
 - **groups**: count a manifest's unique files per content group (`base`, `jtl`, `rotw`, `tow`), or list one group's paths with `--list`. `coverage` also reports matches per group.
-- **iff**: print the chunk tree of one IFF file inside an archive, with a hex preview of each chunk's data.
+- **iff**: print the chunk tree of one IFF file inside an archive (or, given a directory, in whichever of its archives has it), with a hex preview of each chunk's data, and its text where it's mostly text (template parameters, file names).
 - **iff-check**: parse every IFF file in every archive under `<dir>` and print per-extension counts, failures, and root form names. On the Total Experience set, all 130,954 IFF files parse with no failures.
 
 - **export-character**: build a glTF character from Galaxies files in every `.tre` under `<dir>`. The first `.sat` (e.g. a species body) defines the skeleton. Every further `.sat` (armor, clothing) is skinned to it. An optional weapon `.lod` attaches to the `hold_r` joint, with its hardpoints as child nodes (`hp_muzzle`, `hp_scope`, ...). Writes `<name>.gltf`, `<name>.bin`, and one PNG per texture (decoded from DDS) into `<out_dir>`. Write output only to gitignored folders such as `game/imported_assets/`. Example: a human male in stormtrooper armor with an E-11:
@@ -81,6 +82,18 @@ swgtool snapshot <dir> <path.ws> [--match <text>] [--near <x> <z> <radius>]
   Not handled yet: doors and the objects placed inside cells.
 - **pob-check**: parse every building and floor, and load every cell mesh. On the Total Experience set: 223 buildings (2,669 cells, 12,617 lights) and 3,896 floors load. 93 files are deleted by later patches (shipped empty), and 3 buildings use an older layout (`PRTO 0001`) that isn't supported.
 - **snapshot**: list a world snapshot's top-level objects (id, position, yaw in degrees, number of objects inside, template), filtered by template substring and/or distance. For example, `--match cantina` finds the Mos Eisley cantina at (3432.35, 5.00, -4818.13), yaw 38.09. A building's object template names its `.pob` (`portalLayoutFilename`).
+
+- **export-city**: export a city: the objects the world snapshot places within `--radius` of `--center` (buildings, walls, props, terminals), next to the terrain bake it stands on. Each object's template names its look (`appearanceFilename`, or `portalLayoutFilename` for a building), set in it or in a template it derives from. It writes:
+  - `<bake_prefix>_city/`: a glTF per model with its textures. Buildings as `export-building` writes them (every cell, its lights and sidecar); the rest as their appearance's most detailed mesh.
+  - `<bake_prefix>.objects.json`: each object's model, position and rotation in game space (bf2tool's map objects' format), buildings and the hub's war terminals marked.
+  - `<bake_prefix>.collision`: what stops characters and shots, in the map collision format `core::World` loads next to a bake (so the hub's server and clients collide with the city with nothing else to load): each model's collision extent (its collision mesh, boxes, cylinders; composite and detail extents), the floors it names (roofs, stairs, a building's every cell), facing up, and walls where a floor can't be left, facing both ways.
+
+  With `--hub`, the hub's war terminals stand in the city too, on the terrain: each `[recruiter]` with a `Template` (an object template) and `Yaw`. Not yet: objects inside buildings (the cantina's furniture), particle effects and skeletal appearances; the log counts them. Mos Eisley, 700 m around its middle (1,623 objects, 180 models, 93,082 collision triangles, in 8 seconds):
+
+  ```powershell
+  swgtool export-city E:\swg_te\extracted\Star_Wars_files game\imported_assets\terrain\tatooine_mos_eisley `
+    --snapshot snapshot/tatooine.ws --center 3500 -4800 --radius 700 --hub game\hubs\mos_eisley.ini
+  ```
 
 Supported archives: TRE `0005` (retail discs) and plain `0006`. SWG Restoration's `0006` archives encrypt their file data and are reported as unsupported. We don't decrypt them.
 

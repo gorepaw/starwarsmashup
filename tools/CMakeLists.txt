@@ -1,13 +1,16 @@
 # SWG asset library: TRE archives, hashing, manifests.
 add_library(swm_swg STATIC
   swg/appearance.cpp
+  swg/appearance_collision.cpp
   swg/building_export.cpp
   swg/character_export.cpp
+  swg/city_export.cpp
   swg/gltf.cpp
   swg/gltf_assets.cpp
   swg/iff.cpp
   swg/image.cpp
   swg/manifest.cpp
+  swg/object_template.cpp
   swg/portal_layout.cpp
   swg/sha256.cpp
   swg/skeleton.cpp
@@ -26,7 +29,7 @@ add_executable(swgtool swgtool/main.cpp)
 target_link_libraries(swgtool PRIVATE swm_swg)
 swm_target_warnings(swgtool)
 
-foreach(test iff_test image_test manifest_test portal_layout_test sha256_test skeleton_test terrain_test tre_archive_test)
+foreach(test city_export_test iff_test image_test manifest_test portal_layout_test sha256_test skeleton_test terrain_test tre_archive_test)
   add_executable(${test} swg/tests/${test}.cpp)
   target_link_libraries(${test} PRIVATE swm_swg swm::zlib)
   swm_target_warnings(${test})
