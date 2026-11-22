@@ -18,6 +18,7 @@
 #include "swg/datatable.h"
 #include "swg/gltf.h"
 #include "swg/object_template.h"
+#include "swg/particle_effect.h"
 #include "swg/texture_renderer.h"
 #include "swg/tre_archive.h"
 #include "swg/tre_library.h"
@@ -328,6 +329,7 @@ void test_effect_blend() {
     CHECK(effect_blend(effect(1, 0, 4, 5, "pixel_program/a_simple.psh")) == EffectBlend::opaque);
     CHECK(effect_blend(effect(0, 1, 4, 5, "pixel_program/a_alpha.psh")) == EffectBlend::alpha);
     CHECK(effect_blend(effect(0, 1, 1, 1, "pixel_program/a_emisadd.psh")) == EffectBlend::additive);
+    CHECK(effect_blend(effect(0, 1, 2, 1, "pixel_program/a_modulate.psh")) == EffectBlend::additive);  // fire's
     CHECK(effect_blend(effect(1, 0, 4, 5, "pixel_program/a_punchout_ps20.psh")) == EffectBlend::cutout);
 
     const Bytes shader = form("CSHD", {form("0001", {form("SSHT", {form("0000", {
@@ -494,8 +496,85 @@ void test_room_terrain_holes() {
     CHECK(room_terrain_holes({}, {}, [](double, double) { return 0.0; }).empty());
 }
 
+// A particle effect: a fire's emitter, its waveforms in their places (the
+// 7th its radius, 9th spread, 10th rate, 11th speed, 15th lifetime, 16th
+// gravity), its particle's colors, alpha, speed and size over its life, and
+// a 4 x 4 sprite sheet at 16 frames a second.
+void test_particle_effect() {
+    const auto wave = [](std::vector<std::array<float, 4>> points) {
+        Bytes data(12, 0);
+        data[0] = 1;
+        data[8] = uint8_t(points.size());
+        for (const auto& p : points) {
+            const Bytes f = floats({p[0], p[1], p[2], p[3]});
+            data.insert(data.end(), f.begin(), f.end());
+        }
+        return form("WVFM", {chunk("0001", data)});
+    };
+    const auto constant = [&](float value) { return wave({{0, value, 0, 0}, {1, value, 0, 0}}); };
+    std::vector<Bytes> emitter{form("PTIM", {chunk("0001", Bytes(24, 0))})};
+    for (int i = 1; i <= 16; ++i) {
+        if (i == 9) {
+            emitter.push_back(wave({{0, 0, 45, 0}, {1, 0, 45, 0}}));
+        } else if (i == 15) {
+            emitter.push_back(wave({{0, 1, 0, 0.5f}, {1, 1, 0, 0.5f}}));
+        } else {
+            const float values[17] = {0, 0, 0, 0, 0, 0, 0, 0.6f, 0, 0, 4, 0.1f, 0, 0, 0, 0, -0.14f};
+            emitter.push_back(constant(values[i]));
+        }
+    }
+    Bytes settings = text("fire");
+    settings.resize(settings.size() + 20, 0);
+    emitter.push_back(chunk("0000", settings));
+    Bytes colors(12, 0);
+    colors[8] = 2;
+    for (const float f : {0.0f, 1.0f, 0.5f, 0.0f, 1.0f, 0.2f, 0.1f, 0.0f}) {
+        const Bytes b = floats({f});
+        colors.insert(colors.end(), b.begin(), b.end());
+    }
+    Bytes texture = text("shader\\fire.sht");
+    for (const uint32_t u : {16u, 0u, 15u}) {
+        texture.insert(texture.end(), {uint8_t(u), 0, 0, 0});
+    }
+    const Bytes sheet = floats({0.25f});
+    texture.insert(texture.end(), sheet.begin(), sheet.end());
+    texture.insert(texture.end(), {4, 0, 0, 0});
+    const Bytes fps = floats({16});
+    texture.insert(texture.end(), fps.begin(), fps.end());
+    texture.push_back(1);
+    emitter.push_back(form(
+        "PTQD", {form("PTCL", {form("0002", {chunk("0000", text("fire")), form("CLRR", {chunk("0001", colors)}),
+                                             wave({{0, 0, 0, 0}, {0.5f, 1, 0, 0}, {1, 0, 0, 0}}), constant(1)})}),
+                 form("0001", {constant(0), constant(0.6f), constant(0.3f), form("PTEX", {chunk("0000", texture)})})}));
+    const Bytes effect =
+        form("PEFT", {form("0001", {form("PTIM", {chunk("0001", Bytes(24, 0))}), chunk("0000", {1, 0, 0, 0}),
+                                    form("EMGP", {form("0001", {chunk("0000", {1, 0, 0, 0}),
+                                                               form("EMTR", {form("0012", emitter)})})})})});
+
+    const std::vector<ParticleEmitter> emitters = parse_particle_effect(effect);
+    CHECK(emitters.size() == 1);
+    if (emitters.empty()) {
+        return;
+    }
+    const ParticleEmitter& e = emitters[0];
+    CHECK(e.name == "fire" && e.rate.mean() == 4 && std::abs(e.speed.mean() - 0.1f) < 1e-6f);
+    CHECK(e.lifetime.low() == 1 && e.lifetime.high() == 1.5f && std::abs(e.gravity.mean() + 0.14f) < 1e-6f);
+    CHECK(std::abs(e.radius.mean() - 0.6f) < 1e-6f && e.spread.low() == -45 && e.spread.high() == 0);
+    CHECK(e.color.size() == 2 && e.color[1][1] == 0.2f && e.alpha.points.size() == 3 && e.alpha.points[1].value == 1);
+    CHECK(e.speed_scale.mean() == 1 && std::abs(e.size.mean() - 0.6f) < 1e-6f);
+    CHECK(e.shader == "shader/fire.sht" && e.frames == 16 && e.grid == 4 && e.fps == 16);
+    bool threw = false;
+    try {
+        parse_particle_effect(form("XXXX", {}));
+    } catch (const std::runtime_error&) {
+        threw = true;
+    }
+    CHECK(threw);
+}
+
 int main() {
     test_room_terrain_holes();
+    test_particle_effect();
     test_switching_shader();
     test_shader_colors();
     test_effect_blend();

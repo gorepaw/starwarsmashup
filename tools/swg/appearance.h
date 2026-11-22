@@ -65,7 +65,8 @@ std::string shader_effect(std::span<const uint8_t> bytes);
 // in every version seen (0008, 0009). Read from comparing effects, not
 // documented: byte 5 writes depth (0 for transparent effects), 7 blends,
 // 9 and 10 the blend's factors (4, 5: by the texture's alpha, as alpha
-// blending; 1, 1: added), 11 alpha tests, 17 the color write mask (7: not
+// blending; a destination of 1, what's behind kept whole: added, the source
+// by 1 or by its own color, 2, as Galaxies' fire and embers), 11 alpha tests, 17 the color write mask (7: not
 // alpha). A cutout clips in its pixel program instead ("punchout": clip
 // alpha under 0.5), its pass as an opaque one's.
 // Also takes a shader with its effect inside it (SSHT / EFCT: a texture

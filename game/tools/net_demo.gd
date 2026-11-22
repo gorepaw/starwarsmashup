@@ -5,7 +5,7 @@
 #
 #   godot --path game --script res://tools/net_demo.gd -- <bake_prefix> <character.gltf>
 #         [--server a.b.c.d:port] [--host <port>] [--db <file>] [--spawn <x> <z>] [--name <name>]
-#         [--building <building.gltf> <x> <y> <z> <yaw>] [--bot circle|chase|route] [--route <x,z;x,z;...>]
+#         [--building <building.gltf> <x> <y> <z> <yaw>] [--bot circle|chase|route] [--route <x,z;x,z;...>] [--look <x,z>]
 #         [--loadout <file.ini>] [--battlefield <file.ini>] [--bots <n>] [--hub <file.ini>] [--lag <ms>] [--jitter <ms>]
 #         [--loss <0..1>] [--seconds <n>] [--shots <output_prefix>] [--solo] [--terrain3d] [--first-person]
 #
@@ -62,7 +62,8 @@
 # "circle" runs in circles, "chase" runs after the nearest enemy and
 # shoots at it, "conquest" is the C++ bot (core::Bot) playing the match,
 # "route" runs through --route's points (Galaxies x,z, as walk_building.gd
-# prints them) from the nearest one, then stands.
+# prints them) from the nearest one, then stands, facing --look's point
+# (Galaxies x,z) if given, else the nearest other player.
 # --lag/--jitter/--loss simulate a bad connection on this client.
 #
 # With --seconds, quits after that long and prints network stats. Exits 1 if
@@ -135,6 +136,7 @@ var _camera_distance := CAMERA_DISTANCE  # pulled in when a wall is behind the c
 var _camera_sphere := SphereShape3D.new()  # what the camera keeps clear (_physics_process)
 var _first_person := false        # V toggles; --first-person starts in it
 var _route: Array[Vector2] = []  # game x, z
+var _look := Vector2.INF  # game x, z: faced when the route's done
 var _route_index := -1
 var _hud: Label
 var _crosshair: Label
@@ -219,6 +221,9 @@ func _init() -> void:
 	for point in _option(args, "--route", "").split(";", false):
 		var xz := point.split(",")
 		_route.append(Vector2(-float(xz[0]), float(xz[1])))
+	var look := _option(args, "--look", "").split(",")
+	if look.size() == 2:
+		_look = Vector2(-float(look[0]), float(look[1]))
 	var building := PackedStringArray()
 	var at := args.find("--building")
 	if at >= 0 and at + 5 < args.size():
@@ -661,9 +666,12 @@ func _follow_route() -> Dictionary:
 	while _route_index >= 0 and _route_index < _route.size() and here.distance_to(_route[_route_index]) < 0.4:
 		_route_index += 1
 	if _route_index < 0 or _route_index >= _route.size():
-		# Done: stand and face the nearest other player, if any.
+		# Done: stand and face --look's point, or the nearest other player.
 		var other := _nearest_remote()
-		if not other.is_empty():
+		if _look != Vector2.INF:
+			var to_look := _look - here
+			_yaw = atan2(-to_look.x, -to_look.y)
+		elif not other.is_empty():
 			var to_other: Vector3 = other["position"] - position
 			_yaw = atan2(-to_other.x, -to_other.z)
 		return {"yaw": _yaw}

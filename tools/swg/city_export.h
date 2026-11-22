@@ -54,8 +54,9 @@ struct CityExport {
 // into <bake>_city/people/, listed with "creature": true, and stop
 // characters and shots as an upright prism: their template's collision
 // radius and height, else their meshes' bounds in their bind pose.
-// Particles and sounds aren't exported yet; the log counts them. Throws
-// std::runtime_error if the snapshot can't be read.
+// Particle effects are described for the client (export_particle_effect,
+// into <bake>_city/particles/), listed with "particles": true; sound
+// markers aren't. Throws std::runtime_error if the snapshot can't be read.
 void export_city(TreLibrary& library, const CityExport& city, std::ostream& log);
 
 // The terrain in rooms (their floors, game space), as Galaxies draws none

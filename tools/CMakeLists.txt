@@ -18,6 +18,8 @@ add_library(swm_swg STATIC
   swg/skeleton.cpp
   swg/skinned_mesh.cpp
   swg/texture_renderer.cpp
+  swg/particle_effect.cpp
+  swg/particle_export.cpp
   swg/static_mesh.cpp
   swg/terrain.cpp
   swg/tre_archive.cpp

@@ -198,7 +198,7 @@ EffectBlend effect_blend(std::span<const uint8_t> bytes) {
         }
         const auto& d = data->data;
         if (d[7] != 0) {
-            return d[9] == 1 && d[10] == 1 ? EffectBlend::additive : EffectBlend::alpha;
+            return d[10] == 1 ? EffectBlend::additive : EffectBlend::alpha;  // onto what's behind as it is
         }
         // A pixel program that clips: PPSH / <version> / DATA, a byte then
         // the program's path.

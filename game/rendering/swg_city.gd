@@ -2,7 +2,8 @@
 # places around it (<bake>.objects.json, next to the terrain bake), each
 # model loaded once. Its creatures (a ronto, a saddled dewback: "creature")
 # stand in their own colors, breathing (their idle clip, looped, each from
-# a moment of its own). Buildings are drawn with their cells' own lights
+# a moment of its own). Its particle effects (steam, smoke, a campfire:
+# "particles") are drawn by rendering/swg_particles.gd. Buildings are drawn with their cells' own lights
 # (rendering/swg_building.gd), and so is the furniture in their cells. Their
 # doors slide open when someone comes near (update_doors). What
 # they stop is in <bake>.collision, which
@@ -10,6 +11,7 @@
 extends RefCounted
 
 const SwgBuilding = preload("res://rendering/swg_building.gd")
+const SwgParticles = preload("res://rendering/swg_particles.gd")
 
 
 static func has_city(prefix: String) -> bool:
@@ -35,7 +37,12 @@ static func add_objects(parent: Node, prefix: String, camera_collision := false)
 		var model: String = object.get("model", "")
 		if not models.has(model):
 			var file := dir.path_join(model)
-			models[model] = SwgBuilding.load_lit(file) if object.get("building", false) else _load_model(file)
+			if object.get("particles", false):
+				models[model] = SwgParticles.load_effect(file)
+			elif object.get("building", false):
+				models[model] = SwgBuilding.load_lit(file)
+			else:
+				models[model] = _load_model(file)
 			if models[model] != null and object.get("creature", false):
 				SwgColors.apply(models[model], SwgColors.load_colors(file), 0)
 			if camera_collision and models[model] != null and object.get("building", false):

@@ -21,6 +21,7 @@
 #include "swg/gltf_assets.h"
 #include "swg/manifest.h"
 #include "swg/object_template.h"
+#include "swg/particle_export.h"
 #include "swg/portal_layout.h"
 #include "swg/world_snapshot.h"
 #include "swm/core/heightfield.h"
@@ -36,6 +37,7 @@ struct Model {
     std::string file;  // relative to the bake's directory, "" if it couldn't be exported
     bool building = false;
     bool creature = false;  // a skeletal appearance: a person's export, standing idle
+    bool particles = false;  // a particle effect (.prt): its description, not a model
     AppearanceCollision collision;  // glTF space
     std::vector<std::array<Vec3, 3>> rooms;  // a building's rooms' walked floors (every cell but the outside)
     std::vector<std::array<Vec3, 3>> drawn_rooms;  // and their drawn floors
@@ -442,6 +444,24 @@ void export_city(TreLibrary& library, const CityExport& city, std::ostream& log)
         return found->second.file.empty() ? nullptr : &found->second;
     };
 
+    // A particle effect (steam, smoke, a campfire): described for the
+    // client to draw, once per effect; nothing to collide with.
+    const auto particles_for = [&](const std::string& source) -> const Model* {
+        auto found = models.find(source);
+        if (found == models.end()) {
+            Model model;
+            try {
+                const std::string file = export_particle_effect(library, source, out_dir / "particles", log);
+                model.file = out_name + "/particles/" + file;
+                model.particles = true;
+            } catch (const std::exception& error) {
+                log << std::format("  {}: {}\n", source, error.what());
+            }
+            found = models.emplace(source, std::move(model)).first;
+        }
+        return found->second.file.empty() ? nullptr : &found->second;
+    };
+
     const auto place = [&](const SnapshotNode& node, bool recruiter, int inside, int cell) -> bool {
         SharedObjectTemplate look;
         try {
@@ -459,11 +479,17 @@ void export_city(TreLibrary& library, const CityExport& city, std::ostream& log)
         }
         const std::string extension = std::filesystem::path(source).extension().string();
         if (!building && extension != ".apt" && extension != ".msh" && extension != ".lod" && extension != ".cmp" &&
-            extension != ".sat") {
+            extension != ".sat" && extension != ".prt") {
             ++skipped["appearance " + extension];
             return false;
         }
-        const Model* found = extension == ".sat" ? creature_for(node.template_name) : model_for(source, building);
+        if (extension == ".prt" && std::filesystem::path(source).stem().string().starts_with("pt_sound")) {
+            ++skipped["sound marker"];  // where a sound plays, drawn as a note in Galaxies' tools
+            return false;
+        }
+        const Model* found = extension == ".sat"   ? creature_for(node.template_name)
+                             : extension == ".prt" ? particles_for(source)
+                                                   : model_for(source, building);
         if (found == nullptr) {
             ++skipped["model failed"];
             return false;
@@ -472,6 +498,7 @@ void export_city(TreLibrary& library, const CityExport& city, std::ostream& log)
         const Placed p = placed(node);
         std::string marks = model.building    ? "\"building\": true, "
                             : model.creature ? "\"creature\": true, "
+                            : model.particles ? "\"particles\": true, "
                             : recruiter      ? "\"recruiter\": true, "
                                              : "";
         if (inside >= 0) {
