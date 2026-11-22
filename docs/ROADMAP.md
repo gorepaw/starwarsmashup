@@ -5,9 +5,16 @@ Battles come first, the world after. A match has clear boundaries and can be tes
 | Stage | Focus | Outcome |
 |---|---|---|
 | [Phase 0](PHASE0.md) | Feasibility spikes | The tech works |
-| 1 | Battlefront match queued from a Galaxies city | The core loop is fun |
-| 2 | Galaxies weapons and equipment | Loadouts give players something to chase |
-| 3+ | World systems | The planets fill up |
+| 1 | Battlefront match queued from a Galaxies city | The core loop works (done) |
+| 2 | Match polish | Matches feel like Battlefront |
+| 3 | Front end and characters | A main menu, and a character of any species |
+| 4 | Items, weapons and armor | Galaxies gear in an inventory and three loadouts |
+| 5 | Tatooine around Mos Eisley | A loop outside the city: hunt, loot, sell, quest |
+| 6 | Vehicles | Battlefront's in matches, Galaxies' in the world |
+| 7 | More cities | Theed, Coronet and the rest (on hold) |
+| 8 | Professions | Simplified Galaxies professions |
+| 9 | Space combat | Battlefront II's space battles |
+| 10+ | World systems | The planets fill up |
 
 The battlefield evolves alongside: **instanced matches on Battlefront II's own maps → much later, command-post battles built from Galaxies assets in the open world.**
 
@@ -27,14 +34,15 @@ Walk around Mos Eisley, queue at a recruiter, load into a 32v32 conquest match o
 
 ### Tasks
 
+What was left of Stage 1 moved to the stages after it: the remaining controls, bot behaviors, doors, destructibles and audio to Stage 2; vehicles to Stage 6; navigation on Galaxies terrain to Stage 5; other cities to Stage 7.
+
 **Hub**
 - [x] Mos Eisley region loaded as a walkable hub: the city the world snapshot places, 700 m around its middle (`swgtool export-city`): its buildings (with their interiors and lights), walls, props and terminals, 1,623 objects, drawn by the client and collided with on the server and clients alike (every model's collision extent and floors). Inside the buildings, their furniture (900 pieces), lit by their rooms' own lights, and no terrain: the cantina's main room is a meter under the street. Their doors (140) slide open as anyone comes near, as their door styles say. The third-person camera keeps inside their rooms, under their vaulted ceilings (collision from the drawn rooms, the camera's only). Its people: Galaxies' own Tatooine commoners (Rodians, Bith, Aqualish, Sullustans, Nikto, Devaronians, humans, Twi'leks, Zabraks), dressed as their templates' client data says, a crowd of 30 wandering the streets around the cantina and the war terminal and lingering; stormtroopers guarding the terminal and patrolling the plaza; a patron and a dancer in the cantina and a Bith sitting at its side room's console. Galaxies' own creatures where its snapshot places them (rontos, saddled dewbacks and banthas, worrts, an eopie, a cu pa: 13), breathing, solid to walk and shoot into. Ours too, on their own skeletons with their own clips: a dewback walking east of the machine yard, a bantha resting by the war terminal (kneeling: Galaxies' banthas lie on their sides) and one standing; they're simulated as a person is, with their own body against walls (their templates' collision radius, 1.7 m: a round body, not their length). They walk, stand and sit with Galaxies' own animations, run by the hub's server, so every player sees the same people. In Galaxies' colors: its shaders tint skin, hair, eyes and clothes by palettes; the set pieces wear their looks' own colors (stormtroopers white), and the crowd each their own, from the palettes' plain colors, the same for every player. Faces are composited as Galaxies' texture renderers do (skin, brows, makeup, freckles, a Zabrak's tattoos), and the crowd's vary too. Glowing things (the cantina's wall lights, terminals' screens) add their light, as Galaxies' additive effects do. Who stands where, and how the crowd's colors vary, is ours (it was Galaxies' server data). Its particle effects too, where the snapshot places them (15: steam from vents and a crashed ship, smoke plumes, a campfire's fire, embers and smoke), as Galaxies' effects describe them (their waveforms read by comparing effects: rate, speed, lifetime, gravity, spread over the emitter; color, alpha, size over a particle's life), drawn as Godot's particles; fire and embers add their light.
 - [x] Recruiter / war terminal interaction that opens the queue (`game/hubs/mos_eisley.ini`). Stand at the terminal and choose a side. It's Galaxies' HQ terminal, standing in the open between where new characters start and the cantina.
 - [x] The hub's UI in Battlefront's style (`game/ui/war_terminal_screen.gd`, `hub_hud.gd`): coming up to the war terminal, Battlefront's tooltip bar says to use it (E, rebindable, as is leaving the queue, X); its screen has the two sides under their icons to fight for, and while queued, where and when the battle is and leaving the queue. Queued, a panel at the top shows your side, the battlefield, the countdown and how many are queued; back from a battle, Victory, Defeat or Draw over how it went.
-- [ ] Other cities: each a hub file with its war terminals, on its planet's terrain with its city exported (Theed, Coronet, ...).
 - [x] Queue → match handoff (hub sends player and faction to the match server): when the first player has waited 10 s, the hub (`core::Hub`) launches a battle server with bots filling both teams and transfers the queued players to it, each with a ticket the battle server checks. Later players join a battle that's still on.
 - [x] Battles on Battlefront II's maps: the hub picks each battle's battlefield from its list at random (not the last one again), when the first player queues, and loads its world (terrain and map collision) in the background while the queue counts down; the queue shows where it's fought. Players queue for a side by name (`Sides = Rebellion, Empire`), and each battlefield's teams are matched to them by name, since Battlefront's team 1 is the Empire on some maps. Clients load the battle's world when they're sent to it, draw its map (the hub's terrain and buildings make way for it), and go back to the hub's when they return. Mos Eisley's list: the Galactic Civil War's maps, but its own (`tat2`) and Geonosis (the Clone Wars).
-- [x] Return from match to hub with results: after the results screen everyone is sent back, to where they stood, and greeted with how it went ("Victory at Mos Eisley Outskirts: 3 kills, 1 deaths, 2 captures"). Rewards come in Stage 2.
+- [x] Return from match to hub with results: after the results screen everyone is sent back, to where they stood, and greeted with how it went ("Victory at Mos Eisley Outskirts: 3 kills, 1 deaths, 2 captures"). Rewards come in Stage 4.
 
 Hub notes:
 - Battle servers run in the hub's process, each on its own UDP port. Moving them to their own processes or machines keeps the same messages: tickets in, results out.
@@ -45,7 +53,7 @@ Hub notes:
 - [x] Battlefield definition format (terrain bounds, command posts, spawns, out-of-bounds): an INI file (`core::load_battlefield`) with teams and their test loadouts, posts, tickets and timings. Vehicle spawns come with vehicles.
 - [x] A test battlefield: `game/battlefields/mos_eisley_outskirts.ini`, five command posts on Galaxies terrain east of the cantina. It tests the match rules until the Battlefront maps work.
 - [x] Conquest rules (`core::Conquest`): posts are neutralized and captured by soldiers standing in them (Battlefront's NeutralizeTime 12 s and CaptureTime 10 s, read from its command-post class), and frozen while contested. Each death costs a ticket, and holding more posts bleeds the other team. A team wins when the other runs out, or by holding every post for 20 s.
-- [x] Loadout selection and spawning at owned command posts. Leaving the battlefield kills after 10 s. Until the hub sends each player's own gear (Stage 2), battlefields offer test loadouts.
+- [x] Loadout selection and spawning at owned command posts. Leaving the battlefield kills after 10 s. Until the hub sends each player's own gear (Stage 4), battlefields offer test loadouts.
 
 **Battlefront II maps**
 - [x] Level importer (`bf2tool export-map`), from the player's own `.lvl` files: terrain heights, texture layers with their blend weights and baked lighting; every object's placement and model (glTF, with its textures as PNGs, including shared props from `ingame.lvl`); regions, paths, sky, fog and lights. Not yet: water, foliage patches (grass, hanging leaves), a fourth texture layer on patches that use more than three, and bump maps.
@@ -58,13 +66,11 @@ Hub notes:
   - [x] Endor (`end1`, `game/battlefields/endor.ini`): its boundary, the death region by the shield generator, the bunker (CP1) under its hill through a cut in the terrain, the Ewok walkways the Rebellion spawns on.
   - [x] Felucia (`fel1`, `game/battlefields/felucia.ini`): its boundary, four overlapping rings the map lists (not a path named for it); spawn paths its posts name in another case; the ramp up to CP2's cliff top, which has a stretch at 50.2 degrees (soldiers now walk up to 55).
   - [x] Kashyyyk (`kas2`, `game/battlefields/kashyyyk.ini`): its sea is shallow enough to wade; the fort's wooden barricades, fought open in Battlefront, are left out as if destroyed (`--open`) until things can be destroyed; CP4's spawns on the Wookiee tree platforms; the minimap fitted by its sea.
-  - [ ] Destructible objects: Kashyyyk's barricades and the gate panel that opens its sea wall, and the like on other maps.
   - [x] Yavin 4 (`yav1`, `game/battlefields/yavin.ini`): its death region (the plateau over the valley's west wall); its river shallow enough to wade; TFlank's post on the minitemple's roof; the minimap (`yavin1_map`, named for the map's layers) placed by what it draws.
   - [x] Hoth (`hot1`, `game/battlefields/hoth.ini`): as its mission script sets it up, CP3 and CP6 the Empire's (on Hoth, the attacker, team 1), CP7 gone, the walkers' and bombers' barriers off; its two death regions (both under the ground, for whoever falls through it); the minimap placed by Echo Base's hangars and tunnels, the shield generator and the bunkers.
   - [x] Geonosis (`geo1`, `game/battlefields/geonosis.ini`), the first Clone Wars map, with the Republic's and the Separatists' test loadouts (exported as the Rebels' and the Empire's were; the jet trooper without its jetpack): its five death regions (the canyon's floor, and four small ones under the ground by the Geonosian vents); the minimap placed by the round bunkers, the hangar and the core ship's hull. The Geonosians, a third side, wait for a third team.
   - [x] Naboo (`nab2`, `game/battlefields/naboo.ini`): as its mission script sets it up, the Empire team 1, the turret and camera barriers off; its death region (over the falls); objects' collision as their classes list it (`SoldierCollision`, `OrdnanceCollision`), so CP1's floor isn't shut inside its building's vehicle boxes; the minimap placed by the rotunda, the fountains and the palace. The Gungans, a third side, wait for a third team.
   - [x] Polis Massa (`pol1`, `game/battlefields/polis_massa.ini`): its death region (under the ground below the round hall); its damage regions, the vacuum round its halls (over the corridors' tubes, the roofs); its doors, which open as soldiers come, left open until they move; the minimap fitted to the boundary, which what it draws agrees with. Its airlock, which the script shuts while a console is destroyed, stays as the map has it.
-  - [ ] Doors that open as soldiers come, and the airlocks and gates scripts work.
   - [x] Tantive IV (`tan1`, `game/battlefields/tantive_iv.ini`), the first map without terrain: a stand-in ground under the ship, not drawn, with a death region over it; as its mission script sets it up, the turbine's death region, a blast door removed, the barracks' and Leia's barriers off; the minimap (drawn mirrored) placed by the posts' rooms and the doorways. The turbine stops when its console is destroyed, once consoles can be.
   - [x] The Death Star (`dea1`, `game/battlefields/death_star.ini`), on its floors far over the stand-in ground: as its mission script sets it up, the chasms' death regions, the AI barriers it takes down at the start (among them its two bridges', which it extends); without its boundary, which cuts through the station's south end where two of its posts are (sealed, with its falls death regions, it needs none); the minimap placed by the hub's round room, the long corridor and the reactor room's walls. The trash compactor's walls close in on a timer in Battlefront, its death region with them: they don't move yet, so it's left out.
   - [x] Coruscant (`cor1`, `game/battlefields/coruscant.ini`), in the Jedi Temple: as its mission script sets it up, the death regions over the drops outside the temple and under its floors, the doors' AI barriers down; the doors themselves are only in the campaign's layer, so in conquest the doorways stand open. The temple has no ambient light: its soldiers are lit by the map's second global light ("BACK"), out of the sun indoors. The minimap placed by the statue corridor, the round rooms and the grand hall's dome.
@@ -76,7 +82,7 @@ Hub notes:
   - [x] Mos Eisley (`tat2`, `game/battlefields/mos_eisley.ini`), in the spaceport's streets and docking bays: no death regions or barriers from its mission script (the door it locks isn't in the map); the Empire team 1, holding CP1, CP2 and CP8, the Rebellion CP3, CP6 and CP7; its turrets' layer, props until turrets can be manned; the minimap fitted to the boundary. The Jawas, a third side, wait for a third team.
 
 **Combat**
-- [ ] Third-person shooter controller with Battlefront feel: sprint, roll, crouch, zoom. Sprint (with energy), jump and over-the-shoulder aiming are done; roll, crouch and zoom aren't.
+- [x] Third-person shooter controls: sprint (with energy), jump and over-the-shoulder aiming. Crouch, roll and zoom are in Stage 2.
 - [x] First-person view (V toggles): from your own character's eyes, its head hidden, so the arms and gun you see are the armor and weapon you carry. Dying pulls the camera out to third person.
 - [x] Soldiers animated with Battlefront's clips: legs run (forward or backward, turned toward a strafe) while the upper body raises the rifle to fire, reloads or throws; the spine bends with the aim pitch (now networked); hits make them flinch, and they fall when killed. Bolts are drawn leaving the shooter's muzzle and join their true path (from the eyes, where the server fires them) within 20 m.
 - [x] Projectile weapons with clips and overheating: blaster bolts fly at their real speed with gravity. Stats come from the player's own Battlefront II files (`bf2tool export-loadout`): the Imperial rifleman's E-11 (60 damage, a shot every 0.166 s, 50-round clips) and pistol (overheats).
@@ -90,17 +96,9 @@ Combat notes:
 - Spread uses the weapon's documented values, but how Battlefront combines `SpreadPerShot`, `SpreadThreshold` and `SpreadLimit` is a guess (marked ASSUMPTION in `swm/core/combat.h`). So are a grenade's fuse (an unnamed ordnance property), explosions hurting the thrower, and the linear falloff. Grenades bounce as if off the ground even from walls, explosions aren't blocked by walls, and they don't push. Ammo pickups and headshots aren't in yet. Every soldier holds the E-11 model whatever its weapon, and plays rifle animations.
 - Bolts are cheap on the server (a position and velocity, tested as a line segment each tick). How they look is up to each client: color, length and width come from the weapon's ordnance, scaled by graphics settings.
 
-**Vehicles**
-- [ ] One ground vehicle (e.g. speeder bike)
-- [ ] One armored vehicle (walker or tank)
-- [ ] Vehicle spawns tied to command posts
-
 **Bots**
-- [ ] Navigation on Galaxies terrain. For now bots run straight and jump when stuck.
+- [x] Engaging: line of sight, leading the target, sidestepping. Cover and retreat are in Stage 2.
 - [x] Objective selection: attack and defend command posts (`core::Bot`): spawn at the post nearest the fighting (choosing again if it's lost while they wait: they waited for it to be won back, up to minutes), head for the nearest post the team doesn't hold (some go elsewhere, so a team spreads out), guard one when the team holds them all.
-- [ ] Combat behaviors: engage, take cover, retreat. Bots engage (line of sight, leading the target, sidestepping); they don't take cover or retreat.
-- [ ] Vehicle use (basic)
-- [ ] Difficulty settings (`core::BotSkill` has aim error, reaction time and range; not exposed yet)
 
 Bots play through a `GameClient`, with a player's controls and view. `swm_server --bots N` connects them over UDP from the server process, and a whole match runs in `match_test`.
 
@@ -108,41 +106,145 @@ Bots play through a `GameClient`, with a player's controls and view. `swm_server
 - [x] HUD: Battlefront II's own, drawn from its layout, textures, models and fonts (`bf2tool export-hud`, `game/ui/bf2_hud.gd`): reticle with clip and heat arcs, target color and hit marker; health and stamina bars; weapon panels with names and ammo; reinforcements with the sides' icons; the round minimap (command posts with their map icon, your side, enemies seen firing); kill messages; victory and defeat timers; the capture ring on the right while you're in a command post's range (from the per-player group of Battlefront's two-player layout, which the single-player one lacks). Command posts look like Battlefront's: no beams or rings, the holder's insignia turning over the post's projector in a cone of light (the post class's hologram settings; the cone is drawn, as Battlefront does), blue for yours, red for the enemy's, white while neutral or disputed. F3 shows network stats. Missing: the weapon models in the panels (soldiers all hold the E-11 for now).
 - [x] Screens in Battlefront II's style, from its menu art and fonts (`game/ui/`): the spawn screen (units, the battlefield's map with its command posts to click, Spawn), scores (Tab) and the end of a match, and the pause menu with options: mouse sensitivity and inversion, field of view, first or third person, fullscreen, vertical sync and rebindable controls, saved in `user://settings.cfg`. `game/tools/preview_ui.gd` screenshots them with sample data.
 - [x] Scoreboard and end-of-match screen (dev client: kills, deaths and captures per team)
-- [ ] Battlefront audio: weapons, voice-overs, music
 
 ### Exit criteria
 
-A full 32v32 conquest match with bots on a Battlefront II map, launched from and returning to Mos Eisley, that is fun to play solo.
+A full 32v32 conquest match with bots on a Battlefront II map, launched from and returning to Mos Eisley, that is fun to play solo. Met on 2026-11-22: a solo battle on Naboo against 15 bots, queued from Mos Eisley, played to the results.
 
 ---
 
-## Stage 2: Weapons and equipment
+## Stage 2: Match polish
 
 ### Goal
 
-Galaxies' weapon and armor library becomes loadouts you choose in the hub and take into matches, balanced for a shooter. See [Design: Weapons and loadouts](DESIGN.md#weapons-and-loadouts).
+Matches look, sound and feel finished before Galaxies' gear changes what's in them.
 
 ### Tasks
 
-**Data and items**
-- [ ] Weapon archetype definitions (handling, fire mode, projectile, heat)
-- [ ] Map Galaxies weapons to archetypes, with sidegrade stat profiles
-- [ ] Armor from Galaxies, with stats on the gear statistics model (mitigation general and by damage type, health, movement)
-- [ ] Item definitions (data files) separate from item instances (persistent ID + stat values)
-- [ ] Persistence for inventory and loadouts (SQLite via the persistence interface)
+**First person**
+- [ ] Steady arms. Now the first-person view is the third-person animation seen from the head bone, so the run cycle's bob, the recoil clip and the spine's aim bend all move the arms and gun. First person gets its own upper body:
+  - the camera on a smoothed eye point that follows the body, not every move of the head bone;
+  - the arms held at a fixed place in front of the camera by two-bone IK to the weapon's grip points (the hand on the grip, the other on the foregrip);
+  - small procedural sway, bob and recoil in place of the clips;
+  - reloads and throws as the clips' upper body re-aimed to the camera.
+  
+  The legs keep the locomotion: looking down still shows your own body and feet.
+- [ ] The third-person hands look wrong too (fingers and wrist on the grip). Fixed in Stage 4 with each weapon's grip points and hand poses. First-person IK uses the same points, so the two stay in step.
 
-**Hub infrastructure**
-- [ ] Inventory UI
-- [ ] Equipment / paperdoll UI (appearance separate from stats)
-- [ ] Loadout editor: gear slots filled from the inventory
-- [ ] Shooting range in the city for testing weapons
-- [ ] Faction quartermaster: standard-issue gear for faction points
-- [ ] Squads / groups and squad queueing
+**Over soldiers' heads**
+- [ ] Faction holograms instead of names: a small version of the command post hologram (the side's insignia turning in its cone of light), blue for your side and red for the enemy's. Names only on the scoreboard.
+- [ ] Greyed and faded when something blocks the view. Each frame a few rays go from the camera to the holograms against the map's collision, round-robin, so 64 soldiers cost little. A hologram eases to grey and faint when blocked and back when seen.
 
-**Match integration**
-- [ ] Match server receives authoritative loadouts from the hub (never trusts the client)
-- [ ] Standard queue (quality flattened) and gear queue (quality matters)
-- [ ] Rewards: experience, faction points, currency
+**Health and ammo droids**
+- [ ] Battlefront's droids work. Every map already places them as props (`com_item_healthrecharge`, `com_item_weaponrecharge`). Soldiers near one regain health or ammo at the rate and range its class gives (bf2tool reads them). Each droid plays its own idle animation. The HUD shows the effect as Battlefront does.
+- [ ] Bots go to a droid when they're hurt or low on ammo.
+- [ ] Battlefront's other pickups: health and ammo dropped by the dead.
+
+**Projectiles and effects**
+- [ ] Bolts drawn as Battlefront draws them: the ordnance's own textures and glow, not only its color, length and width.
+- [ ] Battlefront's effects: muzzle flashes, sparks and scorch marks where bolts hit, smoke trails and explosions. They come from its effect files (a new bf2tool importer) and are drawn as Godot particles, like Galaxies' effects in the hub.
+- [ ] Grenade models: thermal detonators drawn as their model, spinning in flight. Battlefront's model for now; Galaxies' grenades replace it in Stage 4. Rockets and mortar shells are drawn as their models with their trails.
+
+**Controls and rules**
+- [ ] Crouch, roll and zoom (scopes with their zoom levels), the Battlefront controls not done yet.
+- [ ] Headshots.
+- [ ] Explosions blocked by walls and pushing soldiers. Grenades bouncing off walls as walls, not as ground.
+
+**Bots**
+- [ ] Take cover and retreat.
+- [ ] Difficulty in the options (`core::BotSkill`: aim error, reaction time, range).
+
+**Maps**
+- [ ] Doors that open as soldiers come, and the airlocks and gates that scripts work.
+- [ ] Destructible objects: Kashyyyk's barricades and sea-wall gate, the consoles that stop Tantive IV's turbine and drop Mustafar's bridge.
+- [ ] Deep water (Kamino's sea, Yavin's river): soldiers swim, or die.
+- [ ] Third teams: the locals (Jawas, Gungans, Geonosians, Gamorreans) as Battlefront's natives.
+
+**Audio**
+- [ ] Battlefront's sound: weapons, impacts, explosions, voice-overs ("Command post captured") and music, from its sound banks (a new importer).
+
+### Exit criteria
+
+A match with a steady first-person view, teammates shown by holograms, droids that heal and rearm, and Battlefront's flashes and sounds.
+
+---
+
+## Stage 3: Front end and characters
+
+### Goal
+
+Start the game from a main menu, make a character of any Galaxies species, and come back to them later.
+
+### Tasks
+
+**Main menu**
+- [ ] A main menu scene, set as the project's main scene so opening the game starts there: New Character, Load Character, Settings, Quit. Battlefront's menu style (`bf2_screen.gd`) over a Galaxies backdrop.
+- [ ] Load Character: the characters saved in the world database (name, species, where they are). Choose one to enter the hub where they left, as `net_demo.gd`'s arguments do now.
+- [ ] Settings: the pause menu's options as their own screen.
+- [ ] `net_demo.gd` (2,000 lines) split into scenes the menu can start: the game client, the hub's HUD and screens, the battle's. Solo play still hosts its own hub. Joining a server by address comes when there's one to join.
+
+**Species and rigging**
+- [ ] Galaxies' ten playable species, male and female: Human, Twi'lek, Zabrak, Rodian, Bothan, Sullustan, Mon Calamari, Trandoshan, Wookiee and Ithorian. Each comes with its body, heads, hair and customization data.
+- [ ] Battlefront's clips on every species. The humanoid skeleton the soldier uses now covers most of them. Those with their own skeleton or proportions (Wookiees' long limbs, Ithorians' head and neck, and any the data shows) need their own retarget. Each is checked in the pose tools (`pose_soldier.gd`, `pose_clips.gd`). Meshes that need fixing are fixed in Blender, the results kept with the other imported assets (never committed).
+- [ ] Bodies per species: radius and height from the species' template, as the hub's creatures do, and the eye height for first person.
+
+**Character creator**
+- [ ] Species and gender picker, the model turning on a stand.
+- [ ] Customization as Galaxies does it, read from each species' data:
+  - body sliders (height, build) and face sliders (blend shapes);
+  - skin, hair and eye palettes;
+  - hair styles;
+  - markings (a Zabrak's tattoos, a Twi'lek's lekku patterns).
+  
+  These are the same palettes and texture renderers the hub's crowd already uses.
+- [ ] Name, with a random option, and a starting outfit.
+- [ ] Saved with the character. Every client draws other players from it: snapshots carry species and customization values (the crowd's color seed, made explicit).
+
+**Species traits**
+- [ ] Some species can't wear some gear, as in Galaxies: Wookiees most armor and footwear, Trandoshans footwear, and Ithorians standard armor. The exact rules get checked online before they're built.
+- [ ] In return, built-in traits through the stat model. A species becomes one more stat source in `core::stats_for`. For example: a Wookiee's health and melee mitigation, a Trandoshan's mitigation and regeneration. A Wookiee with empty slots should come out about even with an armored human. The values are tuned in Stage 4, once armor has values.
+
+### Exit criteria
+
+Launch the game, make a Wookiee, play a match as it, quit, and load it again.
+
+---
+
+## Stage 4: Items, weapons and armor
+
+### Goal
+
+Galaxies' weapons and armor become items you own, wear, and put into three loadouts. In a match, your loadouts are your classes. See [Design: Weapons and loadouts](DESIGN.md#weapons-and-loadouts).
+
+### Tasks
+
+**Data**
+- [ ] Item definitions (data files) separate from item instances (a persistent id and its stat values). Inventory and loadouts saved in SQLite through the persistence interface.
+- [ ] Weapon archetypes (handling, fire mode, projectile, heat, animation set), from Battlefront's weapon classes.
+- [ ] Galaxies weapons imported: models with their hardpoints (muzzle, scope), each mapped to an archetype with a sidegrade stat profile. Pistols, carbines, rifles, heavy weapons and grenades.
+- [ ] Galaxies armor imported: every set's pieces in their slots (helmet, chest, biceps, bracers, gloves, belt, leggings, boots), with the species variants where Galaxies has them, and stats on the gear model.
+- [ ] Clothing as appearance items. Appearance is separate from stats: wear what you like.
+
+**Holding weapons**
+- [ ] Each weapon held properly: its grip points, hand poses by archetype, and Battlefront's animation set for its kind (rifle, pistol, bazooka). This fixes the third-person hands, and first person uses the same points.
+- [ ] Soldiers hold their own weapon's model, not all the E-11. The HUD's weapon panels show the models.
+
+**Inventory and equipment**
+
+MMO-style screens in Battlefront II's frames, fonts and colors:
+- [ ] Inventory: what you carry, with tooltips showing every stat and a comparison with what's equipped. Drag to equip; sort; drop or destroy.
+- [ ] Equipment: a paperdoll of your character, its weapon, armor and appearance slots, and the model updating as you change them. Slots your species can't use are greyed out.
+
+**Loadouts**
+- [ ] Up to three loadouts per character. Each is a full kit: primary, sidearm, secondary, armor and other gear. An item can be in more than one, since only one is worn at a time.
+- [ ] In the world, switching loadouts takes several seconds. The HUD shows a bar, and taking damage interrupts it.
+- [ ] In a match, the spawn screen lists your three loadouts in place of Battlefront's classes, and you pick one each time you spawn. The match server gets them from the hub, never from the client. Bots carry stock loadouts for their side.
+- [ ] Standard queue (quality flattened) and gear queue (quality counts).
+
+**Getting gear**
+- [ ] Faction quartermaster in each hub: standard-issue gear for faction points.
+- [ ] Shooting range in Mos Eisley.
+- [ ] Battle rewards: experience, faction points and credits.
 
 ### Exit criteria
 
@@ -150,14 +252,110 @@ Choose a weapon at the quartermaster, try it at the range, put it in a loadout, 
 
 ---
 
-## Stage 3+: World systems
+## Stage 5: Tatooine around Mos Eisley
+
+### Goal
+
+Room outside the city to try a basic looter-shooter loop: hunt creatures and bandits, loot them, sell the junk, take quests.
+
+### Tasks
+
+**The whole planet's terrain**
+- [ ] All of Tatooine (16 × 16 km) in place of the 4 km chunk around Mos Eisley. It's generated from the planet's terrain file at 4 m, as the chunk is (4,097 × 4,097 heights), with Mos Eisley where it stands.
+  - The client streams the terrain in regions around the player.
+  - The server keeps the height field (64 MB as floats), or tiles where people are.
+  - The terrain holes for Mos Eisley's rooms work as before.
+  - No other towns or points of interest yet.
+- [ ] The far view: terrain detail by distance, the sky and haze to the horizon.
+- [ ] Bot navigation on open terrain. `core::NavGrid` already works lazily from collision; this checks it on dunes, rocks and canyons.
+
+**Creatures and bandits**
+
+What lived around Mos Eisley in Galaxies, researched online (wikis and guides). The client data has no spawns anyway.
+- [ ] Wild creatures in areas and lairs, weaker near the walls and tougher further out. Each on its own skeleton with its own clips, like the hub's dewback. Behavior by kind: wander, herd, flee, attack.
+- [ ] Bandits and raiders in camps, the gangs found in that research. They run on the battle bots' code (aim, sidestep, and cover from Stage 2) and wear Galaxies' NPC looks.
+- [ ] Respawning, leashing back home, and who they attack.
+- [ ] Dying in the world: respawn at Mos Eisley's cloning facility, as in Galaxies. Players can't hurt each other outside matches; faction PvP is a later question.
+
+**Loot, credits and vendors**
+- [ ] Loot tables for each creature and NPC: credits, junk (hides, broken parts: Galaxies had junk loot and junk dealers to sell it to), and now and then gear with stats rolled within its sidegrade band.
+- [ ] Looting the dead (see the open questions).
+- [ ] Vendors in Mos Eisley: a junk dealer who buys junk, and vendors who sell basic gear and supplies. Battlefront-style buy and sell screens, with prices in data files.
+- [ ] Credits saved with the character.
+
+**Quests**
+- [ ] A quest system: quests in data files, made of steps (go to, kill so many, collect, talk to, deliver). A quest log, a tracker on the HUD, waypoints on the minimap, and quest givers among the hub's people.
+- [ ] Mission terminals giving generated destroy missions (a lair so many meters out), as Galaxies' terminals did.
+- [ ] Quests inspired by the ones Galaxies' later updates added around Mos Eisley, researched online, not taken from the game data, and rewritten for this game.
+
+### Exit criteria
+
+Leave Mos Eisley, take a mission, kill creatures and bandits, loot them, sell the junk, buy something with it, and come back.
+
+---
+
+## Stage 6: Vehicles
+
+### Goal
+
+Battlefront's vehicles in matches, and Galaxies' vehicles for getting around Tatooine.
+
+### Tasks
+
+**In matches**
+- [ ] Vehicles simulated on the server and predicted for their driver: hover (speeder bikes, hover tanks) and walkers (AT-ST first, AT-AT later). Stats from their Battlefront classes. Getting in and out, seats (driver, gunners), their weapons, health, destruction and ejecting.
+- [ ] Their models animated (walkers' legs), with their effects and sounds.
+- [ ] Vehicle spawns from the maps' own spawn objects (Endor's AT-STs), tied to command posts, with respawn timers.
+- [ ] The maps' turrets manned (Mos Eisley's turret layer, props for now).
+- [ ] Bots drive and gun.
+- [ ] Flyers over ground maps after the ground vehicles. They lead into Stage 9.
+
+**In the world**
+- [ ] Galaxies' personal vehicles (speeder bikes, swoops, landspeeders) as items you call and ride across Tatooine. Creature mounts later.
+
+---
+
+## Stage 7: More cities
+
+On hold until you say go. Each city becomes a hub file with its war terminals and the objects its snapshot places, on its planet's terrain: Theed, Coronet, and the rest. Each is stitched into its whole planet as Mos Eisley is in Stage 5. Then Tatooine's other towns (Anchorhead, Bestine, Mos Espa, Mos Entha) fill out the planet.
+
+---
+
+## Stage 8: Professions
+
+Simplified versions of Galaxies' professions. The specifics are worked out with you before this starts. Two points from the design:
+- Skills widen what you can do (gear, gadgets, vehicles, abilities) rather than opening stat gaps.
+- Crafted items are just item instances with other stat values, so nothing from Stage 4 has to change.
+
+---
+
+## Stage 9: Space combat
+
+Battlefront II's space battles, queued from the hubs like ground battles:
+- its space maps imported;
+- fighters, bombers and capital ships;
+- landing in an enemy hangar and fighting aboard.
+
+Builds on Stage 6's flyers.
+
+---
+
+## Stage 10+: World systems
 
 Added in order of how directly they feed the battles. Each is a streamlined, transparent version of its Galaxies counterpart.
 
-1. **Weaponsmith crafting:** supplies the loadouts. Crafted items are just item instances with other stat values, so nothing in Stage 2 has to change.
-2. **Resources and harvesting:** supply the crafters. Spawning resources with visible stats. Readable surveying.
-3. **Housing and player cities:** structures placed on the terrain. Player cities can host their own war terminals and become hubs.
-4. **Open-world player-vs-AI content, missions, and more professions.**
-5. **Open-world Galactic Civil War:** battles move out of instances into live conquest zones in the world.
+1. **Resources and harvesting**, if the crafting professions need more than Stage 8 gives them: spawning resources with visible stats, and readable surveying.
+2. **Housing and player cities:** structures placed on the terrain. Player cities can host their own war terminals and become hubs.
+3. **Open-world Galactic Civil War:** battles move out of instances into live conquest zones in the world.
 
 Each of these gets a staged breakdown like Stage 1 once the stage before it is finished.
+
+---
+
+## Open questions
+
+1. **Enemy holograms behind walls.** If enemies' holograms show (greyed) through walls, walls stop hiding anyone. Recommended: your side's grey out when blocked, and the enemy's disappear.
+2. **Looting.** Galaxies-style (open the corpse with E and take what you want) or shooter-style (drops spill on the ground and you walk over them). Recommended: Galaxies-style for gear and junk, with credits taken automatically.
+3. **Ithorians.** Galaxies kept them out of standard armor too. Give them the same treatment as Wookiees (traits in return)?
+4. **Switching loadouts in the world.** Interrupted only by taking damage, or also by moving or by being in combat at all?
+5. **Order.** Recommended: Stage 2 → 3 → 4 → 5 → 6. Species come before armor so armor is imported for every species from the start. Items come before the open world, since loot and vendors need them. Vehicles could move up to just after Stage 4 if you'd rather have them sooner. Space stays last whatever the order.

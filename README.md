@@ -20,7 +20,7 @@ This project does not use, and will not accept contributions derived from, any l
 - [Architecture](docs/ARCHITECTURE.md): engine, code layering, networking, persistence, asset pipeline
 - [Phase 0](docs/PHASE0.md): feasibility spikes and task list
 - [Building](docs/BUILDING.md): custom Godot build, C++ build, smoke test
-- [Roadmap](docs/ROADMAP.md): battles first (Stage 1), then weapons and loadouts (Stage 2), then world systems
+- [Roadmap](docs/ROADMAP.md): battles first (Stage 1), then match polish, characters of every species, Galaxies gear and loadouts, Tatooine around Mos Eisley, vehicles, and on to world systems
 
 ## Legal
 

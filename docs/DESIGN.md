@@ -49,6 +49,7 @@ Galaxies has hundreds of weapons and dozens of armor sets. Battlefront has about
 - **Two queue types:**
   - **Standard:** quality is flattened. Only the sidegrade choice matters.
   - **Gear:** quality counts. The Galactic Civil War, and eventually open-world conquest.
+- **Three loadouts:** each character keeps up to three, each a full kit. In a match they're the classes you choose from when you spawn. In the world, switching between them takes several seconds.
 - **Overheating** from Battlefront stays.
 - **Damage types:** ballistic, laser, electro, bio, explosive and melee.
 - **Gear slots, not classes:** a loadout is a primary weapon, a sidearm, a secondary (throwables and gadgets, used with their own button), and armor and other gear, filled from the player's inventory.
@@ -68,6 +69,7 @@ Galaxies has hundreds of weapons and dozens of armor sets. Battlefront has about
 - **Spawning resources:** each resource has rated stats (e.g. overall quality, conductivity, decay resistance), spawns in specific areas for a limited time, then depletes.
 - Survey → harvest → craft → experiment. Experimentation odds and stat contributions are shown.
 - Items are mostly player-crafted. Loot supplements crafting instead of replacing it.
+- Creatures and NPCs drop credits, junk to sell to junk dealers (as in Galaxies), and now and then gear.
 - Item decay and repair keep demand alive.
 - Vendors and player-run shops.
 
@@ -82,6 +84,7 @@ Galaxies has hundreds of weapons and dozens of armor sets. Battlefront has about
 
 - **Every character is a Galaxies model.** Players and AI soldiers alike use Galaxies species bodies and armor, animated with Battlefront II's shooter animations.
 - Galaxies-style character creation: species, body shape sliders (blend shapes), hue/palette choices for skin, hair, and markings.
+- All ten of Galaxies' playable species. Those that can't wear some gear, as in Galaxies (Wookiees, Trandoshans, Ithorians), get built-in traits in return, so an empty slot isn't a handicap.
 - Armor and clothing appearance as a separate layer from stats (wear what you like).
 
 ## World
@@ -92,7 +95,7 @@ Galaxies has hundreds of weapons and dozens of armor sets. Battlefront has about
 
 ## Open questions
 
-- Space flight: out of scope for now.
+- Space: Battlefront II's space battles are planned as queued battles ([Roadmap](ROADMAP.md) Stage 9). Open-world space flight is out of scope.
 - Jedi / Force users: how they fit a shooter without breaking balance. Undecided.
 - Death and penalties: cloning, item decay on death, PvP loss rules.
 - Population target per planet and per server.
