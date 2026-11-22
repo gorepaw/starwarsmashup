@@ -119,6 +119,7 @@ void read_posts(Battlefield& field, const Ini& ini, const std::string& where) {
 }
 
 // Boundary = x1 z1 x2 z2 ...: a polygon, in source-world coordinates.
+// Powerup = x y z radius delay health ammo: a health or ammo droid.
 // DeathRegion = shape x y z sx sy sz m00 m01 ... m22: in source-world
 // coordinates, its rotation's rows. DamageRegion = rate shape x y z ...: the
 // same, hurting `rate` health a second.
@@ -135,6 +136,17 @@ void read_regions(Battlefield& field, const Ini::Section& section, const std::st
                 throw std::runtime_error(where + ": Boundary is \"x1 z1 x2 z2 x3 z3 ...\", got \"" + value + "\"");
             }
             field.boundaries.push_back(std::move(polygon));
+        } else if (iequals(key, "Powerup")) {
+            std::istringstream fields(value);
+            PowerupStation station;
+            if (!(fields >> station.position.x >> station.position.y >> station.position.z >> station.radius >>
+                  station.delay >> station.health >> station.ammo) ||
+                station.radius <= 0 || station.delay <= 0 || station.health < 0 || station.ammo < 0) {
+                throw std::runtime_error(where + ": Powerup is \"x y z radius delay health ammo\", got \"" + value +
+                                         "\"");
+            }
+            station.position.x = -station.position.x;
+            field.powerups.push_back(station);
         } else if (iequals(key, "DeathRegion") || iequals(key, "DamageRegion")) {
             std::istringstream fields(value);
             const bool damage = iequals(key, "DamageRegion");
@@ -252,6 +264,11 @@ double Battlefield::damage_rate(Vec3 feet) const {
         }
     }
     return rate;
+}
+
+bool PowerupStation::reaches(Vec3 feet) const {
+    const double dx = feet.x - position.x, dz = feet.z - position.z;
+    return dx * dx + dz * dz <= radius * radius && std::abs(feet.y - position.y) <= 2.0;
 }
 
 Vec3 Battlefield::center() const {

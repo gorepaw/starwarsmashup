@@ -56,7 +56,7 @@ const TABLE_OUTPUT := "6903ed32"
 
 var bindings := {}        # event -> bool, float, String, Color, Array
 var minimap := {}         # {texture, left_x, top_z, right_x, bottom_z} (game space), or empty
-var map_markers: Array = []  # [{position: Vector2 (game x, z), color, kind: "post" | "soldier", label}]
+var map_markers: Array = []  # [{position: Vector2 (game x, z), color, kind: "post" | "soldier" | "droid", label, icon}]
 var map_player := {}      # {position: Vector2, yaw}
 var messages: Array = []  # [{text, color, age}], newest last
 # Our adjustments to Battlefront's placements: element name -> offset, in
@@ -403,6 +403,19 @@ func _map(node: Dictionary, xf: Transform2D, color: Color, z: float, screen: Vec
 		var big: bool = marker.get("kind") == "post"
 		var dot_size := radius * (0.16 if big else 0.07)
 		var marker_color: Color = marker["color"]
+		var icon := _texture(str(marker.get("icon", ""))) if marker.has("icon") else null
+		if icon != null:
+			# Its own map icon (a droid's: Battlefront's is a small square),
+			# outlined to stand out on the light map.
+			var icon_size := radius * 0.15
+			_add(z - 1.5, func() -> void:
+				draw_set_transform_matrix(xf)
+				var outline := icon_size * 1.3
+				draw_texture_rect(icon, Rect2(at - Vector2(outline, outline) * 0.5, Vector2(outline, outline)),
+						false, Color(0, 0, 0, 0.6 * marker_color.a))
+				draw_texture_rect(icon, Rect2(at - Vector2(icon_size, icon_size) * 0.5, Vector2(icon_size, icon_size)),
+						false, marker_color))
+			continue
 		_add(z - 2, func() -> void:
 			draw_set_transform_matrix(xf)
 			if big and post_icon != null:

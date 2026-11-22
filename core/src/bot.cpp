@@ -310,6 +310,58 @@ Vec3 Bot::steer(Vec3 position, Vec3 destination, double now) {
                                                                                                  : path_[corner_];
 }
 
+// Hurt below this (of full health), a bot looks for a health droid; it
+// stays until this much.
+constexpr double needs_health = 0.5, patched_up = 0.95;
+// Its primary's ammo (clip and spare) below this (of full), for an ammo droid.
+constexpr double needs_ammo = 0.3;
+constexpr double powerup_reach = 45;    // m: a droid further than this isn't worth the walk
+constexpr double powerup_patience = 25;  // s: gives up on one after this
+
+void Bot::choose_powerup(const GameClient& client, double now) {
+    const Battlefield& field = *client.config().battlefield;
+    const MoveState& me = client.predicted();
+    const double max_health = std::max(1.0, client.character_stats().max_health);
+    const double health = double(client.self().health) / max_health;
+    double ammo = 1;
+    if (const WeaponDef* primary = weapon_in_slot(client.loadout(), primary_slot);
+        primary != nullptr && primary->ammo > 0 && me.combat.weapons[primary_slot].reserve >= 0) {
+        const WeaponState& w = me.combat.weapons[primary_slot];
+        ammo = double(w.rounds + w.reserve) / double(primary->ammo * primary->rounds_per_clip);
+    }
+    if (powerup_ >= 0) {
+        const PowerupStation& station = field.powerups[size_t(powerup_)];
+        const bool done = (station.health <= 0 || health >= patched_up) && (station.ammo <= 0 || ammo >= 0.99);
+        if (done || now >= powerup_until_) {
+            powerup_ = -1;
+            next_powerup_ = now + 10;
+        }
+        return;
+    }
+    if (now < next_powerup_ || (health >= needs_health && ammo >= needs_ammo)) {
+        return;
+    }
+    double best = powerup_reach;
+    for (size_t i = 0; i < field.powerups.size(); ++i) {
+        const PowerupStation& station = field.powerups[i];
+        const bool helps = (health < needs_health && station.health > 0) || (ammo < needs_ammo && station.ammo > 0);
+        const double distance = horizontal_distance(station.position, me.position);
+        if (helps && distance < best && std::abs(station.position.y - me.position.y) < 15) {
+            best = distance;
+            powerup_ = int(i);
+        }
+    }
+    next_powerup_ = now + 2;
+    if (powerup_ >= 0) {
+        // Beside it, on the side it comes from: the droid itself is solid.
+        const PowerupStation& station = field.powerups[size_t(powerup_)];
+        Vec3 away{me.position.x - station.position.x, 0, me.position.z - station.position.z};
+        away = away.length() > 1e-3 ? away * (1 / away.length()) : Vec3{1, 0, 0};
+        powerup_spot_ = station.position + away * std::min(1.2, station.radius * 0.5);
+        powerup_until_ = now + powerup_patience;
+    }
+}
+
 void Bot::update(GameClient& client, const World& world, double now) {
     GameClient::Controls controls;
     controls.yaw = client.predicted().yaw;
@@ -332,6 +384,7 @@ void Bot::update(GameClient& client, const World& world, double now) {
             choose_spawn(client);
         }
         objective_ = -1;
+        powerup_ = -1;
         slow_since_ = -1;  // a new life isn't stuck
         unstick_until_ = 0;
         target_ = 0;
@@ -365,6 +418,10 @@ void Bot::update(GameClient& client, const World& world, double now) {
         destination = post.position + offset_;
         if (post.console) {
             destination->y = post.console->y;
+        }
+        choose_powerup(client, now);
+        if (powerup_ >= 0) {
+            destination = powerup_spot_;
         }
     }
 
@@ -404,7 +461,7 @@ void Bot::update(GameClient& client, const World& world, double now) {
         // Over or under a post (on the hillside over Polis Massa's CP3, in
         // its cave) isn't there yet.
         double off_height = 0;
-        if (in_match) {
+        if (in_match && powerup_ < 0) {
             const CommandPost& post = client.config().battlefield->posts[size_t(objective_)];
             off_height = std::max({0.0, post.low - 0.5 - me.position.y, me.position.y - post.high});
         }

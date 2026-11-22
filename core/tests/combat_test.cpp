@@ -394,6 +394,17 @@ void test_grenades_and_ammo() {
     }
     CHECK(fired == 3 && state.combat.weapons[0].rounds == 0 && state.combat.weapons[0].reserve == 0);
     CHECK(state.combat.reload == 0);
+    // An ammo droid: a third of the rockets back, then all; the grenades'
+    // clip refilled at once. Full, it gives nothing more.
+    const WeaponDef& launcher = *weapon_in_slot(loadout, primary_slot);
+    const WeaponDef& grenades = *weapon_in_slot(loadout, secondary_slot);
+    CHECK(resupply(state, loadout, 0.34));
+    CHECK(state.combat.weapons[0].reserve == int(std::ceil(0.34 * launcher.ammo * launcher.rounds_per_clip)) &&
+          state.combat.weapons[secondary_slot].rounds == grenades.rounds_per_clip);
+    CHECK(resupply(state, loadout, 1.0));
+    CHECK(state.combat.weapons[0].reserve == launcher.ammo * launcher.rounds_per_clip &&
+          state.combat.weapons[secondary_slot].reserve == (grenades.ammo - 1) * grenades.rounds_per_clip);
+    CHECK(!resupply(state, loadout, 1.0));
 }
 
 void test_explosion_falloff() {

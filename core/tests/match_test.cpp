@@ -79,7 +79,8 @@ void test_battlefield_file() {
     std::ofstream(dir / "maps" / "b_conquest.ini") << "[map]\nName = b\nBounds = -512 -512 512 512\n"
                                                       "Boundary = 0 0 100 0 0 100\n"
                                                       "DeathRegion = box 10 0 20 2 1 4 0 0 1 0 1 0 -1 0 0\n"
-                                                      "DamageRegion = 50 sphere 40 0 40 3 3 3 1 0 0 0 1 0 0 0 1\n\n"
+                                                      "DamageRegion = 50 sphere 40 0 40 3 3 3 1 0 0 0 1 0 0 0 1\n"
+                                                      "Powerup = 20 1 30 3 2 0 1\n\n"
                                                       "[post]\nName = CP1\nPosition = 10 10\nOwner = 1\n"
                                                       "Altitude = -6 -1\nSpawnPoint = 12 12 -5\nSpawnPoint = 8 8 -5\n\n"
                                                       "[post]\nName = CP2\nPosition = 30 30\nOwner = 2\n";
@@ -102,6 +103,12 @@ void test_battlefield_file() {
           bounded.damage_rate({40, 0, 40}) == 0 && bounded.damage_rate({-40, 0, 44}) == 0);
     CHECK(!bounded.deadly({-40, 0, 40}) && bounded.harmful({-40, 0, 40}) && bounded.harmful({-10, 0, 20}) &&
           !bounded.harmful({-20, 0, 20}));
+    // An ammo droid: every 2 s, a full refill, within 3 m (game x the other
+    // way), not a story above it.
+    CHECK(bounded.powerups.size() == 1 && bounded.powerups[0].position == Vec3(-20, 1, 30) &&
+          bounded.powerups[0].delay == 2 && bounded.powerups[0].health == 0 && bounded.powerups[0].ammo == 1);
+    CHECK(bounded.powerups[0].reaches({-22, 0, 31}) && !bounded.powerups[0].reaches({-24, 1, 30}) &&
+          !bounded.powerups[0].reaches({-20, 4, 30}));
     // A post in a cellar: its middle height, taken from within it and not
     // from the ground over it; its spawn points' heights.
     const CommandPost& cellar = bounded.posts[0];
@@ -396,6 +403,26 @@ void test_damage_region() {
     CHECK(!a.alive() && a.self().deaths == 1);
 }
 
+// A health droid by a damage region: it gives back what the region takes
+// (100 a second against 50 every half second), so a soldier standing in
+// both keeps its health, and can't be healed past full.
+void test_health_droid() {
+    Battlefield battlefield = three_posts();
+    battlefield.damage_regions.push_back({{.center = {-60, 0, 0}, .size = {15, 2, 15}}, 100});
+    battlefield.powerups.push_back({.position = {-60, 0, 0}, .radius = 20, .delay = 0.5, .health = 50});
+    battlefield.warmup = 60;
+    Field field(battlefield);
+    GameClient& a = field.join("a");
+    field.run(0.5);
+    a.request_spawn(0, 0);
+    field.run(0.2);
+    CHECK(a.alive());
+    const double before = a.health();
+    field.run(3);
+    std::printf("health droid in a damage region: %.0f health, then %.0f 3 s later\n", before, a.health());
+    CHECK(a.alive() && near(a.health(), before, 60) && a.health() <= a.character_stats().max_health);
+}
+
 // A spawn point a little under its floor (one of Utapau's, a meter down)
 // puts a soldier on the floor, not under it.
 void test_spawn_under_floor() {
@@ -421,6 +448,10 @@ void test_bots_play_a_match() {
     battlefield.posts.insert(battlefield.posts.begin() + 3, CommandPost{.name = "Inner east", .position = {30, 0, -10}});
     battlefield.tickets = 40;
     battlefield.bleed = 0.2;
+    // Health droids about the field: hurt bots go to them.
+    for (const Vec3 at : {Vec3{0, 0, 30}, Vec3{0, 0, -30}, Vec3{-30, 0, -25}, Vec3{30, 0, 25}}) {
+        battlefield.powerups.push_back({.position = at, .delay = 1, .health = 25});
+    }
     Field field(battlefield);
     // Walls 3 m tall across the field on either side of the middle, open
     // only at one end (the other end meets the bounds).
@@ -440,10 +471,15 @@ void test_bots_play_a_match() {
     bool ended = false;
     MatchState result;
     int captures = 0, kills = 0;
+    std::vector<bool> healed(bots.size());  // reached a droid it was going to
     while (field.now < 900 && !ended) {
         field.run(10, [&] {
             for (size_t i = 0; i < bots.size(); ++i) {
                 bots[i].update(*field.clients[i], field.world, field.now);
+                if (const int droid = bots[i].powerup(); droid >= 0) {
+                    healed[i] = healed[i] || battlefield.powerups[size_t(droid)].reaches(
+                                                 field.clients[i]->predicted().position);
+                }
                 for (const auto& event : field.clients[i]->take_events()) {
                     if (i == 0) {
                         captures += event.kind == net::CombatEvent::captured;
@@ -460,8 +496,10 @@ void test_bots_play_a_match() {
             }
         }, 1.0 / 30);
     }
-    std::printf("bots: %d captures, %d kills\n", captures, kills);
-    CHECK(result.winner >= 0);
+    const auto at_droids = std::count(healed.begin(), healed.end(), true);
+    std::printf("bots: %d captures, %d kills; %d of %zu went to a health droid\n", captures, kills, int(at_droids),
+                bots.size());
+    CHECK(result.winner >= 0 && at_droids >= 1);
     CHECK(ended && captures >= 2 && kills >= 5);
 }
 
@@ -484,6 +522,7 @@ int main() {
     test_match_server();
     test_death_region();
     test_damage_region();
+    test_health_droid();
     test_spawn_under_floor();
     test_bots_play_a_match();
     return swm::test::finish("match_test");

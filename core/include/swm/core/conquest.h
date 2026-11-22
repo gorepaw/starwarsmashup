@@ -73,6 +73,26 @@ struct DamageRegion {
     double rate = 0;
 };
 
+// A health or ammo droid (Battlefront's "powerupstation" class: its
+// com_item_healthrecharge and com_item_weaponrecharge). Every `delay` seconds
+// each living soldier within `radius` gets `health` health and `ammo` of
+// each weapon's full ammunition back (a fraction: 1 fills it), as the class's
+// PowerupDelay, SoldierHealth and SoldierAmmo say. ASSUMPTION: SoldierAmmo
+// is that fraction (the ammo droid's is 1.0, every 2 s), and a droid whose
+// class sets no Radius reaches `default_radius`.
+struct PowerupStation {
+    static constexpr double default_radius = 3.0;
+    Vec3 position;  // game space, at its feet
+    double radius = default_radius;
+    double delay = 1;
+    double health = 0;
+    double ammo = 0;
+
+    // Whether a soldier standing at `feet` is in its reach (a story above or
+    // below it isn't).
+    bool reaches(Vec3 feet) const;
+};
+
 struct Team {
     std::string name;
     // Loadouts its soldiers can spawn with: a stand-in for testing until the
@@ -91,6 +111,7 @@ struct Battlefield {
     std::vector<std::vector<Vec3>> boundaries;
     std::vector<DeathRegion> death_regions;
     std::vector<DamageRegion> damage_regions;
+    std::vector<PowerupStation> powerups;
     std::array<Team, 2> teams;
     std::vector<CommandPost> posts;
     std::vector<Barrier> barriers;
@@ -133,7 +154,8 @@ struct Battlefield {
 // and death regions (`DeathRegion = box|sphere|cylinder x y z sx sy sz` and
 // the rotation's rows, 9 numbers, as Battlefront stores them), and damage
 // regions (`DamageRegion = <health a second>` and a death region's shape,
-// place and rotation). `Minimap = x0 z0
+// place and rotation), and its health and ammo droids (`Powerup = x y z
+// radius delay health ammo`, see PowerupStation). `Minimap = x0 z0
 // x1 z1` is where the map's minimap image lies: the coordinates under its
 // left, top, right and bottom edges (north up). Throws
 // std::runtime_error if it, a map or a loadout can't be read or makes no

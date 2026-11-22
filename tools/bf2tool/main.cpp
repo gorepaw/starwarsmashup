@@ -22,6 +22,7 @@
 #include "bf2/odf.h"
 #include "bf2/ucfb.h"
 #include "swg/image.h"
+#include "swm/core/conquest.h"
 #include "swm/core/world.h"
 
 namespace {
@@ -895,6 +896,7 @@ int cmd_export_map(const std::vector<std::string>& args) {
 
     // Objects, in game space (x mirrored; rotations conjugated by the mirror).
     core::MapCollision collision;
+    std::vector<std::string> powerups;  // the health and ammo droids' lines for the map file
     std::map<std::string, std::vector<CollisionTriangle>> shapes;  // model -> its collision
     {
         std::ofstream json(out_dir / (map + ".objects.json"), std::ios::binary);
@@ -1000,9 +1002,40 @@ int cmd_export_map(const std::vector<std::string>& args) {
                         std::atof(resolved.get("MapScale").value_or("1").c_str()));
                 }
             }
+            // A health or ammo droid ("powerupstation"): what it gives, how
+            // often (PowerupDelay, SoldierHealth, SoldierAmmo, Radius if the
+            // class sets one) for the map file, and how it idles for drawing
+            // (IdleRotateSpeed, IdleWaitTime: the health droid turns and
+            // pauses; IdleWobbleFactor: the GONK rocks) and its map icon.
+            std::string powerup;
+            if (library.classes().find(object.type) != nullptr) {
+                const OdfClass resolved = library.classes().resolve(object.type);
+                if (lowercase(resolved.base) == "powerupstation") {
+                    const auto number = [&](std::string_view name, double fallback) {
+                        const auto value = resolved.get(name);
+                        return value ? std::atof(value->c_str()) : fallback;
+                    };
+                    const double radius = number("Radius", core::PowerupStation::default_radius);
+                    const double delay = number("PowerupDelay", 1);
+                    const double health = number("SoldierHealth", 0);
+                    const double ammo = number("SoldierAmmo", 0);
+                    if (delay > 0 && (health > 0 || ammo > 0)) {
+                        powerups.push_back(std::format("Powerup = {:.2f} {:.2f} {:.2f} {:g} {:g} {:g} {:g}",
+                                                       object.position[0], object.position[1], object.position[2],
+                                                       radius, delay, health, ammo));
+                        powerup = std::format(
+                            ", \"powerup\": {{\"kind\": {}, \"radius\": {:g}, \"delay\": {:g}, \"health\": {:g}, "
+                            "\"ammo\": {:g}, \"idle_rotate_speed\": {:g}, \"idle_wait_time\": {:g}, "
+                            "\"wobble\": {:g}, \"map_texture\": {}}}",
+                            json_string(health > 0 ? "health" : "ammo"), radius, delay, health, ammo,
+                            number("IdleRotateSpeed", 0), number("IdleWaitTime", 0), number("IdleWobbleFactor", 0),
+                            json_string(lowercase(resolved.get("MapTexture").value_or(""))));
+                    }
+                }
+            }
             json << (written++ ? ",\n" : "\n") << "    {\"layer\": " << json_string(object.layer)
                  << ", \"class\": " << json_string(object.type) << ", \"name\": " << json_string(object.name)
-                 << ", \"model\": " << json_string(model) << hologram
+                 << ", \"model\": " << json_string(model) << hologram << powerup
                  << std::format(", \"position\": [{}, {}, {}], \"basis\": [", -object.position[0], object.position[1],
                                 object.position[2]);
             for (size_t i = 0; i < 9; ++i) {
@@ -1153,6 +1186,9 @@ int cmd_export_map(const std::vector<std::string>& args) {
         ini << "\n";
         ++damage_regions;
     }
+    for (const std::string& line : powerups) {
+        ini << line << "\n";
+    }
     if (no_terrain) {
         // Off the ship: falling to the stand-in ground, through this.
         const double half = terrain.cells * terrain.unit / 2;
@@ -1173,8 +1209,8 @@ int cmd_export_map(const std::vector<std::string>& args) {
             }
         }
     }
-    std::cerr << std::format("boundaries: {}; death regions: {} ({} named); damage regions: {}\n", boundaries.size(),
-                             death_regions, deaths.size(), damage_regions);
+    std::cerr << std::format("boundaries: {}; death regions: {} ({} named); damage regions: {}; droids: {}\n",
+                             boundaries.size(), death_regions, deaths.size(), damage_regions, powerups.size());
     int posts = 0;
     for (const WorldItem& object : level.objects) {
         if (object.sublevel != mode_sublevel || object.get("CaptureRegion").empty() ||

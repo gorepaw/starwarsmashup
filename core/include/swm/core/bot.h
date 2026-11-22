@@ -29,7 +29,9 @@ double drop_pace(Vec3 position, const std::vector<Vec3>& path, size_t corner);
 // and the same view of the world a player has. In a match it spawns at the
 // post nearest the fighting, runs to the nearest post its team doesn't hold
 // (or guards one), and shoots enemies it can see, leading them (and lobbing
-// grenades and mortar shells on a ballistic arc). In a hub it
+// grenades and mortar shells on a ballistic arc). Hurt or short of ammo, it
+// goes to a health or ammo droid nearby first, and stays until it's
+// patched up or rearmed. In a hub it
 // walks to the nearest war terminal and queues for a battle. Elsewhere it
 // hunts the nearest other character. With a NavGrid it walks around
 // obstacles on the grid's routes; without one it runs straight. Either way
@@ -44,6 +46,9 @@ public:
 
     // The command post it's heading for, or -1.
     int objective() const { return objective_; }
+    // The health or ammo droid (index into the battlefield's powerups) it's
+    // going to, or -1.
+    int powerup() const { return powerup_; }
     // The side it queues for in a hub (default: picked from the seed).
     void set_queue_team(int team) { queue_team_ = team; }
     // The walkable grid of the battlefield it plays on (shared between bots;
@@ -58,6 +63,9 @@ private:
     void go_to_recruiter(GameClient& client, double now);
     void choose_spawn(GameClient& client);
     void choose_objective(const GameClient& client, double now);
+    // Whether it needs a droid (hurt, or short of ammo), and if so heads for
+    // the nearest that helps; lets go once it's patched up or rearmed.
+    void choose_powerup(const GameClient& client, double now);
     // Where to head now on the way to `destination`: the next corner of its
     // route (planned again when the destination moves, when it's stuck, and
     // now and then), or the destination itself without a grid. Sets pace_.
@@ -68,6 +76,10 @@ private:
     bool requested_ = false;  // asked to spawn since it last died
     int spawn_post_ = -1;     // the post it asked to spawn at
     int objective_ = -1;
+    int powerup_ = -1;
+    Vec3 powerup_spot_;       // beside the droid, where it stands
+    double powerup_until_ = 0;  // gives up then
+    double next_powerup_ = 0;   // looks for one again then
     Vec3 offset_;            // where in the post it stands
     Vec3 home_;              // the post's console (or middle), from its middle: where a spot out of reach gives way to
     double next_objective_ = 0;

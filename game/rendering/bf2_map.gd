@@ -21,6 +21,12 @@ const SKY_LAYER_STEP := 0.04     # each later model this much nearer
 const SKY_FIRST_PRIORITY := -120  # drawn before the map's other blended surfaces
 
 
+const POWERUPS := &"bf2_powerups"  # the health and ammo droids' nodes (meta "powerup": export-map's)
+const DROID_TURN_TIME := 1.2       # s the health droid turns before it waits (ASSUMPTION)
+const DROID_TURN_RANGE := 1.2      # radians either way of where it was placed it looks
+const GONK_ROCK_RATE := 1.6        # rocks a second, the ammo droid shifting from foot to foot
+
+
 static func is_bf2(meta: Dictionary) -> bool:
 	return meta.has("terrain_layers")
 
@@ -127,6 +133,10 @@ static func add_objects(parent: Node, prefix: String) -> int:
 		var p: Array = object["position"]
 		node.basis = Basis(Vector3(b[0], b[3], b[6]), Vector3(b[1], b[4], b[7]), Vector3(b[2], b[5], b[8]))
 		node.position = Vector3(p[0], p[1], p[2])
+		if object.has("powerup"):
+			node.set_meta("powerup", object["powerup"])
+			node.set_meta("placed", node.basis)
+			node.add_to_group(POWERUPS)
 		parent.add_child(node)
 		count += 1
 	for template: Variant in models.values():
@@ -138,6 +148,30 @@ static func add_objects(parent: Node, prefix: String) -> int:
 
 # Fog, ambient light, the sun, local lights and the sky dome. Returns the
 # dome, which should follow the camera, or null.
+# The health and ammo droids idling, as their classes describe: the health
+# droid turns (IdleRotateSpeed, radians a second) to look somewhere else, then
+# waits (IdleWaitTime); the GONK rocks from foot to foot (IdleWobbleFactor).
+# Their models come as one piece, so the whole droid moves.
+static func animate_powerups(tree: SceneTree, time: float) -> void:
+	for node: Node3D in tree.get_nodes_in_group(POWERUPS):
+		var spec: Dictionary = node.get_meta("powerup")
+		var placed: Basis = node.get_meta("placed")
+		var seed := float(node.get_instance_id() % 997)
+		var wobble := float(spec.get("wobble", 0))
+		var speed := float(spec.get("idle_rotate_speed", 0))
+		if wobble > 0:
+			node.basis = placed * Basis(Vector3.BACK, wobble * sin((time + seed) * GONK_ROCK_RATE * TAU))
+		elif speed > 0:
+			# Turn after turn, each to a new heading, then a wait.
+			var period := DROID_TURN_TIME + float(spec.get("idle_wait_time", 0))
+			var cycle := floorf((time + seed) / period)
+			var into := fmod(time + seed, period)
+			var from := DROID_TURN_RANGE * sin(cycle * 1.7 + seed)
+			var to := DROID_TURN_RANGE * sin((cycle + 1.0) * 1.7 + seed)
+			var turned := clampf(into * speed / maxf(absf(to - from), 1e-3), 0.0, 1.0)
+			node.basis = Basis(Vector3.UP, lerpf(from, to, smoothstep(0.0, 1.0, turned))) * placed
+
+
 static func setup_environment(parent: Node, prefix: String, meta: Dictionary, environment: Environment,
 		sun: DirectionalLight3D) -> Node3D:
 	var env: Dictionary = meta.get("environment", {})

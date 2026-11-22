@@ -73,6 +73,30 @@ void refill(WeaponState& w, const WeaponDef& def) {
 
 } // namespace
 
+bool resupply(MoveState& state, const Loadout& loadout, double fraction) {
+    bool changed = false;
+    for (int slot = 0; slot < weapon_slots; ++slot) {
+        const WeaponDef* def = weapon_in_slot(loadout, slot);
+        WeaponState& w = state.combat.weapons[size_t(slot)];
+        if (def == nullptr || def->ammo <= 0 || w.reserve < 0 || fraction <= 0) {
+            continue;
+        }
+        // Clip and spare together, up to the full load.
+        const int full = def->ammo * def->rounds_per_clip;
+        const int given = std::max(1, int(std::ceil(fraction * full)));
+        const int total = std::min(full, w.rounds + w.reserve + given);
+        // Grenades go straight into the hand; a gun's come as spare rounds.
+        const int rounds = slot == secondary_slot ? std::min(def->rounds_per_clip, total) : int(w.rounds);
+        const int reserve = total - rounds;
+        if (rounds != w.rounds || reserve != w.reserve) {
+            w.rounds = int16_t(rounds);
+            w.reserve = int16_t(reserve);
+            changed = true;
+        }
+    }
+    return changed;
+}
+
 std::optional<Shot> simulate_weapons(MoveState& state, const MoveInput& input, const Loadout& loadout, double dt) {
     CombatState& c = state.combat;
     c.cooldown = std::max(0.0, c.cooldown - dt);

@@ -56,6 +56,12 @@ std::optional<double> segment_hits_cylinder(Vec3 a, Vec3 b, Vec3 feet, double ra
 // An explosion's damage to a body standing at `feet`, before mitigation: full
 // within the inner radius of the body, falling linearly to nothing at the
 // outer radius.
+// A droid's resupply: each weapon that carries limited ammo gets `fraction`
+// of its full ammunition back (clip and spare clips together), up to full:
+// a gun's as spare rounds, a secondary's (grenades) into its clip first. Returns whether anything
+// changed.
+bool resupply(MoveState& state, const Loadout& loadout, double fraction);
+
 double explosion_damage(const WeaponDef& weapon, Vec3 center, Vec3 feet);
 
 } // namespace swm::core

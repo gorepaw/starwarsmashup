@@ -477,6 +477,18 @@ void GameServer::run_match() {
                 }
             }
         }
+        // Health and ammo droids: every so often (each its own delay), to
+        // whoever stands by them.
+        if (client.life == Life::alive) {
+            for (const PowerupStation& station : field.powerups) {
+                const double now = tick_ * dt / station.delay;
+                if (std::floor(now) == std::floor(now - dt / station.delay) || !station.reaches(client.state.position)) {
+                    continue;
+                }
+                client.health = std::min(client.stats.max_health, client.health + station.health);
+                resupply(client.state, loadout_of(client), station.ammo);
+            }
+        }
         // Leaving the battlefield kills, after a warning.
         if (client.life == Life::alive && !field.contains(client.state.position)) {
             client.outside += dt;

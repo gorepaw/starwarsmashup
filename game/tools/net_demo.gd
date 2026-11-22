@@ -341,6 +341,7 @@ func _process(delta: float) -> bool:
 			_update_camera(own["position"], delta)
 		if _team_tags != null:
 			_team_tags.update(_camera, delta, _client.raycast)
+		Bf2Map.animate_powerups(self, _elapsed)
 		_update_bolts(delta)
 		_update_events()
 		if not _doors.is_empty():
@@ -975,6 +976,11 @@ func _update_minimap(team: int, game: Dictionary) -> void:
 			var at: Vector3 = post["position"]
 			_bf2_hud.map_markers.append({"position": Vector2(at.x, at.z), "kind": "post",
 					"color": _post_color(int(game["posts"][i]["owner"]), team)})
+	# The health and ammo droids, by their map icon.
+	for droid: Node3D in get_nodes_in_group(Bf2Map.POWERUPS):
+		var at := droid.global_position
+		_bf2_hud.map_markers.append({"position": Vector2(at.x, at.z), "kind": "droid", "color": Color.WHITE,
+				"icon": str((droid.get_meta("powerup") as Dictionary).get("map_texture", ""))})
 	for remote: Dictionary in _client.get_remotes():
 		if not bool(remote["alive"]):
 			continue

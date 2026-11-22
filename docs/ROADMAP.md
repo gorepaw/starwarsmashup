@@ -137,8 +137,8 @@ Matches look, sound and feel finished before Galaxies' gear changes what's in th
 - [x] When the map stands between the camera and one, your side's ease to grey and faint, and the enemy's disappear. Eight rays a frame against the map's collision, round-robin.
 
 **Health and ammo droids**
-- [ ] Battlefront's droids work. Every map already places them as props (`com_item_healthrecharge`, `com_item_weaponrecharge`). Soldiers near one regain health or ammo at the rate and range its class gives (bf2tool reads them). Each droid plays its own idle animation. The HUD shows the effect as Battlefront does.
-- [ ] Bots go to a droid when they're hurt or low on ammo.
+- [x] Battlefront's droids work (`core::PowerupStation`), on every map (10 to 36 a map, in its conquest layers). `bf2tool export-map` writes them into the map file from their class (`powerupstation`): every PowerupDelay seconds, each soldier within reach gets SoldierHealth back (the health droid: 25 a second) or SoldierAmmo of its full ammunition (the ammo droid: all of it, every 2 s; grenades go straight into the hand). ASSUMPTIONS: SoldierAmmo is that fraction, and their classes set no Radius, so they reach 3 m. They show on the minimap as Battlefront's icon (a small square), and idle as their classes say: the health droid turns to look somewhere else and waits, the GONK rocks from foot to foot. Their models come as one piece, so the whole droid moves.
+- [x] Bots go to a droid when they're hurt (under half health) or short of ammo (under 30%), if one is within 45 m, and stay until they're patched up or rearmed. In the bot match test, 5 of 6 bots went to one.
 - [ ] Battlefront's other pickups: health and ammo dropped by the dead.
 
 **Projectiles and effects**
