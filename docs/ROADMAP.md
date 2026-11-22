@@ -133,8 +133,8 @@ Matches look, sound and feel finished before Galaxies' gear changes what's in th
 - [ ] The third-person hands look wrong too (fingers and wrist on the grip). Fixed in Stage 4 with each weapon's grip points and hand poses. First-person IK uses the same points, so the two stay in step.
 
 **Over soldiers' heads**
-- [ ] Faction holograms instead of names: a small version of the command post hologram (the side's insignia turning in its cone of light), blue for your side and red for the enemy's. Names only on the scoreboard.
-- [ ] When something blocks the view, your side's holograms ease to grey and faint, and the enemy's disappear. Each frame a few rays go from the camera to the holograms against the map's collision, round-robin, so 64 soldiers cost little.
+- [x] Faction holograms instead of names (`game/rendering/team_tags.gd`): a small copy of the command post hologram's insignia (the map's own model), glowing and flickering as the post's does, turned toward the camera and swaying a little either way, sized by distance so it reads at range. Blue for your side, red for the enemy's. Names stay in the hub, and on the scoreboard.
+- [x] When the map stands between the camera and one, your side's ease to grey and faint, and the enemy's disappear. Eight rays a frame against the map's collision, round-robin.
 
 **Health and ammo droids**
 - [ ] Battlefront's droids work. Every map already places them as props (`com_item_healthrecharge`, `com_item_weaponrecharge`). Soldiers near one regain health or ammo at the rate and range its class gives (bf2tool reads them). Each droid plays its own idle animation. The HUD shows the effect as Battlefront does.

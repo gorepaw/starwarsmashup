@@ -77,6 +77,7 @@ const SwgBuilding = preload("res://rendering/swg_building.gd")
 const Bf2Map = preload("res://rendering/bf2_map.gd")
 const SwgCity = preload("res://rendering/swg_city.gd")
 const Soldier = preload("res://rendering/soldier.gd")
+const TeamTags = preload("res://rendering/team_tags.gd")
 const Bf2Hud = preload("res://ui/bf2_hud.gd")
 const Settings = preload("res://ui/settings.gd")
 const SpawnScreen = preload("res://ui/spawn_screen.gd")
@@ -150,6 +151,7 @@ var _bolt_mesh: BoxMesh           # a unit cube, scaled per bolt
 var _battlefield: Dictionary = {} # from SwmClient.get_battlefield; empty outside a match
 var _posts: Array = []            # per command post: {hologram} (its model's), or {material, label} (a beam)
 var _cone_shader: Shader         # the command post holograms' cone (_holo_cone_shader)
+var _team_tags: TeamTags         # in a match on a Battlefront map: the holograms over soldiers' heads
 var _spawn_loadout := 0
 var _spawn_post := -1
 var _spawn_requested := false
@@ -337,6 +339,8 @@ func _process(delta: float) -> bool:
 		else:
 			_spawn_requested = false
 			_update_camera(own["position"], delta)
+		if _team_tags != null:
+			_team_tags.update(_camera, delta, _client.raycast)
 		_update_bolts(delta)
 		_update_events()
 		if not _doors.is_empty():
@@ -593,12 +597,20 @@ func _update_remotes(own_team: int) -> void:
 		_pose(_remotes[id], remote)
 		var tag: Label3D = _remotes[id]["tag"]
 		var friend := own_team >= 0 and int(remote["team"]) == own_team
-		tag.text = "player %d" % id
-		tag.modulate = FRIEND_COLOR if friend else ENEMY_COLOR
+		# In a match, their side's hologram; in the hub, their name.
+		var side := _holo_side(int(remote["team"])) if own_team >= 0 and int(remote["team"]) >= 0 else ""
+		tag.visible = _team_tags == null or side == ""
+		if tag.visible:
+			tag.text = "player %d" % id
+			tag.modulate = FRIEND_COLOR if friend else ENEMY_COLOR
+		else:
+			_team_tags.show(id, _remotes[id]["model"], side, friend, bool(remote["alive"]))
 	for id: int in _remotes.keys():
 		if not seen.has(id):
 			(_remotes[id]["model"] as Node).queue_free()
 			_remotes.erase(id)
+			if _team_tags != null:
+				_team_tags.forget(id)
 
 
 # One of the hub's people: their look's model (exported with the city, in
@@ -1458,6 +1470,9 @@ func _add_posts() -> void:
 	if _battlefield.is_empty():
 		return
 	var holograms := _post_models()
+	if not holograms.is_empty():
+		var tags := TeamTags.new("res://" + str(_map_meta["dir"]), holograms.values()[0]["hologram"])
+		_team_tags = tags if tags.available() else null
 	for post: Dictionary in _battlefield["posts"]:
 		var model: Dictionary = holograms.get(str(post["name"]).to_lower(), {})
 		if not model.is_empty():
@@ -1627,6 +1642,7 @@ func _arrive() -> void:
 	for character: Dictionary in _remotes.values():
 		(character["model"] as Node).queue_free()
 	_remotes.clear()
+	_team_tags = null  # its holograms went with the soldiers
 	for post: Dictionary in _posts:
 		var nodes: Array = post.get("nodes", [])
 		if post.has("hologram"):
