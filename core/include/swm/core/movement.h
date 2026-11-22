@@ -19,6 +19,9 @@ struct MoveInput {
         fire = 1 << 2,
         reload = 1 << 3,
         secondary = 1 << 4,  // the secondary weapon: grenades
+        // Pressed standing still: crouch or stand up. Pressed while moving:
+        // roll that way (Battlefront's dive roll).
+        crouch = 1 << 5,
     };
 
     uint32_t sequence = 0;  // increases by one per tick
@@ -69,7 +72,13 @@ struct MoveState {
     bool grounded = true;
     double energy = 100;  // spent by sprinting
     bool sprinting = false;
+    bool crouched = false;
+    bool crouch_held = false;  // the crouch button was down last tick (a press starts a crouch or roll)
+    float roll = 0;            // seconds of rolling left
+    float roll_yaw = 0;        // the way it rolls (as yaw)
     CombatState combat;
+
+    bool rolling() const { return roll > 0; }
 
     friend bool operator==(const MoveState&, const MoveState&) = default;
 };
@@ -90,6 +99,17 @@ struct MoveParams {
     double energy_restore_idle = 15; // EnergyRestoreIdle, per second standing still
     double energy_drain_sprint = 20; // EnergyDrainSprint, per second
     double energy_min_sprint = 20;  // EnergyMinSprint: needed to start sprinting
+    // Crouched, speeds times these (ControlSpeed crouch: forward, sideways).
+    double crouch_factor = 0.70;
+    double crouch_strafe = 0.60;
+    // A roll: it starts at run speed times RollSpeedFactor and slows to a
+    // third of that over `roll_time`, the way it was going; steering is all
+    // but gone (ControlSpeed roll 0.02), and it costs EnergyCostRoll.
+    // ASSUMPTION: the roll's time and slowing (Battlefront's dive roll clip
+    // is 35 frames).
+    double roll_speed_factor = 1.5;
+    double roll_time = 0.75;        // s
+    double energy_cost_roll = 25;
     double max_slope_degrees = 55;  // steeper ground can't be walked up
     double snap_down = 0.6;         // m: grounded characters follow ground this far down per tick
     double step_up = 0.5;           // m: highest ledge walked up without jumping

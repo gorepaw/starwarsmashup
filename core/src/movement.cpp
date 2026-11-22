@@ -55,18 +55,56 @@ MoveState simulate_move(const MoveState& state, const MoveInput& input, const Wo
         const double restore = (f == 0 && r == 0) ? params.energy_restore_idle : params.energy_restore;
         next.energy = std::min(params.max_energy, state.energy + restore * dt);
     }
+    // Crouch: a press standing still crouches or stands up; a press on the
+    // move rolls that way, if there's the energy. Sprinting or jumping
+    // stands up (a jump from a crouch only stands).
+    const bool pressed = input.held(MoveInput::crouch) && !state.crouch_held;
+    next.crouch_held = input.held(MoveInput::crouch);
+    next.roll = float(std::max(0.0, double(state.roll) - dt));
+    bool jump = input.held(MoveInput::jump) && !state.rolling();
+    if (pressed && state.grounded && !state.rolling()) {
+        if (f * f + r * r > 0.09 && state.energy >= params.energy_cost_roll) {
+            const Vec3 way = forward * f + right * r;
+            next.roll = float(params.roll_time);
+            next.roll_yaw = float(std::atan2(-way.x, -way.z));
+            next.energy = std::max(0.0, next.energy - params.energy_cost_roll);
+            next.crouched = false;
+        } else {
+            next.crouched = !state.crouched;
+        }
+    }
+    if (next.crouched && (jump || next.sprinting)) {
+        next.crouched = false;
+        jump = false;
+    }
+    if (next.rolling()) {
+        next.sprinting = false;
+        jump = false;
+    }
+
     double forward_speed = f > 0 ? params.run_speed : params.strafe_speed;
     double side_speed = params.strafe_speed;
     if (next.sprinting) {
         forward_speed *= params.sprint_factor;
         side_speed *= params.sprint_strafe;
+    } else if (next.crouched) {
+        forward_speed *= f > 0 ? params.crouch_factor : params.crouch_strafe;
+        side_speed *= params.crouch_strafe;
     }
-    const Vec3 target = forward * (f * forward_speed) + right * (r * side_speed);
+    Vec3 target = forward * (f * forward_speed) + right * (r * side_speed);
+    if (next.rolling()) {
+        // Rolling: the way it started, slowing; no steering.
+        const double left = next.roll / params.roll_time;
+        const double speed = params.run_speed * params.roll_speed_factor * (1.0 / 3 + 2.0 / 3 * left);
+        target = Vec3{-std::sin(double(next.roll_yaw)), 0, -std::cos(double(next.roll_yaw))} * speed;
+    }
 
     if (state.grounded) {
-        next.velocity = approach(state.velocity, target, params.ground_accel * dt);
+        // A roll starts at full speed at once.
+        next.velocity = next.rolling() && !state.rolling() ? target
+                                                           : approach(state.velocity, target, params.ground_accel * dt);
         next.velocity.y = 0;
-        if (input.held(MoveInput::jump)) {
+        if (jump) {
             next.velocity.y = params.jump_speed;
             next.grounded = false;
         }

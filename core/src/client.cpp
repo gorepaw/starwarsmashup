@@ -64,7 +64,8 @@ void GameClient::set_input(const Controls& c) {
     next_input_.pitch = float(std::clamp(c.pitch, -1.5, 1.5));
     next_input_.buttons = uint8_t((c.sprint ? MoveInput::sprint : 0) | (c.jump ? MoveInput::jump : 0) |
                                   (c.fire ? MoveInput::fire : 0) | (c.reload ? MoveInput::reload : 0) |
-                                  (c.secondary ? MoveInput::secondary : 0));
+                                  (c.secondary ? MoveInput::secondary : 0) |
+                                  (c.crouch ? MoveInput::crouch : 0));
     next_input_.weapon = uint8_t(std::clamp(c.weapon, 0, hand_slots - 1));
 }
 

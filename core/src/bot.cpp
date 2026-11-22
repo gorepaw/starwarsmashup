@@ -458,7 +458,7 @@ void Bot::update(GameClient& client, const World& world, double now) {
     }
 
     const MoveState& me = client.predicted();
-    const Vec3 eye = me.position + Vec3{0, eye_height, 0};
+    const Vec3 eye = me.position + Vec3{0, eye_height_of(me), 0};
     const Loadout& loadout = client.loadout();
     const double gravity = client.character_stats().move.gravity;
     static const WeaponDef unarmed;

@@ -116,7 +116,12 @@ bool resupply_clips(MoveState& state, const Loadout& loadout, int clips) {
     return add_ammo(state, loadout, [&](const WeaponDef& def) { return clips * def.rounds_per_clip; });
 }
 
-std::optional<Shot> simulate_weapons(MoveState& state, const MoveInput& input, const Loadout& loadout, double dt) {
+std::optional<Shot> simulate_weapons(MoveState& state, const MoveInput& pressed, const Loadout& loadout, double dt) {
+    // Rolling, it can't fire, throw or reload.
+    MoveInput input = pressed;
+    if (state.rolling()) {
+        input.buttons &= uint8_t(~(MoveInput::fire | MoveInput::secondary | MoveInput::reload));
+    }
     CombatState& c = state.combat;
     c.cooldown = std::max(0.0, c.cooldown - dt);
     for (int i = 0; i < weapon_slots; ++i) {
@@ -151,7 +156,8 @@ std::optional<Shot> simulate_weapons(MoveState& state, const MoveInput& input, c
                 refill(throwables, *thrown);  // the next one comes out of the pouch
             }
             const double pitch = std::min(1.5, double(input.pitch) + thrown->shot_elevate);
-            return Shot{state.position + Vec3{0, eye_height, 0}, {aim_direction(input.yaw, pitch)}, secondary_slot};
+            return Shot{state.position + Vec3{0, eye_height_of(state), 0}, {aim_direction(input.yaw, pitch)},
+                        secondary_slot};
         }
     }
 
@@ -200,11 +206,12 @@ std::optional<Shot> simulate_weapons(MoveState& state, const MoveInput& input, c
         weapon.heat = float(std::min(1.0, weapon.heat + def.heat_per_shot));
         weapon.overheated = weapon.heat >= 1;
     }
-    Shot shot{state.position + Vec3{0, eye_height, 0}, {}, c.weapon};
+    Shot shot{state.position + Vec3{0, eye_height_of(state), 0}, {}, c.weapon};
     for (int i = 0; i < pellets; ++i) {
         const auto [u, v] = random_pair(input.sequence ^ (uint64_t(i) << 32));
-        const double yaw = input.yaw + u * (def.yaw_spread + c.spread) * degrees;
-        const double pitch = input.pitch + def.shot_elevate + v * (def.pitch_spread + c.spread) * degrees;
+        const double aim = state.crouched ? 1 / crouch_aim_factor : 1.0;  // steadier crouched
+        const double yaw = input.yaw + u * (def.yaw_spread + c.spread) * aim * degrees;
+        const double pitch = input.pitch + def.shot_elevate + v * (def.pitch_spread + c.spread) * aim * degrees;
         shot.directions.push_back(aim_direction(yaw, pitch));
     }
     c.spread = std::min(def.spread_limit, c.spread + def.spread_per_shot);

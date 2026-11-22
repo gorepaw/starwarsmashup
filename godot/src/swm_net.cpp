@@ -29,6 +29,9 @@ godot::Dictionary to_dictionary(const core::MoveState& state) {
     out["grounded"] = state.grounded;
     out["energy"] = state.energy;
     out["sprinting"] = state.sprinting;
+    out["crouched"] = state.crouched;
+    out["roll"] = double(state.roll);          // seconds of rolling left (0: not rolling)
+    out["roll_yaw"] = double(state.roll_yaw);  // the way it rolls
     const core::CombatState& c = state.combat;
     out["weapon"] = int64_t(c.weapon);
     out["rounds"] = int64_t(c.weapons[c.weapon].rounds);
@@ -429,6 +432,7 @@ void SwmClient::set_input(const godot::Dictionary& c) {
     controls.fire = bool(c.get("fire", false));
     controls.reload = bool(c.get("reload", false));
     controls.secondary = bool(c.get("secondary", false));
+    controls.crouch = bool(c.get("crouch", false));
     controls.weapon = int(int64_t(c.get("weapon", 0)));
     client()->set_input(controls);
 }
@@ -709,6 +713,9 @@ godot::Array SwmClient::get_weapons() const {
         const core::WeaponDef& w = *held;
         entry["name"] = godot::String::utf8(w.name.c_str());
         entry["rounds_per_clip"] = int64_t(w.rounds_per_clip);
+        entry["zoom_min"] = w.zoom_min;
+        entry["zoom_max"] = w.zoom_max;
+        entry["zoom_first_person"] = w.zoom_first_person;
         entry["projectile"] = w.projectile == core::Projectile::bolt      ? "bolt"
                               : w.projectile == core::Projectile::missile ? "missile"
                                                                           : "grenade";

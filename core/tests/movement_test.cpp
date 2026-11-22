@@ -91,6 +91,58 @@ void test_running() {
     CHECK(near(stopped.velocity.length(), 0));
 }
 
+// Crouch: a press standing still crouches (a second stands), slower;
+// sprinting or a jump stands up. A press on the move rolls that way, fast at
+// first, for its energy; rolling, the stick doesn't steer.
+void test_crouch_and_roll() {
+    const Heightfield flat = make_ground([](double, double) { return 0.0; });
+    const MoveParams params;
+    MoveState start;
+    start.position = {-50, 0, 50};
+    MoveInput press;
+    press.buttons = MoveInput::crouch;
+    MoveState crouched = run(start, press, flat, 3);  // held: one press
+    CHECK(crouched.crouched && crouched.crouch_held && !crouched.rolling());
+    MoveInput forward;
+    forward.forward = 127;
+    crouched = run(crouched, forward, flat, 30);
+    CHECK(crouched.crouched && near(crouched.velocity.length(), params.run_speed * params.crouch_factor, 1e-6));
+    MoveState stood = run(run(crouched, MoveInput{}, flat, 1), press, flat, 1);
+    CHECK(!stood.crouched);
+    MoveInput sprint = forward;
+    sprint.buttons = MoveInput::sprint;
+    CHECK(!run(crouched, sprint, flat, 1).crouched);
+    MoveInput jump;
+    jump.buttons = MoveInput::jump;
+    const MoveState jumped = run(crouched, jump, flat, 1);
+    CHECK(!jumped.crouched && jumped.grounded);  // stands, doesn't jump
+
+    // Strafing right, a press rolls right (+X): a third faster than running
+    // at first, slowing, about 5 m; then it's over, and the energy's spent.
+    MoveInput strafe;
+    strafe.right = 127;
+    MoveState moving = run(start, strafe, flat, 15);
+    MoveInput roll = strafe;
+    roll.buttons = MoveInput::crouch;
+    MoveState rolled = run(moving, roll, flat, 1);
+    CHECK(rolled.rolling() && !rolled.crouched &&
+          near(rolled.velocity.x, params.run_speed * params.roll_speed_factor, 0.5) &&
+          near(rolled.energy, moving.energy - params.energy_cost_roll, 1));
+    // Steering the other way does nothing while it rolls.
+    MoveInput back;
+    back.right = -127;
+    const double from = rolled.position.x;
+    rolled = run(rolled, back, flat, int(params.roll_time / dt) - 2);
+    std::printf("roll: %.2f m in %.2f s\n", rolled.position.x - from, params.roll_time);
+    CHECK(rolled.rolling() && rolled.position.x - from > 4 && rolled.position.x - from < 7);
+    rolled = run(rolled, back, flat, 10);
+    CHECK(!rolled.rolling() && rolled.velocity.x < 0);
+    // Without the energy, a press on the move crouches instead.
+    moving.energy = params.energy_cost_roll - 1;
+    const MoveState tired = run(moving, roll, flat, 1);
+    CHECK(!tired.rolling() && tired.crouched);
+}
+
 void test_slopes_and_jumps() {
     // Gentle slope up toward game -x (0.3 m per meter): walked, staying on the ground.
     const Heightfield gentle = make_ground([](double gx, double) { return gx * 0.3; });
@@ -529,6 +581,7 @@ void test_determinism() {
 } // namespace
 
 int main() {
+    test_crouch_and_roll();
     test_heightfield();
     test_running();
     test_slopes_and_jumps();

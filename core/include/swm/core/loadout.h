@@ -91,6 +91,12 @@ struct WeaponDef {
     double spread_recover_rate = 2;  // SpreadRecoverRate, degrees per second
     double spread_limit = 1.25;      // SpreadLimit, most bloom (ASSUMPTION)
     int shots_per_salvo = 1;         // ShotsPerSalvo: pellets per shot, each spread on its own and using a round
+    // Aiming down it: magnification from ZoomMin to ZoomMax (the E-11's 2.5;
+    // a sniper rifle's 2 to 8, stepped), through its scope in first person
+    // if ZoomFirstPerson. 1: no zoom. The client's alone (how it's drawn).
+    double zoom_min = 1;
+    double zoom_max = 1;
+    bool zoom_first_person = false;
     double damage = 60;              // ordnance MaxDamage times PersonScale
     double bolt_speed = 300;         // ordnance Velocity, m/s
     double bolt_gravity = 1;         // ordnance Gravity, a multiple of world gravity

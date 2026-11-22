@@ -147,7 +147,12 @@ Matches look, sound and feel finished before Galaxies' gear changes what's in th
 - [x] Grenade models: thermal detonators and mortar shells are drawn as Battlefront's `com_weap_inf_grenadethermal_ord` spinning in flight (stopping when at rest) with their glowing trails (`com_sfx_weap_grenade_red` / `_green`), and rockets as `com_weap_missile` oriented nose-first with their faction-colored smoke/flame trails (`com_sfx_weap_rockettrail_*`) that detach and fade cleanly on impact. Battlefront's models for now; Galaxies' grenades replace them in Stage 4.
 
 **Controls and rules**
-- [ ] Crouch, roll and zoom (scopes with their zoom levels), the Battlefront controls not done yet.
+- [x] Crouch, roll and zoom, as Battlefront's soldier class has them (`core::simulate_move`; C and Z, rebindable):
+  - **Crouch** (C standing still, a toggle): forward speed times 0.70, sideways 0.60 (ControlSpeed crouch); shots leave half a meter lower and are steadier (spread divided by 1.4, AimFactorPostureCrouch 140); the body is 1.3 m tall to shots. Sprinting or jumping stands up. Battlefront's crouch clips (idle, walk forward and back, shoot, reload).
+  - **Roll** (C on the move): the way it's moving, at RollSpeedFactor 1.5 times run speed slowing to a third, for EnergyCostRoll 25; no steering, firing, throwing or reloading while it lasts (0.75 s, about 5 m). Battlefront's dive roll (`human_rifle_diveforward`, from the `human_1` bank, which bf2tool can now read); in first person the gun dips instead.
+  - **Zoom** (Z steps through a weapon's levels, from its ZoomMin to ZoomMax, doubling): the E-11 2.5 times; the sniper rifles 2, 4 and 8 times, in first person through Battlefront's scope (one of its four, mirrored from a quarter, kept 4:3). The mouse turns slower by the magnification. Sprinting, rolling, switching weapons or dying backs out.
+
+  ASSUMPTIONS: the roll's time and slowing, the crouched body's height, what the crouch aim factor does, and which scope is whose.
 - [ ] Headshots.
 - [ ] Explosions blocked by walls and pushing soldiers. Grenades bouncing off walls as walls, not as ground.
 

@@ -14,9 +14,18 @@ class World;
 
 // Where shots start: the character's eyes, above its feet.
 inline constexpr double eye_height = 1.6;
+inline constexpr double crouched_eye_height = 1.1;  // Battlefront's crouch camera is half a meter lower
+// Where shots leave from: the eyes, lower crouched.
+inline double eye_height_of(const MoveState& state) {
+    return state.crouched ? crouched_eye_height : eye_height;
+}
 // The body bolts hit: an upright cylinder from the feet.
 inline constexpr double hit_radius = 0.35;
 inline constexpr double hit_height = 1.8;
+inline constexpr double crouched_hit_height = 1.3;  // ASSUMPTION: a crouched soldier's height
+// Crouched, a soldier's spread is divided by this (AimFactorPostureCrouch
+// 140 against AimFactorPostureStand 100). ASSUMPTION: that's what the factor does.
+inline constexpr double crouch_aim_factor = 1.4;
 // Seconds to bring up the other held weapon.
 inline constexpr double weapon_switch_time = 0.4;
 

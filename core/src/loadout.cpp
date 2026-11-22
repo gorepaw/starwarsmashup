@@ -194,6 +194,9 @@ WeaponDef load_weapon(const std::filesystem::path& path) {
     w.spread_recover_rate = s.number("SpreadRecoverRate", w.spread_recover_rate);
     w.spread_limit = s.number("SpreadLimit", 0);
     w.shots_per_salvo = std::max(1, int(s.number("ShotsPerSalvo", w.shots_per_salvo)));
+    w.zoom_min = std::max(1.0, s.number("ZoomMin", w.zoom_min));
+    w.zoom_max = std::max(w.zoom_min, s.number("ZoomMax", w.zoom_min));
+    w.zoom_first_person = s.number("ZoomFirstPerson", 0) != 0;
     w.damage = s.number("MaxDamage", w.damage) * s.number("PersonScale", 1.0);
     w.bolt_speed = s.number("Velocity", w.bolt_speed);
     w.bolt_gravity = s.number("Gravity", w.bolt_gravity);

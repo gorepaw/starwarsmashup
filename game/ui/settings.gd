@@ -17,6 +17,8 @@ const ACTIONS := [
 	["move_right", "Strafe Right", KEY_D],
 	["sprint", "Sprint", KEY_SHIFT],
 	["jump", "Jump", KEY_SPACE],
+	["crouch", "Crouch / Roll", KEY_C],
+	["zoom", "Zoom", KEY_Z],
 	["fire", "Fire", "mouse:1"],
 	["grenade", "Throw Grenade", "mouse:2"],
 	["reload", "Reload", KEY_R],

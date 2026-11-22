@@ -38,6 +38,9 @@ void put_state(ByteWriter& out, const MoveState& state) {
     out.put(uint8_t(state.grounded));
     out.put(state.energy);
     out.put(uint8_t(state.sprinting));
+    out.put(uint8_t(uint8_t(state.crouched) | uint8_t(state.crouch_held) << 1));
+    out.put(state.roll);
+    out.put(state.roll_yaw);
     const CombatState& c = state.combat;
     out.put(c.weapon);
     out.put(c.cooldown);
@@ -60,6 +63,11 @@ MoveState get_state(ByteReader& in) {
     state.grounded = in.get<uint8_t>() != 0;
     state.energy = in.get<double>();
     state.sprinting = in.get<uint8_t>() != 0;
+    const uint8_t posture = in.get<uint8_t>();
+    state.crouched = (posture & 1) != 0;
+    state.crouch_held = (posture & 2) != 0;
+    state.roll = in.get<float>();
+    state.roll_yaw = in.get<float>();
     CombatState& c = state.combat;
     c.weapon = in.get<uint8_t>();
     c.cooldown = in.get<double>();

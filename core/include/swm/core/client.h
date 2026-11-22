@@ -73,6 +73,7 @@ public:
         bool fire = false;
         bool reload = false;
         bool secondary = false;  // throw a grenade
+        bool crouch = false;     // crouch, stand, or roll on the move (see MoveInput::crouch)
         int weapon = 0;
     };
     void set_input(const Controls& controls);

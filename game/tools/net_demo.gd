@@ -78,6 +78,7 @@ const Bf2Map = preload("res://rendering/bf2_map.gd")
 const SwgCity = preload("res://rendering/swg_city.gd")
 const Soldier = preload("res://rendering/soldier.gd")
 const TeamTags = preload("res://rendering/team_tags.gd")
+const ScopeOverlay = preload("res://ui/scope_overlay.gd")
 const Pickups = preload("res://rendering/pickups.gd")
 const Bf2Effects = preload("res://rendering/bf2_effects.gd")
 const Bf2Hud = preload("res://ui/bf2_hud.gd")
@@ -103,6 +104,10 @@ const SHOT_COUNT := 4
 const CAMERA_MIN_DISTANCE := 0.6
 const FIRST_PERSON_FORWARD := 0.12  # m the first-person camera sits in front of the head bone (out of the helmet)
 const EYE_HEIGHT := 1.6       # matches core: shots start here
+const CROUCHED_EYE_HEIGHT := 1.1  # and crouched (core crouched_eye_height)
+const CROUCH_CAMERA_DROP := 0.5   # m the third-person camera comes down with a crouch
+const CROUCH_CAMERA_RATE := 6.0   # per second, getting there
+const ZOOM_RATE := 12.0           # per second, the view closing in on (or backing out of) a zoom
 const AIM_DISTANCE := 40.0    # the crosshair's ray converges with the shot here
 const MUZZLE_BLEND := 20.0    # m: a drawn bolt leaves the muzzle and joins its true path (from the eye) by here
 const BOT_FIRE_RANGE := 40.0
@@ -154,6 +159,11 @@ var _battlefield: Dictionary = {} # from SwmClient.get_battlefield; empty outsid
 var _posts: Array = []            # per command post: {hologram} (its model's), or {material, label} (a beam)
 var _cone_shader: Shader         # the command post holograms' cone (_holo_cone_shader)
 var _team_tags: TeamTags         # in a match on a Battlefront map: the holograms over soldiers' heads
+var _crouch_view := 0.0          # 0 standing .. 1 crouched: the third-person camera's drop
+var _zoom_step := 0              # 0: not zoomed; else which of the held weapon's zoom levels (Z steps through them)
+var _zoom := 1.0                 # the magnification drawn, easing toward the step's
+var _zoom_weapon := -1           # the weapon zoomed with: switching weapons backs out
+var _scope: ScopeOverlay         # a scoped weapon's overlay (the sniper rifles')
 var _pickups: Pickups            # dropped health, ammo, dual and energy canisters
 var _effects: Bf2Effects         # Battlefront bolts, projectile models, muzzle flashes, sparks, trails, explosions
 var _spawn_loadout := 0
@@ -464,7 +474,8 @@ func _controls() -> Dictionary:
 	return {"forward": forward, "right": right, "yaw": aim.x, "pitch": aim.y,
 			"sprint": Input.is_action_pressed("sprint"), "jump": Input.is_action_pressed("jump"),
 			"fire": Input.is_action_pressed("fire") and can_fire, "reload": Input.is_action_pressed("reload"),
-			"secondary": Input.is_action_pressed("grenade"), "weapon": _weapon}
+			"secondary": Input.is_action_pressed("grenade"), "crouch": Input.is_action_pressed("crouch"),
+			"weapon": _weapon}
 
 
 # Yaw and pitch from the character's eyes to where the crosshair (the
@@ -473,7 +484,8 @@ func _controls() -> Dictionary:
 func _aim() -> Vector2:
 	if not _client.is_spawned():
 		return Vector2(_yaw, 0)
-	var eye: Vector3 = _client.get_presented()["position"] + Vector3.UP * EYE_HEIGHT
+	var own: Dictionary = _client.get_presented()
+	var eye: Vector3 = own["position"] + Vector3.UP * (CROUCHED_EYE_HEIGHT if own.get("crouched", false) else EYE_HEIGHT)
 	var target := _camera.global_position - _camera.global_basis.z * AIM_DISTANCE
 	var to := target - eye
 	return Vector2(atan2(-to.x, -to.z), atan2(to.y, Vector2(to.x, to.z).length()))
@@ -508,7 +520,7 @@ func _on_input(event: InputEvent) -> void:
 	var screen_spawn := _spawn_screen != null and _choosing_spawn()
 	if event is InputEventMouseMotion and _mouse_captured:
 		var motion := event as InputEventMouseMotion
-		var sensitivity := MOUSE_SENSITIVITY * _settings.mouse_sensitivity
+		var sensitivity := MOUSE_SENSITIVITY * _settings.mouse_sensitivity / _zoom  # steadier zoomed in
 		_yaw -= motion.relative.x * sensitivity
 		var lowest := -1.35 if _first_person else -1.2
 		var highest := 1.35 if _first_person else 0.6
@@ -544,6 +556,10 @@ func _on_input(event: InputEvent) -> void:
 	elif event.is_action_pressed("toggle_view") and not event.is_echo():
 		_first_person = not _first_person
 		_pitch = clampf(_pitch, -1.2, 0.6)
+	elif event.is_action_pressed("zoom") and not event.is_echo():
+		var steps := _zoom_steps()
+		_zoom_step = 0 if steps.is_empty() else (_zoom_step + 1) % (steps.size() + 1)
+		_zoom_weapon = _weapon
 	elif event.is_action_pressed("primary"):
 		_weapon = 0
 	elif event.is_action_pressed("sidearm"):
@@ -746,13 +762,14 @@ func _camera_basis() -> Basis:
 
 
 func _camera_pivot(target: Vector3) -> Vector3:
-	return target + Vector3.UP * CAMERA_HEIGHT * 0.8
+	return target + Vector3.UP * (CAMERA_HEIGHT * 0.8 - CROUCH_CAMERA_DROP * _crouch_view)
 
 
 func _update_camera(target: Vector3, delta: float) -> void:
 	# First person while alive; dying, the camera pulls out to watch the body.
 	var soldier := _soldier_of(_client.get_entity_id())
-	var from_eyes := _first_person and soldier != null and bool(_client.get_presented()["alive"])
+	var scoped := _update_zoom(delta)
+	var from_eyes := (_first_person or scoped) and soldier != null and bool(_client.get_presented()["alive"])
 	if soldier != null:
 		soldier.first_person = from_eyes
 	if from_eyes:
@@ -762,10 +779,15 @@ func _update_camera(target: Vector3, delta: float) -> void:
 			_yaw = float(own["yaw"])
 			_pitch = float(own["pitch"])
 		_camera_yaw = _yaw
+		_crouch_view = 0.0
 		var look := _camera_basis()
 		_camera.global_position = soldier.eye() - look.z * FIRST_PERSON_FORWARD
 		_camera.global_basis = look
+		if scoped:
+			soldier.model.visible = false  # through the scope: no arms or gun in the way
 		return
+	var crouched := bool(_client.get_presented().get("crouched", false))
+	_crouch_view = move_toward(_crouch_view, 1.0 if crouched else 0.0, CROUCH_CAMERA_RATE * delta)
 	# Over the shoulder, facing where the character aims (as in Battlefront,
 	# the character always faces the camera's direction). Bots turn sharply,
 	# so their camera follows smoothly.
@@ -885,10 +907,9 @@ func _update_bf2_hud(delta: float) -> void:
 	_bf2_hud.queue_redraw()
 
 
-# The spawn and score screens, from the match's state; the camera's field of
-# view from the settings.
+# The spawn and score screens, from the match's state. (The camera's field
+# of view, from the settings, is _update_zoom's.)
 func _update_screens() -> void:
-	_camera.fov = _settings.field_of_view
 	var game: Dictionary = _client.get_match() if _client.is_spawned() else {}
 	var own: Dictionary = _client.get_presented() if _client.is_spawned() else {}
 	var team := int(own.get("team", -1))
@@ -1348,6 +1369,9 @@ func _setup_scene() -> void:
 	var layer := CanvasLayer.new()
 	_bf2_hud = Bf2Hud.new()
 	if _bf2_hud.load_layout(HUD_DIR):
+		_scope = ScopeOverlay.new(_bf2_hud.art)
+		_scope.visible = false
+		layer.add_child(_scope)
 		for ammo in ["player1weapon1ammo", "player1weapon2ammo", "player1weapon1ammoInfinite",
 				"player1weapon2ammoInfinite"]:
 			_bf2_hud.nudges[ammo] = AMMO_NUDGE
@@ -1589,6 +1613,49 @@ void fragment() {
 }
 """
 	return _cone_shader
+
+
+# The held weapon's zoom levels: from ZoomMin up to ZoomMax, doubling (the
+# sniper rifle's 2, 4 and 8); none if it doesn't zoom.
+func _zoom_steps() -> Array[float]:
+	var steps: Array[float] = []
+	if _weapon >= _weapons.size() or (_weapons[_weapon] as Dictionary).is_empty():
+		return steps
+	var weapon: Dictionary = _weapons[_weapon]
+	var low := float(weapon.get("zoom_min", 1.0))
+	var high := float(weapon.get("zoom_max", low))
+	if high <= 1.0:
+		return steps
+	steps.append(low)
+	while steps[-1] * 2.0 <= high + 0.01:
+		steps.append(steps[-1] * 2.0)
+	if steps[-1] < high - 0.01:
+		steps.append(high)
+	return steps
+
+
+# Backs out of a zoom when it no longer fits (another weapon, sprinting,
+# rolling, dead), eases the view toward the zoom's magnification, and shows
+# the scope for a scoped weapon. Returns whether it's looking through one.
+func _update_zoom(delta: float) -> bool:
+	var own: Dictionary = _client.get_presented()
+	var steps := _zoom_steps()
+	if _zoom_weapon != _weapon or not bool(own.get("alive", false)) or bool(own.get("sprinting", false)) \
+			or float(own.get("roll", 0.0)) > 0.0 or _zoom_step > steps.size():
+		_zoom_step = 0
+	var target := steps[_zoom_step - 1] if _zoom_step > 0 else 1.0
+	_zoom = lerpf(_zoom, target, minf(1.0, ZOOM_RATE * delta))
+	if absf(_zoom - target) < 0.01:
+		_zoom = target
+	# The same view, magnified: the field of view narrowed by the zoom.
+	var base := deg_to_rad(_settings.field_of_view)
+	_camera.fov = rad_to_deg(2.0 * atan(tan(base / 2.0) / _zoom))
+	var weapon: Dictionary = _weapons[_weapon] if _weapon < _weapons.size() else {}
+	var scoped := _zoom_step > 0 and bool(weapon.get("zoom_first_person", false))
+	if _scope != null:
+		_scope.visible = scoped
+		_scope.side = str(weapon.get("name", "imp_")).substr(0, 3)
+	return scoped
 
 
 # The hologram key (HoloImageGeometry's side) for a team: from its icon.

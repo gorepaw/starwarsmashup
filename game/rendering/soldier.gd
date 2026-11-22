@@ -26,6 +26,15 @@ const RELOAD := &"human_rifle_stand_reload_full"
 const THROW := &"human_rifle_stand_shoot_secondary_full"
 const HIT := &"human_rifle_stand_hitfront"
 const DEATHS: Array[StringName] = [&"human_rifle_stand_death_forward", &"human_rifle_stand_death_backward"]
+const CROUCH_IDLE := &"human_rifle_crouch_idle_emote_full"
+const CROUCH_WALK := &"human_rifle_crouch_walkforward"
+const CROUCH_BACK := &"human_rifle_crouch_walkbackward"
+const CROUCH_SHOOT := &"human_rifle_crouch_shoot_full"
+const CROUCH_RELOAD := &"human_rifle_crouch_reload_full"
+const ROLL := &"human_rifle_diveforward"  # Battlefront's roll (human_1)
+const CROUCH_WALK_SPEED := 3.5  # m/s the crouch walk plays at its own pace (ASSUMPTION, by eye)
+const CROUCH_BLEND := 6.0       # per second, getting down or up
+const ROLL_TIME := 0.75         # s a roll lasts (core MoveParams::roll_time)
 const RUN_SPEED := 6.0       # m/s the run cycle plays at its own pace (faster, faster; tuned by eye: 4.5 looked hurried)
 const AIM_HOLD := 1.2        # seconds the rifle stays raised after a shot
 const AIM_BLEND := 8.0       # per second, raising and lowering it
@@ -87,6 +96,8 @@ var _sway := 0.0
 var _last_yaw := 0.0
 var _last_y := 0.0
 var _step := 0.0             # m the chest still lags a step up or down
+var _crouch := 0.0           # 0 standing .. 1 crouched
+var _rolling := false
 var _dip := 0.0              # first person: 0 .. 1 the gun dipped to reload or throw
 var _throwing := 0.0         # s left of a first-person throw's dip
 
@@ -208,7 +219,7 @@ func _init(scene: Node3D) -> void:
 		skeleton.add_child(_aimer)
 	if _player == null or not _player.has_animation(SHOOT):
 		return  # an older export without the firing clips: run and idle only
-	for looping: StringName in [IDLE, RUN, RUN_BACK]:
+	for looping: StringName in [IDLE, RUN, RUN_BACK, CROUCH_IDLE, CROUCH_WALK, CROUCH_BACK]:
 		if _player.has_animation(looping):
 			_player.get_animation(looping).loop_mode = Animation.LOOP_LINEAR
 	_tree = AnimationTree.new()
@@ -222,9 +233,10 @@ func _init(scene: Node3D) -> void:
 	_tree.active = true
 
 
-# Legs: idle <-> run (back or forward) scaled by speed. Upper body on top:
-# the raised-rifle firing clip (restarted per shot), then reload, throw and
-# flinch as one-shots.
+# Legs: idle <-> run (back or forward) scaled by speed, standing or
+# crouched (blended by "posture"). Upper body on top: the raised-rifle firing
+# clip (restarted per shot; the crouched one crouched), then reload, throw and
+# flinch as one-shots, and the roll over everything.
 func _build_tree(upper: Array[NodePath]) -> AnimationNodeBlendTree:
 	var root := AnimationNodeBlendTree.new()
 	var move := AnimationNodeBlendSpace1D.new()
@@ -234,34 +246,65 @@ func _build_tree(upper: Array[NodePath]) -> AnimationNodeBlendTree:
 	root.add_node(&"move", move)
 	root.add_node(&"move_speed", AnimationNodeTimeScale.new())
 	root.connect_node(&"move_speed", 0, &"move")
+	var crouch_move := AnimationNodeBlendSpace1D.new()
+	crouch_move.add_blend_point(_clip(CROUCH_BACK, CROUCH_IDLE), -1.0, -1, &"back")
+	crouch_move.add_blend_point(_clip(CROUCH_IDLE), 0.0, -1, &"idle")
+	crouch_move.add_blend_point(_clip(CROUCH_WALK, CROUCH_IDLE), 1.0, -1, &"walk")
+	root.add_node(&"crouch_move", crouch_move)
+	root.add_node(&"crouch_speed", AnimationNodeTimeScale.new())
+	root.connect_node(&"crouch_speed", 0, &"crouch_move")
+	root.add_node(&"posture", AnimationNodeBlend2.new())
+	root.connect_node(&"posture", 0, &"move_speed")
+	root.connect_node(&"posture", 1, &"crouch_speed")
 
 	root.add_node(&"shoot", _clip(SHOOT))
+	root.add_node(&"crouch_shoot", _clip(CROUCH_SHOOT, SHOOT))
+	root.add_node(&"shoot_posture", AnimationNodeBlend2.new())
+	root.connect_node(&"shoot_posture", 0, &"shoot")
+	root.connect_node(&"shoot_posture", 1, &"crouch_shoot")
 	root.add_node(&"shoot_seek", AnimationNodeTimeSeek.new())
-	root.connect_node(&"shoot_seek", 0, &"shoot")
+	root.connect_node(&"shoot_seek", 0, &"shoot_posture")
 	var aim := AnimationNodeBlend2.new()
 	_filter(aim, upper)
 	root.add_node(&"aim", aim)
-	root.connect_node(&"aim", 0, &"move_speed")
+	root.connect_node(&"aim", 0, &"posture")
 	root.connect_node(&"aim", 1, &"shoot_seek")
 
+	root.add_node(&"reload_stand", _clip(RELOAD))
+	root.add_node(&"reload_crouch", _clip(CROUCH_RELOAD, RELOAD))
+	root.add_node(&"reload_clip", AnimationNodeBlend2.new())
+	root.connect_node(&"reload_clip", 0, &"reload_stand")
+	root.connect_node(&"reload_clip", 1, &"reload_crouch")
+	root.add_node(&"throw_clip", _clip(THROW))
+	root.add_node(&"flinch_clip", _clip(HIT))
 	var last := &"aim"
-	for layer: Array in [[&"reload", RELOAD], [&"throw", THROW], [&"flinch", HIT]]:
+	for layer: StringName in [&"reload", &"throw", &"flinch"]:
 		var shot := AnimationNodeOneShot.new()
 		shot.fadein_time = 0.12
 		shot.fadeout_time = 0.2
 		_filter(shot, upper)
-		root.add_node(layer[0], shot)
-		root.add_node(StringName(str(layer[0]) + "_clip"), _clip(layer[1]))
-		root.connect_node(layer[0], 0, last)
-		root.connect_node(layer[0], 1, StringName(str(layer[0]) + "_clip"))
-		last = layer[0]
-	root.connect_node(&"output", 0, last)
+		root.add_node(layer, shot)
+		root.connect_node(layer, 0, last)
+		root.connect_node(layer, 1, StringName(str(layer) + "_clip"))
+		last = layer
+	# The roll: the whole body, played to last as long as the roll does.
+	var roll := AnimationNodeOneShot.new()
+	roll.fadein_time = 0.08
+	roll.fadeout_time = 0.15
+	root.add_node(&"roll", roll)
+	root.add_node(&"roll_clip", _clip(ROLL))
+	root.add_node(&"roll_rate", AnimationNodeTimeScale.new())
+	root.connect_node(&"roll_rate", 0, &"roll_clip")
+	root.connect_node(&"roll", 0, last)
+	root.connect_node(&"roll", 1, &"roll_rate")
+	root.connect_node(&"output", 0, &"roll")
 	return root
 
 
-func _clip(animation: StringName) -> AnimationNodeAnimation:
+# A clip node; `fallback` (or idle) if the export doesn't have it.
+func _clip(animation: StringName, fallback: StringName = IDLE) -> AnimationNodeAnimation:
 	var node := AnimationNodeAnimation.new()
-	node.animation = animation if _player.has_animation(animation) else IDLE
+	node.animation = animation if _player.has_animation(animation) else fallback
 	return node
 
 
@@ -301,6 +344,9 @@ func pose(state: Dictionary, delta: float) -> void:
 	model.position = state["position"]
 	var yaw := float(state["yaw"])
 	model.rotation.y = yaw + PI  # the model faces +Z; yaw 0 faces -Z
+	var rolling := float(state.get("roll", 0.0)) > 0.0
+	if rolling and not first_person:
+		model.rotation.y = float(state.get("roll_yaw", yaw)) + PI  # it rolls the way it goes
 	if _tree == null:
 		_pose_simple(state)
 		return
@@ -322,6 +368,23 @@ func pose(state: Dictionary, delta: float) -> void:
 	_leg_yaw = lerp_angle(_leg_yaw, leg_yaw, minf(1.0, 10.0 * delta))
 	_tree.set("parameters/move/blend_position", blend)
 	_tree.set("parameters/move_speed/scale", clampf(speed / RUN_SPEED, 0.6, 1.5) if speed > 0.5 else 1.0)
+	_tree.set("parameters/crouch_move/blend_position", blend)
+	_tree.set("parameters/crouch_speed/scale", clampf(speed / CROUCH_WALK_SPEED, 0.6, 1.5) if speed > 0.5 else 1.0)
+	_crouch = move_toward(_crouch, 1.0 if bool(state.get("crouched", false)) else 0.0, CROUCH_BLEND * delta)
+	for blend_node: String in ["posture", "shoot_posture", "reload_clip"]:
+		_tree.set("parameters/%s/blend_amount" % blend_node, _crouch)
+
+	# A roll: Battlefront's dive roll in third person; in first person, the
+	# gun dips (the clip would tumble the camera).
+	if rolling and not _rolling:
+		if first_person:
+			_throwing = maxf(_throwing, ROLL_TIME)
+		elif _player.has_animation(ROLL):
+			_tree.set("parameters/roll_rate/scale", _player.get_animation(ROLL).length / ROLL_TIME)
+			_tree.set("parameters/roll/request", AnimationNodeOneShot.ONE_SHOT_REQUEST_FIRE)
+	_rolling = rolling
+	if rolling:
+		_leg_yaw = 0.0
 
 	_since_shot += delta
 	if first_person:

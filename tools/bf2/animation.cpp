@@ -50,6 +50,11 @@ std::vector<Block> read_blocks(std::span<const uint8_t> bytes) {
     while (pos + 8 <= bytes.size()) {
         uint32_t size;
         std::memcpy(&size, bytes.data() + pos + 4, 4);
+        // A bank's last block may count padding its payload stops short of
+        // (human_1's TADA: 28,844 bytes declared, 28,843 there).
+        if (size > bytes.size() - pos - 8 && size - (bytes.size() - pos - 8) <= 3) {
+            size = uint32_t(bytes.size() - pos - 8);
+        }
         if (size > bytes.size() - pos - 8) {
             throw std::runtime_error("animation data: block overruns its parent");
         }

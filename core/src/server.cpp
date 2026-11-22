@@ -707,8 +707,10 @@ void GameServer::advance_bolts() {
             if (bounces || harmless || target.entity == bolt.owner || target.life != Life::alive || teammate) {
                 continue;
             }
+            // Its posture now (not rewound: ASSUMPTION, close enough).
             const Vec3 feet = position_at(target, double(tick_) - bolt.rewind);
-            const auto t = segment_hits_cylinder(from, to, feet, hit_radius, hit_height);
+            const auto t = segment_hits_cylinder(from, to, feet, hit_radius,
+                                                 target.state.crouched ? crouched_hit_height : hit_height);
             if (t && (!nearest || *t < *nearest)) {
                 nearest = t;
                 victim = &target;

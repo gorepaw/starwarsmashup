@@ -226,7 +226,8 @@ void write_weapon(std::ostream& out, const char* section, const CarriedWeapon& c
     }
     for (const char* key : {"ShotDelay", "RoundsPerClip", "ReloadTime", "HeatPerShot", "HeatRecoverRate",
                             "HeatThreshold", "YawSpread", "PitchSpread", "SpreadPerShot", "SpreadRecoverRate",
-                            "SpreadLimit", "ShotsPerSalvo", "ShotElevate", "MaxRange", "MuzzleFlash", "FlashColor",
+                            "SpreadLimit", "ShotsPerSalvo", "ShotElevate", "MaxRange", "ZoomMin", "ZoomMax",
+                            "ZoomFirstPerson", "MuzzleFlash", "FlashColor",
                             "FlashLength", "FlashLightColor", "FlashLightRadius", "FlashLightDuration"}) {
         if (const auto value = weapon.get(key)) {
             out << key << " = " << *value << "\n";
