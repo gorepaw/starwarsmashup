@@ -11,6 +11,7 @@
 #include <sstream>
 #include <stdexcept>
 
+#include "swg/appearance.h"
 #include "swg/appearance_collision.h"
 #include "swg/building_export.h"
 #include "swg/character_export.h"
@@ -125,7 +126,10 @@ std::vector<SnapshotNode> recruiters(const CityExport& city) {
 // The hub's people ([npc] and [crowd] templates): each a dressed body
 // (its template's appearance and what its client data file says it wears)
 // with Galaxies' own clips, named walk, idle and sit, in <out_dir>/people/,
-// named by the template's file without "shared_".
+// named by the template's file without "shared_". A creature (a bantha, a
+// dewback: its own skeleton, whose name its clips are named by) walks,
+// stands breathing, and kneels for sit (else lies down: a bantha lies on
+// its side, which reads as dead).
 void export_people(TreLibrary& library, const CityExport& city, const std::filesystem::path& out_dir,
                    std::ostream& log) {
     const core::Ini hub = core::Ini::load(city.hub);
@@ -161,11 +165,21 @@ void export_people(TreLibrary& library, const CityExport& city, const std::files
             const std::string body = std::filesystem::path(shared.appearance).stem().string();
             const bool female = body.ends_with("_f");
             const Skeleton skeleton = load_appearance_skeleton(library, shared.appearance);
-            const std::pair<const char*, const char*> clips[] = {
-                {"walk", female ? "appearance/animation/all_b_loc_walk_female.ans" : "appearance/animation/all_b_loc_walk_male.ans"},
-                {"idle", "appearance/animation/all_b_idl_standing_idle1.ans"},
-                {"sit", "appearance/animation/all_b_idl_sitting_chair_idle.ans"},
+            const SkeletalAppearance appearance = parse_skeletal_appearance(library.read(shared.appearance));
+            const std::string kind =
+                appearance.skeletons.empty() ? "all_b" : std::filesystem::path(appearance.skeletons[0].path).stem().string();
+            const std::string clip_prefix = "appearance/animation/" + kind;
+            std::vector<std::pair<std::string, std::string>> clips = {
+                {"walk", clip_prefix + (female ? "_loc_walk_female.ans" : "_loc_walk_male.ans")},
+                {"idle", clip_prefix + "_idl_standing_idle1.ans"},
+                {"sit", clip_prefix + "_idl_sitting_chair_idle.ans"},
             };
+            if (kind != "all_b") {  // a creature
+                const std::string kneel = clip_prefix + "_idl_kneel_breathe.ans";
+                clips = {{"walk", clip_prefix + "_loc_walk.ans"},
+                         {"idle", clip_prefix + "_idl_stand_breathe.ans"},
+                         {"sit", library.contains(kneel) ? kneel : clip_prefix + "_idl_lie_breathe.ans"}};
+            }
             for (const auto& [name, path] : clips) {
                 if (library.contains(path)) {
                     request.clips.push_back(sample_animation(parse_keyframe_animation(library.read(path)), skeleton, name));
