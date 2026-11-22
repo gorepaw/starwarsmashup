@@ -206,16 +206,39 @@ WeaponDef load_weapon(const std::filesystem::path& path) {
     w.explosion_damage = s.number("ExplosionDamage", 0) * s.number("ExplosionPersonScale", 1.0);
     w.explosion_inner = s.number("ExplosionRadiusInner", 0);
     w.explosion_outer = std::max(w.explosion_inner, s.number("ExplosionRadiusOuter", 0));
-    if (const auto color = s.get("LaserGlowColor")) {
-        std::istringstream fields(*color);
-        for (double& channel : w.bolt_color) {
-            double value = channel * 255;
-            fields >> value;
-            channel = value / 255;
+    const auto read_color = [&](const char* key, std::array<double, 4>& out) {
+        if (const auto color = s.get(key)) {
+            std::istringstream fields(*color);
+            for (double& channel : out) {
+                double value = channel * 255;
+                if (fields >> value) {
+                    channel = value / 255;
+                }
+            }
         }
-    }
+    };
+    read_color("LaserGlowColor", w.bolt_color);
     w.bolt_length = s.number("LaserLength", w.bolt_length);
     w.bolt_width = s.number("LaserWidth", w.bolt_width);
+    if (const auto tex = s.get("LaserTexture")) {
+        w.bolt_texture = *tex;
+    } else if (w.projectile != Projectile::bolt) {
+        w.bolt_texture.clear();
+    }
+    w.glow_length = s.number("GlowLength", w.bolt_length * 3.0);
+    w.blur_length = s.number("BlurLength", w.glow_length);
+    read_color("LightColor", w.light_color);
+    w.light_radius = s.number("LightRadius", w.light_radius);
+    w.ordnance_model = s.get("GeometryName").value_or("");
+    w.trail_effect = s.get("TrailEffect").value_or("");
+    w.impact_effect = s.get("ImpactEffect").value_or(w.impact_effect);
+    w.explosion_effect = s.get("ExplosionEffect").value_or("");
+    w.muzzle_flash = s.get("MuzzleFlash").value_or(w.projectile == Projectile::grenade ? "" : w.muzzle_flash);
+    read_color("FlashColor", w.flash_color);
+    w.flash_length = s.number("FlashLength", w.flash_length);
+    read_color("FlashLightColor", w.flash_light_color);
+    w.flash_light_radius = s.number("FlashLightRadius", w.flash_light_radius);
+    w.flash_light_duration = s.number("FlashLightDuration", w.flash_light_duration);
     w.modifiers = read_modifiers(s, where);
     return w;
 }

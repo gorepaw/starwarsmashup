@@ -92,8 +92,12 @@ public:
     // "captured" and "neutralized" have the team as attacker and the command
     // post as victim.
     godot::Array take_events();
-    // Explosions since the last call: [{position, radius, owner}].
+    // Explosions since the last call: [{position, normal, radius, owner, effect,
+    // light_color, light_radius}].
     godot::Array take_explosions();
+    // Bolt impacts since the last call (for sparks and scorch marks):
+    // [{position, normal, hit_character, effect, color}].
+    godot::Array take_impacts();
     // Dropped health, ammo, dual and energy canisters on the ground:
     // [{id, kind, model, position, time_left}].
     godot::Array get_pickups() const;

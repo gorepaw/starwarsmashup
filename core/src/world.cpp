@@ -517,7 +517,14 @@ World::Ground World::support_at(double x, double z, double y, double step_up, do
     return best;
 }
 
-std::optional<double> World::raycast(Vec3 a, Vec3 b) const { return cast(a, b, blocks_shots, false); }
+std::optional<World::RayHit> World::raycast_hit(Vec3 a, Vec3 b) const { return cast(a, b, blocks_shots, false); }
+
+std::optional<double> World::raycast(Vec3 a, Vec3 b) const {
+    if (const auto hit = cast(a, b, blocks_shots, false)) {
+        return hit->t;
+    }
+    return std::nullopt;
+}
 
 bool World::walk_blocked(Vec3 a, Vec3 b) const { return cast(a, b, blocks_characters, true).has_value(); }
 
@@ -568,14 +575,23 @@ bool World::floor_between(double x, double z, double low, double high) const {
     return found;
 }
 
-std::optional<double> World::cast(Vec3 a, Vec3 b, uint8_t blocks, bool front_only) const {
-    std::optional<double> best;
-    const auto consider = [&](double t) {
-        if (t >= 0 && t <= 1 && (!best || t < *best)) {
-            best = t;
+std::optional<World::RayHit> World::cast(Vec3 a, Vec3 b, uint8_t blocks, bool front_only) const {
+    std::optional<RayHit> best;
+    const Vec3 d = b - a;
+    const auto consider = [&](double t, Vec3 normal) {
+        if (t >= 0 && t <= 1 && (!best || t < best->t)) {
+            const double len = normal.length();
+            if (len > 1e-9) {
+                normal = normal * (1.0 / len);
+            } else {
+                normal = {0, 1, 0};
+            }
+            if (dot(normal, d) > 0) {
+                normal = normal * -1.0;
+            }
+            best = RayHit{t, normal};
         }
     };
-    const Vec3 d = b - a;
 
     // Terrain: march in steps of at most a meter, then bisect the crossing.
     const auto below = [&](double t) {
@@ -592,7 +608,8 @@ std::optional<double> World::cast(Vec3 a, Vec3 b, uint8_t blocks, bool front_onl
                     const double mid = (lo + hi) / 2;
                     (below(mid) ? hi : lo) = mid;
                 }
-                consider(hi);
+                const Vec3 at = a + d * hi;
+                consider(hi, terrain_.normal_at(at.x, at.z));
                 break;
             }
         }
@@ -601,7 +618,7 @@ std::optional<double> World::cast(Vec3 a, Vec3 b, uint8_t blocks, bool front_onl
     for_solids_along(a, b, [&](const Solid& s) {
         if ((s.blocks & blocks) && (!front_only || s.normal.dot(d) < 0)) {
             if (const auto t = segment_triangle(a, d, s.a, s.b, s.c)) {
-                consider(*t);
+                consider(*t, s.normal);
             }
         }
     });
@@ -630,7 +647,7 @@ std::optional<double> World::cast(Vec3 a, Vec3 b, uint8_t blocks, bool front_onl
             if (v < 0 || u + v > 1) {
                 continue;
             }
-            consider((e2.x * q.x + e2.y * q.y + e2.z * q.z) / det);
+            consider((e2.x * q.x + e2.y * q.y + e2.z * q.z) / det, cross(e1, e2));
         }
         // Walls: vertical quads above their floor edge.
         for (const Wall& w : building.walls) {
@@ -647,7 +664,7 @@ std::optional<double> World::cast(Vec3 a, Vec3 b, uint8_t blocks, bool front_onl
             const double y = a.y + d.y * t;
             const double floor = w.a.y + (w.b.y - w.a.y) * u;
             if (y >= floor && y <= floor + (w.top - std::max(w.a.y, w.b.y))) {
-                consider(t);
+                consider(t, {-ez, 0, ex});
             }
         }
     }

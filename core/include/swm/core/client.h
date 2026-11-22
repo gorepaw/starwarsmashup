@@ -134,6 +134,8 @@ public:
     std::vector<net::CombatEvent> take_events();
     // Explosions since the last call.
     std::vector<net::Explosion> take_explosions();
+    // Bolt impacts since the last call (for sparks and scorch marks).
+    std::vector<net::Impact> take_impacts();
     // Dropped health, ammo, dual and energy canisters from the newest snapshot.
     const std::vector<net::PickupState>& pickups() const { return pickups_; }
 
@@ -199,6 +201,7 @@ private:
     std::vector<Shot> shots_;
     std::vector<net::CombatEvent> events_;
     std::vector<net::Explosion> explosions_;
+    std::vector<net::Impact> impacts_;
     std::vector<net::PickupState> pickups_;
 };
 

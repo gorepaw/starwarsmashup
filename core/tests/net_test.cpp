@@ -23,12 +23,21 @@ void test_protocol() {
     snapshot.last_input = 99;
     snapshot.entities.push_back({7, {{1.5, -2.25, 3e6}, {4, 0, -5}, 0.75f, false}});
     snapshot.entities.push_back({8, {}});
+    snapshot.impacts.push_back({7, 0, {10, 2, -5}, {0, 0, 1}, false});
     snapshot.pickups.push_back({42, PickupKind::dual, {-12.5, 3.0, 8.25}, 24.5f});
+    MatchState match;
+    match.phase = Phase::live;
+    match.tickets = {120, 115};
+    match.posts.push_back({0, 0, 1.0f, false});
+    match.powerup_health = {600.0f, 180.0f, 0.0f};
+    snapshot.match = match;
     const Message decoded = decode(encode(snapshot));
     const auto* s = std::get_if<Snapshot>(&decoded);
     CHECK(s != nullptr && s->server_tick == 1234 && s->last_input == 99 && s->entities.size() == 2);
     CHECK(s != nullptr && s->entities[0].id == 7 && s->entities[0].state == snapshot.entities[0].state);
+    CHECK(s != nullptr && s->impacts.size() == 1 && s->impacts[0] == snapshot.impacts[0]);
     CHECK(s != nullptr && s->pickups.size() == 1 && s->pickups[0] == snapshot.pickups[0]);
+    CHECK(s != nullptr && s->match && s->match->powerup_health == match.powerup_health);
 
     InputBatch batch;
     for (uint32_t i = 1; i <= 20; ++i) {

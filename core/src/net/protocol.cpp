@@ -116,6 +116,10 @@ void put_match(ByteWriter& out, const MatchState& m) {
         out.put(post.charge);
         out.put(uint8_t(post.contested));
     }
+    out.put(uint16_t(m.powerup_health.size()));
+    for (const float health : m.powerup_health) {
+        out.put(health);
+    }
 }
 
 int8_t get_team(ByteReader& in) {
@@ -147,6 +151,11 @@ MatchState get_match(ByteReader& in) {
         post.charge = in.get<float>();
         post.contested = in.get<uint8_t>() != 0;
         m.posts.push_back(post);
+    }
+    const size_t powerups = in.get<uint16_t>();
+    m.powerup_health.reserve(powerups);
+    for (size_t i = 0; i < powerups; ++i) {
+        m.powerup_health.push_back(in.get<float>());
     }
     return m;
 }
@@ -231,7 +240,16 @@ struct Encoder {
             out.put(e.owner);
             out.put(e.weapon);
             put_vec3(out, e.position);
+            put_vec3(out, e.normal);
             out.put(e.radius);
+        }
+        out.put(uint16_t(m.impacts.size()));
+        for (const Impact& imp : m.impacts) {
+            out.put(imp.owner);
+            out.put(imp.weapon);
+            put_vec3(out, imp.position);
+            put_vec3(out, imp.normal);
+            out.put(uint8_t(imp.hit_character));
         }
         out.put(uint16_t(m.pickups.size()));
         for (const PickupState& p : m.pickups) {
@@ -396,8 +414,19 @@ Message decode(std::span<const uint8_t> packet) {
             e.owner = in.get<uint32_t>();
             e.weapon = in.get<uint8_t>();
             e.position = get_vec3(in);
+            e.normal = get_vec3(in);
             e.radius = in.get<float>();
             m.explosions.push_back(e);
+        }
+        const size_t impacts = in.get<uint16_t>();
+        for (size_t i = 0; i < impacts; ++i) {
+            Impact imp;
+            imp.owner = in.get<uint32_t>();
+            imp.weapon = in.get<uint8_t>();
+            imp.position = get_vec3(in);
+            imp.normal = get_vec3(in);
+            imp.hit_character = in.get<uint8_t>() != 0;
+            m.impacts.push_back(imp);
         }
         const size_t pickups = in.get<uint16_t>();
         for (size_t i = 0; i < pickups; ++i) {

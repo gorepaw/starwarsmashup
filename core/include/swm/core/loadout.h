@@ -103,10 +103,25 @@ struct WeaponDef {
     double explosion_damage = 0;     // explosion Damage: full within the inner radius...
     double explosion_inner = 0;      // DamageRadiusInner, m
     double explosion_outer = 0;      // DamageRadiusOuter, m: ...falling to nothing here (ASSUMPTION: linearly)
-    // Looks only (clients draw bolts however their settings allow).
+    // Looks only (clients draw bolts, models and effects however their settings allow).
     std::array<double, 4> bolt_color{253 / 255.0, 43 / 255.0, 43 / 255.0, 100 / 255.0};  // LaserGlowColor
     double bolt_length = 1.0;        // LaserLength, m
     double bolt_width = 0.1;         // LaserWidth, m
+    std::string bolt_texture = "com_sfx_laser_red";  // LaserTexture
+    double glow_length = 3.0;        // GlowLength, m
+    double blur_length = 5.0;        // BlurLength, m
+    std::array<double, 4> light_color{253 / 255.0, 43 / 255.0, 43 / 255.0, 150 / 255.0};  // LightColor
+    double light_radius = 4.0;       // LightRadius, m
+    std::string ordnance_model;      // ordnance GeometryName (grenade, missile, mortar shell)
+    std::string trail_effect;        // TrailEffect
+    std::string impact_effect = "com_sfx_ord_exp";  // ImpactEffectSoft / Terrain
+    std::string explosion_effect;    // explosion Effect
+    std::string muzzle_flash = "small_muzzle_flash";  // MuzzleFlash
+    std::array<double, 4> flash_color{1.0, 100 / 255.0, 100 / 255.0, 1.0};  // FlashColor
+    double flash_length = 0.025;     // FlashLength, s
+    std::array<double, 4> flash_light_color{1.0, 220 / 255.0, 220 / 255.0, 175 / 255.0};  // FlashLightColor
+    double flash_light_radius = 2.0;    // FlashLightRadius, m
+    double flash_light_duration = 0.25; // FlashLightDuration, s
     std::vector<StatModifier> modifiers;  // while carried
 };
 

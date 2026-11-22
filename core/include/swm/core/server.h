@@ -197,6 +197,12 @@ private:
         Vec3 position;
         double life = 0;  // seconds left
     };
+    struct Blast {
+        Bolt bolt;
+        Vec3 at;
+        Vec3 normal{0, 1, 0};
+        bool droid = false;
+    };
 
     void receive(double now);
     void handle(const net::Endpoint& from, const net::Datagram& datagram, double now);
@@ -210,7 +216,8 @@ private:
     void drop_pickup(Vec3 at);
     double random_unit();
     void damage(Client& victim, double raw, DamageType type, uint32_t attacker);
-    void explode(const Bolt& bolt, Vec3 at);
+    void damage_powerup(size_t index, double amount, uint32_t attacker, std::vector<Blast>& blasts);
+    void explode(const Blast& blast, std::vector<Blast>& blasts);
     void kill(Client& victim, uint32_t attacker);
     void respawn(Client& client);
     void spawn_at_post(Client& client, size_t loadout, size_t post);
@@ -238,6 +245,7 @@ private:
     std::vector<Pickup> pickups_;
     std::vector<net::CombatEvent> events_;  // this tick's
     std::vector<net::Explosion> explosions_;  // this tick's
+    std::vector<net::Impact> impacts_;        // this tick's
     std::vector<net::Recruiter> recruiters_;
     std::array<std::string, 2> factions_;
     uint32_t tick_ = 0;

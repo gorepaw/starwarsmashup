@@ -353,12 +353,17 @@ void Bot::choose_powerup(const GameClient& client, double now) {
         }
         return;
     }
+    const auto& match = client.match();
+    const auto station_alive = [&](size_t i) {
+        return !match || i >= match->powerup_health.size() || match->powerup_health[i] > 0.0f;
+    };
     if (powerup_ >= 0) {
         const PowerupStation& station = field.powerups[size_t(powerup_)];
-        const bool done = (station.health <= 0 || health >= patched_up) && (station.ammo <= 0 || ammo >= 0.99);
+        const bool broken = !station_alive(size_t(powerup_));
+        const bool done = broken || ((station.health <= 0 || health >= patched_up) && (station.ammo <= 0 || ammo >= 0.99));
         if (done || now >= powerup_until_) {
             powerup_ = -1;
-            next_powerup_ = now + 10;
+            next_powerup_ = now + (broken ? 0.5 : 10.0);
         }
         return;
     }
@@ -386,6 +391,9 @@ void Bot::choose_powerup(const GameClient& client, double now) {
     int best_station = -1;
     if (urgent) {
         for (size_t i = 0; i < field.powerups.size(); ++i) {
+            if (!station_alive(i)) {
+                continue;
+            }
             const PowerupStation& station = field.powerups[i];
             const bool helps = (health < needs_health && station.health > 0) || (ammo < needs_ammo && station.ammo > 0);
             const double distance = horizontal_distance(station.position, me.position);

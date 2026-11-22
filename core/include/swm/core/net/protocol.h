@@ -17,7 +17,8 @@ namespace swm::core::net {
 // Every packet starts with a magic number, the protocol version and a message
 // type. Peers drop packets with another version. Bump it on any wire change.
 inline constexpr uint16_t protocol_magic = 0x4D53;  // "SM"
-inline constexpr uint16_t protocol_version = 11;
+inline constexpr uint16_t protocol_version = 13;
+inline constexpr uint8_t droid_explosion_weapon = 0xFF;  // Explosion::weapon sentinel for destroyed health/ammo droids
 
 // Client -> server, repeated until a Welcome or Refused arrives. The name
 // picks the saved character (there are no accounts yet). A match server
@@ -133,7 +134,19 @@ struct Explosion {
     uint32_t owner = 0;
     uint8_t weapon = 0;
     Vec3 position;
-    float radius = 0;  // the outer damage radius
+    Vec3 normal{0, 1, 0};  // surface normal, for orienting decals and bursts
+    float radius = 0;      // the outer damage radius
+};
+
+// A projectile impact this tick (sparks and scorch marks), for drawing.
+struct Impact {
+    uint32_t owner = 0;
+    uint8_t weapon = 0;
+    Vec3 position;
+    Vec3 normal{0, 1, 0};
+    bool hit_character = false;
+
+    friend bool operator==(const Impact&, const Impact&) = default;
 };
 
 // Something that happened this tick. Hits and kills are between entities
@@ -169,6 +182,7 @@ struct Snapshot {
     // snapshots stays right.
     std::vector<CombatEvent> events;
     std::vector<Explosion> explosions;  // this tick's
+    std::vector<Impact> impacts;        // this tick's bolt hits on surfaces and bodies
     std::vector<PickupState> pickups;   // dropped canisters on the ground
     std::optional<MatchState> match;  // in a conquest match
     PlayerStatus you;                 // differs per client

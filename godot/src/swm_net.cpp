@@ -68,11 +68,27 @@ void describe(godot::Dictionary& out, const core::net::EntityState& entity) {
     out["colors"] = int64_t(entity.colors);  // 0: the look's own colors; else a seed to vary them by
 }
 
+godot::Color to_color(const std::array<double, 4>& c) {
+    return godot::Color(float(c[0]), float(c[1]), float(c[2]), float(c[3]));
+}
+
 void add_bolt_look(godot::Dictionary& entry, const core::WeaponDef& w) {
-    entry["color"] = godot::Color(float(w.bolt_color[0]), float(w.bolt_color[1]), float(w.bolt_color[2]),
-                                  float(w.bolt_color[3]));
+    entry["color"] = to_color(w.bolt_color);
     entry["length"] = w.bolt_length;
     entry["width"] = w.bolt_width;
+    entry["texture"] = godot::String::utf8(w.bolt_texture.c_str());
+    entry["glow_length"] = w.glow_length;
+    entry["blur_length"] = w.blur_length;
+    entry["light_color"] = to_color(w.light_color);
+    entry["light_radius"] = w.light_radius;
+    entry["model"] = godot::String::utf8(w.ordnance_model.c_str());
+    entry["trail_effect"] = godot::String::utf8(w.trail_effect.c_str());
+    entry["muzzle_flash"] = godot::String::utf8(w.muzzle_flash.c_str());
+    entry["flash_color"] = to_color(w.flash_color);
+    entry["flash_length"] = w.flash_length;
+    entry["flash_light_color"] = to_color(w.flash_light_color);
+    entry["flash_light_radius"] = w.flash_light_radius;
+    entry["flash_light_duration"] = w.flash_light_duration;
 }
 
 godot::Error load_battlefield_file(std::optional<core::Battlefield>& battlefield, const godot::String& path) {
@@ -285,6 +301,17 @@ godot::Dictionary SwmClient::get_battlefield() const {
         posts.push_back(entry);
     }
     out["posts"] = posts;
+    godot::Array powerups;
+    for (const core::PowerupStation& station : field.powerups) {
+        godot::Dictionary entry;
+        entry["position"] = to_godot(station.position);
+        entry["radius"] = station.radius;
+        entry["health"] = station.health;
+        entry["ammo"] = station.ammo;
+        entry["max_health"] = station.max_health;
+        powerups.push_back(entry);
+    }
+    out["powerups"] = powerups;
     return out;
 }
 
@@ -313,6 +340,18 @@ godot::Dictionary SwmClient::get_match() const {
         posts.push_back(entry);
     }
     out["posts"] = posts;
+    godot::Array powerups;
+    const auto& defs = battlefield() ? battlefield()->powerups : std::vector<core::PowerupStation>{};
+    for (size_t i = 0; i < match.powerup_health.size(); ++i) {
+        godot::Dictionary entry;
+        const double hp = double(match.powerup_health[i]);
+        const double max_hp = i < defs.size() ? defs[i].max_health : core::PowerupStation::default_max_health;
+        entry["health"] = hp;
+        entry["max_health"] = max_hp;
+        entry["alive"] = hp > 0.0;
+        powerups.push_back(entry);
+    }
+    out["powerups"] = powerups;
     return out;
 }
 
@@ -553,11 +592,64 @@ godot::Array SwmClient::take_events() {
 godot::Array SwmClient::take_explosions() {
     godot::Array out;
     if (client()) {
+        const auto remotes = client()->remotes();
         for (const core::net::Explosion& e : client()->take_explosions()) {
             godot::Dictionary entry;
             entry["position"] = to_godot(e.position);
+            entry["normal"] = to_godot(e.normal);
             entry["radius"] = double(e.radius);
             entry["owner"] = int64_t(e.owner);
+            if (e.weapon == core::net::droid_explosion_weapon) {
+                entry["effect"] = godot::String("com_sfx_explosion_sm");
+                entry["light_color"] = godot::Color(1.0f, 0.72f, 0.3f, 1.0f);
+                entry["light_radius"] = 6.0;
+                out.push_back(entry);
+                continue;
+            }
+            const core::Loadout* owner_def = &loadout();
+            if (e.owner != uint32_t(client()->entity_id())) {
+                int team = -1, loadout_index = 0;
+                for (const auto& remote : remotes) {
+                    if (remote.id == e.owner) {
+                        team = remote.team;
+                        loadout_index = remote.loadout;
+                    }
+                }
+                owner_def = &loadout_of(team, loadout_index);
+            }
+            const core::WeaponDef* weapon = core::weapon_in_slot(*owner_def, e.weapon);
+            entry["effect"] = weapon ? godot::String::utf8(weapon->explosion_effect.c_str()) : godot::String();
+            entry["light_color"] = weapon ? to_color(weapon->light_color) : godot::Color(1.0f, 0.7f, 0.3f, 1.0f);
+            entry["light_radius"] = weapon && weapon->light_radius > 0 ? weapon->light_radius : double(e.radius) * 2.0;
+            out.push_back(entry);
+        }
+    }
+    return out;
+}
+
+godot::Array SwmClient::take_impacts() {
+    godot::Array out;
+    if (client()) {
+        const auto remotes = client()->remotes();
+        for (const core::net::Impact& imp : client()->take_impacts()) {
+            const core::Loadout* owner_def = &loadout();
+            if (imp.owner != uint32_t(client()->entity_id())) {
+                int team = -1, loadout_index = 0;
+                for (const auto& remote : remotes) {
+                    if (remote.id == imp.owner) {
+                        team = remote.team;
+                        loadout_index = remote.loadout;
+                    }
+                }
+                owner_def = &loadout_of(team, loadout_index);
+            }
+            const core::WeaponDef* weapon = core::weapon_in_slot(*owner_def, imp.weapon);
+            godot::Dictionary entry;
+            entry["position"] = to_godot(imp.position);
+            entry["normal"] = to_godot(imp.normal);
+            entry["hit_character"] = imp.hit_character;
+            entry["effect"] = weapon ? godot::String::utf8(weapon->impact_effect.c_str()) : godot::String("com_sfx_ord_exp");
+            entry["color"] = weapon ? to_color(weapon->bolt_color) : godot::Color(1.0f, 0.5f, 0.2f, 1.0f);
             out.push_back(entry);
         }
     }
@@ -731,6 +823,7 @@ void SwmClient::_bind_methods() {
     ClassDB::bind_method(D_METHOD("take_shots"), &SwmClient::take_shots);
     ClassDB::bind_method(D_METHOD("take_events"), &SwmClient::take_events);
     ClassDB::bind_method(D_METHOD("take_explosions"), &SwmClient::take_explosions);
+    ClassDB::bind_method(D_METHOD("take_impacts"), &SwmClient::take_impacts);
     ClassDB::bind_method(D_METHOD("get_pickups"), &SwmClient::get_pickups);
     ClassDB::bind_method(D_METHOD("get_secondary"), &SwmClient::get_secondary);
     ClassDB::bind_method(D_METHOD("get_weapons"), &SwmClient::get_weapons);

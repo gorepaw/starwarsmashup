@@ -154,6 +154,8 @@ static func add_objects(parent: Node, prefix: String) -> int:
 # Their models come as one piece, so the whole droid moves.
 static func animate_powerups(tree: SceneTree, time: float) -> void:
 	for node: Node3D in tree.get_nodes_in_group(POWERUPS):
+		if not node.visible:
+			continue
 		var spec: Dictionary = node.get_meta("powerup")
 		var placed: Basis = node.get_meta("placed")
 		var seed := float(node.get_instance_id() % 997)

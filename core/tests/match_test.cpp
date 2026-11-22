@@ -561,6 +561,73 @@ void test_spawn_under_floor() {
     CHECK(a.alive() && near(a.predicted().position.y, 4, 0.01));
 }
 
+// Health and ammo droids take a fair amount of damage, blow up when destroyed,
+// stop healing/rearming, bots stop walking to them, and they reset on match live.
+void test_destructible_droids() {
+    Battlefield battlefield = three_posts();
+    battlefield.warmup = 60;
+    battlefield.powerups.push_back({.position = {-50, 0, 0}, .radius = 3, .delay = 0.5, .health = 50, .ammo = 0});
+    Field field(battlefield);
+    GameClient& a = field.join("a");
+    field.run(0.4);
+    a.request_spawn(0, 0);
+    field.run(0.4);
+    CHECK(a.alive() && a.match() && a.match()->powerup_health.size() == 1);
+    CHECK(near(a.match()->powerup_health[0], PowerupStation::default_max_health, 1));
+
+    // Place A 6 m from the droid and shoot it: a few shots chip its health without
+    // destroying it immediately, then sustained fire blows it up.
+    MoveState placed = *field.server->state_of(a.entity_id());
+    placed.position = {-56, 0, 0};
+    field.server->set_state(a.entity_id(), placed);
+    field.run(0.2);
+    const Vec3 to_droid = Vec3{-50, 0.8, 0} - (a.predicted().position + Vec3{0, eye_height, 0});
+    const float yaw = float(std::atan2(-to_droid.x, -to_droid.z));
+    const float pitch = float(std::atan2(to_droid.y, std::hypot(to_droid.x, to_droid.z)));
+    // A brief burst damages it, but it survives (takes a fair amount of damage).
+    field.run(0.4, [&] { a.set_input({.yaw = yaw, .pitch = pitch, .fire = true}); });
+    CHECK(a.match()->powerup_health[0] < PowerupStation::default_max_health && a.match()->powerup_health[0] > 0.0f);
+
+    // Sustained fire destroys it and emits a droid explosion.
+    bool droid_exploded = false;
+    field.run(4.0, [&] {
+        a.set_input({.yaw = yaw, .pitch = pitch, .fire = a.match()->powerup_health[0] > 0.0f});
+        for (const auto& exp : a.take_explosions()) {
+            if (exp.weapon == net::droid_explosion_weapon) {
+                droid_exploded = true;
+            }
+        }
+    });
+    CHECK(a.match()->powerup_health[0] == 0.0f && droid_exploded);
+
+    // Standing next to a destroyed droid no longer heals.
+    Battlefield heal_test = three_posts();
+    heal_test.warmup = 60;
+    heal_test.damage_regions.push_back({.where = {.center = {-60, 0, 0}, .size = {10, 2, 10}}, .rate = 100});
+    heal_test.powerups.push_back({.position = {-40, 0, 0}, .radius = 4, .delay = 0.25, .health = 50, .ammo = 0,
+                                  .max_health = 100});
+    Field hf(heal_test);
+    GameClient& h = hf.join("h");
+    hf.run(0.4);
+    h.request_spawn(0, 0);
+    hf.run(1.5);  // take some damage in the damage region
+    MoveState by_droid = *hf.server->state_of(h.entity_id());
+    by_droid.position = {-42, 0, 0};
+    hf.server->set_state(h.entity_id(), by_droid);
+    hf.run(0.2);
+    // Destroy the droid with a grenade/shots.
+    const Vec3 aim_d = Vec3{-40, 0.8, 0} - (h.predicted().position + Vec3{0, eye_height, 0});
+    hf.run(1.5, [&] {
+        h.set_input({.yaw = float(std::atan2(-aim_d.x, -aim_d.z)),
+                     .pitch = float(std::atan2(aim_d.y, std::hypot(aim_d.x, aim_d.z))),
+                     .fire = h.match()->powerup_health[0] > 0.0f});
+    });
+    CHECK(h.match()->powerup_health[0] == 0.0f);
+    const double hp_after = h.health();
+    hf.run(1.0, [&] { h.set_input({}); });
+    CHECK(near(h.health(), hp_after, 0.5));  // broken droid gives no health
+}
+
 void test_bots_play_a_match() {
     Battlefield battlefield = three_posts();
     battlefield.posts.insert(battlefield.posts.begin() + 1, CommandPost{.name = "Inner west", .position = {-30, 0, 10}});
@@ -648,6 +715,7 @@ int main() {
     test_death_region();
     test_damage_region();
     test_health_droid();
+    test_destructible_droids();
     test_dropped_pickups();
     test_spawn_under_floor();
     test_bots_play_a_match();

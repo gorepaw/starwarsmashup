@@ -320,8 +320,17 @@ void test_wall_blocks() {
     wall.walls.push_back({{6, 0, -5}, {6, 0, 5}, 3});  // between A (x 0) and B (x 12)
     Arena arena(0, 0.5, wall);
     arena.run(0.5, [] {});
-    arena.run(2.0, [&] { arena.a.set_input(arena.a_aims_at_b(true)); });
+    std::vector<net::Impact> impacts;
+    arena.run(2.0, [&] {
+        arena.a.set_input(arena.a_aims_at_b(true));
+        for (const auto& imp : arena.a.take_impacts()) {
+            impacts.push_back(imp);
+        }
+    });
     CHECK(arena.a.take_shots().size() >= 10 && arena.server.health_of(arena.b.entity_id()) == 400);
+    // Bolts stopping at the wall report surface impacts facing back toward A (-X).
+    CHECK(impacts.size() >= 5 && !impacts[0].hit_character && near(impacts[0].position.x, 6.0, 0.05) &&
+          near(impacts[0].normal.x, -1.0, 0.05));
 }
 
 // Battlefront's rocket launcher and thermal detonator, as export-loadout writes them.

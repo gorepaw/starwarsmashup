@@ -79,6 +79,7 @@ const SwgCity = preload("res://rendering/swg_city.gd")
 const Soldier = preload("res://rendering/soldier.gd")
 const TeamTags = preload("res://rendering/team_tags.gd")
 const Pickups = preload("res://rendering/pickups.gd")
+const Bf2Effects = preload("res://rendering/bf2_effects.gd")
 const Bf2Hud = preload("res://ui/bf2_hud.gd")
 const Settings = preload("res://ui/settings.gd")
 const SpawnScreen = preload("res://ui/spawn_screen.gd")
@@ -87,6 +88,7 @@ const PauseMenu = preload("res://ui/pause_menu.gd")
 const WarTerminalScreen = preload("res://ui/war_terminal_screen.gd")
 const HubHud = preload("res://ui/hub_hud.gd")
 const HUD_DIR := "res://imported_assets/hud"  # bf2tool export-hud
+const EFFECTS_DIR := "res://imported_assets/effects"  # bf2tool export-effects
 const MAX_ENERGY := 100.0     # core::MoveParams::max_energy
 const TARGET_CONE := 0.035    # radians: a character this close to the crosshair is its target
 const TARGET_RANGE := 150.0
@@ -113,6 +115,7 @@ const POST_BEAM_HEIGHT := 30.0
 const HOLO_LENS_HEIGHT := 0.32  # the command post model's projector lens: its height
 const HOLO_LENS_RADIUS := 0.15  # and radius
 const EXPLOSION_TIME := 0.6   # seconds an explosion's flash lasts
+const SPAWN_FIRE_LOCKOUT := 0.35  # seconds after spawning before primary fire unlocks (prevents click-to-spawn misfires)
 
 var _client: Object
 var _server: Object
@@ -147,16 +150,19 @@ var _feed_lines: PackedStringArray = []
 var _hit_flash := 0.0
 var _weapons: Array = []          # from SwmClient.get_weapons: the held weapons, by slot
 var _weapon := 0                  # slot wanted
-var _bolt_materials := {}         # bolt color (html) -> material
-var _bolt_mesh: BoxMesh           # a unit cube, scaled per bolt
 var _battlefield: Dictionary = {} # from SwmClient.get_battlefield; empty outside a match
 var _posts: Array = []            # per command post: {hologram} (its model's), or {material, label} (a beam)
 var _cone_shader: Shader         # the command post holograms' cone (_holo_cone_shader)
 var _team_tags: TeamTags         # in a match on a Battlefront map: the holograms over soldiers' heads
 var _pickups: Pickups            # dropped health, ammo, dual and energy canisters
+var _effects: Bf2Effects         # Battlefront bolts, projectile models, muzzle flashes, sparks, trails, explosions
 var _spawn_loadout := 0
 var _spawn_post := -1
 var _spawn_requested := false
+var _fire_lockout := 0.0          # disables primary fire briefly on spawn / mouse capture
+var _wait_fire_release := false   # waits for left-click release before allowing primary fire
+var _was_alive := false
+var _powerup_nodes: Array = []    # [{node, index, kind, wreck, spark_cd}]
 var _center: Label                # spawn menu, results, warnings
 var _match_label: RichTextLabel
 var _outside := 0.0               # seconds out of bounds
@@ -165,11 +171,9 @@ var _recruiter_nodes: Array = []
 var _notice_id := 0
 var _notice := ""
 var _notice_time := 0.0           # seconds left showing it
-var _explosions: Array = []       # [{node, light, age, radius}]
 var _explosions_seen := 0
 var _own_bolts: Array = []        # [{node, position, velocity, life, origin, offset}] drawn from predicted shots
-var _remote_bolt_nodes: Array[MeshInstance3D] = []
-var _remote_bolt_starts := {}     # bolt id -> {origin, offset}: where it was first seen drawn from
+var _remote_bolts := {}           # bolt id -> {node, trail, origin, offset}
 var _kills := 0
 var _deaths := 0
 var _hits := 0
@@ -301,6 +305,7 @@ func _init() -> void:
 		return
 	_setup_scene()
 	_add_posts()
+	_bind_powerups()
 	root.window_input.connect(_on_input)
 	DisplayServer.window_set_size(Vector2i(1280, 720))
 	if _bot == "":
@@ -310,6 +315,9 @@ func _init() -> void:
 func _process(delta: float) -> bool:
 	_elapsed += delta
 	_delta = delta
+	_fire_lockout = maxf(0.0, _fire_lockout - delta)
+	if _wait_fire_release and not Input.is_action_pressed("fire"):
+		_wait_fire_release = false
 	if _server != null:
 		_server.update()
 	if _bot != "conquest":
@@ -327,6 +335,10 @@ func _process(delta: float) -> bool:
 			_add_recruiters()
 		_update_notice()
 		var own: Dictionary = _client.get_presented()
+		var alive_now: bool = bool(own["alive"]) and str(own.get("life", "alive")) == "alive"
+		if alive_now and not _was_alive:
+			_lock_spawn_fire()
+		_was_alive = alive_now
 		if not _announced:
 			_announced = true
 			var at: Vector3 = own["position"]
@@ -336,6 +348,7 @@ func _process(delta: float) -> bool:
 		_update_remotes(int(own["team"]))
 		var game: Dictionary = _client.get_match()
 		_update_posts(game, int(own["team"]))
+		_update_powerups(game, delta)
 		if own["life"] == "waiting" and not game.is_empty():
 			_choose_spawn(game, own)
 		else:
@@ -389,6 +402,8 @@ func _finish() -> bool:
 	_people_colors.clear()
 	if _pickups != null:
 		_pickups.dispose()
+	if _effects != null:
+		_effects.dispose()
 	var stats: Dictionary = _client.get_stats()
 	var at: Vector3 = _client.get_presented().get("position", Vector3.ZERO)
 	print("left at Galaxies (%.2f, %.2f, %.2f)" % [-at.x, at.y, at.z])
@@ -445,9 +460,10 @@ func _controls() -> Dictionary:
 	var forward := Input.get_action_strength("move_forward") - Input.get_action_strength("move_back")
 	var right := Input.get_action_strength("move_right") - Input.get_action_strength("move_left")
 	var aim := _aim()
+	var can_fire := _fire_lockout <= 0.0 and not _wait_fire_release
 	return {"forward": forward, "right": right, "yaw": aim.x, "pitch": aim.y,
 			"sprint": Input.is_action_pressed("sprint"), "jump": Input.is_action_pressed("jump"),
-			"fire": Input.is_action_pressed("fire"), "reload": Input.is_action_pressed("reload"),
+			"fire": Input.is_action_pressed("fire") and can_fire, "reload": Input.is_action_pressed("reload"),
 			"secondary": Input.is_action_pressed("grenade"), "weapon": _weapon}
 
 
@@ -500,6 +516,7 @@ func _on_input(event: InputEvent) -> void:
 		_pitch = clampf(_pitch - motion.relative.y * sensitivity * up, lowest, highest)
 	elif event is InputEventMouseButton and event.pressed and not _mouse_captured and not screen_spawn:
 		_capture_mouse(true)
+		_lock_spawn_fire()
 	elif event is InputEventMouseButton and event.pressed and _choosing_spawn() and not screen_spawn:
 		_request_spawn()
 	elif event is InputEventKey and event.pressed and _choosing_spawn() and event.physical_keycode != KEY_ESCAPE:
@@ -982,8 +999,10 @@ func _update_minimap(team: int, game: Dictionary) -> void:
 			var at: Vector3 = post["position"]
 			_bf2_hud.map_markers.append({"position": Vector2(at.x, at.z), "kind": "post",
 					"color": _post_color(int(game["posts"][i]["owner"]), team)})
-	# The health and ammo droids, by their map icon.
+	# The intact health and ammo droids, by their map icon.
 	for droid: Node3D in get_nodes_in_group(Bf2Map.POWERUPS):
+		if not droid.visible:
+			continue
 		var at := droid.global_position
 		_bf2_hud.map_markers.append({"position": Vector2(at.x, at.z), "kind": "droid", "color": Color.WHITE,
 				"icon": str((droid.get_meta("powerup") as Dictionary).get("map_texture", ""))})
@@ -1113,8 +1132,9 @@ func _who(id: int) -> String:
 	return "you" if id == _client.get_entity_id() else "player %d" % id
 
 
-# Bolts: own shots fly from the moment they're fired (predicted), others'
-# come from the server. Only looks: what they hit is the server's call.
+# Bolts, projectile models, muzzle flashes, sparks, scorch marks, trails and
+# explosions. Own bolts fly from the moment they're fired (predicted); others'
+# bolts and all missiles/grenades come from the server's snapshots.
 func _update_bolts(delta: float) -> void:
 	var own_soldier := _soldier_of(_client.get_entity_id())
 	for shot: Dictionary in _client.take_shots():
@@ -1127,50 +1147,66 @@ func _update_bolts(delta: float) -> void:
 			else:
 				own_soldier.fire()
 			offset = own_soldier.muzzle() - origin
-		for direction: Vector3 in shot["directions"]:
-			var node := _bolt_node(shot)
+		var dirs: Array = shot["directions"]
+		if not dirs.is_empty():
+			_effects.spawn_muzzle_flash(origin + offset, dirs[0], shot)
+		for direction: Vector3 in dirs:
+			var node := _effects.make_projectile(shot)
 			var velocity: Vector3 = direction * float(weapon["bolt_speed"])
 			var bolt := {"node": node, "position": origin, "velocity": velocity, "life": float(weapon["bolt_life"]),
 					"origin": origin, "offset": offset}
-			_place_drawn_bolt(node, bolt)
+			_place_drawn_bolt(node, bolt, delta)
 			_own_bolts.append(bolt)
 	for i in range(_own_bolts.size() - 1, -1, -1):
 		var bolt: Dictionary = _own_bolts[i]
 		bolt["life"] = float(bolt["life"]) - delta
 		bolt["velocity"] = bolt["velocity"] + Vector3.DOWN * 9.8 * delta
-		var node: MeshInstance3D = bolt["node"]
-		if float(bolt["life"]) <= 0:
+		var node: Node3D = bolt["node"]
+		var prev_pos: Vector3 = bolt["position"]
+		var next_pos: Vector3 = prev_pos + (bolt["velocity"] as Vector3) * delta
+		if float(bolt["life"]) <= 0 or _client.raycast(prev_pos, next_pos) >= 0.0:
 			node.queue_free()
 			_own_bolts.remove_at(i)
 			continue
-		bolt["position"] = bolt["position"] + bolt["velocity"] * delta
-		_place_drawn_bolt(node, bolt)
+		bolt["position"] = next_pos
+		_place_drawn_bolt(node, bolt, delta)
 
-	_update_explosions(delta)
-	var remote: Array = _client.get_bolts()
-	while _remote_bolt_nodes.size() < remote.size():
-		_remote_bolt_nodes.append(_bolt_node(remote[_remote_bolt_nodes.size()]))
+	for impact: Dictionary in _client.take_impacts():
+		_effects.spawn_impact(impact["position"], impact["normal"], bool(impact["hit_character"]),
+				str(impact.get("effect", "")))
+	for explosion: Dictionary in _client.take_explosions():
+		_effects.spawn_explosion(explosion["position"], explosion.get("normal", Vector3.UP),
+				float(explosion["radius"]), str(explosion.get("effect", "")),
+				explosion.get("light_color", Color(1.0, 0.7, 0.3)), float(explosion.get("light_radius", 7.0)))
+		_explosions_seen += 1
+	_effects.update(delta)
+
 	var seen := {}
-	for i in _remote_bolt_nodes.size():
-		var node := _remote_bolt_nodes[i]
-		node.visible = i < remote.size()
-		if node.visible:
-			var bolt: Dictionary = remote[i]
-			var id := int(bolt["id"])
-			seen[id] = true
-			if not _remote_bolt_starts.has(id):
-				_remote_bolt_starts[id] = _bolt_start(bolt)
-			_style_bolt(node, bolt)
-			var start: Dictionary = _remote_bolt_starts[id]
-			_place_drawn_bolt(node, {"position": bolt["position"], "velocity": bolt["velocity"],
-					"origin": start["origin"], "offset": start["offset"]})
-	for id: int in _remote_bolt_starts.keys():
+	for bolt: Dictionary in _client.get_bolts():
+		var id := int(bolt["id"])
+		seen[id] = true
+		if not _remote_bolts.has(id):
+			var start := _bolt_start(bolt)
+			var node := _effects.make_projectile(bolt)
+			var trail_name := str(bolt.get("trail_effect", ""))
+			var trail := _effects.attach_trail(node, trail_name) if trail_name != "" else null
+			_remote_bolts[id] = {"node": node, "trail": trail, "origin": start["origin"], "offset": start["offset"]}
+		var entry: Dictionary = _remote_bolts[id]
+		_place_drawn_bolt(entry["node"], {"position": bolt["position"], "velocity": bolt["velocity"],
+				"origin": entry["origin"], "offset": entry["offset"]}, delta)
+	for id: int in _remote_bolts.keys():
 		if not seen.has(id):
-			_remote_bolt_starts.erase(id)
+			var entry: Dictionary = _remote_bolts[id]
+			if entry["trail"] != null:
+				_effects.detach_trail(entry["trail"])
+			var node: Node3D = entry["node"]
+			if is_instance_valid(node):
+				node.queue_free()
+			_remote_bolts.erase(id)
 
 
-# A projectile seen for the first time: its shooter fires (or throws), and it's
-# drawn from that shooter's muzzle. Bolts start at the eye (core::eye_height).
+# A projectile seen for the first time: its shooter fires (or throws), spawns
+# its muzzle flash, and the projectile is drawn from that shooter's muzzle.
 func _bolt_start(bolt: Dictionary) -> Dictionary:
 	var owner := int(bolt["owner"])
 	var soldier := _soldier_of(owner)
@@ -1183,102 +1219,19 @@ func _bolt_start(bolt: Dictionary) -> Dictionary:
 		else:
 			soldier.fire()
 	var origin := soldier.model.global_position + Vector3.UP * EYE_HEIGHT
-	return {"origin": origin, "offset": soldier.muzzle() - origin}
+	var muzzle := soldier.muzzle()
+	if bolt["kind"] != "grenade":
+		_effects.spawn_muzzle_flash(muzzle, bolt["velocity"], bolt)
+	return {"origin": origin, "offset": muzzle - origin}
 
 
-# Draws a bolt at its true position, shifted toward the muzzle it left: fully
-# at first, none once it's MUZZLE_BLEND from where it was fired.
-func _place_drawn_bolt(node: MeshInstance3D, bolt: Dictionary) -> void:
+# Draws a projectile at its true position, shifted toward the muzzle it left:
+# fully at first, none once it's MUZZLE_BLEND from where it was fired.
+func _place_drawn_bolt(node: Node3D, bolt: Dictionary, delta: float) -> void:
 	var position: Vector3 = bolt["position"]
 	var travelled := position.distance_to(bolt["origin"])
 	var shift: Vector3 = bolt["offset"] * maxf(0.0, 1.0 - travelled / MUZZLE_BLEND)
-	_place_bolt(node, position + shift, bolt["velocity"])
-
-
-# `look` has the firing weapon's {color, length, width}.
-func _bolt_node(look: Dictionary) -> MeshInstance3D:
-	var node := MeshInstance3D.new()
-	node.mesh = _bolt_mesh
-	node.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
-	_style_bolt(node, look)
-	root.add_child(node)
-	return node
-
-
-# Battlefront's bolt color, length and width; how they're drawn (glow,
-# stretch) is up to the graphics settings.
-func _style_bolt(node: MeshInstance3D, look: Dictionary) -> void:
-	var color: Color = look["color"]
-	var key := color.to_html()
-	if not _bolt_materials.has(key):
-		var material := StandardMaterial3D.new()
-		material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
-		material.albedo_color = Color(color.r, color.g, color.b)
-		material.emission_enabled = true
-		material.emission = Color(color.r, color.g, color.b)
-		material.emission_energy_multiplier = BOLT_GLOW
-		_bolt_materials[key] = material
-	node.material_override = _bolt_materials[key]
-	var width := float(look["width"]) * BOLT_STRETCH / 2
-	var length := float(look["length"]) * BOLT_STRETCH
-	if look.get("kind", "bolt") == "grenade":
-		width = 0.22
-		length = 0.22
-	elif length <= 0 or width <= 0:
-		width = 0.15  # an invisible bolt (the sonic blaster's): draw something
-		length = 1.0
-	node.set_meta("size", Vector3(width, width, length))
-
-
-# Explosions: a flash that swells to the damage radius and fades.
-func _update_explosions(delta: float) -> void:
-	for explosion: Dictionary in _client.take_explosions():
-		var material := StandardMaterial3D.new()
-		material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
-		material.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
-		material.albedo_color = Color(1.0, 0.6, 0.2, 0.8)
-		material.emission_enabled = true
-		material.emission = Color(1.0, 0.5, 0.15)
-		material.emission_energy_multiplier = 4.0
-		var node := MeshInstance3D.new()
-		var sphere := SphereMesh.new()
-		sphere.radius = 1.0
-		sphere.height = 2.0
-		node.mesh = sphere
-		node.material_override = material
-		node.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
-		node.position = explosion["position"]
-		var light := OmniLight3D.new()
-		light.light_color = Color(1.0, 0.6, 0.3)
-		light.omni_range = float(explosion["radius"]) * 4
-		light.position = explosion["position"] + Vector3.UP
-		root.add_child(node)
-		root.add_child(light)
-		_explosions.append({"node": node, "light": light, "age": 0.0, "radius": float(explosion["radius"])})
-		_explosions_seen += 1
-	for i in range(_explosions.size() - 1, -1, -1):
-		var e: Dictionary = _explosions[i]
-		e["age"] = float(e["age"]) + delta
-		var t := float(e["age"]) / EXPLOSION_TIME
-		var node: MeshInstance3D = e["node"]
-		var light: OmniLight3D = e["light"]
-		if t >= 1.0:
-			node.queue_free()
-			light.queue_free()
-			_explosions.remove_at(i)
-			continue
-		node.scale = Vector3.ONE * float(e["radius"]) * (0.3 + 0.7 * sqrt(t))
-		(node.material_override as StandardMaterial3D).albedo_color.a = 0.8 * (1.0 - t)
-		light.light_energy = 6.0 * (1.0 - t)
-
-
-# A bolt is a thin glowing box along its velocity.
-func _place_bolt(node: MeshInstance3D, position: Vector3, velocity: Vector3) -> void:
-	node.position = position
-	if velocity.length_squared() > 0.0001:
-		var forward := velocity.normalized()
-		var up := Vector3.UP if absf(forward.y) < 0.99 else Vector3.RIGHT
-		node.basis = Basis.looking_at(forward, up) * Basis.from_scale(node.get_meta("size", Vector3.ONE))
+	_effects.place_projectile(node, position + shift, bolt["velocity"], delta)
 
 
 func _add_character() -> Dictionary:
@@ -1472,9 +1425,8 @@ func _setup_scene() -> void:
 			layer.add_child(screen)
 	root.add_child(layer)
 
-	_bolt_mesh = BoxMesh.new()
-	_bolt_mesh.size = Vector3(1, 1, 1)
 	_pickups = Pickups.new(root, HUD_DIR)
+	_effects = Bf2Effects.new(root, EFFECTS_DIR)
 
 
 # Command posts: a beam, a ring around the capture region and a name, in the
@@ -1666,14 +1618,18 @@ func _arrive() -> void:
 	for node: Node in _recruiter_nodes:
 		node.queue_free()
 	_recruiter_nodes.clear()
-	for node: Node in _remote_bolt_nodes:
-		node.queue_free()
-	_remote_bolt_nodes.clear()
+	for entry: Dictionary in _remote_bolts.values():
+		var node: Node3D = entry["node"]
+		if is_instance_valid(node):
+			node.queue_free()
+	_remote_bolts.clear()
 	for bolt: Dictionary in _own_bolts:
 		(bolt["node"] as Node).queue_free()
 	_own_bolts.clear()
 	if _pickups != null:
 		_pickups.clear()
+	if _effects != null:
+		_effects.clear()
 	if _terminal_screen != null and _terminal_screen.visible:
 		_close_terminal()
 	_battlefield = _client.get_battlefield()
@@ -1683,7 +1639,9 @@ func _arrive() -> void:
 	if bake != _world_bake and not _build_world(bake):
 		printerr("cannot draw ", bake)
 	_add_posts()
+	_bind_powerups()
 	_spawn_requested = false
+	_was_alive = false
 	_notice_id = 0
 	print("transferred to ", "the battle on " + str(_battlefield["name"]) if not _battlefield.is_empty() else "the hub")
 
@@ -1913,8 +1871,82 @@ func _cycle_post(step: int) -> void:
 	_spawn_post = owned[posmod(at + step, owned.size())]
 
 
+func _lock_spawn_fire() -> void:
+	_fire_lockout = SPAWN_FIRE_LOCKOUT
+	_wait_fire_release = true
+
+
+# Links placed map droid nodes (Bf2Map.POWERUPS) to their battlefield powerup
+# index so destroyed droids hide and swap to their Battlefront wreck models.
+func _bind_powerups() -> void:
+	for entry: Dictionary in _powerup_nodes:
+		var wreck: Variant = entry.get("wreck")
+		if wreck != null and is_instance_valid(wreck):
+			(wreck as Node).queue_free()
+	_powerup_nodes.clear()
+	if _battlefield.is_empty():
+		return
+	var defs: Array = _battlefield.get("powerups", [])
+	if defs.is_empty():
+		return
+	for node: Node3D in get_nodes_in_group(Bf2Map.POWERUPS):
+		var best := -1
+		var best_d2 := 1.0
+		for i in defs.size():
+			var d2 := node.position.distance_squared_to(defs[i]["position"])
+			if d2 < best_d2:
+				best_d2 = d2
+				best = i
+		if best >= 0:
+			var spec: Dictionary = node.get_meta("powerup")
+			_powerup_nodes.append({"node": node, "index": best, "kind": str(spec.get("kind", "health")),
+					"wreck": null, "spark_cd": 0.0})
+
+
+func _update_powerups(game: Dictionary, delta: float) -> void:
+	if _powerup_nodes.is_empty() or game.is_empty():
+		return
+	var states: Array = game.get("powerups", [])
+	if states.is_empty():
+		return
+	for entry: Dictionary in _powerup_nodes:
+		var idx: int = entry["index"]
+		if idx < 0 or idx >= states.size():
+			continue
+		var st: Dictionary = states[idx]
+		var alive: bool = bool(st.get("alive", true))
+		var node: Node3D = entry["node"]
+		if not is_instance_valid(node):
+			continue
+		node.visible = alive
+		var wreck: Node3D = entry["wreck"]
+		if alive:
+			if wreck != null and is_instance_valid(wreck):
+				wreck.visible = false
+			var hp := float(st.get("health", 1.0))
+			var max_hp := maxf(1.0, float(st.get("max_health", 1.0)))
+			if hp < max_hp * 0.5 and _effects != null:
+				entry["spark_cd"] = float(entry["spark_cd"]) - delta
+				if float(entry["spark_cd"]) <= 0.0:
+					entry["spark_cd"] = 1.1 + randf() * 0.8
+					_effects.spawn_burst("com_sfx_ord_exp", node.global_position + Vector3.UP * 0.9, Vector3.UP)
+		else:
+			if (wreck == null or not is_instance_valid(wreck)) and _effects != null:
+				var model_name := "com_item_healthrecharge_dst" if str(entry["kind"]) == "health" \
+						else "com_item_weaponrecharge_dst"
+				wreck = _effects.make_model(model_name)
+				if wreck != null:
+					wreck.position = node.position
+					wreck.basis = node.get_meta("placed", node.basis)
+					_world.add_child(wreck)
+					entry["wreck"] = wreck
+			if wreck != null and is_instance_valid(wreck):
+				wreck.visible = true
+
+
 func _request_spawn() -> void:
 	if _spawn_post >= 0:
+		_lock_spawn_fire()
 		_client.request_spawn(_spawn_loadout, _spawn_post)
 		_spawn_requested = true
 

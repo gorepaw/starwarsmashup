@@ -82,11 +82,15 @@ struct DamageRegion {
 // class sets no Radius reaches `default_radius`.
 struct PowerupStation {
     static constexpr double default_radius = 3.0;
+    static constexpr double default_max_health = 600.0;
+    static constexpr double hit_radius = 0.75;
+    static constexpr double hit_height = 1.6;
     Vec3 position;  // game space, at its feet
     double radius = default_radius;
     double delay = 1;
     double health = 0;
     double ammo = 0;
+    double max_health = default_max_health;
 
     // Whether a soldier standing at `feet` is in its reach (a story above or
     // below it isn't).
@@ -218,6 +222,7 @@ struct MatchState {
     double victory_left = 0;
     int8_t winner = -1;              // when ended; -1: a draw
     std::vector<PostState> posts;
+    std::vector<float> powerup_health;  // current health per Battlefield::powerups[i]; <= 0: destroyed
 };
 
 struct MatchEvent {
@@ -250,6 +255,10 @@ public:
     void killed(int team);
     // Whether a soldier of `team` may spawn at `post` now.
     bool can_spawn(int team, size_t post) const;
+    // Whether health/ammo droid `index` is intact.
+    bool powerup_alive(size_t index) const;
+    // Damages health/ammo droid `index`. Returns true on the hit that destroys it.
+    bool damage_powerup(size_t index, double amount);
     const MatchState& state() const { return state_; }
     const Battlefield& battlefield() const { return battlefield_; }
 

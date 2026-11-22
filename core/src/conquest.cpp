@@ -142,8 +142,14 @@ void read_regions(Battlefield& field, const Ini::Section& section, const std::st
             if (!(fields >> station.position.x >> station.position.y >> station.position.z >> station.radius >>
                   station.delay >> station.health >> station.ammo) ||
                 station.radius <= 0 || station.delay <= 0 || station.health < 0 || station.ammo < 0) {
-                throw std::runtime_error(where + ": Powerup is \"x y z radius delay health ammo\", got \"" + value +
-                                         "\"");
+                throw std::runtime_error(where + ": Powerup is \"x y z radius delay health ammo [max_health]\", got \"" +
+                                         value + "\"");
+            }
+            if (double max_hp = 0; fields >> max_hp) {
+                if (max_hp <= 0) {
+                    throw std::runtime_error(where + ": Powerup max_health must be > 0");
+                }
+                station.max_health = max_hp;
             }
             station.position.x = -station.position.x;
             field.powerups.push_back(station);
@@ -419,11 +425,28 @@ void Conquest::reset() {
         s.charge = post.owner >= 0 ? 1.0f : 0.0f;
         state_.posts.push_back(s);
     }
+    state_.powerup_health.clear();
+    state_.powerup_health.reserve(battlefield_.powerups.size());
+    for (const PowerupStation& station : battlefield_.powerups) {
+        state_.powerup_health.push_back(float(station.max_health));
+    }
 }
 
 bool Conquest::can_spawn(int team, size_t post) const {
     return state_.phase != Phase::ended && team >= 0 && team < 2 && post < state_.posts.size() &&
            state_.posts[post].owner == team && (state_.phase != Phase::live || state_.tickets[size_t(team)] > 0);
+}
+
+bool Conquest::powerup_alive(size_t index) const {
+    return index < state_.powerup_health.size() && state_.powerup_health[index] > 0.0f;
+}
+
+bool Conquest::damage_powerup(size_t index, double amount) {
+    if (index >= state_.powerup_health.size() || amount <= 0 || state_.powerup_health[index] <= 0.0f) {
+        return false;
+    }
+    state_.powerup_health[index] = float(std::max(0.0, double(state_.powerup_health[index]) - amount));
+    return state_.powerup_health[index] <= 0.0f;
 }
 
 void Conquest::killed(int team) {

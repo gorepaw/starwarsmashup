@@ -89,6 +89,10 @@ std::vector<net::Explosion> GameClient::take_explosions() {
     return std::exchange(explosions_, {});
 }
 
+std::vector<net::Impact> GameClient::take_impacts() {
+    return std::exchange(impacts_, {});
+}
+
 void GameClient::update(double now) {
     if (!started_) {
         started_ = true;
@@ -209,6 +213,7 @@ void GameClient::handle(const net::Datagram& datagram, double now) {
     bolts_time_ = now;
     events_.insert(events_.end(), snapshot->events.begin(), snapshot->events.end());
     explosions_.insert(explosions_.end(), snapshot->explosions.begin(), snapshot->explosions.end());
+    impacts_.insert(impacts_.end(), snapshot->impacts.begin(), snapshot->impacts.end());
     pickups_ = snapshot->pickups;
     match_ = snapshot->match;
     player_status_ = snapshot->you;

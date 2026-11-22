@@ -15,6 +15,7 @@
 #include <vector>
 
 #include "bf2/animation.h"
+#include "bf2/effect.h"
 #include "bf2/hash.h"
 #include "bf2/hud.h"
 #include "bf2/level.h"
@@ -42,6 +43,7 @@ constexpr const char* usage = R"(usage:
                      [--death <region>]... [--open <object>]... [--team <post>=<n>]... [--disable <barrier>]...
                      [--drop-boundary <path>]... [--set <object>.<property>=<value>]...
   bf2tool export-hud <_lvl_pc dir> -o <out dir>
+  bf2tool export-effects <_lvl_pc dir> -o <out dir>
 )";
 
 std::vector<uint8_t> read_file(const std::filesystem::path& path);
@@ -224,17 +226,30 @@ void write_weapon(std::ostream& out, const char* section, const CarriedWeapon& c
     }
     for (const char* key : {"ShotDelay", "RoundsPerClip", "ReloadTime", "HeatPerShot", "HeatRecoverRate",
                             "HeatThreshold", "YawSpread", "PitchSpread", "SpreadPerShot", "SpreadRecoverRate",
-                            "SpreadLimit", "ShotsPerSalvo", "ShotElevate", "MaxRange"}) {
+                            "SpreadLimit", "ShotsPerSalvo", "ShotElevate", "MaxRange", "MuzzleFlash", "FlashColor",
+                            "FlashLength", "FlashLightColor", "FlashLightRadius", "FlashLightDuration"}) {
         if (const auto value = weapon.get(key)) {
             out << key << " = " << *value << "\n";
         }
     }
     out << "; ordnance: " << ordnance.type << " (" << ordnance.base << ")\n";
     for (const char* key : {"MaxDamage", "PersonScale", "Velocity", "Acceleration", "Gravity", "Rebound", "LifeSpan",
-                            "LaserGlowColor", "LaserLength", "LaserWidth", "LightColor", "LightRadius"}) {
+                            "LaserTexture", "LaserGlowColor", "LaserLength", "LaserWidth", "GlowLength", "BlurLength",
+                            "LightColor", "LightRadius", "GeometryName", "TrailEffect"}) {
         if (const auto value = ordnance.get(key)) {
             out << key << " = " << *value << "\n";
         }
+    }
+    std::string impact_effect;
+    for (const char* key : {"ImpactEffectSoft", "ImpactEffectTerrain", "ImpactEffectRigid", "ImpactEffectStatic",
+                            "ImpactEffect"}) {
+        if (const auto value = ordnance.get(key); value && !value->empty()) {
+            impact_effect = *value;
+            break;
+        }
+    }
+    if (!impact_effect.empty()) {
+        out << "ImpactEffect = " << impact_effect << "\n";
     }
     if (projectile == "grenade") {
         // A grenade's fuse: an unnamed ordnance property (hash a51be2bb: 2.0
@@ -263,7 +278,8 @@ void write_weapon(std::ostream& out, const char* section, const CarriedWeapon& c
     }
     for (const auto& [key, ours] : {std::pair{"DamageRadiusInner", "ExplosionRadiusInner"},
                                     std::pair{"DamageRadiusOuter", "ExplosionRadiusOuter"},
-                                    std::pair{"PersonScale", "ExplosionPersonScale"}}) {
+                                    std::pair{"PersonScale", "ExplosionPersonScale"},
+                                    std::pair{"Effect", "ExplosionEffect"}}) {
         if (const auto value = explosion.get(key)) {
             out << ours << " = " << *value << "\n";
         }
@@ -1458,6 +1474,132 @@ int cmd_export_hud(const std::vector<std::string>& args) {
     return 0;
 }
 
+// Writes Battlefront II's projectile & weapon effects (<name>.json), their
+// particle and laser textures (textures/), and shared ordnance & muzzle flash
+// models (models/) from ingame.lvl and side/*.lvl.
+int cmd_export_effects(const std::vector<std::string>& args) {
+    if (args.empty()) {
+        std::cerr << usage;
+        return 2;
+    }
+    const std::filesystem::path lvl_dir = args[0];
+    const std::filesystem::path out_dir = option(args, "-o");
+    if (out_dir.empty()) {
+        std::cerr << usage;
+        return 2;
+    }
+    const std::filesystem::path texture_dir = out_dir / "textures";
+    const std::filesystem::path model_dir = out_dir / "models";
+    std::filesystem::create_directories(texture_dir);
+    std::filesystem::create_directories(model_dir);
+
+    std::vector<std::filesystem::path> lvl_files{lvl_dir / "ingame.lvl"};
+    for (const char* side : {"imp", "all", "rep", "cis"}) {
+        if (const auto p = lvl_dir / "side" / (std::string(side) + ".lvl"); std::filesystem::exists(p)) {
+            lvl_files.push_back(p);
+        }
+    }
+    AssetLibrary library;
+    std::vector<std::vector<uint8_t>> bytes;
+    std::vector<UcfbNode> roots;
+    bytes.reserve(lvl_files.size());
+    roots.reserve(lvl_files.size());
+    for (const auto& file : lvl_files) {
+        bytes.push_back(read_file(file));
+        library.add(bytes.back());
+        roots.push_back(parse_ucfb(bytes.back()));
+    }
+
+    // Index all fx__ chunks by their 4-byte NAME hash (c | 0x20 FNV-1a).
+    std::map<uint32_t, const UcfbNode*> fx_by_hash;
+    for (const UcfbNode& root : roots) {
+        visit_ucfb(root, [&](const UcfbNode& node, int) {
+            if (node.tag != "fx__") {
+                return;
+            }
+            if (const UcfbNode* name = node.child("NAME"); name && name->data.size() == 4) {
+                uint32_t hash = 0;
+                std::memcpy(&hash, name->data.data(), 4);
+                fx_by_hash.emplace(hash, &node);
+            }
+        });
+    }
+
+    // Collect every effect, laser texture, and ordnance model referenced by
+    // any weapon, ordnance, or explosion ODF, plus shared muzzle/explosion FX.
+    std::set<std::string> effect_names{"com_sfx_ord_exp", "com_sfx_explosion_lg", "com_sfx_explosion_sm",
+                                       "com_sfx_weap_flame_exp_md", "com_sfx_weap_flame_exp_sm",
+                                       "com_sfx_watersplash_ord", "com_sfx_watersplash_lg"};
+    std::set<std::string> laser_textures{"com_sfx_laser_red", "com_sfx_laser_blue", "com_sfx_laser_green",
+                                         "com_sfx_laser_yellow", "com_sfx_laser_orange", "com_sfx_laser_purple",
+                                         "com_sfx_meshmuzzleflash", "com_sfx_smoke3"};
+    std::set<std::string> model_names{"com_weap_inf_grenadethermal_ord", "com_weap_missile", "com_sfx_muzzleflash",
+                                      "com_item_healthrecharge_dst", "com_item_weaponrecharge_dst"};
+
+    for (const OdfClass& odf : library.classes().all()) {
+        if (odf.kind != "wpnc" && odf.kind != "ordc" && odf.kind != "expc") {
+            continue;
+        }
+        const OdfClass resolved = library.classes().resolve(odf.type);
+        for (const char* key : {"TrailEffect", "ImpactEffectSoft", "ImpactEffectTerrain", "ImpactEffectRigid",
+                                "ImpactEffectStatic", "ImpactEffectWater", "ImpactEffect", "Effect", "WaterEffect"}) {
+            if (const auto v = resolved.get(key); v && !v->empty()) {
+                effect_names.insert(lowercase(*v));
+            }
+        }
+        if (const auto tex = resolved.get("LaserTexture"); tex && !tex->empty()) {
+            laser_textures.insert(lowercase(*tex));
+        }
+        if (odf.kind == "ordc") {
+            if (const auto geom = resolved.get("GeometryName"); geom && !geom->empty()) {
+                model_names.insert(lowercase(*geom));
+            }
+        }
+    }
+
+    std::set<std::string> textures;
+    for (const std::string& tex : laser_textures) {
+        if (library.texture(tex) != nullptr && export_texture(library, tex, texture_dir / (tex + ".png"))) {
+            textures.insert(tex);
+        }
+    }
+
+    size_t exported_effects = 0;
+    for (const std::string& name : effect_names) {
+        const auto it = fx_by_hash.find(effect_name_hash(name));
+        if (it == fx_by_hash.end()) {
+            continue;
+        }
+        const std::vector<EffectEmitter> emitters = read_effect(*it->second);
+        if (emitters.empty()) {
+            continue;
+        }
+        for (const EffectEmitter& e : emitters) {
+            if (!e.texture.empty() && !textures.contains(e.texture) && library.texture(e.texture) != nullptr &&
+                export_texture(library, e.texture, texture_dir / (e.texture + ".png"))) {
+                textures.insert(e.texture);
+            }
+        }
+        std::ofstream out(out_dir / (name + ".json"), std::ios::binary);
+        write_effect_json(out, emitters);
+        ++exported_effects;
+    }
+
+    size_t exported_models = 0;
+    for (const std::string& name : model_names) {
+        if (library.model(name) == nullptr) {
+            continue;
+        }
+        const ModelExport written = export_model(library, name, model_dir, texture_dir, textures);
+        if (written.segments > 0) {
+            ++exported_models;
+        }
+    }
+
+    std::cout << exported_effects << " effects, " << textures.size() << " textures, " << exported_models << " models\n";
+    return 0;
+}
+
 int cmd_check(const std::vector<std::string>& args) {
     if (args.empty()) {
         std::cerr << usage;
@@ -1542,6 +1684,9 @@ int main(int argc, char** argv) {
         }
         if (command == "export-hud") {
             return cmd_export_hud(args);
+        }
+        if (command == "export-effects") {
+            return cmd_export_effects(args);
         }
     } catch (const std::exception& e) {
         std::cerr << "error: " << e.what() << "\n";

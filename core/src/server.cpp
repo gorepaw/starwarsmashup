@@ -428,6 +428,8 @@ void GameServer::step() {
     events_.clear();
     snapshot.explosions = std::move(explosions_);
     explosions_.clear();
+    snapshot.impacts = std::move(impacts_);
+    impacts_.clear();
     for (const Pickup& pickup : pickups_) {
         snapshot.pickups.push_back({pickup.id, pickup.kind, pickup.position, float(pickup.life)});
     }
@@ -482,9 +484,13 @@ void GameServer::run_match() {
             }
         }
         // Health and ammo droids: every so often (each its own delay), to
-        // whoever stands by them.
+        // whoever stands by them (while the droid is intact).
         if (client.life == Life::alive) {
-            for (const PowerupStation& station : field.powerups) {
+            for (size_t i = 0; i < field.powerups.size(); ++i) {
+                if (!conquest_->powerup_alive(i)) {
+                    continue;
+                }
+                const PowerupStation& station = field.powerups[i];
                 const double now = tick_ * dt / station.delay;
                 if (std::floor(now) == std::floor(now - dt / station.delay) || !station.reaches(client.state.position)) {
                     continue;
@@ -668,13 +674,13 @@ void GameServer::advance_bolts() {
     // After a match ends, bolts fly on but harm nobody.
     const bool harmless = conquest_ && conquest_->state().phase == Phase::ended;
     // Explosions damage the bolt list's owners, so collect them first.
-    std::vector<std::pair<Bolt, Vec3>> blasts;
+    std::vector<Blast> blasts;
     std::erase_if(bolts_, [&](Bolt& bolt) {
         const WeaponDef& def = *bolt.def;
         bolt.life -= dt;
         if (bolt.resting) {
             if (bolt.life <= 0) {
-                blasts.emplace_back(bolt, bolt.position);
+                blasts.push_back({bolt, bolt.position, {0, 1, 0}, false});
                 return true;
             }
             return false;
@@ -688,10 +694,13 @@ void GameServer::advance_bolts() {
             }
         }
         const Vec3 to = from + bolt.velocity * dt;
-        // The first thing along the way: the world, or someone where the
-        // shooter saw them. Bouncing grenades pass people by.
-        std::optional<double> nearest = world_.raycast(from, to);
+        // The first thing along the way: the world, someone where the shooter
+        // saw them, or a living health/ammo droid. Bouncing grenades pass people by.
+        const auto world_hit = world_.raycast_hit(from, to);
+        std::optional<double> nearest = world_hit ? std::optional(world_hit->t) : std::nullopt;
+        Vec3 normal = world_hit ? world_hit->normal : Vec3{0, 1, 0};
         Client* victim = nullptr;
+        int hit_powerup = -1;
         const bool bounces = def.projectile == Projectile::grenade && !def.explode_on_impact;
         for (Client& target : clients_) {
             const bool teammate = bolt.team >= 0 && target.team == bolt.team && !config_.friendly_fire;
@@ -703,17 +712,72 @@ void GameServer::advance_bolts() {
             if (t && (!nearest || *t < *nearest)) {
                 nearest = t;
                 victim = &target;
+                const double speed = bolt.velocity.length();
+                normal = speed > 1e-6 ? bolt.velocity * (-1.0 / speed) : Vec3{0, 1, 0};
+            }
+        }
+        if (conquest_ && !harmless && !bounces) {
+            const auto& stations = conquest_->battlefield().powerups;
+            for (size_t i = 0; i < stations.size(); ++i) {
+                if (!conquest_->powerup_alive(i)) {
+                    continue;
+                }
+                const auto t = segment_hits_cylinder(from, to, stations[i].position, PowerupStation::hit_radius,
+                                                     PowerupStation::hit_height);
+                if (t && (!nearest || *t < *nearest)) {
+                    nearest = t;
+                    victim = nullptr;
+                    hit_powerup = int(i);
+                    const double speed = bolt.velocity.length();
+                    normal = speed > 1e-6 ? bolt.velocity * (-1.0 / speed) : Vec3{0, 1, 0};
+                }
+            }
+            // A droid's own exported collision mesh may catch the ray slightly
+            // ahead of its cylinder hitbox; attribute world hits inside its padded volume.
+            if (victim == nullptr && hit_powerup < 0 && nearest) {
+                const Vec3 at = from + (to - from) * *nearest;
+                constexpr double pad_r = PowerupStation::hit_radius + 0.25;
+                for (size_t i = 0; i < stations.size(); ++i) {
+                    if (!conquest_->powerup_alive(i)) {
+                        continue;
+                    }
+                    const Vec3 d = at - stations[i].position;
+                    if (d.x * d.x + d.z * d.z <= pad_r * pad_r && d.y >= -0.25 &&
+                        d.y <= PowerupStation::hit_height + 0.25) {
+                        hit_powerup = int(i);
+                        break;
+                    }
+                }
             }
         }
         if (victim != nullptr) {
+            const Vec3 at = from + (to - from) * *nearest;
             damage(*victim, def.damage, def.damage_type, bolt.owner);
-            blasts.emplace_back(bolt, from + (to - from) * *nearest);
+            if (def.explosion_damage > 0 && def.explosion_outer > 0) {
+                blasts.push_back({bolt, at, normal, false});
+            } else {
+                impacts_.push_back({bolt.owner, bolt.weapon, at, normal, true});
+            }
+            return true;
+        }
+        if (hit_powerup >= 0) {
+            const Vec3 at = from + (to - from) * *nearest;
+            damage_powerup(size_t(hit_powerup), def.damage, bolt.owner, blasts);
+            if (def.explosion_damage > 0 && def.explosion_outer > 0) {
+                blasts.push_back({bolt, at, normal, false});
+            } else {
+                impacts_.push_back({bolt.owner, bolt.weapon, at, normal, false});
+            }
             return true;
         }
         if (nearest) {
             const Vec3 at = from + (to - from) * *nearest;
             if (!bounces) {
-                blasts.emplace_back(bolt, at);
+                if (def.explosion_damage > 0 && def.explosion_outer > 0) {
+                    blasts.push_back({bolt, at, normal, false});
+                } else {
+                    impacts_.push_back({bolt.owner, bolt.weapon, at, normal, false});
+                }
                 return true;
             }
             // A bounce, as off the ground (ASSUMPTION: walls bounce the same;
@@ -729,36 +793,75 @@ void GameServer::advance_bolts() {
         }
         if (bolt.life <= 0) {
             if (bounces) {
-                blasts.emplace_back(bolt, bolt.position);  // the fuse ran out
+                blasts.push_back({bolt, bolt.position, {0, 1, 0}, false});  // the fuse ran out
             }
             return true;
         }
         return false;
     });
     if (!harmless) {
-        for (const auto& [bolt, at] : blasts) {
-            explode(bolt, at);
+        for (size_t i = 0; i < blasts.size(); ++i) {
+            const Blast blast = blasts[i];
+            explode(blast, blasts);
         }
+    }
+}
+
+void GameServer::damage_powerup(size_t index, double amount, uint32_t attacker, std::vector<Blast>& blasts) {
+    if (!conquest_ || !conquest_->powerup_alive(index) || amount <= 0) {
+        return;
+    }
+    events_.push_back({net::CombatEvent::hit, attacker, 0, float(amount)});
+    if (conquest_->damage_powerup(index, amount)) {
+        Blast blast;
+        blast.bolt.owner = attacker;
+        blast.bolt.team = -1;
+        blast.bolt.weapon = net::droid_explosion_weapon;
+        blast.at = conquest_->battlefield().powerups[index].position + Vec3{0, 0.7, 0};
+        blast.normal = {0, 1, 0};
+        blast.droid = true;
+        blasts.push_back(blast);
     }
 }
 
 // Damage to everyone near: teammates are spared (unless friendly fire is
 // on), the thrower isn't (ASSUMPTION: Battlefront hurts the thrower too).
-void GameServer::explode(const Bolt& bolt, Vec3 at) {
-    const WeaponDef& def = *bolt.def;
+void GameServer::explode(const Blast& blast, std::vector<Blast>& blasts) {
+    const Bolt& bolt = blast.bolt;
+    WeaponDef droid_def;
+    if (blast.droid) {
+        // Battlefront's com_inf_rechargedroid_exp: small burst when a droid blows up.
+        droid_def.explosion_damage = 20.0;
+        droid_def.explosion_inner = 1.25;
+        droid_def.explosion_outer = 2.5;
+    }
+    const WeaponDef& def = blast.droid ? droid_def : *bolt.def;
     if (def.explosion_damage <= 0 || def.explosion_outer <= 0) {
         return;
     }
-    explosions_.push_back({bolt.owner, bolt.weapon, at, float(def.explosion_outer)});
+    explosions_.push_back({bolt.owner, bolt.weapon, blast.at, blast.normal, float(def.explosion_outer)});
     for (Client& target : clients_) {
-        const bool teammate = bolt.team >= 0 && target.team == bolt.team && target.entity != bolt.owner &&
-                              !config_.friendly_fire;
+        const bool teammate = !blast.droid && bolt.team >= 0 && target.team == bolt.team &&
+                              target.entity != bolt.owner && !config_.friendly_fire;
         if (target.life != Life::alive || teammate) {
             continue;
         }
-        const double amount = explosion_damage(def, at, position_at(target, double(tick_) - bolt.rewind));
+        const Vec3 target_pos = blast.droid ? target.state.position : position_at(target, double(tick_) - bolt.rewind);
+        const double amount = explosion_damage(def, blast.at, target_pos);
         if (amount > 0) {
             damage(target, amount, DamageType::explosive, bolt.owner);
+        }
+    }
+    if (conquest_) {
+        const auto& stations = conquest_->battlefield().powerups;
+        for (size_t i = 0; i < stations.size(); ++i) {
+            if (!conquest_->powerup_alive(i)) {
+                continue;
+            }
+            const double amount = explosion_damage(def, blast.at, stations[i].position);
+            if (amount > 0) {
+                damage_powerup(i, amount, bolt.owner, blasts);
+            }
         }
     }
 }

@@ -37,7 +37,8 @@ constexpr std::array known_names = {
     "ZoomTurnDivisorMax", "ExtremeRange",
     // ordnance
     "Velocity", "LifeSpan", "MaxDamage", "Gravity", "Rebound", "LaserTexture", "LaserGlowColor", "LaserLength",
-    "LaserWidth", "GlowLength", "GlowWidth", "LightColor", "LightRadius", "ImpactEffect", "ImpactEffectWater",
+    "LaserWidth", "GlowLength", "GlowWidth", "BlurLength", "TrailEffect", "LightColor", "LightRadius",
+    "LightDuration", "Decal", "WaterEffect", "FadeOutTime", "MuzzleFlashEffect", "ImpactEffect", "ImpactEffectWater",
     "ImpactEffectSoft", "ImpactEffectRigid", "ImpactEffectStatic", "ImpactEffectTerrain", "ImpactEffectShield",
     "VehicleScale", "ShieldScale", "PersonScale", "DroidScale", "AnimalScale", "BuildingScale",
     "BuildingDeadScale", "BuildingUnbuiltScale", "ExplosionName", "ExplosionImpact", "ExplosionExpire",
