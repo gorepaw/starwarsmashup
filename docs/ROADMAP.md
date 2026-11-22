@@ -133,7 +133,7 @@ Matches look, sound and feel finished before Galaxies' gear changes what's in th
 
 **Over soldiers' heads**
 - [ ] Faction holograms instead of names: a small version of the command post hologram (the side's insignia turning in its cone of light), blue for your side and red for the enemy's. Names only on the scoreboard.
-- [ ] Greyed and faded when something blocks the view. Each frame a few rays go from the camera to the holograms against the map's collision, round-robin, so 64 soldiers cost little. A hologram eases to grey and faint when blocked and back when seen.
+- [ ] When something blocks the view, your side's holograms ease to grey and faint, and the enemy's disappear. Each frame a few rays go from the camera to the holograms against the map's collision, round-robin, so 64 soldiers cost little.
 
 **Health and ammo droids**
 - [ ] Battlefront's droids work. Every map already places them as props (`com_item_healthrecharge`, `com_item_weaponrecharge`). Soldiers near one regain health or ammo at the rate and range its class gives (bf2tool reads them). Each droid plays its own idle animation. The HUD shows the effect as Battlefront does.
@@ -201,7 +201,7 @@ Start the game from a main menu, make a character of any Galaxies species, and c
 - [ ] Saved with the character. Every client draws other players from it: snapshots carry species and customization values (the crowd's color seed, made explicit).
 
 **Species traits**
-- [ ] Some species can't wear some gear, as in Galaxies: Wookiees most armor and footwear, Trandoshans footwear, and Ithorians standard armor. The exact rules get checked online before they're built.
+- [ ] Some species can't wear some gear, as in Galaxies: Wookiees and Ithorians most armor (Wookiees footwear too), Trandoshans footwear. The exact rules get checked online before they're built.
 - [ ] In return, built-in traits through the stat model. A species becomes one more stat source in `core::stats_for`. For example: a Wookiee's health and melee mitigation, a Trandoshan's mitigation and regeneration. A Wookiee with empty slots should come out about even with an armored human. The values are tuned in Stage 4, once armor has values.
 
 ### Exit criteria
@@ -279,7 +279,7 @@ What lived around Mos Eisley in Galaxies, researched online (wikis and guides). 
 
 **Loot, credits and vendors**
 - [ ] Loot tables for each creature and NPC: credits, junk (hides, broken parts: Galaxies had junk loot and junk dealers to sell it to), and now and then gear with stats rolled within its sidegrade band.
-- [ ] Looting the dead (see the open questions).
+- [ ] Looting the dead, Galaxies-style: open the corpse with E and take what you want; credits are taken automatically.
 - [ ] Vendors in Mos Eisley: a junk dealer who buys junk, and vendors who sell basic gear and supplies. Battlefront-style buy and sell screens, with prices in data files.
 - [ ] Credits saved with the character.
 
@@ -352,10 +352,12 @@ Each of these gets a staged breakdown like Stage 1 once the stage before it is f
 
 ---
 
-## Open questions
+## Decisions for the stages ahead
 
-1. **Enemy holograms behind walls.** If enemies' holograms show (greyed) through walls, walls stop hiding anyone. Recommended: your side's grey out when blocked, and the enemy's disappear.
-2. **Looting.** Galaxies-style (open the corpse with E and take what you want) or shooter-style (drops spill on the ground and you walk over them). Recommended: Galaxies-style for gear and junk, with credits taken automatically.
-3. **Ithorians.** Galaxies kept them out of standard armor too. Give them the same treatment as Wookiees (traits in return)?
-4. **Switching loadouts in the world.** Interrupted only by taking damage, or also by moving or by being in combat at all?
-5. **Order.** Recommended: Stage 2 → 3 → 4 → 5 → 6. Species come before armor so armor is imported for every species from the start. Items come before the open world, since loot and vendors need them. Vehicles could move up to just after Stage 4 if you'd rather have them sooner. Space stays last whatever the order.
+Decided 2026-11-22:
+
+1. **Holograms behind walls:** your side's grey out and fade when something blocks the view; the enemy's disappear.
+2. **Looting:** Galaxies-style. Open the corpse with E and take what you want; credits are taken automatically.
+3. **Ithorians** get the same treatment as Wookiees: kept out of standard armor, with built-in traits in return.
+4. **Switching loadouts in the world** takes several seconds and is interrupted only by taking damage.
+5. **Order:** Stage 2 → 3 → 4 → 5 → 6, then 7 when you say go, 8, 9. Species come before armor so armor is imported for every species from the start. Items come before the open world, since loot and vendors need them.
