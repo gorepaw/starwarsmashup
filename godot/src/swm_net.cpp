@@ -872,6 +872,19 @@ godot::Error SwmServer::set_battlefield(const godot::String& path) {
     return load_battlefield_file(battlefield_, path);
 }
 
+void SwmServer::set_bot_difficulty(const godot::String& difficulty) {
+    bot_skill_ = core::BotSkill::preset(difficulty.utf8().get_data());
+    if (bots_) {
+        bots_->set_skill(bot_skill_);
+    }
+    if (hub_config_) {
+        hub_config_->bot_skill = bot_skill_;
+    }
+    if (hub_) {
+        hub_->set_bot_skill(bot_skill_);
+    }
+}
+
 void SwmServer::set_bots(int64_t count) {
     bot_count_ = int(std::clamp<int64_t>(count, 0, 64));
 }
@@ -915,7 +928,7 @@ godot::Error SwmServer::start(int64_t port, const godot::String& bake_prefix, co
         bot_config.loadout = loadout_;
         bot_config.battlefield = battlefield_;
         try {
-            bots_ = std::make_unique<core::BotPlayers>(bot_count_, *world_, bot_config);
+            bots_ = std::make_unique<core::BotPlayers>(bot_count_, *world_, bot_config, core::BotPlayers::LinkFactory{}, bot_skill_);
         } catch (const std::exception& error) {
             godot::UtilityFunctions::push_error("SwmServer: bots: ", error.what());
         }
@@ -965,6 +978,7 @@ void SwmServer::_bind_methods() {
     ClassDB::bind_method(D_METHOD("set_loadout", "path"), &SwmServer::set_loadout);
     ClassDB::bind_method(D_METHOD("set_battlefield", "path"), &SwmServer::set_battlefield);
     ClassDB::bind_method(D_METHOD("set_bots", "count"), &SwmServer::set_bots);
+    ClassDB::bind_method(D_METHOD("set_bot_difficulty", "difficulty"), &SwmServer::set_bot_difficulty);
     ClassDB::bind_method(D_METHOD("set_hub", "path"), &SwmServer::set_hub);
     ClassDB::bind_method(D_METHOD("add_building", "collision_path", "position", "yaw_degrees"),
                          &SwmServer::add_building);

@@ -66,7 +66,8 @@ std::atomic<bool> stop_requested = false;
 int usage() {
     std::cerr << "usage: swm_server [--bake <prefix>] [--db <file>] [--port 7777] [--spawn <swg_x> <swg_z>] "
                  "[--seconds <n>] [--building <file.collision> <swg_x> <swg_y> <swg_z> <yaw_degrees>]... "
-                 "[--loadout <file.ini>] [--battlefield <file.ini>] [--bots <n>] [--hub <file.ini>]\n";
+                 "[--loadout <file.ini>] [--battlefield <file.ini>] [--bots <n>] [--difficulty easy|normal|hard] "
+                 "[--hub <file.ini>]\n";
     return 2;
 }
 
@@ -83,6 +84,7 @@ int main(int argc, char** argv) {
     std::string battlefield;
     std::string hub_file;
     int bot_count = 0;
+    std::string difficulty = "normal";
     int port = 7777;
     bool has_spawn = false;
     double spawn_x = 0, spawn_z = 0, run_for = 0;
@@ -103,6 +105,8 @@ int main(int argc, char** argv) {
             hub_file = argv[++i];
         } else if (arg == "--bots" && i + 1 < argc) {
             bot_count = std::atoi(argv[++i]);
+        } else if (arg == "--difficulty" && i + 1 < argc) {
+            difficulty = argv[++i];
         } else if (arg == "--db" && i + 1 < argc) {
             db = argv[++i];
         } else if (arg == "--port" && i + 1 < argc) {
@@ -189,11 +193,13 @@ int main(int argc, char** argv) {
         bot_config.loadout = config.loadout;
         bot_config.base_stats = config.base_stats;
         bot_config.battlefield = config.battlefield;
-        swm::core::BotPlayers bots(bot_count, world, bot_config);
+        const swm::core::BotSkill skill = swm::core::BotSkill::preset(difficulty);
+        swm::core::BotPlayers bots(bot_count, world, bot_config, {}, skill);
         swm::core::UdpHubNetwork hub_network;
         std::unique_ptr<swm::core::Hub> hub;
         if (!hub_file.empty()) {
             swm::core::HubConfig hub_config = swm::core::load_hub(hub_file);
+            hub_config.bot_skill = skill;
             std::cout << std::format("hub {}: {} war terminal(s), battles on {} battlefields, {} per team\n", hub_config.name,
                                      hub_config.recruiters.size(), hub_config.battlefields.size(), hub_config.team_size);
             hub = std::make_unique<swm::core::Hub>(server, link.port(), world, std::move(hub_config), hub_network);

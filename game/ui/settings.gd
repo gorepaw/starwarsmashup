@@ -37,6 +37,8 @@ var field_of_view := 65.0    # degrees, vertical
 var first_person := false
 var fullscreen := false
 var vsync := true
+var bot_difficulty := "normal"  # easy, normal or hard: bots on a server this game hosts
+const DIFFICULTIES := ["easy", "normal", "hard"]
 
 
 func _init() -> void:
@@ -53,6 +55,9 @@ func load_file() -> void:
 		first_person = bool(file.get_value("view", "first_person", first_person))
 		fullscreen = bool(file.get_value("display", "fullscreen", fullscreen))
 		vsync = bool(file.get_value("display", "vsync", vsync))
+		bot_difficulty = str(file.get_value("bots", "difficulty", bot_difficulty))
+		if not DIFFICULTIES.has(bot_difficulty):
+			bot_difficulty = "normal"
 		for action: Array in ACTIONS:
 			bindings[action[0]] = file.get_value("controls", action[0], bindings[action[0]])
 	apply()
@@ -66,6 +71,7 @@ func save_file() -> void:
 	file.set_value("view", "first_person", first_person)
 	file.set_value("display", "fullscreen", fullscreen)
 	file.set_value("display", "vsync", vsync)
+	file.set_value("bots", "difficulty", bot_difficulty)
 	for action: Array in ACTIONS:
 		file.set_value("controls", action[0], bindings[action[0]])
 	file.save(PATH)

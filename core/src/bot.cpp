@@ -321,6 +321,56 @@ constexpr double dropped_reach = 25;     // m: a dropped pickup further than thi
 constexpr double nearby_pickup = 10;     // m: grab a close dropped pack even when only lightly hurt/spent
 constexpr double powerup_patience = 25;  // s: gives up on one after this
 
+BotSkill BotSkill::preset(std::string_view difficulty) {
+    if (difficulty == "easy") {
+        return {.aim_error = 5.0, .reaction = 0.8, .fire_range = 45, .cover = 0.3, .dodge = 0};
+    }
+    if (difficulty == "hard") {
+        return {.aim_error = 1.2, .reaction = 0.25, .fire_range = 80, .cover = 1.0, .dodge = 0.35};
+    }
+    return {};
+}
+
+std::optional<Vec3> Bot::find_cover(const GameClient& client, const World& world, Vec3 enemy, bool& crouch) {
+    const MoveState& me = client.predicted();
+    const double step_up = client.character_stats().move.step_up;
+    const Battlefield* field = client.config().battlefield ? &*client.config().battlefield : nullptr;
+    std::optional<Vec3> best;
+    double best_score = std::numeric_limits<double>::max();
+    const double start = random() * 2 * std::numbers::pi;
+    for (const double reach : {2.5, 5.0, 8.0, 11.0}) {
+        for (int i = 0; i < 12; ++i) {
+            const double angle = start + i * std::numbers::pi / 6;
+            Vec3 spot{me.position.x + std::cos(angle) * reach, 0, me.position.z + std::sin(angle) * reach};
+            spot.y = world.support_at(spot.x, spot.z, me.position.y + step_up, step_up).height;
+            // Somewhere it can stand (its route there, around whatever hides
+            // it, is planned as any is).
+            if (std::abs(spot.y - me.position.y) > 2.5 || (field && field->harmful(spot)) ||
+                (navigation_ && !navigation_->walkable(spot))) {
+                continue;
+            }
+            // Hidden standing (head and chest), or crouched (behind something low).
+            const bool high = world.raycast(enemy, spot + Vec3{0, 1.6, 0}) && world.raycast(enemy, spot + Vec3{0, 1.0, 0});
+            const bool low = world.raycast(enemy, spot + Vec3{0, 0.9, 0}) && world.raycast(enemy, spot + Vec3{0, 0.4, 0});
+            if (!high && !low) {
+                continue;
+            }
+            // Nearer is better; toward the enemy a little worse.
+            const double toward = horizontal_distance(spot, enemy) < horizontal_distance(me.position, enemy) ? 2 : 0;
+            const double score = reach + toward + (high ? 0 : 1);
+            if (score < best_score) {
+                best_score = score;
+                best = spot;
+                crouch = !high;
+            }
+        }
+        if (best) {
+            break;  // the nearest ring with any
+        }
+    }
+    return best;
+}
+
 void Bot::choose_powerup(const GameClient& client, double now) {
     const Battlefield& field = *client.config().battlefield;
     const MoveState& me = client.predicted();
@@ -443,6 +493,8 @@ void Bot::update(GameClient& client, const World& world, double now) {
         }
         objective_ = -1;
         powerup_ = -1;
+        cover_.reset();
+        retreat_until_ = 0;
         pickup_ = 0;
         slow_since_ = -1;  // a new life isn't stuck
         unstick_until_ = 0;
@@ -512,6 +564,64 @@ void Bot::update(GameClient& client, const World& world, double now) {
         target_since_ = now;
     }
 
+    // In a fight: cover to reload or when hurt; falling back badly hurt (no
+    // droid to go to); now and then a roll aside.
+    bool want_crouch = false;
+    bool roll = false;
+    if (in_match) {
+        const double max_health = std::max(1.0, client.character_stats().max_health);
+        const double health = double(self.health) / max_health;
+        const WeaponState& clip = me.combat.weapons[me.combat.weapon];
+        const bool reloading = me.combat.reload > 0 || clip.overheated ||
+                               (weapon.rounds_per_clip > 0 && clip.rounds == 0);
+        // There, it stays a while (from arriving); on the way, it gives up
+        // after a few seconds.
+        if (cover_ && !cover_reached_ && horizontal_distance(*cover_, me.position) < 0.6) {
+            cover_reached_ = true;
+            cover_until_ = now + cover_hold_;
+        }
+        if (cover_ && now >= cover_until_) {
+            cover_.reset();
+            next_cover_ = now + 4 + random() * 4;
+        }
+        if (!cover_ && target != nullptr && now >= next_cover_ && powerup_ < 0 && (reloading || health < 0.5)) {
+            next_cover_ = now + 2;
+            if (random() < skill_.cover) {
+                const Vec3 enemy = target->state.position + Vec3{0, eye_height, 0};
+                if (auto spot = find_cover(client, world, enemy, cover_crouch_)) {
+                    cover_ = spot;
+                    cover_reached_ = false;
+                    cover_until_ = now + 6;  // to get there
+                    cover_hold_ = std::max(2.0, me.combat.reload) + 1.0 + random() * 2;
+                }
+            }
+        }
+        if (cover_) {
+            destination = *cover_;
+            want_crouch = cover_crouch_ && horizontal_distance(*cover_, me.position) < 1.0;
+        } else if (powerup_ < 0 && health < 0.3 && target != nullptr && retreat_until_ <= now) {
+            retreat_until_ = now + 5 + random() * 3;
+        }
+        if (!cover_ && powerup_ < 0 && now < retreat_until_) {
+            // The nearest post its team holds that's further from the enemy.
+            const Vec3 threat = target != nullptr ? target->state.position : me.position;
+            const auto& posts = client.config().battlefield->posts;
+            double best = std::numeric_limits<double>::max();
+            for (size_t i = 0; i < posts.size() && i < match->posts.size(); ++i) {
+                if (match->posts[i].owner == self.team &&
+                    horizontal_distance(posts[i].position, threat) > horizontal_distance(me.position, threat) &&
+                    horizontal_distance(posts[i].position, me.position) < best) {
+                    best = horizontal_distance(posts[i].position, me.position);
+                    destination = posts[i].position;
+                }
+            }
+        }
+        if (target != nullptr && !cover_ && now >= next_roll_) {
+            next_roll_ = now + 2.5 + random() * 3;
+            roll = random() < skill_.dodge && me.energy > 50 && me.grounded;
+        }
+    }
+
     // Movement in the world, then in the frame of where it faces.
     Vec3 move;
     double to_go = 0;
@@ -520,12 +630,12 @@ void Bot::update(GameClient& client, const World& world, double now) {
         // Over or under a post (on the hillside over Polis Massa's CP3, in
         // its cave) isn't there yet.
         double off_height = 0;
-        if (in_match && powerup_ < 0 && pickup_ == 0) {
+        if (in_match && powerup_ < 0 && pickup_ == 0 && !cover_) {
             const CommandPost& post = client.config().battlefield->posts[size_t(objective_)];
             off_height = std::max({0.0, post.low - 0.5 - me.position.y, me.position.y - post.high});
         }
         to_go = horizontal_distance(*destination, me.position) + off_height;
-        const double stop = pickup_ != 0 ? 0.4 : 1.5;
+        const double stop = pickup_ != 0 || cover_ ? 0.4 : 1.5;  // right onto a pickup, right behind cover
         if (to_go > stop) {
             const Vec3 toward = steer(me.position, *destination, now);
             const Vec3 d{toward.x - me.position.x, 0, toward.z - me.position.z};
@@ -636,11 +746,27 @@ void Bot::update(GameClient& client, const World& world, double now) {
     const Vec3 right{c, 0, -s};
     controls.forward = std::clamp(move.dot(forward), -1.0, 1.0);
     controls.right = std::clamp(move.dot(right), -1.0, 1.0);
+    // A press crouches or stands still, rolls on the move: a roll aside in
+    // a fight (strafing), else crouching behind low cover once there, and
+    // standing up out of it.
+    if (!me.crouch_held && !me.rolling()) {
+        if (roll && std::abs(controls.right) > 0.3) {
+            controls.crouch = true;
+        } else if (want_crouch != me.crouched && std::hypot(controls.forward, controls.right) < 0.1) {
+            controls.crouch = true;
+        } else if (me.crouched && !want_crouch && !cover_) {
+            controls.crouch = !(std::hypot(controls.forward, controls.right) > 0.1);  // stand before moving off
+            if (controls.crouch) {
+                controls.forward = controls.right = 0;
+            }
+        }
+    }
     controls.weapon = 0;
     client.set_input(controls);
 }
 
-BotPlayers::BotPlayers(int count, const World& world, const ClientConfig& base, LinkFactory open_link)
+BotPlayers::BotPlayers(int count, const World& world, const ClientConfig& base, LinkFactory open_link,
+                       BotSkill skill)
     : world_(world) {
     if (base.battlefield) {
         navigation_ = std::make_shared<NavGrid>(world, *base.battlefield);
@@ -651,6 +777,13 @@ BotPlayers::BotPlayers(int count, const World& world, const ClientConfig& base, 
         auto link = open_link ? open_link() : std::make_unique<net::UdpLink>();
         players_.push_back(std::make_unique<Player>(std::move(link), world, std::move(config), uint64_t(i + 1)));
         players_.back()->bot.set_navigation(navigation_);
+        players_.back()->bot.set_skill(skill);
+    }
+}
+
+void BotPlayers::set_skill(BotSkill skill) {
+    for (auto& player : players_) {
+        player->bot.set_skill(skill);
     }
 }
 

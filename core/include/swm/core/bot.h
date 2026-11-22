@@ -3,6 +3,8 @@
 #include <cstdint>
 #include <functional>
 #include <memory>
+#include <optional>
+#include <string_view>
 #include <vector>
 
 #include "swm/core/client.h"
@@ -18,6 +20,11 @@ struct BotSkill {
     double aim_error = 2.5;    // degrees: how far its aim wanders
     double reaction = 0.4;     // seconds from spotting an enemy to shooting
     double fire_range = 60;    // m
+    double cover = 0.7;        // 0..1: how often it takes cover to reload or when hurt
+    double dodge = 0.15;       // 0..1: how often it rolls aside in a fight (every few seconds)
+
+    // "easy", "normal" or "hard" (anything else: normal).
+    static BotSkill preset(std::string_view difficulty);
 };
 
 // How fast (of full speed) to go from `position` heading for `path[corner]`:
@@ -31,7 +38,10 @@ double drop_pace(Vec3 position, const std::vector<Vec3>& path, size_t corner);
 // (or guards one), and shoots enemies it can see, leading them (and lobbing
 // grenades and mortar shells on a ballistic arc). Hurt or short of ammo, it
 // goes to a health or ammo droid nearby first, and stays until it's
-// patched up or rearmed. In a hub it
+// patched up or rearmed. In a fight it takes cover (somewhere near the
+// enemy can't see, crouched behind something low) to reload or when hurt,
+// falls back toward a post its team holds when badly hurt with no droid
+// near, and now and then rolls aside, as often as its skill says. In a hub it
 // walks to the nearest war terminal and queues for a battle. Elsewhere it
 // hunts the nearest other character. With a NavGrid it walks around
 // obstacles on the grid's routes; without one it runs straight. Either way
@@ -51,6 +61,10 @@ public:
     int powerup() const { return powerup_; }
     // The dropped health/ammo pickup id it's heading for, or 0.
     uint32_t pickup() const { return pickup_; }
+    void set_skill(BotSkill skill) { skill_ = skill; }
+    const BotSkill& skill() const { return skill_; }
+    // Where it's taking cover, if it is.
+    const std::optional<Vec3>& cover() const { return cover_; }
     // The side it queues for in a hub (default: picked from the seed).
     void set_queue_team(int team) { queue_team_ = team; }
     // The walkable grid of the battlefield it plays on (shared between bots;
@@ -68,6 +82,9 @@ private:
     // Whether it needs a droid (hurt, or short of ammo), and if so heads for
     // the nearest that helps; lets go once it's patched up or rearmed.
     void choose_powerup(const GameClient& client, double now);
+    // Somewhere near (on ground it can stand on) that the enemy at `enemy`
+    // (its eyes) can't see: behind something tall, or low (then crouched).
+    std::optional<Vec3> find_cover(const GameClient& client, const World& world, Vec3 enemy, bool& crouch);
     // Where to head now on the way to `destination`: the next corner of its
     // route (planned again when the destination moves, when it's stuck, and
     // now and then), or the destination itself without a grid. Sets pace_.
@@ -83,6 +100,14 @@ private:
     Vec3 powerup_spot_;       // beside the droid, or on the pickup, where it goes
     double powerup_until_ = 0;  // gives up then
     double next_powerup_ = 0;   // looks for one again then
+    std::optional<Vec3> cover_;  // where it's taking cover
+    bool cover_crouch_ = false;  // ...crouched, behind something low
+    bool cover_reached_ = false;
+    double cover_hold_ = 0;      // seconds it stays once there
+    double cover_until_ = 0;     // leaves (or gives up getting there) then
+    double next_cover_ = 0;      // thinks about cover again then
+    double retreat_until_ = 0;   // falling back to a held post until then
+    double next_roll_ = 0;       // may roll aside then
     Vec3 offset_;            // where in the post it stands
     Vec3 home_;              // the post's console (or middle), from its middle: where a spot out of reach gives way to
     double next_objective_ = 0;
@@ -118,7 +143,10 @@ public:
     // `base` is each bot's client config: the server, and the soldier or
     // battlefield the server uses. Each bot gets a link from `open_link`
     // (default: a UDP socket on a free port). Throws if one can't be opened.
-    BotPlayers(int count, const World& world, const ClientConfig& base, LinkFactory open_link = {});
+    BotPlayers(int count, const World& world, const ClientConfig& base, LinkFactory open_link = {},
+               BotSkill skill = {});
+    // Every bot's skill, from now on.
+    void set_skill(BotSkill skill);
     void update(double now);
     void disconnect();
     size_t size() const { return players_.size(); }

@@ -160,6 +160,7 @@ var _posts: Array = []            # per command post: {hologram} (its model's), 
 var _cone_shader: Shader         # the command post holograms' cone (_holo_cone_shader)
 var _team_tags: TeamTags         # in a match on a Battlefront map: the holograms over soldiers' heads
 var _crouch_view := 0.0          # 0 standing .. 1 crouched: the third-person camera's drop
+var _bot_difficulty := ""        # the bots' difficulty the hosted server has (the options' may change)
 var _zoom_step := 0              # 0: not zoomed; else which of the held weapon's zoom levels (Z steps through them)
 var _zoom := 1.0                 # the magnification drawn, easing toward the step's
 var _zoom_weapon := -1           # the weapon zoomed with: switching weapons backs out
@@ -272,6 +273,8 @@ func _init() -> void:
 			quit(1)
 			return
 		_server.set_bots(int(_option(args, "--bots", "0")))
+		_server.set_bot_difficulty(_settings.bot_difficulty)
+		_bot_difficulty = _settings.bot_difficulty
 		if _option(args, "--hub", "") != "" and _server.set_hub(_os_path(_option(args, "--hub", ""))) != OK:
 			quit(1)
 			return
@@ -329,6 +332,9 @@ func _process(delta: float) -> bool:
 	if _wait_fire_release and not Input.is_action_pressed("fire"):
 		_wait_fire_release = false
 	if _server != null:
+		if _settings.bot_difficulty != _bot_difficulty:
+			_bot_difficulty = _settings.bot_difficulty
+			_server.set_bot_difficulty(_bot_difficulty)  # changed in the options: its bots, now
 		_server.update()
 	if _bot != "conquest":
 		_client.set_input(_controls())

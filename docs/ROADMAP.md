@@ -161,8 +161,8 @@ Matches look, sound and feel finished before Galaxies' gear changes what's in th
   - The thermal detonator's timer is its LifeSpan, 0.6 s, from when it first touches something (StartTimerOnContact; its "sticky" class says nothing of it, so ASSUMPTION). What bf2tool had read as its 2 s fuse (an unnamed property) is its Friction, as hashing the mod tools' names showed. Its sticking to vehicles and buildings (StickVehicle, StickBuilding) waits for vehicles and destructible buildings.
 
 **Bots**
-- [ ] Take cover and retreat.
-- [ ] Difficulty in the options (`core::BotSkill`: aim error, reaction time, range).
+- [x] Take cover and retreat (`core::Bot`). Reloading (or out of rounds, or overheated) or under half health with no droid to go to, a bot in a fight looks for cover: the nearest place within 11 m it can stand that the enemy can't see, behind something tall, or low (then it crouches there). It goes there (routed around whatever hides it, giving up after 6 s), stays until reloaded and a moment more, and goes back to its objective. Under 30% health with no droid, it falls back toward the nearest post its team holds that's further from the enemy, still shooting. In a fight it now and then rolls aside. In the bot match test, its bots spent 14 bot-seconds in cover over two minutes.
+- [x] Difficulty in the options (Bots: Easy, Normal, Hard; `core::BotSkill::preset`): aim error (5, 2.5, 1.2 degrees), reaction time (0.8, 0.4, 0.25 s), range (45, 60, 80 m), how often they take cover (30%, 70%, always) and roll aside (never, 15%, 35%). It applies to bots on the server the game hosts, and in a hub's battles, at once when changed; `swm_server --difficulty`.
 
 **Maps**
 - [ ] Doors that open as soldiers come, and the airlocks and gates that scripts work.

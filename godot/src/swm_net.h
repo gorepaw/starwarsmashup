@@ -199,6 +199,9 @@ public:
     godot::Error set_battlefield(const godot::String& path);
     // Adds bots, connected like players, when the server starts.
     void set_bots(int64_t count);
+    // How well bots play: "easy", "normal" or "hard" (core::BotSkill::preset),
+    // here and in a hub's battles; any time.
+    void set_bot_difficulty(const godot::String& difficulty);
     // Makes the server a hub (a hub file, an OS path; see game/hubs/): its
     // war terminals queue players for battles it launches. Call before start().
     godot::Error set_hub(const godot::String& path);
@@ -221,6 +224,7 @@ private:
     core::Loadout loadout_;
     std::optional<core::Battlefield> battlefield_;
     int bot_count_ = 0;
+    core::BotSkill bot_skill_;
     std::unique_ptr<core::World> world_;
     std::unique_ptr<core::SqliteCharacterStore> store_;
     std::unique_ptr<core::net::UdpLink> udp_;

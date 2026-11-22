@@ -57,6 +57,7 @@ struct HubConfig {
     std::array<std::string, 2> sides;
     std::vector<HubBattlefield> battlefields;  // each battle is on one, at random
     int team_size = 8;           // soldiers per team; bots fill the places players don't
+    BotSkill bot_skill;          // theirs (the players' difficulty setting, when they host)
     double queue_time = 10;      // seconds from the first player queueing to the battle starting
     double return_delay = 5;     // seconds after a battle's results before it closes
     // Its people: how they look (Galaxies object templates), the set pieces
@@ -122,6 +123,8 @@ public:
     // Its people (made on the first update).
     size_t people_count() const { return walkers_.size() + standing_; }
     size_t battle_count() const { return battles_.size(); }
+    // The bots' skill in battles from now on, and in those being fought.
+    void set_bot_skill(BotSkill skill);
     // The last battle's result, if one has ended.
     const std::optional<MatchResult>& last_result() const { return last_result_; }
 

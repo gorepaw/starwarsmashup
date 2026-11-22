@@ -657,6 +657,8 @@ void test_bots_play_a_match() {
     bool ended = false;
     MatchState result;
     int captures = 0, kills = 0, max_pickups = 0;
+    int in_cover = 0, crouched_in_cover = 0;  // bot-ticks behind cover (and crouched there)
+    const auto horizontal = [](Vec3 d) { return std::hypot(d.x, d.z); };
     std::vector<bool> healed(bots.size());  // reached a droid it was going to
     std::vector<bool> scavenged(bots.size());  // went for a dropped pickup
     while (field.now < 900 && !ended) {
@@ -670,6 +672,12 @@ void test_bots_play_a_match() {
                 }
                 if (bots[i].pickup() != 0) {
                     scavenged[i] = true;
+                }
+                // In cover: there, and hidden from every enemy it can see.
+                if (const auto& cover = bots[i].cover();
+                    cover && horizontal(field.clients[i]->predicted().position - *cover) < 1.0) {
+                    ++in_cover;
+                    crouched_in_cover += field.clients[i]->predicted().crouched ? 1 : 0;
                 }
                 for (const auto& event : field.clients[i]->take_events()) {
                     if (i == 0) {
@@ -691,7 +699,8 @@ void test_bots_play_a_match() {
     const auto went_for_drops = std::count(scavenged.begin(), scavenged.end(), true);
     std::printf("bots: %d captures, %d kills; %d of %zu went to a health droid, %d went for dropped pickups (peak %d on ground)\n",
                 captures, kills, int(at_droids), bots.size(), int(went_for_drops), max_pickups);
-    CHECK(result.winner >= 0 && at_droids >= 1 && max_pickups >= 1);
+    std::printf("bots: %.0f bot-seconds in cover (%.0f crouched)\n", in_cover * dt, crouched_in_cover * dt);
+    CHECK(result.winner >= 0 && at_droids >= 1 && max_pickups >= 1 && in_cover > 0);
     CHECK(ended && captures >= 2 && kills >= 5);
 }
 

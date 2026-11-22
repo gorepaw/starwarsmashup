@@ -517,7 +517,8 @@ void Hub::start_battle() {
     bot_config.server = network_.local(b->port);
     bot_config.battlefield = b->field.field;
     bot_config.ticket = b->bot_ticket;
-    b->bots = std::make_unique<BotPlayers>(bots, world, bot_config, [this] { return network_.open_client(); });
+    b->bots = std::make_unique<BotPlayers>(bots, world, bot_config, [this] { return network_.open_client(); },
+                                           config_.bot_skill);
     say(std::format("battle {} on {}: port {}, {} players, {} bots", b->id, b->field.field.name, b->port,
                     b->players[0] + b->players[1], bots));
     battles_.push_back(std::move(battle));
@@ -587,6 +588,15 @@ void Hub::update(double now) {
         }
         return done || abandoned;
     });
+}
+
+void Hub::set_bot_skill(BotSkill skill) {
+    config_.bot_skill = skill;
+    for (const auto& battle : battles_) {
+        if (battle->bots) {
+            battle->bots->set_skill(skill);
+        }
+    }
 }
 
 } // namespace swm::core
