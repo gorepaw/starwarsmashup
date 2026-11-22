@@ -14,6 +14,7 @@
 
 #include "swg/appearance.h"
 #include "swg/appearance_collision.h"
+#include "swg/city_export.h"
 #include "swg/datatable.h"
 #include "swg/gltf.h"
 #include "swg/object_template.h"
@@ -441,7 +442,33 @@ void test_datatable() {
 
 } // namespace
 
+// The terrain in a room: a walked floor with a diagonal edge (x + z = 2.2),
+// and a drawn one beside it (x 3..4). Taken away where a cell's center is
+// on the walked floor; hidden (still stood on) where the terrain stands
+// above a floor (it would show through) over the cell's center (the drawn
+// one's) or part of it; not where it's below (the floor covers it).
+void test_room_terrain_holes() {
+    const std::vector<std::array<Vec3, 3>> walked{{Vec3{0.1f, 0, 0.1f}, Vec3{2.1f, 0, 0.1f}, Vec3{0.1f, 0, 2.1f}}};
+    const std::vector<std::array<Vec3, 3>> drawn{{Vec3{3, 0, 0}, Vec3{4, 0, 0}, Vec3{3, 0, 1}}};
+    const core::TerrainHoles above = room_terrain_holes(walked, drawn, [](double, double) { return 1.0; });
+    const core::TerrainHoles below = room_terrain_holes(walked, drawn, [](double, double) { return -1.0; });
+    const auto cell = [](const core::TerrainHoles& holes, double x, double z) {
+        return holes.cells[size_t(std::floor((z - holes.z0) / holes.cell)) * size_t(holes.width) +
+                           size_t(std::floor((x - holes.x0) / holes.cell))];
+    };
+    CHECK(above.cell == 0.25);
+    CHECK(above.at(1.0, 0.5) && below.at(1.0, 0.5));  // its center on the walked floor: taken away
+    CHECK(cell(above, 1.875, 0.375) == 2 && !above.at(1.875, 0.375));  // a corner under its edge: hidden
+    CHECK(cell(below, 1.875, 0.375) == 0);                             // unless the terrain's under it
+    CHECK(cell(above, 2.125, 0.375) == 0 && cell(below, 2.125, 0.375) == 0);  // beside the edge
+    CHECK(cell(above, -0.125, 1.0) == 0);                                     // beside a straight edge
+    CHECK(cell(above, 3.375, 0.375) == 2 && cell(below, 3.375, 0.375) == 0);  // on the drawn floor
+    CHECK(!above.at(3.375, 0.375));
+    CHECK(room_terrain_holes({}, {}, [](double, double) { return 0.0; }).empty());
+}
+
 int main() {
+    test_room_terrain_holes();
     test_switching_shader();
     test_shader_colors();
     test_effect_blend();

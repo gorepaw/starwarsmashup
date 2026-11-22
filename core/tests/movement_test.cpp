@@ -432,6 +432,14 @@ void test_terrain_holes() {
         }
     }
     CHECK(holes.at(-45, 50) && !holes.at(-39.9, 50) && !holes.at(-45, 60.1));
+    // Hidden (drawn away only): still there to stand on; a taken-away cell
+    // stays taken away.
+    TerrainHoles hidden = holes;
+    hidden.cells.assign(hidden.cells.size(), 0);
+    hidden.hide(0, 0);
+    hidden.set(1, 0);
+    hidden.hide(1, 0);
+    CHECK(hidden.cells[0] == 2 && !hidden.at(-49.9, 40.1) && hidden.at(-49.6, 40.1));
     flat.set_holes(holes);
     CHECK(flat.cut_at(-45, 50) && !flat.cut_at(-35, 50));
     // The room's floor a meter down.

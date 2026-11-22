@@ -35,7 +35,8 @@ struct Model {
     std::string file;  // relative to the bake's directory, "" if it couldn't be exported
     bool building = false;
     AppearanceCollision collision;  // glTF space
-    std::vector<std::array<Vec3, 3>> rooms;  // a building's rooms' floors (every cell but the outside)
+    std::vector<std::array<Vec3, 3>> rooms;  // a building's rooms' walked floors (every cell but the outside)
+    std::vector<std::array<Vec3, 3>> drawn_rooms;  // and their drawn floors
     // A building's doors: one per doorway that names a door style.
     struct Door {
         std::string style;
@@ -179,6 +180,66 @@ void export_people(TreLibrary& library, const CityExport& city, const std::files
     }
 }
 
+// A room's drawn floors, in glTF space: its render mesh's triangles facing
+// up (by their vertices' normals). They reach its walls, where its walked
+// floor (.flr) stops short of them.
+void add_drawn_floors(const StaticMesh& mesh, std::vector<std::array<Vec3, 3>>& out) {
+    for (const StaticMesh::Part& part : mesh.parts) {
+        if (part.normals.size() != part.positions.size()) {
+            continue;
+        }
+        for (size_t i = 0; i + 2 < part.indices.size(); i += 3) {
+            const uint32_t a = part.indices[i], b = part.indices[i + 1], c = part.indices[i + 2];
+            if (part.normals[a].y + part.normals[b].y + part.normals[c].y < 3 * 0.7f) {
+                continue;
+            }
+            out.push_back({to_gltf(part.positions[a]), to_gltf(part.positions[b]), to_gltf(part.positions[c])});
+        }
+    }
+}
+
+// Whether the square [x, x + size] by [z, z + size] and a triangle, seen from
+// above, overlap by more than a touch (separating axes: the square's and the
+// triangle's edges' normals).
+bool square_meets_triangle(double x, double z, double size, const std::array<Vec3, 3>& t) {
+    const auto separated = [&](double ax, double az) {
+        double s_lo = 1e300, s_hi = -1e300, t_lo = 1e300, t_hi = -1e300;
+        for (const double cx : {x, x + size}) {
+            for (const double cz : {z, z + size}) {
+                s_lo = std::min(s_lo, cx * ax + cz * az), s_hi = std::max(s_hi, cx * ax + cz * az);
+            }
+        }
+        for (const Vec3& v : t) {
+            t_lo = std::min(t_lo, v.x * ax + v.z * az), t_hi = std::max(t_hi, v.x * ax + v.z * az);
+        }
+        const double touch = 1e-6 * (std::abs(ax) + std::abs(az));
+        return s_hi <= t_lo + touch || t_hi <= s_lo + touch;
+    };
+    if (separated(1, 0) || separated(0, 1)) {
+        return false;
+    }
+    for (int i = 0; i < 3; ++i) {
+        const Vec3& a = t[size_t(i)];
+        const Vec3& b = t[size_t((i + 1) % 3)];
+        if (separated(-(double(b.z) - a.z), double(b.x) - a.x)) {
+            return false;
+        }
+    }
+    return true;
+}
+
+// The height of a triangle's plane over (x, z) (its highest corner if it
+// stands on edge).
+double plane_height(const std::array<Vec3, 3>& t, double x, double z) {
+    const double e1x = t[1].x - t[0].x, e1y = t[1].y - t[0].y, e1z = t[1].z - t[0].z;
+    const double e2x = t[2].x - t[0].x, e2y = t[2].y - t[0].y, e2z = t[2].z - t[0].z;
+    const double nx = e1y * e2z - e1z * e2y, ny = e1z * e2x - e1x * e2z, nz = e1x * e2y - e1y * e2x;
+    if (std::abs(ny) < 1e-9) {
+        return std::max({t[0].y, t[1].y, t[2].y});
+    }
+    return t[0].y - (nx * (x - t[0].x) + nz * (z - t[0].z)) / ny;
+}
+
 } // namespace
 
 void export_city(TreLibrary& library, const CityExport& city, std::ostream& log) {
@@ -207,7 +268,8 @@ void export_city(TreLibrary& library, const CityExport& city, std::ostream& log)
     std::ostringstream objects;
     objects << "{\n  \"city\": " << std::format("\"{}\"", out_name) << ",\n  \"objects\": [";
     core::MapCollision collision;
-    std::vector<std::array<Vec3, 3>> rooms;  // every building's rooms' floors, game space
+    std::vector<std::array<Vec3, 3>> rooms;  // every building's rooms' walked floors, game space
+    std::vector<std::array<Vec3, 3>> drawn_rooms;  // and their drawn floors
     size_t placed_count = 0, furniture = 0, doors = 0;
     // Galaxies' door styles: each one's door, how far it slides and how fast.
     struct DoorStyle {
@@ -259,6 +321,9 @@ void export_city(TreLibrary& library, const CityExport& city, std::ostream& log)
                                 add_floor_collision(floor, Mat4{}, room);
                                 model.rooms.insert(model.rooms.end(), room.floors.begin(), room.floors.end());
                             }
+                        }
+                        if (c > 0) {
+                            add_drawn_floors(load_static_appearance(library, cell_layout.appearance), model.drawn_rooms);
                         }
                         // A doorway's door, named on either side: once.
                         for (const PortalLayout::CellPortal& link : cell_layout.portals) {
@@ -345,6 +410,9 @@ void export_city(TreLibrary& library, const CityExport& city, std::ostream& log)
         for (const auto& t : model.rooms) {
             rooms.push_back({p.apply(t[0]), p.apply(t[1]), p.apply(t[2])});
         }
+        for (const auto& t : model.drawn_rooms) {
+            drawn_rooms.push_back({p.apply(t[0]), p.apply(t[1]), p.apply(t[2])});
+        }
         return true;
     };
 
@@ -411,42 +479,10 @@ void export_city(TreLibrary& library, const CityExport& city, std::ostream& log)
     const std::filesystem::path objects_path = city.bake.string() + ".objects.json";
     std::ofstream(objects_path, std::ios::binary) << objects.str();
     core::save_map_collision(collision, core::map_collision_path(city.bake));
-    // No terrain in the buildings' rooms: where a cell's center is over a
-    // room's floor (so the holes stay inside the rooms, under their walls).
     core::TerrainHoles holes;
     if (!rooms.empty()) {
-        float lo_x = 1e30f, lo_z = 1e30f, hi_x = -1e30f, hi_z = -1e30f;
-        for (const auto& t : rooms) {
-            for (const Vec3& v : t) {
-                lo_x = std::min(lo_x, v.x), hi_x = std::max(hi_x, v.x);
-                lo_z = std::min(lo_z, v.z), hi_z = std::max(hi_z, v.z);
-            }
-        }
-        holes.x0 = std::floor(lo_x) - 1;
-        holes.z0 = std::floor(lo_z) - 1;
-        holes.width = int(std::ceil((hi_x + 1 - holes.x0) / holes.cell));
-        holes.height = int(std::ceil((hi_z + 1 - holes.z0) / holes.cell));
-        holes.cells.assign(size_t(holes.width) * size_t(holes.height), 0);
-        const auto side = [](double ax, double az, double bx, double bz, double px, double pz) {
-            return (bx - ax) * (pz - az) - (bz - az) * (px - ax);
-        };
-        for (const auto& t : rooms) {
-            const double x_lo = std::min({t[0].x, t[1].x, t[2].x}), x_hi = std::max({t[0].x, t[1].x, t[2].x});
-            const double z_lo = std::min({t[0].z, t[1].z, t[2].z}), z_hi = std::max({t[0].z, t[1].z, t[2].z});
-            for (int row = int((z_lo - holes.z0) / holes.cell); row <= int((z_hi - holes.z0) / holes.cell); ++row) {
-                for (int column = int((x_lo - holes.x0) / holes.cell); column <= int((x_hi - holes.x0) / holes.cell);
-                     ++column) {
-                    const double px = holes.x0 + (column + 0.5) * holes.cell;
-                    const double pz = holes.z0 + (row + 0.5) * holes.cell;
-                    const double a = side(t[0].x, t[0].z, t[1].x, t[1].z, px, pz);
-                    const double b = side(t[1].x, t[1].z, t[2].x, t[2].z, px, pz);
-                    const double c = side(t[2].x, t[2].z, t[0].x, t[0].z, px, pz);
-                    if ((a >= 0 && b >= 0 && c >= 0) || (a <= 0 && b <= 0 && c <= 0)) {
-                        holes.set(column, row);
-                    }
-                }
-            }
-        }
+        const core::Heightfield ground = core::load_bake(city.bake);
+        holes = room_terrain_holes(rooms, drawn_rooms, [&](double x, double z) { return ground.height_at(x, z); });
         core::save_terrain_holes(holes, city.bake.string() + ".holes");
     }
     log << std::format("placed {} objects ({} inside buildings, {} doors, {} models) in {}; {} collision triangles; "
@@ -462,6 +498,59 @@ void export_city(TreLibrary& library, const CityExport& city, std::ostream& log)
     if (!city.hub.empty()) {
         export_people(library, city, out_dir, log);
     }
+}
+
+core::TerrainHoles room_terrain_holes(const std::vector<std::array<Vec3, 3>>& walked,
+                                      const std::vector<std::array<Vec3, 3>>& drawn,
+                                      const std::function<double(double, double)>& terrain_height) {
+    core::TerrainHoles holes;
+    if (walked.empty() && drawn.empty()) {
+        return holes;
+    }
+    double lo_x = 1e30, lo_z = 1e30, hi_x = -1e30, hi_z = -1e30;
+    for (const auto* rooms : {&walked, &drawn}) {
+        for (const auto& t : *rooms) {
+            for (const Vec3& v : t) {
+                lo_x = std::min(lo_x, double(v.x)), hi_x = std::max(hi_x, double(v.x));
+                lo_z = std::min(lo_z, double(v.z)), hi_z = std::max(hi_z, double(v.z));
+            }
+        }
+    }
+    holes.x0 = std::floor(lo_x) - 1;
+    holes.z0 = std::floor(lo_z) - 1;
+    holes.width = int(std::ceil((hi_x + 1 - holes.x0) / holes.cell));
+    holes.height = int(std::ceil((hi_z + 1 - holes.z0) / holes.cell));
+    holes.cells.assign(size_t(holes.width) * size_t(holes.height), 0);
+    const auto side = [](double ax, double az, double bx, double bz, double px, double pz) {
+        return (bx - ax) * (pz - az) - (bz - az) * (px - ax);
+    };
+    const auto mark = [&](const std::vector<std::array<Vec3, 3>>& rooms, bool walked_on) {
+        for (const auto& t : rooms) {
+            const double x_lo = std::min({t[0].x, t[1].x, t[2].x}), x_hi = std::max({t[0].x, t[1].x, t[2].x});
+            const double z_lo = std::min({t[0].z, t[1].z, t[2].z}), z_hi = std::max({t[0].z, t[1].z, t[2].z});
+            for (int row = int((z_lo - holes.z0) / holes.cell); row <= int((z_hi - holes.z0) / holes.cell); ++row) {
+                for (int column = int((x_lo - holes.x0) / holes.cell); column <= int((x_hi - holes.x0) / holes.cell);
+                     ++column) {
+                    const double px = holes.x0 + (column + 0.5) * holes.cell;
+                    const double pz = holes.z0 + (row + 0.5) * holes.cell;
+                    const double a = side(t[0].x, t[0].z, t[1].x, t[1].z, px, pz);
+                    const double b = side(t[1].x, t[1].z, t[2].x, t[2].z, px, pz);
+                    const double c = side(t[2].x, t[2].z, t[0].x, t[0].z, px, pz);
+                    const bool center = (a >= 0 && b >= 0 && c >= 0) || (a <= 0 && b <= 0 && c <= 0);
+                    if (center && walked_on) {
+                        holes.set(column, row);
+                    } else if ((center || square_meets_triangle(holes.x0 + column * holes.cell,
+                                                                holes.z0 + row * holes.cell, holes.cell, t)) &&
+                               terrain_height(px, pz) > plane_height(t, px, pz) + 0.02) {
+                        holes.hide(column, row);  // the floor covers terrain under it
+                    }
+                }
+            }
+        }
+    };
+    mark(walked, true);
+    mark(drawn, false);
+    return holes;
 }
 
 } // namespace swm::swg

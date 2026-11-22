@@ -1,10 +1,15 @@
 #pragma once
 
+#include <array>
 #include <filesystem>
+#include <functional>
 #include <iosfwd>
 #include <string>
+#include <vector>
 
+#include "common/math.h"
 #include "swg/tre_library.h"
+#include "swm/core/heightfield.h"
 
 namespace swm::swg {
 
@@ -42,11 +47,23 @@ struct CityExport {
 //   boxes and cylinders) and its floors, with walls where floors can't be
 //   left. A building's: its outside's extent, and every cell's floor.
 // - <bake>.holes: where its rooms are (every cell's floor but the
-//   outside's), the terrain taken away (core::TerrainHoles), as in
-//   Galaxies a room has no terrain in it.
+//   outside's), the terrain taken away or hidden (core::TerrainHoles,
+//   room_terrain_holes), as in Galaxies a room has no terrain in it.
 //
 // Objects without a static appearance (particles, sounds, creatures)
 // aren't exported yet; the log counts them. Throws std::runtime_error if the snapshot can't be read.
 void export_city(TreLibrary& library, const CityExport& city, std::ostream& log);
+
+// The terrain in rooms (their floors, game space), as Galaxies draws none
+// there. Taken away where a cell's center is over a walked floor (so the
+// holes stay inside the rooms, under their walls). Hidden (drawn away, still
+// stood on: see TerrainHoles) where the terrain (its height at a game x z)
+// stands above a floor over the cell's center (a drawn floor's: it reaches
+// the walls where the walked one stops short of them) or over part of the
+// cell: a room under the street, as the cantina's, showed the terrain along
+// its walls' foot. Terrain under a floor stays (the floor covers it).
+core::TerrainHoles room_terrain_holes(const std::vector<std::array<Vec3, 3>>& walked,
+                                      const std::vector<std::array<Vec3, 3>>& drawn,
+                                      const std::function<double(double, double)>& terrain_height);
 
 } // namespace swm::swg

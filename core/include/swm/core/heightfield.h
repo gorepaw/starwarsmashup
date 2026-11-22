@@ -34,11 +34,20 @@ struct TerrainHoles {
     double x0 = 0, z0 = 0;  // game x and z of cell (0, 0)'s corner
     double cell = 0.25;     // meters
     int width = 0, height = 0;  // cells along +x and +z
-    std::vector<uint8_t> cells;  // 1 where the terrain is taken away; rows along +z
+    // Rows along +z: 0 where the terrain is, 1 where it's taken away (not
+    // there to stand on, nor drawn), 2 where it's hidden: drawn away only,
+    // still there to stand on (over a room's floor where no one walks: along
+    // its walls' foot, a bar's footprint).
+    std::vector<uint8_t> cells;
 
     bool empty() const { return cells.empty(); }
+    // Whether the terrain is taken away there (a hidden cell's is still there).
     bool at(double x, double z) const;
     void set(int column, int row) { cells[size_t(row) * size_t(width) + size_t(column)] = 1; }
+    void hide(int column, int row) {
+        uint8_t& c = cells[size_t(row) * size_t(width) + size_t(column)];
+        c = c == 0 ? 2 : c;
+    }
 };
 
 void save_terrain_holes(const TerrainHoles& holes, const std::filesystem::path& path);

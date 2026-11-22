@@ -79,7 +79,7 @@ bool TerrainHoles::at(double x, double z) const {
     if (cells.empty() || column < 0 || row < 0 || column >= width || row >= height) {
         return false;
     }
-    return cells[size_t(row) * size_t(width) + size_t(column)] != 0;
+    return cells[size_t(row) * size_t(width) + size_t(column)] == 1;
 }
 
 namespace {
