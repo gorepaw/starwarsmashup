@@ -33,6 +33,14 @@ static func load_lit(path: String) -> Node3D:
 	return building
 
 
+# Physics collision from a building's drawn cells (each <cell>_mesh: walls,
+# vaulted ceilings, the outside's domes), for the camera only: movement is
+# core's, which has floors and the walls along their edges, not ceilings.
+static func add_camera_collision(building: Node) -> void:
+	for mesh in building.find_children("*_mesh", "MeshInstance3D", true, false):
+		(mesh as MeshInstance3D).create_trimesh_collision()
+
+
 # The additive material for a glTF material swgtool marked as one (extras
 # {"blend": "add"}: Galaxies' glowing panels), else null. Unlit, so the same
 # inside and out.

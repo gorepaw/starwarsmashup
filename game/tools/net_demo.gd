@@ -132,6 +132,7 @@ var _camera: Camera3D
 var _sky_dome: Node3D  # follows the camera
 var _camera_yaw := 0.0
 var _camera_distance := CAMERA_DISTANCE  # pulled in when a wall is behind the character
+var _camera_sphere := SphereShape3D.new()  # what the camera keeps clear (_physics_process)
 var _first_person := false        # V toggles; --first-person starts in it
 var _route: Array[Vector2] = []  # game x, z
 var _route_index := -1
@@ -679,11 +680,16 @@ func _physics_process(_delta: float) -> bool:
 		return false
 	var pivot := _camera_pivot(_client.get_presented()["position"])
 	var wanted := pivot + _camera_basis() * Vector3(CAMERA_SHOULDER, 0.3, CAMERA_DISTANCE)
-	var query := PhysicsRayQueryParameters3D.create(pivot, wanted)
-	var hit := root.get_world_3d().direct_space_state.intersect_ray(query)
+	# A small sphere, not a ray, so the camera's near plane doesn't graze a
+	# wall the ray just misses.
+	var query := PhysicsShapeQueryParameters3D.new()
+	query.shape = _camera_sphere
+	query.transform = Transform3D(Basis.IDENTITY, pivot)
+	query.motion = wanted - pivot
+	var fractions := root.get_world_3d().direct_space_state.cast_motion(query)
 	var reach := CAMERA_DISTANCE + 1.0
-	if not hit.is_empty():
-		reach = pivot.distance_to(hit["position"])
+	if fractions.size() == 2 and fractions[0] < 1.0:
+		reach = fractions[0] * pivot.distance_to(wanted) + 0.25  # as far as the ray's margin
 	var along: float = _client.raycast(pivot, wanted)
 	if along >= 0:
 		reach = minf(reach, along * pivot.distance_to(wanted))
@@ -1266,8 +1272,7 @@ func _add_building(path: String, galaxies_position: Vector3, yaw_degrees: float)
 	building.position = Vector3(-galaxies_position.x, galaxies_position.y, galaxies_position.z)
 	building.rotation.y = deg_to_rad(-yaw_degrees)
 	_world.add_child(building)
-	for mesh in building.find_children("*_mesh", "MeshInstance3D", true, false):
-		(mesh as MeshInstance3D).create_trimesh_collision()
+	SwgBuilding.add_camera_collision(building)
 	return true
 
 
@@ -1315,7 +1320,7 @@ func _build_world(bake: String) -> bool:
 	if Bf2Map.is_bf2(meta):
 		Bf2Map.add_objects(_world, bake)
 	elif SwgCity.has_city(bake):
-		SwgCity.add_objects(_world, bake)  # a city's buildings and props (swgtool export-city)
+		SwgCity.add_objects(_world, bake, true)  # a city's buildings and props (swgtool export-city)
 	_doors = SwgCity.doors_in(_world)
 	if bake == _start_bake:
 		for building: Array in _buildings:
@@ -1352,6 +1357,7 @@ func _setup_scene() -> void:
 	_camera = Camera3D.new()
 	_camera.fov = 65
 	_camera.near = 0.05
+	_camera_sphere.radius = 0.15  # clear of the near plane's corners at any field of view used
 	_camera.far = 8000
 	root.add_child(_camera)
 

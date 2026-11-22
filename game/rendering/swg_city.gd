@@ -14,8 +14,10 @@ static func has_city(prefix: String) -> bool:
 	return FileAccess.file_exists(prefix + ".objects.json")
 
 
-# Places every object; returns how many.
-static func add_objects(parent: Node, prefix: String) -> int:
+# Places every object; returns how many. With `camera_collision`, buildings
+# get physics collision for a camera to keep inside their rooms
+# (SwgBuilding.add_camera_collision), shared by their copies.
+static func add_objects(parent: Node, prefix: String, camera_collision := false) -> int:
 	var path := prefix + ".objects.json"
 	var parsed: Variant = JSON.parse_string(FileAccess.get_file_as_string(path))
 	if not parsed is Dictionary:
@@ -32,6 +34,8 @@ static func add_objects(parent: Node, prefix: String) -> int:
 		if not models.has(model):
 			var file := dir.path_join(model)
 			models[model] = SwgBuilding.load_lit(file) if object.get("building", false) else _load_model(file)
+			if camera_collision and models[model] != null and object.get("building", false):
+				SwgBuilding.add_camera_collision(models[model])
 		if models[model] == null:
 			continue
 		var node := (models[model] as Node3D).duplicate() as Node3D
