@@ -123,8 +123,10 @@ public:
     // Adds one standing on the ground under `position` (from a meter
     // over it), facing `yaw`; returns its entity. `colors`: 0 for its look's
     // own colors, else a seed clients vary them by (net::EntityState).
+    // `radius`: its body's, against walls (a creature's), 0 for a person's
+    // (the loadout's).
     uint32_t add_npc(const std::string& name, Vec3 position, double yaw, uint8_t look, uint8_t pose = 0,
-                     uint16_t colors = 0);
+                     uint16_t colors = 0, double radius = 0);
     void steer_npc(uint32_t entity, const MoveInput& input);
     std::vector<uint32_t> npcs() const;
 
@@ -170,6 +172,7 @@ private:
         MoveInput input;
         uint8_t look = 0, pose = 0;
         uint16_t colors = 0;
+        double radius = 0;  // 0: a person's
     };
     struct Bolt {
         uint32_t id = 0;

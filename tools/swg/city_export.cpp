@@ -187,7 +187,12 @@ void export_people(TreLibrary& library, const CityExport& city, const std::files
             }
             std::ostringstream quiet;
             export_character(library, request, out_dir / "people", quiet);
-            log << std::format("  person {}: {} ({} worn)\n", request.name, shared.appearance, request.meshes.size());
+            // A creature's body is its own (the hub file's [npc] Radius).
+            const std::string radius = kind != "all_b" && shared.collision_radius > 0
+                                           ? std::format(", radius {:.2f} m", shared.collision_radius)
+                                           : "";
+            log << std::format("  person {}: {} ({} worn{})\n", request.name, shared.appearance, request.meshes.size(),
+                               radius);
         } catch (const std::exception& error) {
             log << std::format("  person {}: {}\n", look, error.what());
         }

@@ -17,6 +17,9 @@ struct SharedObjectTemplate {
     std::string appearance;
     std::string portal_layout;
     std::string client_data;  // .cdf: a person's clothes and hair, sounds, effects
+    // A creature's (SCOT) body: the radius it collides with, meters; 0 if no
+    // template in its chain sets one.
+    float collision_radius = 0;
 };
 
 // What a client data file (.cdf, CLDF) says a person wears: the meshes in
@@ -30,7 +33,10 @@ std::vector<std::string> client_data_wearables(std::span<const uint8_t> bytes);
 //
 // Parameter chunks (XXXX) are the parameter's name, a byte saying whether
 // this template sets it (0: no, the base's applies), then the value: for a
-// file name, a null-terminated string.
+// file name, a null-terminated string; for a number, a byte saying what
+// kind of value follows and, for a single one (' ', the only kind read:
+// ASSUMPTION, from the creature templates, where a set radius is a float
+// after it), a 32-bit float.
 class ObjectTemplates {
 public:
     explicit ObjectTemplates(TreLibrary& library) : library_(library) {}
@@ -39,7 +45,7 @@ public:
 private:
     struct Read {
         SharedObjectTemplate values;
-        bool has_appearance = false, has_portal_layout = false, has_client_data = false;
+        bool has_appearance = false, has_portal_layout = false, has_client_data = false, has_radius = false;
         std::string base;
     };
     Read read(const std::string& path);

@@ -37,6 +37,7 @@ struct HubPerson {
     double yaw = 0;            // game yaw (Godot's rotation.y: 0 faces -Z)
     uint8_t pose = 0;          // 0 standing, 1 sitting
     std::vector<Vec3> route;   // if walking: the points walked to in turn, game space
+    double radius = 0;         // its body's, meters (a creature's); 0 for a person's
 };
 
 // A hub's crowd (its [crowd]): people who wander its streets, walking from
@@ -68,7 +69,8 @@ struct HubConfig {
 // Reads a hub file (see game/hubs/): its war terminals (Galaxies x z), the
 // sides, the battlefield files it launches battles on (Battlefield =,
 // repeated), relative to it, and its people ([npc]: Template, Position x z,
-// Yaw in Galaxies degrees, Pose stand or sit, Route "x z; x z; ..."; [crowd]:
+// Yaw in Galaxies degrees, Pose stand or sit, Route "x z; x z; ...", Radius
+// in meters (a creature's body: its template's collisionRadius); [crowd]:
 // Count, Template repeated, Area x z radius). Throws std::runtime_error if it, or a
 // battlefield, can't be read, or a battlefield has no team for a side.
 HubConfig load_hub(const std::filesystem::path& path);

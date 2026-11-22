@@ -39,11 +39,19 @@ ObjectTemplates::Read ObjectTemplates::read(const std::string& path) {
     for (const IffNode* parameter : parameters) {
         IffReader r(parameter->data);
         const std::string name = r.cstring();
-        if (name != "appearanceFilename" && name != "portalLayoutFilename" && name != "clientDataFile") {
+        if (name != "appearanceFilename" && name != "portalLayoutFilename" && name != "clientDataFile" &&
+            name != "collisionRadius") {
             continue;
         }
         if (r.remaining() == 0 || r.u8() == 0) {
             continue;  // not set here
+        }
+        if (name == "collisionRadius") {
+            if (r.remaining() >= 5 && r.u8() == ' ') {
+                out.values.collision_radius = r.f32();
+                out.has_radius = true;
+            }
+            continue;
         }
         const std::string value = normalize_path(r.cstring());
         if (name == "appearanceFilename") {
@@ -69,7 +77,9 @@ const SharedObjectTemplate& ObjectTemplates::shared(const std::string& path_in) 
     SharedObjectTemplate values = r.values;
     // What this template leaves unset comes from its base, and so on.
     std::string base = r.base;
-    for (int depth = 0; !base.empty() && (!r.has_appearance || !r.has_portal_layout || !r.has_client_data) && depth < 16;
+    for (int depth = 0;
+         !base.empty() && (!r.has_appearance || !r.has_portal_layout || !r.has_client_data || !r.has_radius) &&
+         depth < 16;
          ++depth) {
         if (!library_.contains(normalize_path(base))) {
             break;
@@ -86,6 +96,10 @@ const SharedObjectTemplate& ObjectTemplates::shared(const std::string& path_in) 
         if (!r.has_client_data && b.has_client_data) {
             values.client_data = b.values.client_data;
             r.has_client_data = true;
+        }
+        if (!r.has_radius && b.has_radius) {
+            values.collision_radius = b.values.collision_radius;
+            r.has_radius = true;
         }
         base = b.base;
     }

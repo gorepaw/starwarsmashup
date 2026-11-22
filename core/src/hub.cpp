@@ -136,6 +136,7 @@ HubConfig load_hub(const std::filesystem::path& path) {
             // Galaxies' yaw faces +Z at 0 and turns toward +X; the game's faces -Z.
             person.yaw = std::numbers::pi - s.number("Yaw", 0) * std::numbers::pi / 180;
             person.pose = same_name(s.get("Pose").value_or("stand"), "sit") ? 1 : 0;
+            person.radius = std::clamp(s.number("Radius", 0), 0.0, 5.0);
             if (const auto route = s.get("Route")) {
                 std::string_view rest = *route;
                 while (!rest.empty()) {
@@ -240,7 +241,8 @@ void Hub::add_people() {
     for (const HubPerson& person : config_.people) {
         Vec3 at = person.position;
         at.y = world_.terrain().height_at(at.x, at.z);
-        const uint32_t entity = server_.add_npc(person.name, at, person.yaw, uint8_t(person.look + 1), person.pose);
+        const uint32_t entity =
+            server_.add_npc(person.name, at, person.yaw, uint8_t(person.look + 1), person.pose, 0, person.radius);
         if (person.route.size() >= 1) {
             walkers_.push_back({.entity = entity, .route = person.route});
         } else {

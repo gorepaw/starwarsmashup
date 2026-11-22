@@ -95,6 +95,25 @@ Bytes object_template(const std::string& base, const std::string* appearance, co
     return form("STAT", stat);
 }
 
+// A shared creature template (SCOT, its own parameters and then a SHOT's),
+// setting its collision radius or not.
+Bytes creature_template(const std::string& base, const float* radius) {
+    Bytes value = text("collisionRadius");
+    value.push_back(radius != nullptr ? 1 : 0);
+    value.push_back(' ');
+    if (radius != nullptr) {
+        const Bytes f = floats({*radius});
+        value.insert(value.end(), f.begin(), f.end());
+    }
+    std::vector<Bytes> scot;
+    if (!base.empty()) {
+        scot.push_back(form("DERV", {chunk("XXXX", text(base))}));
+    }
+    scot.push_back(form("0013", {chunk("XXXX", value)}));
+    scot.push_back(form("STOT", {form("0007", {}), form("SHOT", {form("0009", {parameter("objectName", nullptr)})})}));
+    return form("SCOT", scot);
+}
+
 Bytes box_extent(float lo, float hi) {
     return form("EXBX", {form("0001", {form("EXSP", {form("0001", {chunk("SPHR", floats({0, 0, 0, hi}))})}),
                                        chunk("BOX ", floats({hi, hi, hi, lo, lo, lo}))})});
@@ -151,6 +170,7 @@ double signed_volume(const std::vector<std::array<Vec3, 3>>& triangles) {
 
 void test_templates_and_collision() {
     const std::string crate = "appearance/crate.msh", pob = "appearance/house.pob";
+    const float person_radius = 0.5f, beast_radius = 1.7f;
     const auto dir = std::filesystem::temp_directory_path() / "swm_city_export_test";
     std::filesystem::create_directories(dir);
     write_tre(dir / "test.tre",
@@ -168,6 +188,9 @@ void test_templates_and_collision() {
                   {"appearance/detail.msh",
                    mesh_with(form("DTAL", {form("0000", {form("CPST", {form("0000", {box_extent(-9, 9), box_extent(0, 2)})})})}))},
                   {"appearance/none.msh", mesh_with(form("NULL", {}))},
+                  {"object/creature/shared_base_creature.iff", creature_template("", &person_radius)},
+                  {"object/mobile/shared_beast.iff", creature_template("object/creature/shared_base_creature.iff", &beast_radius)},
+                  {"object/mobile/shared_person.iff", creature_template("object/creature/shared_base_creature.iff", nullptr)},
               });
     {
         TreLibrary library(dir);
@@ -176,6 +199,10 @@ void test_templates_and_collision() {
         CHECK(templates.shared("object/shared_derived.iff").portal_layout.empty());
         CHECK(templates.shared("object/shared_house.iff").portal_layout == pob);
         CHECK(templates.shared("object/shared_house.iff").appearance == crate);
+        // A creature's collision radius, its own or its base's.
+        CHECK(templates.shared("object/mobile/shared_beast.iff").collision_radius == beast_radius);
+        CHECK(templates.shared("object/mobile/shared_person.iff").collision_radius == person_radius);
+        CHECK(templates.shared("object/shared_house.iff").collision_radius == 0);
 
         AppearanceCollisions collisions(library);
         // A 2 m box through the redirect, facing outward: 8 m3.

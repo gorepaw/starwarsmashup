@@ -98,7 +98,7 @@ const MoveState* GameServer::state_of(uint32_t entity) const {
 }
 
 uint32_t GameServer::add_npc(const std::string& name, Vec3 position, double yaw, uint8_t look, uint8_t pose,
-                             uint16_t colors) {
+                             uint16_t colors, double radius) {
     constexpr double lift = 1;  // from a meter over where it's put (as spawns are)
     const MoveParams params;
     Npc npc;
@@ -107,6 +107,7 @@ uint32_t GameServer::add_npc(const std::string& name, Vec3 position, double yaw,
     npc.look = look;
     npc.pose = pose;
     npc.colors = colors;
+    npc.radius = radius;
     npc.state.position = world_.clamp(position);
     npc.state.position.y = world_.support_at(npc.state.position.x, npc.state.position.z,
                                              position.y + lift, params.step_up).height;
@@ -377,8 +378,10 @@ void GameServer::step() {
     // The server's own people, by how they're steered.
     if (!npcs_.empty()) {
         const CharacterStats stats = stats_for(config_.loadout, config_.base_stats);
+        CharacterStats own = stats;  // a creature's body
         for (Npc& npc : npcs_) {
-            simulate_character(npc.state, npc.input, true, world_, config_.loadout, stats, dt);
+            own.move.radius = npc.radius > 0 ? npc.radius : stats.move.radius;
+            simulate_character(npc.state, npc.input, true, world_, config_.loadout, own, dt);
         }
     }
     ++tick_;

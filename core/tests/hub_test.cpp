@@ -247,7 +247,7 @@ void test_people() {
                                                    "[post]\nPosition = 50 0\nOwner = Rebellion\n";
     std::ofstream(dir / "hub.ini") << "[hub]\nBattlefield = fields/dunes.ini\n[recruiter]\nPosition = 0 20\n"
                                       "[npc]\nName = Guard\nTemplate = object/mobile/shared_guard.iff\n"
-                                      "Position = 10 10\nRoute = 10 10; -10 10\n"
+                                      "Position = 10 10\nRoute = 10 10; -10 10\nRadius = 1.7\n"
                                       "[npc]\nName = Drinker\nTemplate = object/mobile/shared_commoner.iff\n"
                                       "Position = 0 -10\nYaw = 90\nPose = sit\n"
                                       "[crowd]\nCount = 6\nArea = 0 0 30\nTemplate = object/mobile/shared_commoner.iff\n"
@@ -257,6 +257,7 @@ void test_people() {
     CHECK(config.looks.size() == 3 && config.looks[0] == "object/mobile/shared_guard.iff");
     CHECK(config.people.size() == 2 && config.people[0].route.size() == 2 && config.people[0].route[1] == Vec3(10, 0, 10));
     CHECK(config.people[1].pose == 1 && config.people[1].look == 1);
+    CHECK(config.people[0].radius == 1.7 && config.people[1].radius == 0);  // a creature's body; a person's
     // Galaxies' yaw 90 faces its +X, the game's -X: a game yaw of pi/2.
     CHECK(std::abs(config.people[1].yaw - std::numbers::pi / 2) < 1e-9);
     CHECK(config.crowd.count == 6 && config.crowd.looks == (std::vector<int>{1, 2}) && config.crowd.radius == 30);
@@ -309,8 +310,42 @@ void test_people() {
 
 } // namespace
 
+// A creature's body (add_npc's radius) keeps it further from a wall than a
+// person's: both walk east into a wall at x = 10.
+void test_creature_body() {
+    Heightfield ground{201, 1.0, -100, -100, std::vector<float>(201 * 201, 0.0f)};
+    World world{ground};
+    MapCollision wall;
+    const Vec3 lo{10, 0, -20}, hi{12, 3, 20};
+    const auto corner = [&](int i) { return Vec3{i & 1 ? hi.x : lo.x, i & 2 ? hi.y : lo.y, i & 4 ? hi.z : lo.z}; };
+    const int faces[6][4] = {{0, 1, 3, 2}, {4, 6, 7, 5}, {0, 4, 5, 1}, {2, 3, 7, 6}, {0, 2, 6, 4}, {1, 5, 7, 3}};
+    for (const auto& f : faces) {
+        wall.triangles.push_back({corner(f[0]), corner(f[2]), corner(f[1])});
+        wall.triangles.push_back({corner(f[0]), corner(f[3]), corner(f[2])});
+    }
+    world.add_map_collision(wall);
+    net::LoopbackHub links;
+    net::LoopbackLink link{links, {1, 1}};
+    GameServer server(link, world, ServerConfig{});
+    const uint32_t person = server.add_npc("Citizen", {0, 0, -5}, 0, 1);
+    const uint32_t bantha = server.add_npc("Bantha", {0, 0, 5}, 0, 2, 0, 0, 1.7);
+    MoveInput east;
+    east.forward = 127;
+    east.yaw = float(-std::numbers::pi / 2);
+    server.steer_npc(person, east);
+    server.steer_npc(bantha, east);
+    for (double now = 0; now < 10; now += 1.0 / 30) {
+        server.update(now);
+    }
+    const double person_x = server.state_of(person)->position.x, bantha_x = server.state_of(bantha)->position.x;
+    std::printf("against the wall: a person at x %.2f, a bantha at %.2f\n", person_x, bantha_x);
+    CHECK(person_x > 9.5 && person_x < 10);
+    CHECK(std::abs(bantha_x - (10 - 1.7)) < 0.01);
+}
+
 int main() {
     test_hub_file();
+    test_creature_body();
     test_queue_battle_and_back();
     test_people();
     return swm::test::finish("hub_test");
