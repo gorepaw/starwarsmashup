@@ -235,6 +235,7 @@ void write_weapon(std::ostream& out, const char* section, const CarriedWeapon& c
     }
     out << "; ordnance: " << ordnance.type << " (" << ordnance.base << ")\n";
     for (const char* key : {"MaxDamage", "PersonScale", "Velocity", "Acceleration", "Gravity", "Rebound", "LifeSpan",
+                            "DamageTransitionDelay", "DamageTransitionPeriod", "DamageFinalDamage",
                             "LaserTexture", "LaserGlowColor", "LaserLength", "LaserWidth", "GlowLength", "BlurLength",
                             "LightColor", "LightRadius", "GeometryName", "TrailEffect"}) {
         if (const auto value = ordnance.get(key)) {

@@ -23,6 +23,17 @@ inline double eye_height_of(const MoveState& state) {
 inline constexpr double hit_radius = 0.35;
 inline constexpr double hit_height = 1.8;
 inline constexpr double crouched_hit_height = 1.3;  // ASSUMPTION: a crouched soldier's height
+// A hit within this much of the top of a soldier is in the head, and does
+// this many times the damage. ASSUMPTION: Battlefront's ODFs give no
+// multiplier (its soldiers have a head collision box); doubled, a sniper
+// rifle's 300 kills a 400-health soldier with a headshot and takes two to
+// the body, as its own tip has it ("a well aimed shot from a sniper unit can
+// prove to be quite deadly").
+inline constexpr double head_size = 0.3;
+inline constexpr double headshot_multiplier = 2.0;
+
+// A bolt's damage after `flown` seconds in flight (its falloff, if any).
+double bolt_damage(const WeaponDef& weapon, double flown);
 // Crouched, a soldier's spread is divided by this (AimFactorPostureCrouch
 // 140 against AimFactorPostureStand 100). ASSUMPTION: that's what the factor does.
 inline constexpr double crouch_aim_factor = 1.4;

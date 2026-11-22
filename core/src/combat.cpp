@@ -100,6 +100,15 @@ bool add_ammo(MoveState& state, const Loadout& loadout, auto amount_for) {
 
 } // namespace
 
+double bolt_damage(const WeaponDef& weapon, double flown) {
+    if (weapon.damage_final < 0 || flown <= weapon.damage_transition_delay) {
+        return weapon.damage;
+    }
+    const double period = weapon.damage_transition_period;
+    const double f = period > 0 ? std::min(1.0, (flown - weapon.damage_transition_delay) / period) : 1.0;
+    return weapon.damage + (weapon.damage_final - weapon.damage) * f;
+}
+
 bool resupply(MoveState& state, const Loadout& loadout, double fraction) {
     if (fraction <= 0) {
         return false;

@@ -245,8 +245,9 @@ struct Arena {
         }
     }
 
-    // A aims at B's chest where A sees B, and fires.
-    GameClient::Controls a_aims_at_b(bool fire) {
+    // A aims at B's chest (or `height` up from its feet) where A sees B,
+    // and fires.
+    GameClient::Controls a_aims_at_b(bool fire, double height = 1.0) {
         GameClient::Controls controls;
         controls.fire = fire;
         const auto remotes = a.remotes();
@@ -254,7 +255,7 @@ struct Arena {
             return controls;
         }
         const Vec3 eye = a.predicted().position + Vec3{0, eye_height, 0};
-        const Vec3 to = remotes[0].state.position + Vec3{0, 1.0, 0} - eye;
+        const Vec3 to = remotes[0].state.position + Vec3{0, height, 0} - eye;
         controls.yaw = std::atan2(-to.x, -to.z);
         controls.pitch = std::atan2(to.y, std::hypot(to.x, to.z));
         return controls;
@@ -313,6 +314,29 @@ void test_lag_compensation() {
     const int raw = strafing_hits(0);
     CHECK(rewound >= 6 && raw <= 1);
     std::printf("lag compensation: %d hits with rewinding, %d without\n", rewound, raw);
+}
+
+// One shot in the head does double; one in the body, the bolt's damage.
+// Bolts lose damage with flight time as their ordnance says.
+void test_headshot_and_falloff() {
+    for (const double height : {1.0, 1.7}) {
+        Arena arena(0, 0.5);
+        arena.run(0.5, [] {});
+        const uint32_t b = arena.b.entity_id();
+        arena.run(1.0 / 30, [&] { arena.a.set_input(arena.a_aims_at_b(true, height)); });
+        arena.run(0.5, [&] { arena.a.set_input(arena.a_aims_at_b(false, height)); });
+        const double lost = 400 - arena.server.health_of(b);
+        std::printf("a shot %.1f m up: %.0f damage\n", height, lost);
+        CHECK(near(lost, height > 1.5 ? 60 * headshot_multiplier : 60, 1e-6));
+    }
+    WeaponDef rifle;
+    rifle.damage = 60;
+    rifle.damage_transition_delay = 0.4;
+    rifle.damage_transition_period = 0.2;
+    rifle.damage_final = 40;
+    CHECK(bolt_damage(rifle, 0.3) == 60 && near(bolt_damage(rifle, 0.5), 50, 1e-9) && bolt_damage(rifle, 0.7) == 40);
+    rifle.damage_final = -1;
+    CHECK(bolt_damage(rifle, 0.7) == 60);
 }
 
 void test_wall_blocks() {
@@ -537,6 +561,7 @@ int main() {
     test_kill_and_respawn();
     test_lag_compensation();
     test_wall_blocks();
+    test_headshot_and_falloff();
     test_explosives_file();
     test_grenades_and_ammo();
     test_explosion_falloff();

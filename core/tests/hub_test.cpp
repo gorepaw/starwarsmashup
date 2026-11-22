@@ -185,8 +185,8 @@ void test_queue_battle_and_back() {
                 next_battle = client.player_status().battlefield;
             }
             p.fought |= client.match().has_value() && client.self().kills + client.self().deaths > 0;
-            if (client.match() && client.self().life == Life::alive) {
-                p.battle_height = client.self().state.position.y;
+            if (client.match() && client.self().life == Life::alive && client.self().state.grounded) {
+                p.battle_height = client.self().state.position.y;  // on the ground (bots hop when stuck)
             }
             if (!client.player_status().notice.empty()) {
                 p.notice = client.player_status().notice;

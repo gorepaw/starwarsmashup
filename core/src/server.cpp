@@ -700,6 +700,7 @@ void GameServer::advance_bolts() {
         std::optional<double> nearest = world_hit ? std::optional(world_hit->t) : std::nullopt;
         Vec3 normal = world_hit ? world_hit->normal : Vec3{0, 1, 0};
         Client* victim = nullptr;
+        double victim_top = 0;  // the top of the victim's body (its head's), when hit
         int hit_powerup = -1;
         const bool bounces = def.projectile == Projectile::grenade && !def.explode_on_impact;
         for (Client& target : clients_) {
@@ -709,11 +710,12 @@ void GameServer::advance_bolts() {
             }
             // Its posture now (not rewound: ASSUMPTION, close enough).
             const Vec3 feet = position_at(target, double(tick_) - bolt.rewind);
-            const auto t = segment_hits_cylinder(from, to, feet, hit_radius,
-                                                 target.state.crouched ? crouched_hit_height : hit_height);
+            const double height = target.state.crouched ? crouched_hit_height : hit_height;
+            const auto t = segment_hits_cylinder(from, to, feet, hit_radius, height);
             if (t && (!nearest || *t < *nearest)) {
                 nearest = t;
                 victim = &target;
+                victim_top = feet.y + height;
                 const double speed = bolt.velocity.length();
                 normal = speed > 1e-6 ? bolt.velocity * (-1.0 / speed) : Vec3{0, 1, 0};
             }
@@ -754,7 +756,11 @@ void GameServer::advance_bolts() {
         }
         if (victim != nullptr) {
             const Vec3 at = from + (to - from) * *nearest;
-            damage(*victim, def.damage, def.damage_type, bolt.owner);
+            // Less after a long flight; double in the head.
+            const bool headshot = at.y >= victim_top - head_size;
+            const double flown = def.bolt_life - bolt.life;
+            damage(*victim, bolt_damage(def, flown) * (headshot ? headshot_multiplier : 1.0), def.damage_type,
+                   bolt.owner);
             if (def.explosion_damage > 0 && def.explosion_outer > 0) {
                 blasts.push_back({bolt, at, normal, false});
             } else {

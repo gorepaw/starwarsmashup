@@ -101,6 +101,13 @@ struct WeaponDef {
     double bolt_speed = 300;         // ordnance Velocity, m/s
     double bolt_gravity = 1;         // ordnance Gravity, a multiple of world gravity
     double bolt_life = 0.8;          // ordnance LifeSpan, seconds
+    // Damage falling off with flight time: after DamageTransitionDelay
+    // seconds it falls, over DamageTransitionPeriod, to DamageFinalDamage
+    // (times PersonScale). The E-11's: 60 to 40 after 0.4 s (some 120 m);
+    // a sniper rifle's doesn't (final < 0).
+    double damage_transition_delay = 0;
+    double damage_transition_period = 0;
+    double damage_final = -1;
     double bolt_acceleration = 0;    // ordnance Acceleration (missiles), m/s^2 along its flight
     double rebound = 0;              // ordnance Rebound: the share of its speed a grenade keeps bouncing
     bool explode_on_impact = true;   // grenades: ExplosionImpact (else they explode when the fuse runs out)

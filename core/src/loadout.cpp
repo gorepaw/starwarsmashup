@@ -201,6 +201,11 @@ WeaponDef load_weapon(const std::filesystem::path& path) {
     w.bolt_speed = s.number("Velocity", w.bolt_speed);
     w.bolt_gravity = s.number("Gravity", w.bolt_gravity);
     w.bolt_life = s.number("LifeSpan", w.bolt_life);
+    w.damage_transition_delay = s.number("DamageTransitionDelay", 0);
+    w.damage_transition_period = s.number("DamageTransitionPeriod", 0);
+    if (const double final_damage = s.number("DamageFinalDamage", -1); final_damage >= 0) {
+        w.damage_final = final_damage * s.number("PersonScale", 1.0);
+    }
     w.bolt_acceleration = s.number("Acceleration", 0);
     w.rebound = s.number("Rebound", 0);
     w.explode_on_impact = s.number("ExplosionImpact", w.projectile == Projectile::grenade ? 0 : 1) != 0;

@@ -153,7 +153,8 @@ Matches look, sound and feel finished before Galaxies' gear changes what's in th
   - **Zoom** (Z steps through a weapon's levels, from its ZoomMin to ZoomMax, doubling): the E-11 2.5 times; the sniper rifles 2, 4 and 8 times, in first person through Battlefront's scope (one of its four, mirrored from a quarter, kept 4:3). The mouse turns slower by the magnification. Sprinting, rolling, switching weapons or dying backs out.
 
   ASSUMPTIONS: the roll's time and slowing, the crouched body's height, what the crouch aim factor does, and which scope is whose.
-- [ ] Headshots.
+- [x] Headshots: a bolt hitting the top 0.3 m of a soldier (standing or crouched) does double damage, so a sniper rifle's 300 kills a 400-health soldier with one headshot and takes two to the body. ASSUMPTION: Battlefront's ODFs give no multiplier; its own tip says sniper headshots are deadly.
+- [x] Damage falloff, from the ordnance (DamageTransitionDelay, DamageTransitionPeriod, DamageFinalDamage): the E-11's bolts fall from 60 to 40 after 0.4 s of flight (some 120 m); sniper bolts don't fall off.
 - [ ] Explosions blocked by walls and pushing soldiers. Grenades bouncing off walls as walls, not as ground.
 
 **Bots**
