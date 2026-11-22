@@ -75,12 +75,14 @@ func _paint_options() -> void:
 	var cy := box.position.y + 60 * u
 	text("gamefont_medium", "Controls", Vector2(cx, cy), "Left", ACCENT)
 	cy += 30 * u
+	# Rows as tall as fit above the Back button.
+	var row := minf(27.0, 345.0 / Settings.ACTIONS.size())
 	for action: Array in Settings.ACTIONS:
 		var name: String = action[0]
-		text("gamefont_small", action[1], Vector2(cx, cy + 5 * u), "Left", TEXT)
+		text("gamefont_small", action[1], Vector2(cx, cy + (row - 22) * u), "Left", TEXT)
 		var key_label := "Press a key..." if _rebinding == name else Settings.binding_name(settings.bindings[name])
-		button(Rect2(Vector2(cx + 190 * u, cy), Vector2(150, 24) * u), key_label, "bind:" + name, _rebinding == name)
-		cy += 27 * u
+		button(Rect2(Vector2(cx + 190 * u, cy), Vector2(150, row - 3) * u), key_label, "bind:" + name, _rebinding == name)
+		cy += row * u
 	button(Rect2(Vector2(box.get_center().x - 80 * u, box.end.y - 50 * u), Vector2(160, 34) * u), art.localize("common.back"),
 			"back")
 

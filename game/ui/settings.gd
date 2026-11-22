@@ -24,6 +24,8 @@ const ACTIONS := [
 	["sidearm", "Sidearm", KEY_2],
 	["toggle_view", "First / Third Person", KEY_V],
 	["scores", "Show Scores", KEY_TAB],
+	["interact", "Use", KEY_E],
+	["leave_queue", "Leave the Queue", KEY_X],
 ]
 
 var bindings := {}           # action -> physical keycode (int) or "mouse:<button>"

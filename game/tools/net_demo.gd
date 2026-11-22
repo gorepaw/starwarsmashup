@@ -39,9 +39,10 @@
 # its prefix (e.g. imported_assets/maps/dag1/dag1) and it's drawn with its
 # terrain textures, models, sky, fog and lights (rendering/bf2_map.gd).
 #
-# --hub hosts a hub (game/hubs/) instead: walk to the war terminal (its
-# name over it; a yellow pillar if the city isn't exported) and press F or
-# G to queue for a side, X to leave the queue.
+# --hub hosts a hub (game/hubs/) instead: walk up to the war terminal (a
+# yellow pillar if the city isn't exported) and use it (E) to choose a
+# side; X leaves the queue. (Without Battlefront's HUD exported, F and G
+# queue for a side.)
 # When the battle starts you're sent to it, on its own map (the hub picks
 # one for each battle), and back to the hub after the results. Joining a hub
 # server (swm_server --hub) works the same. Battles' battlefield files are
@@ -78,6 +79,8 @@ const Settings = preload("res://ui/settings.gd")
 const SpawnScreen = preload("res://ui/spawn_screen.gd")
 const ScoreScreen = preload("res://ui/score_screen.gd")
 const PauseMenu = preload("res://ui/pause_menu.gd")
+const WarTerminalScreen = preload("res://ui/war_terminal_screen.gd")
+const HubHud = preload("res://ui/hub_hud.gd")
 const HUD_DIR := "res://imported_assets/hud"  # bf2tool export-hud
 const MAX_ENERGY := 100.0     # core::MoveParams::max_energy
 const TARGET_CONE := 0.035    # radians: a character this close to the crosshair is its target
@@ -167,6 +170,8 @@ var _settings: Settings
 var _spawn_screen: SpawnScreen    # these three exist with Battlefront's HUD
 var _score_screen: ScoreScreen
 var _pause_menu: PauseMenu
+var _terminal_screen: WarTerminalScreen  # these two with Battlefront's HUD, in a hub
+var _hub_hud: HubHud
 var _was_choosing := false
 var _view_setting := false         # the options' view when the pause menu opened
 var _show_stats := false          # F3: network stats
@@ -435,6 +440,16 @@ func _on_input(event: InputEvent) -> void:
 			_pause_menu.visible = false
 			_resume()
 		return  # the menu has the input
+	if _terminal_screen != null and _terminal_screen.visible:
+		# The war terminal's screen has the keys (and the mouse, its buttons).
+		if escape or event.is_action_pressed("interact"):
+			_close_terminal()
+		elif event.is_action_pressed("leave_queue"):
+			_client.queue(-1)
+		elif event is InputEventKey and event.pressed and not event.echo \
+				and event.physical_keycode in [KEY_1, KEY_2]:
+			_client.queue(0 if event.physical_keycode == KEY_1 else 1)
+		return
 	if escape and _pause_menu != null:
 		_capture_mouse(false)
 		_pause_menu.in_match = not _battlefield.is_empty()
@@ -465,12 +480,15 @@ func _on_input(event: InputEvent) -> void:
 			_cycle_post(1)
 		elif key in [KEY_SPACE, KEY_ENTER]:
 			_request_spawn()
-	elif event is InputEventKey and event.pressed and event.physical_keycode in [KEY_F, KEY_G, KEY_X] \
-			and not _client.get_recruiters().is_empty():
-		if event.physical_keycode == KEY_X:
-			_client.queue(-1)
-		elif not _at_recruiter().is_empty():
-			_client.queue(0 if event.physical_keycode == KEY_F else 1)
+	elif event.is_action_pressed("leave_queue") and not _client.get_recruiters().is_empty():
+		_client.queue(-1)
+	elif event.is_action_pressed("interact") and not event.is_echo() and _terminal_screen != null \
+			and not _at_recruiter().is_empty():
+		_terminal_screen.visible = true
+		_capture_mouse(false)
+	elif _terminal_screen == null and event is InputEventKey and event.pressed \
+			and event.physical_keycode in [KEY_F, KEY_G] and not _at_recruiter().is_empty():
+		_client.queue(0 if event.physical_keycode == KEY_F else 1)
 	elif event is InputEventKey and event.pressed and event.physical_keycode == KEY_F3 and not event.echo:
 		_show_stats = not _show_stats
 	elif event.is_action_pressed("toggle_view") and not event.is_echo():
@@ -793,7 +811,9 @@ func _update_screens() -> void:
 	var ended: bool = not game.is_empty() and game["phase"] == "ended"
 	_score_screen.visible = not game.is_empty() and team >= 0 and not _pause_menu.visible \
 			and (ended or (Input.is_action_pressed("scores") and _bot == ""))
-	_bf2_hud.visible = not (_pause_menu.visible or _spawn_screen.visible or _score_screen.visible)
+	_update_hub_screens()
+	_bf2_hud.visible = not (_pause_menu.visible or _spawn_screen.visible or _score_screen.visible
+			or _terminal_screen.visible)
 	if _score_screen.visible:
 		var everyone: Array = _client.get_remotes()
 		var me := own.duplicate()
@@ -1288,6 +1308,13 @@ func _setup_scene() -> void:
 		_pause_menu.leave_requested.connect(func() -> void:
 			_leave()
 			quit(0))
+		_hub_hud = HubHud.new(_bf2_hud.art)
+		layer.add_child(_hub_hud)
+		_terminal_screen = WarTerminalScreen.new(_bf2_hud.art)
+		_terminal_screen.visible = false
+		_terminal_screen.side_chosen.connect(func(side: int) -> void: _client.queue(side))
+		_terminal_screen.leave_requested.connect(func() -> void: _client.queue(-1))
+		_terminal_screen.closed.connect(_close_terminal)
 	else:
 		_bf2_hud = null
 	_hud = Label.new()
@@ -1335,7 +1362,7 @@ func _setup_scene() -> void:
 	_match_label.add_theme_color_override("font_outline_color", Color.BLACK)
 	_match_label.add_theme_constant_override("outline_size", 4)
 	layer.add_child(_match_label)
-	for screen: Control in [_spawn_screen, _score_screen, _pause_menu]:
+	for screen: Control in [_spawn_screen, _score_screen, _terminal_screen, _pause_menu]:
 		if screen != null:
 			layer.add_child(screen)
 	root.add_child(layer)
@@ -1535,6 +1562,8 @@ func _arrive() -> void:
 	for bolt: Dictionary in _own_bolts:
 		(bolt["node"] as Node).queue_free()
 	_own_bolts.clear()
+	if _terminal_screen != null and _terminal_screen.visible:
+		_close_terminal()
 	_battlefield = _client.get_battlefield()
 	# A battle on another map: its world (the client says hello to the
 	# battle's server once this is drawn).
@@ -1547,8 +1576,9 @@ func _arrive() -> void:
 	print("transferred to ", "the battle on " + str(_battlefield["name"]) if not _battlefield.is_empty() else "the hub")
 
 
-# War terminals: its name and a ring where you can queue, and a yellow
-# pillar where the city has no terminal standing there (export-city --hub).
+# War terminals the city has no model of (export-city --hub): a yellow
+# pillar, its name, and a ring where you can use it. Where one stands, the
+# tooltip names it as you come up to it.
 func _add_recruiters() -> void:
 	var material := StandardMaterial3D.new()
 	material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
@@ -1584,7 +1614,7 @@ func _add_recruiters() -> void:
 		label.modulate = material.albedo_color
 		label.position = position + Vector3.UP * 3.2
 		for node: Node3D in [pillar, ring, label]:
-			if node == pillar and drawn:
+			if drawn:
 				node.free()
 				continue
 			root.add_child(node)
@@ -1614,7 +1644,67 @@ func _update_notice() -> void:
 		_feed_lines.append(_notice)
 
 
-# In a hub: the war terminal's prompt, or the queue.
+# In a hub, with Battlefront's art: the war terminal's screen (closed when
+# you walk away or leave for a battle), the tooltip where you can use it,
+# the queue, and how your last battle went.
+func _update_hub_screens() -> void:
+	var in_hub: bool = _client.is_spawned() and not _client.get_recruiters().is_empty() and _client.get_match().is_empty()
+	var terminal: Dictionary = _at_recruiter() if in_hub else {}
+	if _terminal_screen.visible and terminal.is_empty():
+		_close_terminal()
+	var factions: PackedStringArray = _client.get_factions()
+	var status: Dictionary = _client.get_player_status() if in_hub else {}
+	var queued: int = int(status.get("team", -1)) if status.get("queue", "none") == "queued" else -1
+	var sides: Array = []
+	for i in factions.size():
+		sides.append({"name": factions[i], "icon": _side_icon(factions[i], i)})
+	if _terminal_screen.visible:
+		_terminal_screen.title = str(terminal["name"])
+		_terminal_screen.sides = sides
+		_terminal_screen.queued = queued
+		_terminal_screen.battlefield = str(status.get("battlefield", ""))
+		_terminal_screen.starts_in = float(status.get("starts_in", 0))
+		_terminal_screen.in_queue = int(status.get("in_queue", 0))
+		_terminal_screen.keys = {"leave": _key_name("leave_queue"), "close": "Esc"}
+		_terminal_screen.queue_redraw()
+	_hub_hud.visible = in_hub and not (_pause_menu.visible or _terminal_screen.visible)
+	_hub_hud.tooltip = "Press %s to use the %s" % [_key_name("interact"), terminal["name"]] \
+			if not terminal.is_empty() and queued < 0 else ""
+	_hub_hud.queue = {} if queued < 0 or queued >= sides.size() else {"side": sides[queued]["name"],
+			"icon": sides[queued]["icon"], "battlefield": str(status.get("battlefield", "")),
+			"starts_in": float(status.get("starts_in", 0)), "in_queue": int(status.get("in_queue", 0)),
+			"leave_key": _key_name("leave_queue")}
+	_hub_hud.notice = _notice
+	_hub_hud.notice_alpha = clampf(_notice_time, 0.0, 1.0)
+	_hub_hud.queue_redraw()
+
+
+func _close_terminal() -> void:
+	_terminal_screen.visible = false
+	if _bot == "" and not _pause_menu.visible:
+		_capture_mouse(true)
+
+
+# A side's icon by its name (Battlefront's: all_icon, imp_icon, ...).
+func _side_icon(side: String, index: int) -> String:
+	var name := side.to_lower()
+	if name.contains("rebel"):
+		return "all_icon"
+	if name.contains("empire") or name.contains("imperial"):
+		return "imp_icon"
+	if name.contains("republic"):
+		return "rep_icon"
+	if name.contains("separatist") or name.contains("cis"):
+		return "cis_icon"
+	return "all_icon" if index == 0 else "imp_icon"
+
+
+func _key_name(action: String) -> String:
+	return Settings.binding_name(_settings.bindings[action])
+
+
+# In a hub without Battlefront's art: the war terminal's prompt, or the
+# queue, as text.
 func _update_hub_hud() -> void:
 	var factions: PackedStringArray = _client.get_factions()
 	var status: Dictionary = _client.get_player_status()
@@ -1743,10 +1833,13 @@ func _update_match_hud(delta: float) -> void:
 			_center.text = "Traveling..."
 		elif not own_state.is_empty() and not own_state["alive"]:
 			_center.text = "Eliminated. Respawning..."
-		elif _notice_time > 0 and _notice != "":
+		elif _notice_time > 0 and _notice != "" and _hub_hud == null:
 			_center.text = _notice
 		if _client.is_spawned() and not _client.get_recruiters().is_empty():
-			_update_hub_hud()
+			if _hub_hud == null:
+				_update_hub_hud()
+			else:
+				_match_label.text = ""
 		return
 	var own: Dictionary = _client.get_presented()
 	var team := int(own["team"])

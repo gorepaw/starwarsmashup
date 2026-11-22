@@ -283,8 +283,13 @@ void Hub::start_battle() {
                 continue;  // a bot
             }
             const char* outcome = result.winner < 0 ? "Draw" : result.winner == player.team ? "Victory" : "Defeat";
-            notices_[player.name] = std::format("{} at {}: {} kills, {} deaths, {} captures", outcome,
-                                                result.battlefield, player.kills, player.deaths, player.captures);
+            const auto count = [](int n, const char* one, const char* many) {
+                return std::format("{} {}", n, n == 1 ? one : many);
+            };
+            notices_[player.name] = std::format("{} at {}: {}, {}, {}", outcome, result.battlefield,
+                                                count(player.kills, "kill", "kills"),
+                                                count(player.deaths, "death", "deaths"),
+                                                count(player.captures, "capture", "captures"));
         }
     };
 

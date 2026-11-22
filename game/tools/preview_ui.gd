@@ -3,8 +3,10 @@
 #
 #   godot --path game --script res://tools/preview_ui.gd -- <output_prefix> [<map bake prefix> <battlefield.ini>]
 #
-# Writes <output_prefix>hud.png, pause.png, options.png, scores.png, end.png
-# and spawn.png. With a map, the minimap uses its image as the battlefield
+# Writes <output_prefix>hud.png, pause.png, options.png, scores.png, end.png,
+# spawn.png, and a hub's: terminal.png (the war terminal), queued.png (its
+# screen while queued), hub.png (the tooltip and the queue over the HUD) and
+# back.png (how the last battle went). With a map, the minimap uses its image as the battlefield
 # file places it. Needs a real window and bf2tool export-hud's output.
 extends SceneTree
 
@@ -13,14 +15,18 @@ const Settings = preload("res://ui/settings.gd")
 const SpawnScreen = preload("res://ui/spawn_screen.gd")
 const ScoreScreen = preload("res://ui/score_screen.gd")
 const PauseMenu = preload("res://ui/pause_menu.gd")
+const WarTerminalScreen = preload("res://ui/war_terminal_screen.gd")
+const HubHud = preload("res://ui/hub_hud.gd")
 
-const SHOTS := ["hud", "pause", "options", "scores", "end", "spawn"]
+const SHOTS := ["hud", "pause", "options", "scores", "end", "spawn", "terminal", "queued", "hub", "back"]
 
 var _prefix := ""
 var _hud: Bf2Hud
 var _spawn: SpawnScreen
 var _scores: ScoreScreen
 var _pause: PauseMenu
+var _terminal: WarTerminalScreen
+var _hub: HubHud
 var _index := -1
 var _frames := 0
 var _minimap := {}
@@ -52,7 +58,9 @@ func _initialize() -> void:
 	_scores = ScoreScreen.new(_hud.art)
 	_pause = PauseMenu.new(_hud.art)
 	_pause.settings = Settings.new()
-	for screen: Control in [_spawn, _scores, _pause]:
+	_terminal = WarTerminalScreen.new(_hud.art)
+	_hub = HubHud.new(_hud.art)
+	for screen: Control in [_spawn, _scores, _pause, _terminal, _hub]:
 		screen.visible = false
 		layer.add_child(screen)
 	_sample_hud()
@@ -87,7 +95,15 @@ func _next() -> void:
 	_scores.visible = shot in ["scores", "end"]
 	_scores.ended = shot == "end"
 	_spawn.visible = shot == "spawn"
-	for control: Control in [_hud, _spawn, _scores, _pause]:
+	_terminal.visible = shot in ["terminal", "queued"]
+	_terminal.queued = 1 if shot == "queued" else -1
+	_hub.visible = shot in ["hub", "back"]
+	_hub.tooltip = "Press E to use the War Terminal" if shot == "hub" else ""
+	_hub.queue = {"side": "Empire", "icon": "imp_icon", "battlefield": "Polis Massa", "starts_in": 6.2,
+			"in_queue": 3, "leave_key": "X"} if shot == "hub" else {}
+	_hub.notice = "Victory at Endor: 12 kills, 1 death, 3 captures" if shot == "back" else ""
+	_hub.notice_alpha = 1.0
+	for control: Control in [_hud, _spawn, _scores, _pause, _terminal, _hub]:
 		control.queue_redraw()
 
 
@@ -162,6 +178,12 @@ func _sample_screens() -> void:
 		{"name": "CP4", "position": Vector2(10, -10), "color": Color(0.35, 0.6, 1.0), "ours": true}]
 	_spawn.post = 0
 	_spawn.minimap = _minimap
+	_terminal.title = "War Terminal"
+	_terminal.sides = [{"name": "Rebellion", "icon": "all_icon"}, {"name": "Empire", "icon": "imp_icon"}]
+	_terminal.battlefield = "Polis Massa"
+	_terminal.starts_in = 6.2
+	_terminal.in_queue = 3
+	_terminal.keys = {"leave": "X", "close": "Esc"}
 
 
 func _load_minimap(bake: String, battlefield: String) -> Dictionary:
