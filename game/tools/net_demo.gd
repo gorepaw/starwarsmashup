@@ -727,8 +727,7 @@ func _update_camera(target: Vector3, delta: float) -> void:
 			_pitch = float(own["pitch"])
 		_camera_yaw = _yaw
 		var look := _camera_basis()
-		var flat := Vector3(-sin(_yaw), 0, -cos(_yaw))
-		_camera.global_position = soldier.eye() + flat * FIRST_PERSON_FORWARD
+		_camera.global_position = soldier.eye() - look.z * FIRST_PERSON_FORWARD
 		_camera.global_basis = look
 		return
 	# Over the shoulder, facing where the character aims (as in Battlefront,

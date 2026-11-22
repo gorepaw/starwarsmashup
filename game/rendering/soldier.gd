@@ -11,6 +11,11 @@
 #   soldier.muzzle()                      # where its bolts leave the barrel
 #   soldier.first_person = true           # own soldier seen from its eyes: no head, rifle up
 #   soldier.eye()                         # where a first-person camera sits
+#
+# In first person the upper body is steadied (see Aimer): the chest rides on
+# the hips' average over the run cycle, not their every bob and turn; steps
+# up and down are smoothed; the recoil and flinch clips give way to a small
+# kick, bob and sway of the arms; reloads and throws move only the arms.
 extends RefCounted
 
 const IDLE := &"human_rifle_stand_idle_emote_full"
@@ -34,13 +39,35 @@ const UPPER_BODY := ["spine1", "spine2", "spine3", "neck", "Head",
 		"rClav", "rArm", "rForeArm", "rUlna", "rWrist", "rThumb01", "rThumb02", "rIndex01", "rIndex02",
 		"rRing01", "rRing02", "hold_r"]
 const SPINE := ["spine1", "spine2", "spine3"]
+# First person: one-shot clips (reload, throw) leave these to the steadied chest.
+const STEADY := ["spine1", "spine2", "spine3", "neck", "Head"]
+const KICK_DECAY := 14.0         # per second, the first-person recoil settling
+const KICK_BACK := 0.025         # m a shot pushes the arms back
+const KICK_UP := deg_to_rad(2.5) # and turns the muzzle up
+const BOB := Vector2(0.007, 0.005)  # m sideways and up at a full run
+const STRIDE := 1.7              # m a full run cycle (two steps) covers
+const SWAY := 0.012              # radians of lag per radian a second of turning
+const SWAY_LIMIT := 0.05
+const STEP_SNAP := 0.06          # m: a height change in one frame this big is a step
+const STEP_SETTLE := 12.0        # per second, a step smoothed out
+const VIEW_OFFSET := Vector3(-0.015, -0.045, 0.0)  # m the arms sit lower and to the right in first person
+const DIP_SPEED := 5.0           # per second, the gun dipping for a first-person reload or throw
+const DIP_TURN := Vector2(deg_to_rad(16), deg_to_rad(10))  # its muzzle down, and rolled
+const DIP_DROP := 0.05           # m it drops
+const DIP_PIVOT := Vector3(-0.12, -0.2, 0.35)  # about where the hands are, from the eyes (+X left, +Z forward)
+const THROW_DIP := 0.45         # s the gun stays dipped for a first-person throw
 
 var model: Node3D
 var first_person := false:
 	set(value):
+		if value != first_person and _tree != null:
+			for layer: StringName in [&"reload", &"throw"]:
+				var node: AnimationNode = (_tree.tree_root as AnimationNodeBlendTree).get_node(layer)
+				for path in _steady_paths:
+					node.set_filter_path(path, not value)
 		first_person = value
 		if _aimer != null:
-			_aimer.hide_head = value
+			_aimer.first_person = value
 var _player: AnimationPlayer
 var _skeleton: Skeleton3D
 var _head := -1
@@ -53,16 +80,41 @@ var _reloading := false
 var _alive := true
 var _dead_time := 0.0
 var _leg_yaw := 0.0
+var _steady_paths: Array[NodePath] = []  # the STEADY bones' track paths
+var _kick := 0.0             # first person: 1 just after a shot, settling to 0
+var _bob_phase := 0.0
+var _sway := 0.0
+var _last_yaw := 0.0
+var _last_y := 0.0
+var _step := 0.0             # m the chest still lags a step up or down
+var _dip := 0.0              # first person: 0 .. 1 the gun dipped to reload or throw
+var _throwing := 0.0         # s left of a first-person throw's dip
 
 
 # Bends the spine with the aim pitch and turns the legs, after the animation.
+# In first person it also steadies the upper body: the chest is carried on
+# the hips' average pose (over about a third of a second) rather than their
+# every bob and turn through the run cycle, raised or lowered by `step` (a
+# step being smoothed out), and the arms move by `arms` about the chest.
+# Skeleton space: the model faces +Z, up is +Y.
 class Aimer extends SkeletonModifier3D:
+	const AVERAGE := 3.0  # per second, the hips' average following them
+	const FIRST_PERSON_BEND := 0.3  # of the aim pitch the spine takes in first person
 	var pitch := 0.0      # radians, aim up positive
 	var leg_yaw := 0.0    # radians the legs turn from the aim, left positive
-	var hide_head := false  # first person: the camera is inside it
+	var first_person := false:  # the camera is in the head: shrink it, steady the chest
+		set(value):
+			first_person = value
+			_averaged = false
+	var step := 0.0       # m the chest is carried over (+) or under the hips
+	var arms := Transform3D()  # first person: the arms' kick, bob and sway, about the chest
+	var eye_local := Vector3.ZERO  # the head as last drawn (skeleton space)
 	var _spine: Array[int] = []
 	var _root := -1
 	var _head := -1
+	var _clavicles: Array[int] = []
+	var _average := Transform3D()
+	var _averaged := false
 
 	func setup(skeleton: Skeleton3D) -> void:
 		for bone_name: String in SPINE:
@@ -71,22 +123,68 @@ class Aimer extends SkeletonModifier3D:
 				_spine.append(bone)
 		_root = skeleton.find_bone("root")
 		_head = skeleton.find_bone("Head")
+		for bone_name: String in ["rClav", "lClav"]:
+			var bone := skeleton.find_bone(bone_name)
+			if bone >= 0:
+				_clavicles.append(bone)
 
-	func _process_modification_with_delta(_delta: float) -> void:
+	func _process_modification_with_delta(delta: float) -> void:
 		var skeleton := get_skeleton()
 		if skeleton == null or _spine.is_empty():
 			return
-		# Legs: turn the hips toward the movement; the spine turns back.
+		var steady := first_person and _root >= 0
+		if steady:
+			var hips := skeleton.get_bone_global_pose(_root)
+			if not _averaged:
+				_average = hips
+				_averaged = true
+			var f := minf(1.0, AVERAGE * delta)
+			_average = Transform3D(_average.basis.slerp(hips.basis, f).orthonormalized(),
+					_average.origin.lerp(hips.origin, f))
+		# Legs: turn the hips toward the movement; the spine turns back (in
+		# first person the chest is set from the average below instead).
 		if _root >= 0 and absf(leg_yaw) > 0.001:
 			_rotate_global(skeleton, _root, Basis(Vector3.UP, leg_yaw))
-			_rotate_global(skeleton, _spine[0], Basis(Vector3.UP, -leg_yaw))
-		# Aim: the model faces +Z, so raising the aim turns about -X.
-		var share := Basis(Vector3.RIGHT, -pitch / _spine.size())
+			if not steady:
+				_rotate_global(skeleton, _spine[0], Basis(Vector3.UP, -leg_yaw))
+		if steady:
+			# The chest where it sits on the averaged hips.
+			var carried := Transform3D(_average.basis, _average.origin + Vector3.UP * step)
+			_set_global(skeleton, _spine[0], carried * _local(skeleton, _spine[0]))
+		# Aim: the model faces +Z, so raising the aim turns about -X. In first
+		# person the spine takes only some of it, so the eyes don't drop far
+		# looking down; the arms turn the rest about the eyes, as a shooter's
+		# view model does.
+		var bend := pitch * (FIRST_PERSON_BEND if steady else 1.0)
+		var share := Basis(Vector3.RIGHT, -bend / _spine.size())
 		for bone in _spine:
 			_rotate_global(skeleton, bone, share)
+		if steady and _head >= 0:
+			# The rest of the aim and the arms' motion, in the model's frame
+			# turned with the bend, about the eyes.
+			var eyes := skeleton.get_bone_global_pose(_head).origin
+			var about := Transform3D(Basis(Vector3.RIGHT, -bend), eyes)
+			var move := about * Transform3D(Basis(Vector3.RIGHT, bend - pitch)) * arms * about.affine_inverse()
+			for bone in _clavicles:
+				_set_global(skeleton, bone, move * skeleton.get_bone_global_pose(bone))
 		# Shrinks the head and whatever is worn on it (helmet, hair).
 		if _head >= 0:
-			skeleton.set_bone_pose_scale(_head, Vector3.ONE * (0.001 if hide_head else 1.0))
+			skeleton.set_bone_pose_scale(_head, Vector3.ONE * (0.001 if first_person else 1.0))
+			# Read now: once the modifiers are done the skeleton's poses go back
+			# to the animation's, without the bending and steadying.
+			eye_local = skeleton.get_bone_global_pose(_head).origin
+
+	static func _local(skeleton: Skeleton3D, bone: int) -> Transform3D:
+		return Transform3D(Basis(skeleton.get_bone_pose_rotation(bone)).scaled(skeleton.get_bone_pose_scale(bone)),
+				skeleton.get_bone_pose_position(bone))
+
+	# Poses a bone so its skeleton-space transform is `target` (its scale kept).
+	static func _set_global(skeleton: Skeleton3D, bone: int, target: Transform3D) -> void:
+		var parent := skeleton.get_bone_parent(bone)
+		var parent_pose := skeleton.get_bone_global_pose(parent) if parent >= 0 else Transform3D()
+		var local := parent_pose.affine_inverse() * target
+		skeleton.set_bone_pose_position(bone, local.origin)
+		skeleton.set_bone_pose_rotation(bone, local.basis.get_rotation_quaternion())
 
 	# Rotates a bone by `turn` in skeleton space, about its own origin.
 	static func _rotate_global(skeleton: Skeleton3D, bone: int, turn: Basis) -> void:
@@ -116,7 +214,11 @@ func _init(scene: Node3D) -> void:
 	_tree = AnimationTree.new()
 	_player.get_parent().add_child(_tree)
 	_tree.anim_player = _tree.get_path_to(_player)
-	_tree.tree_root = _build_tree(_upper_body_paths())
+	var upper := _upper_body_paths()
+	for path in upper:
+		if STEADY.has(str(path.get_subname(0))):
+			_steady_paths.append(path)
+	_tree.tree_root = _build_tree(upper)
 	_tree.active = true
 
 
@@ -222,12 +324,15 @@ func pose(state: Dictionary, delta: float) -> void:
 	_tree.set("parameters/move_speed/scale", clampf(speed / RUN_SPEED, 0.6, 1.9) if speed > 0.5 else 1.0)
 
 	_since_shot += delta
+	if first_person:
+		_tree.set("parameters/shoot_seek/seek_request", 0.0)  # the raised pose, without the recoil clip
+		_first_person_motion(state, speed, delta)
 	var target := 1.0 if _since_shot < AIM_HOLD or first_person else 0.0
 	_aim = move_toward(_aim, target, AIM_BLEND * delta)
 	_tree.set("parameters/aim/blend_amount", _aim)
 
 	var reloading := bool(state.get("reloading", false))
-	if reloading and not _reloading:
+	if reloading and not _reloading and not first_person:  # first person dips the gun instead
 		_tree.set("parameters/reload/request", AnimationNodeOneShot.ONE_SHOT_REQUEST_FIRE)
 	_reloading = reloading
 
@@ -235,6 +340,38 @@ func pose(state: Dictionary, delta: float) -> void:
 		# Relaxed, the rifle points down; raised, the whole aim shows.
 		_aimer.pitch = float(state.get("pitch", 0.0)) * lerpf(0.5, 1.0, _aim)
 		_aimer.leg_yaw = _leg_yaw
+
+
+# First person: the arms kick on a shot, bob with the stride and lag behind a
+# turn; steps up and down are smoothed out of the chest's height.
+func _first_person_motion(state: Dictionary, speed: float, delta: float) -> void:
+	var yaw := float(state["yaw"])
+	var y: float = (state["position"] as Vector3).y
+	if absf(y - _last_y) > STEP_SNAP:
+		_step = clampf(_step - (y - _last_y), -0.5, 0.5)
+	_last_y = y
+	_step *= exp(-STEP_SETTLE * delta)
+	_kick *= exp(-KICK_DECAY * delta)
+	_throwing = maxf(0.0, _throwing - delta)
+	var dipped := bool(state.get("reloading", false)) or _throwing > 0.0
+	_dip = move_toward(_dip, 1.0 if dipped else 0.0, DIP_SPEED * delta)
+	var dip := smoothstep(0.0, 1.0, _dip)
+	var run := clampf(speed / RUN_SPEED, 0.0, 1.0)
+	_bob_phase = fmod(_bob_phase + speed * delta / STRIDE * TAU, TAU)
+	var turn_rate := angle_difference(_last_yaw, yaw) / maxf(delta, 1e-4)
+	_last_yaw = yaw
+	_sway = lerpf(_sway, clampf(-turn_rate * SWAY, -SWAY_LIMIT, SWAY_LIMIT), minf(1.0, 10.0 * delta))
+	if _aimer == null:
+		return
+	_aimer.step = _step
+	# The chest's frame: +Z forward, +Y up, +X the soldier's left.
+	var offset := VIEW_OFFSET + Vector3(BOB.x * sin(_bob_phase) * run,
+			BOB.y * sin(2.0 * _bob_phase) * run - DIP_DROP * dip, -KICK_BACK * _kick)
+	var turn := Basis(Vector3.UP, _sway) * Basis(Vector3.RIGHT, -KICK_UP * _kick)
+	# The dip turns the gun about the hands, not the eyes.
+	var tilt := Basis(Vector3.RIGHT, DIP_TURN.x * dip) * Basis(Vector3.BACK, DIP_TURN.y * dip)
+	var dip_about := Transform3D(Basis(), DIP_PIVOT) * Transform3D(tilt) * Transform3D(Basis(), -DIP_PIVOT)
+	_aimer.arms = Transform3D(turn, offset) * dip_about
 
 
 func _pose_simple(state: Dictionary) -> void:
@@ -251,18 +388,21 @@ func _pose_simple(state: Dictionary) -> void:
 # A shot: raise the rifle (if it isn't) and play the recoil from the start.
 func fire() -> void:
 	_since_shot = 0.0
+	_kick = 1.0
 	if _tree != null:
 		_tree.set("parameters/shoot_seek/seek_request", 0.0)
 
 
 func throw() -> void:
 	_since_shot = AIM_HOLD  # lowers the rifle
-	if _tree != null:
+	if first_person:
+		_throwing = THROW_DIP  # the gun dips instead: the clip swings the arm behind the camera
+	elif _tree != null:
 		_tree.set("parameters/throw/request", AnimationNodeOneShot.ONE_SHOT_REQUEST_FIRE)
 
 
 func flinch() -> void:
-	if _tree != null:
+	if _tree != null and not first_person:
 		_tree.set("parameters/flinch/request", AnimationNodeOneShot.ONE_SHOT_REQUEST_FIRE)
 
 
@@ -279,11 +419,14 @@ func _die() -> void:
 		_player.speed_scale = 1.0
 
 
-# The head's position (world space), from the last drawn pose but where the
-# model is now; a little above the waist if the skeleton has no head.
+# The head's position (world space), as last drawn (bent with the aim and,
+# in first person, steadied) but where the model is now; a little above the
+# waist if the skeleton has no head.
 func eye() -> Vector3:
 	if _skeleton == null or _head < 0:
 		return model.global_position + Vector3.UP * 1.6
+	if _aimer != null and _aimer.eye_local != Vector3.ZERO:
+		return _skeleton.global_transform * _aimer.eye_local
 	return _skeleton.global_transform * _skeleton.get_bone_global_pose(_head).origin
 
 

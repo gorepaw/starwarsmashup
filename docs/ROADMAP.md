@@ -122,13 +122,14 @@ Matches look, sound and feel finished before Galaxies' gear changes what's in th
 ### Tasks
 
 **First person**
-- [ ] Steady arms. Now the first-person view is the third-person animation seen from the head bone, so the run cycle's bob, the recoil clip and the spine's aim bend all move the arms and gun. First person gets its own upper body:
-  - the camera on a smoothed eye point that follows the body, not every move of the head bone;
-  - the arms held at a fixed place in front of the camera by two-bone IK to the weapon's grip points (the hand on the grip, the other on the foregrip);
-  - small procedural sway, bob and recoil in place of the clips;
-  - reloads and throws as the clips' upper body re-aimed to the camera.
-  
-  The legs keep the locomotion: looking down still shows your own body and feet.
+- [x] Steady arms (`game/rendering/soldier.gd`). The camera had been placed at the head as the animation left it, before the spine bent with the aim (since Godot 4.3, a skeleton modifier's pose lasts only while the skeleton updates), so the gun swung through the view with every look up or down, and the recoil and reload clips jolted the whole body. In first person now:
+  - the chest rides on the hips' average over the run cycle, not their every bob and turn, and steps up and down are smoothed out;
+  - the spine takes only 30% of the aim pitch and the arms turn the rest about the eyes, as a shooter's view model does: the muzzle stays put in view at any pitch, and looking down lowers the eyes 7 cm, not 26;
+  - the camera is at the head as drawn, pushed out along the view;
+  - the recoil and flinch clips give way to a small kick, a bob with the stride (under a centimeter) and a sway lagging behind turns;
+  - reloads and throws dip the gun about the hands rather than playing the clips, which swing it out of view.
+
+  The legs keep the locomotion: looking down still shows your own body and feet. Others see the third-person animation as before.
 - [ ] The third-person hands look wrong too (fingers and wrist on the grip). Fixed in Stage 4 with each weapon's grip points and hand poses. First-person IK uses the same points, so the two stay in step.
 
 **Over soldiers' heads**
