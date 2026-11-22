@@ -2,11 +2,13 @@
 # by side from the side and the front, to check how they move (Galaxies'
 # own clips, swgtool export-character --swg-anim, or retargeted ones).
 #
-#   godot --path game --script res://tools/pose_clips.gd -- <character.gltf> <output_prefix> [clip...]
+#   godot --path game --script res://tools/pose_clips.gd -- <character.gltf> <output_prefix> [--varied] [clip...]
 #
 # Writes <output_prefix><clip>.png: four moments through the clip in a row
 # (the side view), and the same under them from the front. All clips when
-# none are named. Needs a real window.
+# none are named. In the character's own colors (its .colors.json, if any),
+# or with --varied, each in colors varied as a hub's crowd's are. Needs a
+# real window.
 extends SceneTree
 
 const MOMENTS := 4
@@ -26,6 +28,9 @@ func _initialize() -> void:
 		quit(2)
 		return
 	_out = args[1]
+	var varied := args.has("--varied")
+	args.erase("--varied")
+	var colors := SwgColors.load_colors(args[0])
 	DisplayServer.window_set_size(Vector2i(1280, 720))
 	var environment := Environment.new()
 	environment.background_mode = Environment.BG_COLOR
@@ -50,6 +55,7 @@ func _initialize() -> void:
 			var model: Node3D = document.generate_scene(state)
 			model.position = Vector3((i - (MOMENTS - 1) / 2.0) * 1.6, 2.4 - row * 2.4, 0)
 			model.rotation.y = PI / 2 if row == 0 else 0.0
+			SwgColors.apply(model, colors, 1 + row * MOMENTS + i if varied else 0)
 			root.add_child(model)
 			_models.append(model)
 			_players.append(model.find_child("AnimationPlayer", true, false) as AnimationPlayer)

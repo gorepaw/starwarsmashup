@@ -297,12 +297,14 @@ void test_people() {
     CHECK(moved >= 5);
     // The player sees them, and how they look.
     CHECK(player.looks().size() == 3 && player.looks()[2] == "object/mobile/shared_twilek.iff");
-    int seen = 0, sitting = 0;
+    int seen = 0, sitting = 0, varied = 0;
     for (const auto& remote : player.remotes()) {
         seen += remote.look > 0;
         sitting += remote.pose == 1;
+        varied += remote.colors != 0;
     }
     CHECK(seen == 8 && sitting == 1);
+    CHECK(varied == 6);  // the crowd, each in colors of their own; the set pieces in their looks'
 }
 
 } // namespace

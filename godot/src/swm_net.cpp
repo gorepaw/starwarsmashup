@@ -65,6 +65,7 @@ void describe(godot::Dictionary& out, const core::net::EntityState& entity) {
     out["captures"] = int64_t(entity.captures);
     out["look"] = int64_t(entity.look);  // 0: a player; else get_looks()[look - 1]
     out["pose"] = int64_t(entity.pose);  // 0 on their feet, 1 sitting
+    out["colors"] = int64_t(entity.colors);  // 0: the look's own colors; else a seed to vary them by
 }
 
 void add_bolt_look(godot::Dictionary& entry, const core::WeaponDef& w) {

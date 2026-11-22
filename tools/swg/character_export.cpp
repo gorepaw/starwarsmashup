@@ -1,7 +1,10 @@
 #include "swg/character_export.h"
 
 #include <algorithm>
+#include <format>
+#include <fstream>
 #include <ostream>
+#include <set>
 #include <stdexcept>
 
 #include "swg/appearance.h"
@@ -19,7 +22,8 @@ constexpr int max_influences = 4;  // glTF JOINTS_0 / WEIGHTS_0
 class Exporter {
 public:
     Exporter(TreLibrary& library, const std::filesystem::path& out_dir, std::ostream& log)
-        : library_(library), out_dir_(out_dir), log_(log), assets_(library, gltf_, out_dir, log) {}
+        : library_(library), out_dir_(out_dir), log_(log),
+          assets_(library, gltf_, out_dir, log, GltfAssets::Colors::describe) {}
 
     void run(const CharacterExport& request) {
         if (request.appearances.empty()) {
@@ -43,7 +47,7 @@ public:
             for (const std::string& generator : appearances[a].mesh_generators) {
                 const std::string mgn_path = highest_detail_mgn(generator);
                 log_ << "  " << request.appearances[a] << " -> " << mgn_path << "\n";
-                const int mesh_node = add_skinned_mesh(mgn_path);
+                const int mesh_node = add_skinned_mesh(mgn_path, true);
                 gltf_.nodes[size_t(root)].children.push_back(mesh_node);
             }
         }
@@ -64,6 +68,7 @@ public:
 
         gltf_.scene_nodes = {root};
         gltf_.write(out_dir_ / (request.name + ".gltf"));
+        write_colors(out_dir_ / (request.name + ".colors.json"));
     }
 
 private:
@@ -101,8 +106,19 @@ private:
         return generator;
     }
 
-    int add_skinned_mesh(const std::string& path) {
+    // `body`: one of the body's own meshes (not something worn).
+    int add_skinned_mesh(const std::string& path, bool body = false) {
         const SkinnedMesh mesh = parse_skinned_mesh(library_.read(path));
+        if (body) {
+            // A garment's bare skin (an owner proxy shader, "body") is drawn
+            // with the body's shader, which Galaxies names <species>_body.
+            // ASSUMPTION: by that name; it holds for every species exported.
+            for (const SkinnedMesh::Part& part : mesh.parts) {
+                if (std::filesystem::path(part.shader).stem().string().ends_with("_body")) {
+                    assets_.set_owner_shader("body", part.shader);
+                }
+            }
+        }
 
         std::vector<int> bone_to_joint;
         for (const std::string& bone : mesh.bones) {
@@ -220,6 +236,50 @@ private:
         animation.channels.push_back({0, "translation", input, gltf_.add_vec3(translations, false, false)});
         gltf_.animations.push_back(std::move(animation));
         log_ << "  animation " << clip.name << ": " << clip.rotations.size() << " frames\n";
+    }
+
+    // <name>.colors.json: the customizable materials' colors, for the client
+    // to choose (see CharacterExport).
+    void write_colors(const std::filesystem::path& path) {
+        std::set<std::string> palettes;
+        std::string materials;
+        for (const auto& [name, customization] : assets_.colors()) {
+            std::string factors;
+            for (const char* factor : {"MAIN", "HUEB"}) {
+                if (std::string_view(factor) == "HUEB" && !customization.two_colors()) {
+                    continue;
+                }
+                const auto color = std::find_if(customization.colors.begin(), customization.colors.end(),
+                                                [&](const PaletteColor& c) { return c.factor == factor; });
+                std::string value;
+                if (color != customization.colors.end()) {
+                    palettes.insert(color->palette);
+                    value = std::format(R"({{"variable":"{}","shared":{},"palette":"{}","index":{}}})",
+                                        color->variable, color->shared, color->palette, color->default_index);
+                } else {
+                    value = "\"" + hex(assets_.default_color(customization, factor)) + "\"";
+                }
+                factors += std::format(R"({}"{}":{})", factors.empty() ? "" : ",", factor, value);
+            }
+            materials += std::format("{}\n    \"{}\": {{{}}}", materials.empty() ? "" : ",", name, factors);
+        }
+        std::string palette_json;
+        for (const std::string& palette : palettes) {
+            std::string colors;
+            for (const auto& color : assets_.palette(palette)) {
+                colors += hex(color);
+            }
+            palette_json += std::format("{}\n    \"{}\": \"{}\"", palette_json.empty() ? "" : ",", palette, colors);
+        }
+        std::ofstream out(path, std::ios::binary);
+        out << "{\n  \"palettes\": {" << palette_json << "\n  },\n  \"materials\": {" << materials << "\n  }\n}\n";
+        if (!out) {
+            throw std::runtime_error("can't write " + path.string());
+        }
+    }
+
+    static std::string hex(std::array<uint8_t, 3> color) {
+        return std::format("{:02x}{:02x}{:02x}", color[0], color[1], color[2]);
     }
 
     int add_node(Gltf::Node node) {

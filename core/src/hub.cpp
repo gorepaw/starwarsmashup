@@ -254,7 +254,9 @@ void Hub::add_people() {
         }
         const int look = config_.crowd.looks[size_t(i) % config_.crowd.looks.size()];
         const double yaw = std::uniform_real_distribution<double>(-std::numbers::pi, std::numbers::pi)(random_);
-        const uint32_t entity = server_.add_npc("Citizen", *at, yaw, uint8_t(look + 1));
+        // Each in colors of their own (the set pieces keep their looks').
+        const auto colors = uint16_t(std::uniform_int_distribution<int>(1, 65535)(random_));
+        const uint32_t entity = server_.add_npc("Citizen", *at, yaw, uint8_t(look + 1), 0, colors);
         // Some linger a while before they set off.
         Walker walker{.entity = entity};
         walker.pause_until = std::uniform_real_distribution<double>(0, 10)(random_);

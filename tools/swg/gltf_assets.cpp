@@ -1,5 +1,7 @@
 #include "swg/gltf_assets.h"
 
+#include <algorithm>
+#include <cmath>
 #include <ostream>
 #include <stdexcept>
 
@@ -10,14 +12,49 @@
 
 namespace swm::swg {
 
+namespace {
+
+// Galaxies multiplied colors in gamma space; glTF's base color factor is
+// linear. (a * b)^2.2 = a^2.2 * b^2.2, so the linear factor is the color's
+// linear value, under a power-law gamma.
+float linear(uint8_t c) {
+    return std::pow(c / 255.0f, 2.2f);
+}
+
+} // namespace
+
 int GltfAssets::material_for(const std::string& shader_path) {
     if (const auto it = materials_.find(shader_path); it != materials_.end()) {
         return it->second;
     }
     Gltf::Material material{.name = std::filesystem::path(shader_path).stem().string()};
     try {
-        const std::string texture = shader_main_texture(library_.read(shader_path));
-        if (!texture.empty()) {
+        const std::vector<uint8_t> bytes = library_.read(shader_path);
+        const ShaderCustomization customization = parse_shader_customization(bytes);
+        if (!customization.owner_proxy.empty()) {
+            // A stand-in for its wearer's shader: that shader's material.
+            const auto owner = owner_shaders_.find(customization.owner_proxy);
+            if (owner != owner_shaders_.end() && owner->second != shader_path) {
+                materials_[shader_path] = material_for(owner->second);
+                return materials_[shader_path];
+            }
+            log_ << "  warning: " << shader_path << ": no shader for its owner's '" << customization.owner_proxy
+                 << "'\n";
+        }
+        const std::string texture = shader_main_texture(bytes);
+        if (!customization.colors.empty()) {
+            const std::array<uint8_t, 3> main = default_color(customization, "MAIN");
+            if (colors_mode_ == Colors::bake && customization.two_colors() && !texture.empty()) {
+                material.texture =
+                    hued_image_for(texture, material.name, main, default_color(customization, "HUEB"));
+            } else {
+                material.color = {linear(main[0]), linear(main[1]), linear(main[2]), 1};
+            }
+            if (colors_mode_ == Colors::describe) {
+                colors_[material.name] = customization;
+            }
+        }
+        if (!texture.empty() && material.texture < 0) {
             material.texture = image_for(texture);
         }
     } catch (const std::exception& e) {
@@ -26,6 +63,51 @@ int GltfAssets::material_for(const std::string& shader_path) {
     gltf_.materials.push_back(std::move(material));
     materials_[shader_path] = int(gltf_.materials.size() - 1);
     return materials_[shader_path];
+}
+
+const std::vector<std::array<uint8_t, 3>>& GltfAssets::palette(const std::string& path) {
+    auto it = palettes_.find(path);
+    if (it == palettes_.end()) {
+        it = palettes_.emplace(path, parse_palette(library_.read(path))).first;
+    }
+    return it->second;
+}
+
+std::array<uint8_t, 3> GltfAssets::default_color(const ShaderCustomization& customization, const std::string& factor) {
+    for (const PaletteColor& color : customization.colors) {
+        if (color.factor == factor) {
+            const auto& colors = palette(color.palette);
+            if (colors.empty()) {
+                break;
+            }
+            return colors[size_t(std::clamp(color.default_index, 0, int(colors.size()) - 1))];
+        }
+    }
+    for (const auto& [name, argb] : customization.factor_defaults) {
+        if (name == factor) {
+            return {uint8_t(argb >> 16), uint8_t(argb >> 8), uint8_t(argb)};
+        }
+    }
+    return {255, 255, 255};
+}
+
+int GltfAssets::hued_image_for(const std::string& texture_path, const std::string& name, std::array<uint8_t, 3> main,
+                               std::array<uint8_t, 3> hueb) {
+    // As a color2 pixel program: the texture times MAIN blended to HUEB by the
+    // texture's alpha. The alpha is the blend's mask, so the copy is opaque.
+    ImageRgba image = decode_dds(library_.read(texture_path));
+    for (size_t i = 0; i + 3 < image.pixels.size(); i += 4) {
+        const int mask = image.pixels[i + 3];
+        for (int c = 0; c < 3; ++c) {
+            const int hue = (main[size_t(c)] * (255 - mask) + hueb[size_t(c)] * mask) / 255;
+            image.pixels[i + size_t(c)] = uint8_t(image.pixels[i + size_t(c)] * hue / 255);
+        }
+        image.pixels[i + 3] = 255;
+    }
+    const std::string file_name = name + ".hue.png";
+    write_png(out_dir_ / file_name, image);
+    gltf_.images.push_back(file_name);
+    return int(gltf_.images.size() - 1);
 }
 
 int GltfAssets::image_for(const std::string& texture_path) {

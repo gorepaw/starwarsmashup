@@ -6,6 +6,7 @@
 #include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <stdexcept>
 #include <string>
 #include <tuple>
 #include <vector>
@@ -224,6 +225,60 @@ void test_switching_shader() {
     CHECK(shader_main_texture(shader) == "texture/screen_1.dds");
 }
 
+// A customizable shader: a skin color shared by the body, a garment's own
+// second color, the shader's default for a factor no palette sets; an owner
+// proxy shader; a palette.
+void test_shader_colors() {
+    const auto pal = [](const std::string& variable, uint8_t flag, const char* tag, const std::string& palette,
+                        int32_t index) {
+        Bytes out = text(variable);
+        out.push_back(flag);
+        out.insert(out.end(), tag, tag + 4);
+        const Bytes path = text(palette);
+        out.insert(out.end(), path.begin(), path.end());
+        const auto* b = reinterpret_cast<const uint8_t*>(&index);
+        out.insert(out.end(), b, b + 4);
+        return chunk("PAL ", out);
+    };
+    // TFNS: BLCK opaque black, HUEB white (tags and colors little-endian).
+    const Bytes names{'K', 'C', 'L', 'B', 0, 0, 0, 0xff, 'B', 'E', 'U', 'H', 0xff, 0xff, 0xff, 0xff};
+    const Bytes shader = form(
+        "CSHD",
+        {form("0001", {form("SSHT", {form("0000", {form("TFNS", {chunk("0000", names)})})}),
+                       form("TFAC", {pal("index_color_skin", 0, "NIAM", "palette\\skin.pal", 3),
+                                     pal("index_color_1", 1, "BEUH", "palette/cloth.pal", 124)})})});
+    const ShaderCustomization colors = parse_shader_customization(shader);
+    CHECK(colors.colors.size() == 2);
+    CHECK(colors.colors[0].variable == "index_color_skin" && colors.colors[0].shared &&
+          colors.colors[0].factor == "MAIN" && colors.colors[0].palette == "palette/skin.pal" &&
+          colors.colors[0].default_index == 3);
+    CHECK(colors.colors[1].variable == "index_color_1" && !colors.colors[1].shared &&
+          colors.colors[1].factor == "HUEB" && colors.colors[1].default_index == 124);
+    CHECK(colors.factor_defaults.size() == 2);
+    CHECK((colors.factor_defaults[0] == std::pair<std::string, uint32_t>("BLCK", 0xff000000)));
+    CHECK((colors.factor_defaults[1] == std::pair<std::string, uint32_t>("HUEB", 0xffffffff)));
+    CHECK(colors.two_colors());
+    CHECK(colors.owner_proxy.empty());
+
+    const ShaderCustomization proxy = parse_shader_customization(form("OPST", {form("0000", {chunk("INFO", text("body"))})}));
+    CHECK(proxy.owner_proxy == "body" && proxy.colors.empty() && !proxy.two_colors());
+
+    Bytes palette{'R', 'I', 'F', 'F', 16, 0, 0, 0, 'P', 'A', 'L', ' ', 'd', 'a', 't', 'a', 8, 0, 0, 0, 0, 3, 2, 0,
+                  10, 20, 30, 0, 200, 100, 50, 0};
+    const auto entries = parse_palette(palette);
+    CHECK(entries.size() == 2);
+    CHECK(entries.size() == 2 && entries[0] == (std::array<uint8_t, 3>{10, 20, 30}) &&
+          entries[1] == (std::array<uint8_t, 3>{200, 100, 50}));
+    palette.resize(28);
+    bool threw = false;
+    try {
+        parse_palette(palette);
+    } catch (const std::runtime_error&) {
+        threw = true;
+    }
+    CHECK(threw);
+}
+
 // A datatable: typed columns, rows of strings, numbers and booleans.
 void test_datatable() {
     Bytes columns;
@@ -262,6 +317,7 @@ void test_datatable() {
 
 int main() {
     test_switching_shader();
+    test_shader_colors();
     test_datatable();
     test_templates_and_collision();
     test_floor_collision();

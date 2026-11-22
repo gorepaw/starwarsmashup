@@ -17,7 +17,7 @@ namespace swm::core::net {
 // Every packet starts with a magic number, the protocol version and a message
 // type. Peers drop packets with another version. Bump it on any wire change.
 inline constexpr uint16_t protocol_magic = 0x4D53;  // "SM"
-inline constexpr uint16_t protocol_version = 9;
+inline constexpr uint16_t protocol_version = 10;
 
 // Client -> server, repeated until a Welcome or Refused arrives. The name
 // picks the saved character (there are no accounts yet). A match server
@@ -113,6 +113,7 @@ struct EntityState {
     uint16_t captures = 0;    // command posts taken or neutralized while in them
     uint8_t look = 0;         // 0: a player; else the server's looks[look - 1] (a hub's people)
     uint8_t pose = 0;         // 0: on their feet; 1: sitting
+    uint16_t colors = 0;      // a look's colors: 0 its own; else a seed the client varies them by
 
     bool alive() const { return life == Life::alive; }
 };

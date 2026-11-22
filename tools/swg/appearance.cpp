@@ -1,5 +1,6 @@
 #include "swg/appearance.h"
 
+#include <algorithm>
 #include <cstring>
 #include <stdexcept>
 
@@ -88,6 +89,100 @@ std::string shader_main_texture(std::span<const uint8_t> bytes) {
         }
     }
     return {};
+}
+
+namespace {
+
+// Texture factor tags are stored as little-endian uint32s: "MAIN" reads as
+// "NIAM". Returns the tag as written in the shader's source ("MAIN").
+std::string factor_tag(std::span<const uint8_t> bytes) {
+    if (bytes.size() < 4) {
+        throw std::runtime_error("truncated texture factor tag");
+    }
+    return {char(bytes[3]), char(bytes[2]), char(bytes[1]), char(bytes[0])};
+}
+
+const IffNode* find_form(const IffNode& node, std::string_view tag) {
+    if (node.form && node.tag == tag) {
+        return &node;
+    }
+    for (const IffNode& child : node.children) {
+        if (const IffNode* found = find_form(child, tag)) {
+            return found;
+        }
+    }
+    return nullptr;
+}
+
+} // namespace
+
+bool ShaderCustomization::two_colors() const {
+    return std::any_of(colors.begin(), colors.end(), [](const PaletteColor& c) { return c.factor == "HUEB"; }) ||
+           std::any_of(factor_defaults.begin(), factor_defaults.end(), [](const auto& d) { return d.first == "HUEB"; });
+}
+
+ShaderCustomization parse_shader_customization(std::span<const uint8_t> bytes) {
+    const IffNode root = parse_iff_root(bytes);
+    ShaderCustomization result;
+    if (root.tag == "OPST") {
+        // FORM OPST / 0000 / INFO: the proxied shader's name.
+        for (const IffNode& version : root.children) {
+            if (const IffNode* info = version.form ? version.child("INFO") : nullptr) {
+                result.owner_proxy = IffReader(info->data).cstring();
+            }
+        }
+        return result;
+    }
+    if (const IffNode* names = find_form(root, "TFNS")) {
+        // TFNS / 0000: (tag, 0xAARRGGBB) pairs.
+        for (const IffNode& version : names->children) {
+            for (size_t at = 0; at + 8 <= version.data.size(); at += 8) {
+                IffReader r(version.data.subspan(at + 4, 4));
+                result.factor_defaults.emplace_back(factor_tag(version.data.subspan(at, 4)), r.u32());
+            }
+        }
+    }
+    if (root.tag != "CSHD") {
+        return result;
+    }
+    // CSHD / <version> / TFAC / PAL: variable name, the shared byte, the
+    // factor's tag, the palette's path, the default index.
+    for (const IffNode& version : root.children) {
+        const IffNode* factors = version.form ? version.child("TFAC") : nullptr;
+        if (!factors) {
+            continue;
+        }
+        for (const IffNode* pal : factors->children_with("PAL ")) {
+            IffReader r(pal->data);
+            PaletteColor color;
+            color.variable = r.cstring();
+            color.shared = r.u8() == 0;
+            const uint32_t tag = r.u32();
+            color.factor = factor_tag(std::span(reinterpret_cast<const uint8_t*>(&tag), 4));
+            color.palette = normalize_path(r.cstring());
+            color.default_index = r.i32();
+            result.colors.push_back(std::move(color));
+        }
+    }
+    return result;
+}
+
+std::vector<std::array<uint8_t, 3>> parse_palette(std::span<const uint8_t> bytes) {
+    // "RIFF" <size> "PAL " "data" <size> <u16 version> <u16 count> then
+    // count entries of r, g, b, flags.
+    if (bytes.size() < 24 || std::memcmp(bytes.data(), "RIFF", 4) != 0 || std::memcmp(bytes.data() + 8, "PAL ", 4) != 0 ||
+        std::memcmp(bytes.data() + 12, "data", 4) != 0) {
+        throw std::runtime_error("not a RIFF palette");
+    }
+    const size_t count = size_t(bytes[22]) | size_t(bytes[23]) << 8;
+    if (bytes.size() < 24 + 4 * count) {
+        throw std::runtime_error("truncated palette");
+    }
+    std::vector<std::array<uint8_t, 3>> colors(count);
+    for (size_t i = 0; i < count; ++i) {
+        colors[i] = {bytes[24 + 4 * i], bytes[25 + 4 * i], bytes[26 + 4 * i]};
+    }
+    return colors;
 }
 
 } // namespace swm::swg

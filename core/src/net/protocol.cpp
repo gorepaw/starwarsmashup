@@ -208,6 +208,7 @@ struct Encoder {
             out.put(entity.captures);
             out.put(entity.look);
             out.put(entity.pose);
+            out.put(entity.colors);
         }
         out.put(uint16_t(m.bolts.size()));
         for (const BoltState& bolt : m.bolts) {
@@ -351,6 +352,7 @@ Message decode(std::span<const uint8_t> packet) {
             entity.captures = in.get<uint16_t>();
             entity.look = in.get<uint8_t>();
             entity.pose = in.get<uint8_t>();
+            entity.colors = in.get<uint16_t>();
             m.entities.push_back(entity);
         }
         const size_t bolts = in.get<uint16_t>();

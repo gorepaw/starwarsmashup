@@ -186,6 +186,7 @@ var _buildings: Array = []        # [[gltf, Galaxies position, yaw]] from --buil
 var _terrain3d := false
 var _doors: Array[Node3D] = []    # the city's doors (rendering/swg_city.gd)
 var _people := {}                 # look -> a loaded person (swgtool export-city --hub), null if missing
+var _people_colors := {}          # look -> its colors (SwgColors.load_colors)
 var _shot_delay := 0
 
 
@@ -370,6 +371,7 @@ func _finish() -> bool:
 		if person != null:
 			(person as Node).free()
 	_people.clear()
+	_people_colors.clear()
 	var stats: Dictionary = _client.get_stats()
 	var at: Vector3 = _client.get_presented().get("position", Vector3.ZERO)
 	print("left at Galaxies (%.2f, %.2f, %.2f)" % [-at.x, at.y, at.z])
@@ -604,6 +606,7 @@ func _update_person(id: int, state: Dictionary) -> void:
 		if _people[look] == null:
 			return
 		var model := (_people[look] as Node3D).duplicate() as Node3D
+		SwgColors.apply(model, _people_colors.get(look, {}), int(state.get("colors", 0)))
 		root.add_child(model)
 		_remotes[id] = {"model": model, "person": true,
 				"player": model.find_child("AnimationPlayer", true, false)}
@@ -634,6 +637,7 @@ func _load_person(look: int) -> Node3D:
 	if document.append_from_file(path, state) != OK:
 		printerr("no person exported for ", looks[look - 1], " (", path, ")")
 		return null
+	_people_colors[look] = SwgColors.load_colors(path)
 	return document.generate_scene(state) as Node3D
 
 

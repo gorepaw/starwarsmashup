@@ -121,8 +121,10 @@ public:
     // do, by the input they're steered with, and take no harm.
     void set_looks(std::vector<std::string> looks) { looks_ = std::move(looks); }
     // Adds one standing on the ground under `position` (from a meter
-    // over it), facing `yaw`; returns its entity.
-    uint32_t add_npc(const std::string& name, Vec3 position, double yaw, uint8_t look, uint8_t pose = 0);
+    // over it), facing `yaw`; returns its entity. `colors`: 0 for its look's
+    // own colors, else a seed clients vary them by (net::EntityState).
+    uint32_t add_npc(const std::string& name, Vec3 position, double yaw, uint8_t look, uint8_t pose = 0,
+                     uint16_t colors = 0);
     void steer_npc(uint32_t entity, const MoveInput& input);
     std::vector<uint32_t> npcs() const;
 
@@ -167,6 +169,7 @@ private:
         MoveState state;
         MoveInput input;
         uint8_t look = 0, pose = 0;
+        uint16_t colors = 0;
     };
     struct Bolt {
         uint32_t id = 0;

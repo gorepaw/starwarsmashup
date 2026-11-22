@@ -97,7 +97,8 @@ const MoveState* GameServer::state_of(uint32_t entity) const {
     return npc == npcs_.end() ? nullptr : &npc->state;
 }
 
-uint32_t GameServer::add_npc(const std::string& name, Vec3 position, double yaw, uint8_t look, uint8_t pose) {
+uint32_t GameServer::add_npc(const std::string& name, Vec3 position, double yaw, uint8_t look, uint8_t pose,
+                             uint16_t colors) {
     constexpr double lift = 1;  // from a meter over where it's put (as spawns are)
     const MoveParams params;
     Npc npc;
@@ -105,6 +106,7 @@ uint32_t GameServer::add_npc(const std::string& name, Vec3 position, double yaw,
     npc.name = name;
     npc.look = look;
     npc.pose = pose;
+    npc.colors = colors;
     npc.state.position = world_.clamp(position);
     npc.state.position.y = world_.support_at(npc.state.position.x, npc.state.position.z,
                                              position.y + lift, params.step_up).height;
@@ -412,6 +414,7 @@ void GameServer::step() {
         entity.health = float(config_.base_stats.max_health);
         entity.look = npc.look;
         entity.pose = npc.pose;
+        entity.colors = npc.colors;
         snapshot.entities.push_back(entity);
     }
     for (const Bolt& bolt : bolts_) {
