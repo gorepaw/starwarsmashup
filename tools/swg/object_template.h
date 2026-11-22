@@ -17,9 +17,9 @@ struct SharedObjectTemplate {
     std::string appearance;
     std::string portal_layout;
     std::string client_data;  // .cdf: a person's clothes and hair, sounds, effects
-    // A creature's (SCOT) body: the radius it collides with, meters; 0 if no
-    // template in its chain sets one.
-    float collision_radius = 0;
+    // A creature's (SCOT) body: the radius and height it collides with,
+    // meters; 0 if no template in its chain sets one.
+    float collision_radius = 0, collision_height = 0;
 };
 
 // What a client data file (.cdf, CLDF) says a person wears: the meshes in
@@ -45,7 +45,8 @@ public:
 private:
     struct Read {
         SharedObjectTemplate values;
-        bool has_appearance = false, has_portal_layout = false, has_client_data = false, has_radius = false;
+        bool has_appearance = false, has_portal_layout = false, has_client_data = false, has_radius = false,
+             has_height = false;
         std::string base;
     };
     Read read(const std::string& path);

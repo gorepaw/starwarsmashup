@@ -40,16 +40,17 @@ ObjectTemplates::Read ObjectTemplates::read(const std::string& path) {
         IffReader r(parameter->data);
         const std::string name = r.cstring();
         if (name != "appearanceFilename" && name != "portalLayoutFilename" && name != "clientDataFile" &&
-            name != "collisionRadius") {
+            name != "collisionRadius" && name != "collisionHeight") {
             continue;
         }
         if (r.remaining() == 0 || r.u8() == 0) {
             continue;  // not set here
         }
-        if (name == "collisionRadius") {
+        if (name == "collisionRadius" || name == "collisionHeight") {
             if (r.remaining() >= 5 && r.u8() == ' ') {
-                out.values.collision_radius = r.f32();
-                out.has_radius = true;
+                const bool radius = name == "collisionRadius";
+                (radius ? out.values.collision_radius : out.values.collision_height) = r.f32();
+                (radius ? out.has_radius : out.has_height) = true;
             }
             continue;
         }
@@ -78,7 +79,8 @@ const SharedObjectTemplate& ObjectTemplates::shared(const std::string& path_in) 
     // What this template leaves unset comes from its base, and so on.
     std::string base = r.base;
     for (int depth = 0;
-         !base.empty() && (!r.has_appearance || !r.has_portal_layout || !r.has_client_data || !r.has_radius) &&
+         !base.empty() && (!r.has_appearance || !r.has_portal_layout || !r.has_client_data || !r.has_radius ||
+                           !r.has_height) &&
          depth < 16;
          ++depth) {
         if (!library_.contains(normalize_path(base))) {
@@ -100,6 +102,10 @@ const SharedObjectTemplate& ObjectTemplates::shared(const std::string& path_in) 
         if (!r.has_radius && b.has_radius) {
             values.collision_radius = b.values.collision_radius;
             r.has_radius = true;
+        }
+        if (!r.has_height && b.has_height) {
+            values.collision_height = b.values.collision_height;
+            r.has_height = true;
         }
         base = b.base;
     }

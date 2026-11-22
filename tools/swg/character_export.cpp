@@ -27,6 +27,8 @@ public:
         : library_(library), out_dir_(out_dir), log_(log),
           assets_(library, gltf_, out_dir, log, GltfAssets::Colors::describe) {}
 
+    const CharacterBounds& bounds() const { return bounds_; }
+
     void run(const CharacterExport& request) {
         if (request.appearances.empty()) {
             throw std::runtime_error("no appearances to export");
@@ -148,6 +150,9 @@ private:
             for (size_t v = 0; v < part.position_index.size(); ++v) {
                 const uint32_t p = part.position_index[v];
                 positions.push_back(to_gltf(mesh.positions[p]));
+                const Vec3& at = positions.back();
+                bounds_.min = {std::min(bounds_.min.x, at.x), std::min(bounds_.min.y, at.y), std::min(bounds_.min.z, at.z)};
+                bounds_.max = {std::max(bounds_.max.x, at.x), std::max(bounds_.max.y, at.y), std::max(bounds_.max.z, at.z)};
                 if (!part.normal_index.empty()) {
                     normals.push_back(to_gltf(mesh.normals[part.normal_index[v]]));
                 }
@@ -358,6 +363,7 @@ private:
     Gltf gltf_;
     GltfAssets assets_;
     Skeleton skeleton_;
+    CharacterBounds bounds_;
     std::map<std::string, std::string> renderers_;  // material -> its main texture's renderer (.trt)
 };
 
@@ -371,9 +377,11 @@ Skeleton load_appearance_skeleton(TreLibrary& library, const std::string& sat_pa
     return skeleton;
 }
 
-void export_character(TreLibrary& library, const CharacterExport& request, const std::filesystem::path& out_dir,
-                      std::ostream& log) {
-    Exporter(library, out_dir, log).run(request);
+CharacterBounds export_character(TreLibrary& library, const CharacterExport& request,
+                                 const std::filesystem::path& out_dir, std::ostream& log) {
+    Exporter exporter(library, out_dir, log);
+    exporter.run(request);
+    return exporter.bounds();
 }
 
 } // namespace swm::swg

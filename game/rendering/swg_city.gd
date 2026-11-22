@@ -1,6 +1,8 @@
 # Draws a city exported by `swgtool export-city`: the objects a world snapshot
 # places around it (<bake>.objects.json, next to the terrain bake), each
-# model loaded once. Buildings are drawn with their cells' own lights
+# model loaded once. Its creatures (a ronto, a saddled dewback: "creature")
+# stand in their own colors, breathing (their idle clip, looped, each from
+# a moment of its own). Buildings are drawn with their cells' own lights
 # (rendering/swg_building.gd), and so is the furniture in their cells. Their
 # doors slide open when someone comes near (update_doors). What
 # they stop is in <bake>.collision, which
@@ -34,6 +36,8 @@ static func add_objects(parent: Node, prefix: String, camera_collision := false)
 		if not models.has(model):
 			var file := dir.path_join(model)
 			models[model] = SwgBuilding.load_lit(file) if object.get("building", false) else _load_model(file)
+			if models[model] != null and object.get("creature", false):
+				SwgColors.apply(models[model], SwgColors.load_colors(file), 0)
 			if camera_collision and models[model] != null and object.get("building", false):
 				SwgBuilding.add_camera_collision(models[model])
 		if models[model] == null:
@@ -54,6 +58,8 @@ static func add_objects(parent: Node, prefix: String, camera_collision := false)
 		parent.add_child(node)
 		placed[placed.size() - 1] = node
 		count += 1
+		if object.get("creature", false):
+			_breathe(node, placed.size())
 		var inside := int(object.get("inside", -1))
 		if inside >= 0 and inside < placed.size() and placed[inside] != null:
 			_light_furniture(node, placed[inside], dir.path_join(str(parsed["objects"][inside]["model"])),
@@ -116,6 +122,18 @@ static func _light_furniture(node: Node3D, building: Node3D, building_file: Stri
 			in_node = (at as Node3D).transform * in_node
 			at = at.get_parent()
 		SwgBuilding.apply_cell_lighting(mesh, list[cell], to_building * in_node)
+
+
+# Loops a creature's idle clip, from a moment of its own (by `seed`), so
+# a herd doesn't breathe as one.
+static func _breathe(node: Node3D, seed: int) -> void:
+	var player := node.find_child("AnimationPlayer", true, false) as AnimationPlayer
+	if player == null or not player.has_animation("idle"):
+		return
+	var idle := player.get_animation("idle")
+	idle.loop_mode = Animation.LOOP_LINEAR
+	player.play("idle")
+	player.seek(idle.length * fposmod(seed * 0.618034, 1.0), true)
 
 
 static func _load_model(path: String) -> Node3D:

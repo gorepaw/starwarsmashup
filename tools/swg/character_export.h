@@ -5,6 +5,7 @@
 #include <string>
 #include <vector>
 
+#include "common/math.h"
 #include "swg/animation_clip.h"
 #include "swg/skeleton.h"
 #include "swg/tre_library.h"
@@ -42,7 +43,12 @@ Skeleton load_appearance_skeleton(TreLibrary& library, const std::string& sat_pa
 //
 // A garment's bare skin (an owner proxy shader, "body") is drawn with the
 // body's own material.
-void export_character(TreLibrary& library, const CharacterExport& request, const std::filesystem::path& out_dir,
-                      std::ostream& log);
+//
+// Returns the bounds of its meshes in their bind pose (glTF space).
+struct CharacterBounds {
+    Vec3 min{1e30f, 1e30f, 1e30f}, max{-1e30f, -1e30f, -1e30f};
+};
+CharacterBounds export_character(TreLibrary& library, const CharacterExport& request,
+                                 const std::filesystem::path& out_dir, std::ostream& log);
 
 } // namespace swm::swg

@@ -35,6 +35,7 @@ namespace {
 struct Model {
     std::string file;  // relative to the bake's directory, "" if it couldn't be exported
     bool building = false;
+    bool creature = false;  // a skeletal appearance: a person's export, standing idle
     AppearanceCollision collision;  // glTF space
     std::vector<std::array<Vec3, 3>> rooms;  // a building's rooms' walked floors (every cell but the outside)
     std::vector<std::array<Vec3, 3>> drawn_rooms;  // and their drawn floors
@@ -123,13 +124,69 @@ std::vector<SnapshotNode> recruiters(const CityExport& city) {
     return out;
 }
 
-// The hub's people ([npc] and [crowd] templates): each a dressed body
-// (its template's appearance and what its client data file says it wears)
-// with Galaxies' own clips, named walk, idle and sit, in <out_dir>/people/,
-// named by the template's file without "shared_". A creature (a bantha, a
-// dewback: its own skeleton, whose name its clips are named by) walks,
-// stands breathing, and kneels for sit (else lies down: a bantha lies on
-// its side, which reads as dead).
+// A person (an object template with a skeletal appearance): a dressed body
+// (its appearance and what its client data file says it wears) with
+// Galaxies' own clips, named walk, idle and sit, in `people_dir`, named by the
+// template's file without "shared_"; returns that name. A creature (a bantha,
+// a dewback: its own skeleton, whose name its clips are named by) walks,
+// stands breathing, and kneels for sit (else lies down: a bantha lies on its
+// side, which reads as dead). Throws std::runtime_error if it can't.
+// `bounds`, if given: its meshes' bounds in their bind pose.
+std::string export_person(TreLibrary& library, ObjectTemplates& templates, const std::string& look,
+                          const std::filesystem::path& people_dir, std::ostream& log,
+                          CharacterBounds* bounds = nullptr) {
+    const SharedObjectTemplate& shared = templates.shared(look);
+    if (!shared.appearance.ends_with(".sat")) {
+        throw std::runtime_error("no skeletal appearance (" + shared.appearance + ")");
+    }
+    CharacterExport request;
+    request.name = std::filesystem::path(look).stem().string();
+    if (request.name.starts_with("shared_")) {
+        request.name = request.name.substr(7);
+    }
+    request.appearances = {shared.appearance};
+    if (!shared.client_data.empty() && library.contains(shared.client_data)) {
+        request.meshes = client_data_wearables(library.read(shared.client_data));
+    }
+    // A woman walks as one (hum_f.sat, twk_f.sat, ...).
+    const std::string body = std::filesystem::path(shared.appearance).stem().string();
+    const bool female = body.ends_with("_f");
+    const Skeleton skeleton = load_appearance_skeleton(library, shared.appearance);
+    const SkeletalAppearance appearance = parse_skeletal_appearance(library.read(shared.appearance));
+    const std::string kind =
+        appearance.skeletons.empty() ? "all_b" : std::filesystem::path(appearance.skeletons[0].path).stem().string();
+    const std::string clip_prefix = "appearance/animation/" + kind;
+    std::vector<std::pair<std::string, std::string>> clips = {
+        {"walk", clip_prefix + (female ? "_loc_walk_female.ans" : "_loc_walk_male.ans")},
+        {"idle", clip_prefix + "_idl_standing_idle1.ans"},
+        {"sit", clip_prefix + "_idl_sitting_chair_idle.ans"},
+    };
+    if (kind != "all_b") {  // a creature
+        const std::string kneel = clip_prefix + "_idl_kneel_breathe.ans";
+        clips = {{"walk", clip_prefix + "_loc_walk.ans"},
+                 {"idle", clip_prefix + "_idl_stand_breathe.ans"},
+                 {"sit", library.contains(kneel) ? kneel : clip_prefix + "_idl_lie_breathe.ans"}};
+    }
+    for (const auto& [name, path] : clips) {
+        if (library.contains(path)) {
+            request.clips.push_back(sample_animation(parse_keyframe_animation(library.read(path)), skeleton, name));
+        }
+    }
+    std::ostringstream quiet;
+    const CharacterBounds extent = export_character(library, request, people_dir, quiet);
+    if (bounds != nullptr) {
+        *bounds = extent;
+    }
+    // A creature's body is its own (the hub file's [npc] Radius).
+    const std::string radius = kind != "all_b" && shared.collision_radius > 0
+                                   ? std::format(", radius {:.2f} m", shared.collision_radius)
+                                   : "";
+    log << std::format("  person {}: {} ({} worn{})\n", request.name, shared.appearance, request.meshes.size(), radius);
+    return request.name;
+}
+
+// The hub's people ([npc] and [crowd] templates), as export_person, in
+// <out_dir>/people/.
 void export_people(TreLibrary& library, const CityExport& city, const std::filesystem::path& out_dir,
                    std::ostream& log) {
     const core::Ini hub = core::Ini::load(city.hub);
@@ -147,55 +204,27 @@ void export_people(TreLibrary& library, const CityExport& city, const std::files
     ObjectTemplates templates(library);
     for (const std::string& look : looks) {
         try {
-            const SharedObjectTemplate& shared = templates.shared(look);
-            if (!shared.appearance.ends_with(".sat")) {
-                log << std::format("  person {}: no skeletal appearance ({})\n", look, shared.appearance);
-                continue;
-            }
-            CharacterExport request;
-            request.name = std::filesystem::path(look).stem().string();
-            if (request.name.starts_with("shared_")) {
-                request.name = request.name.substr(7);
-            }
-            request.appearances = {shared.appearance};
-            if (!shared.client_data.empty() && library.contains(shared.client_data)) {
-                request.meshes = client_data_wearables(library.read(shared.client_data));
-            }
-            // A woman walks as one (hum_f.sat, twk_f.sat, ...).
-            const std::string body = std::filesystem::path(shared.appearance).stem().string();
-            const bool female = body.ends_with("_f");
-            const Skeleton skeleton = load_appearance_skeleton(library, shared.appearance);
-            const SkeletalAppearance appearance = parse_skeletal_appearance(library.read(shared.appearance));
-            const std::string kind =
-                appearance.skeletons.empty() ? "all_b" : std::filesystem::path(appearance.skeletons[0].path).stem().string();
-            const std::string clip_prefix = "appearance/animation/" + kind;
-            std::vector<std::pair<std::string, std::string>> clips = {
-                {"walk", clip_prefix + (female ? "_loc_walk_female.ans" : "_loc_walk_male.ans")},
-                {"idle", clip_prefix + "_idl_standing_idle1.ans"},
-                {"sit", clip_prefix + "_idl_sitting_chair_idle.ans"},
-            };
-            if (kind != "all_b") {  // a creature
-                const std::string kneel = clip_prefix + "_idl_kneel_breathe.ans";
-                clips = {{"walk", clip_prefix + "_loc_walk.ans"},
-                         {"idle", clip_prefix + "_idl_stand_breathe.ans"},
-                         {"sit", library.contains(kneel) ? kneel : clip_prefix + "_idl_lie_breathe.ans"}};
-            }
-            for (const auto& [name, path] : clips) {
-                if (library.contains(path)) {
-                    request.clips.push_back(sample_animation(parse_keyframe_animation(library.read(path)), skeleton, name));
-                }
-            }
-            std::ostringstream quiet;
-            export_character(library, request, out_dir / "people", quiet);
-            // A creature's body is its own (the hub file's [npc] Radius).
-            const std::string radius = kind != "all_b" && shared.collision_radius > 0
-                                           ? std::format(", radius {:.2f} m", shared.collision_radius)
-                                           : "";
-            log << std::format("  person {}: {} ({} worn{})\n", request.name, shared.appearance, request.meshes.size(),
-                               radius);
+            export_person(library, templates, look, out_dir / "people", log);
         } catch (const std::exception& error) {
             log << std::format("  person {}: {}\n", look, error.what());
         }
+    }
+}
+
+// A creature standing where the world snapshot places it: an upright prism
+// (eight sides) of a radius and height, glTF space, facing outward.
+void add_creature_body(float radius, float height, AppearanceCollision& out) {
+    constexpr int sides = 8;
+    const auto rim = [&](int i, float y) {
+        const double a = 2 * std::numbers::pi * i / sides;
+        return Vec3{float(radius * std::cos(a)), y, float(radius * std::sin(a))};
+    };
+    for (int i = 0; i < sides; ++i) {
+        const Vec3 a = rim(i, 0), b = rim(i + 1, 0), c = rim(i + 1, height), d = rim(i, height);
+        out.solids.push_back({a, c, b});
+        out.solids.push_back({a, d, c});
+        out.solids.push_back({Vec3{0, height, 0}, c, d});  // the top
+        out.solids.push_back({Vec3{0, 0, 0}, a, b});        // the bottom
     }
 }
 
@@ -383,6 +412,36 @@ void export_city(TreLibrary& library, const CityExport& city, std::ostream& log)
         return found->second.file.empty() ? nullptr : &found->second;
     };
 
+    // A creature the snapshot places (a ronto, a saddled dewback): exported
+    // as a person is, once per template, with a body of its own: its
+    // template's collision radius and height, or (a static creature's
+    // template has none) its meshes' in their bind pose: half its narrower
+    // width, its height.
+    const auto creature_for = [&](const std::string& template_name) -> const Model* {
+        const std::string key = "creature:" + template_name;
+        auto found = models.find(key);
+        if (found == models.end()) {
+            Model model;
+            try {
+                CharacterBounds bounds;
+                const std::string name =
+                    export_person(library, templates, template_name, out_dir / "people", log, &bounds);
+                const SharedObjectTemplate& shared = templates.shared(template_name);
+                const float width = std::min(bounds.max.x - bounds.min.x, bounds.max.z - bounds.min.z);
+                const float radius = shared.collision_radius > 0 ? shared.collision_radius : std::max(0.3f, width / 2);
+                const float height = shared.collision_height > 0 ? shared.collision_height : std::max(1.0f, bounds.max.y);
+                add_creature_body(radius, height, model.collision);
+                log << std::format("    body: radius {:.2f} m, height {:.2f} m\n", radius, height);
+                model.file = out_name + "/people/" + name + ".gltf";
+                model.creature = true;
+            } catch (const std::exception& error) {
+                log << std::format("  {}: {}\n", template_name, error.what());
+            }
+            found = models.emplace(key, std::move(model)).first;
+        }
+        return found->second.file.empty() ? nullptr : &found->second;
+    };
+
     const auto place = [&](const SnapshotNode& node, bool recruiter, int inside, int cell) -> bool {
         SharedObjectTemplate look;
         try {
@@ -399,18 +458,22 @@ void export_city(TreLibrary& library, const CityExport& city, std::ostream& log)
             return false;
         }
         const std::string extension = std::filesystem::path(source).extension().string();
-        if (!building && extension != ".apt" && extension != ".msh" && extension != ".lod" && extension != ".cmp") {
+        if (!building && extension != ".apt" && extension != ".msh" && extension != ".lod" && extension != ".cmp" &&
+            extension != ".sat") {
             ++skipped["appearance " + extension];
             return false;
         }
-        const Model* found = model_for(source, building);
+        const Model* found = extension == ".sat" ? creature_for(node.template_name) : model_for(source, building);
         if (found == nullptr) {
             ++skipped["model failed"];
             return false;
         }
         const Model& model = *found;
         const Placed p = placed(node);
-        std::string marks = model.building ? "\"building\": true, " : recruiter ? "\"recruiter\": true, " : "";
+        std::string marks = model.building    ? "\"building\": true, "
+                            : model.creature ? "\"creature\": true, "
+                            : recruiter      ? "\"recruiter\": true, "
+                                             : "";
         if (inside >= 0) {
             marks += std::format("\"inside\": {}, \"cell\": {}, ", inside, cell);
         }
