@@ -506,6 +506,101 @@ void test_grenade_and_rocket_kills() {
     CHECK(!arena.server.alive(b_id));
 }
 
+// Battlefront's thermal detonator as export-loadout now writes it: its
+// timer (LifeSpan) starts when it lands, it bounces off what it hits by
+// Rebound and Friction, and its explosion pushes. `damage` is its
+// explosion's (small, to watch the push on someone who lives).
+Loadout thermal_thrower(double damage) {
+    const auto dir = write_items("thermal_" + std::to_string(int(damage)));
+    std::ofstream(dir / "items" / "launcher.ini")
+        << "[weapon]\nName = launcher\nProjectile = missile\nWeaponAmmo = 3\nRoundsPerClip = 1\n"
+           "ReloadTime = 4.0\nShotDelay = 0.0\nYawSpread = 0.0\nPitchSpread = 0.0\n"
+           "MaxDamage = 500.0\nVelocity = 100.0\nAcceleration = 80.0\nGravity = 0.0\nLifeSpan = 10.0\n"
+           "ExplosionDamage = 400.0\nExplosionRadiusInner = 1.0\nExplosionRadiusOuter = 3.0\n";
+    std::ofstream(dir / "items" / "thermal.ini")
+        << "[weapon]\nName = thermal\nProjectile = grenade\nWeaponAmmo = 4\nRoundsPerClip = 1\n"
+           "ReloadTime = 0.0\nShotDelay = 1.3\nShotElevate = 0.21\nVelocity = 25.0\nGravity = 1.25\n"
+           "Rebound = 0.2\nFriction = 2.0\nLifeSpan = 0.6\nStartTimerOnContact = 1\nExplosionImpact = 0\n"
+           "ExplosionDamage = "
+        << damage
+        << "\nExplosionRadiusInner = 4.5\nExplosionRadiusOuter = 6.5\n"
+           "ExplosionPush = 10.0\nExplosionPushRadiusInner = 6.5\nExplosionPushRadiusOuter = 6.5\n";
+    std::ofstream(dir / "loadouts" / "thrower.ini") << "[loadout]\nName = thrower\nPrimary = launcher\nSecondary = thermal\n";
+    Loadout loadout = load_loadout(dir / "loadouts" / "thrower.ini");
+    std::filesystem::remove_all(dir);
+    return loadout;
+}
+
+// Walls: a grenade thrown at one bounces back off it (and goes off 0.6 s
+// after it first touches something); a rocket into one right in front of
+// someone doesn't hurt them behind it. An explosion throws people near it.
+void test_walls_and_push() {
+    {
+        BuildingCollision wall;
+        wall.walls.push_back({{6, 0, -5}, {6, 0, 5}, 3});
+        Arena arena(0, 0.5, wall, thermal_thrower(450));
+        arena.run(0.5, [] {});
+        bool thrown = false;
+        std::vector<net::Explosion> explosions;
+        double thrown_at = arena.now, exploded_at = 0;
+        arena.run(3.0, [&] {
+            GameClient::Controls controls;
+            controls.yaw = -std::numbers::pi / 2;  // facing +X, at the wall
+            controls.pitch = -0.21;                // level
+            controls.secondary = !thrown;
+            thrown = true;
+            arena.a.set_input(controls);
+            for (const auto& e : arena.a.take_explosions()) {
+                explosions.push_back(e);
+                exploded_at = arena.now;
+            }
+        });
+        CHECK(explosions.size() == 1);
+        if (!explosions.empty()) {
+            std::printf("grenade at a wall 6 m off: went off at x %.2f, %.2f s after the throw\n",
+                        explosions[0].position.x, exploded_at - thrown_at);
+            CHECK(explosions[0].position.x < 6 && exploded_at - thrown_at < 1.2);
+        }
+    }
+    {
+        // B 12 m off, a wall a meter before it: the rocket's blast stays this side.
+        BuildingCollision wall;
+        wall.walls.push_back({{11, 0, -5}, {11, 0, 5}, 3});
+        Arena arena(0, 0.5, wall, thermal_thrower(450));
+        arena.run(0.5, [] {});
+        const uint32_t b = arena.b.entity_id();
+        arena.run(1.0 / 30, [&] { arena.a.set_input(arena.a_aims_at_b(true)); });
+        arena.run(1.0, [&] { arena.a.set_input(arena.a_aims_at_b(false)); });
+        CHECK(arena.server.health_of(b) == 400);
+    }
+    {
+        // A grenade (all push, a scratch of damage) at B's feet throws B.
+        Arena arena(0, 0.5, {}, thermal_thrower(1));
+        arena.run(0.5, [] {});
+        const double pitch = *ballistic_pitch(25, 1.25 * 9.8, 11.0, -eye_height) - 0.21;
+        bool thrown = false;
+        double fastest = 0;
+        arena.run(3.0, [&] {
+            GameClient::Controls controls;
+            controls.yaw = -std::numbers::pi / 2;
+            controls.pitch = pitch;
+            controls.secondary = !thrown;
+            thrown = true;
+            arena.a.set_input(controls);
+            arena.b.set_input({});
+            fastest = std::max(fastest, arena.b.predicted().velocity.length());
+        });
+        std::printf("grenade's push: B up to %.1f m/s\n", fastest);
+        CHECK(arena.server.alive(arena.b.entity_id()) && fastest > 5);
+    }
+    WeaponDef thermal;
+    thermal.explosion_push = 10;
+    thermal.push_inner = 2;
+    thermal.push_outer = 6;
+    CHECK(explosion_push(thermal, {0, 1, 0}, {1, 0, 0}) == 10 && near(explosion_push(thermal, {0, 1, 0}, {4, 0, 0}), 5) &&
+          explosion_push(thermal, {0, 1, 0}, {7, 0, 0}) == 0);
+}
+
 void test_rocket_splash() {
     // A rocket into the ground 2 m short of B: only the explosion reaches it.
     Arena arena(0, 0.5, {}, rocketeer());
@@ -562,6 +657,7 @@ int main() {
     test_lag_compensation();
     test_wall_blocks();
     test_headshot_and_falloff();
+    test_walls_and_push();
     test_explosives_file();
     test_grenades_and_ammo();
     test_explosion_falloff();

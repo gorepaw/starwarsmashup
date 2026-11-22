@@ -189,6 +189,7 @@ private:
         double gravity = 0;  // m/s^2
         double rewind = 0;   // ticks: targets are tested this far in the past
         bool resting = false;  // a grenade that stopped bouncing
+        bool touched = false;  // a grenade that's hit something (its timer may start then)
     };
 
     struct Pickup {

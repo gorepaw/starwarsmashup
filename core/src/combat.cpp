@@ -240,6 +240,20 @@ std::optional<Shot> simulate_character(MoveState& state, const MoveInput& input,
     return simulate_weapons(state, input, loadout, dt);
 }
 
+double explosion_push(const WeaponDef& weapon, Vec3 center, Vec3 feet) {
+    if (weapon.explosion_push <= 0 || weapon.push_outer <= 0) {
+        return 0;
+    }
+    const double distance = (feet + Vec3{0, 1.0, 0} - center).length();
+    if (distance >= weapon.push_outer) {
+        return distance <= weapon.push_inner ? weapon.explosion_push : 0;
+    }
+    if (distance <= weapon.push_inner) {
+        return weapon.explosion_push;
+    }
+    return weapon.explosion_push * (weapon.push_outer - distance) / (weapon.push_outer - weapon.push_inner);
+}
+
 double explosion_damage(const WeaponDef& weapon, Vec3 center, Vec3 feet) {
     if (weapon.explosion_damage <= 0 || weapon.explosion_outer <= 0) {
         return 0;

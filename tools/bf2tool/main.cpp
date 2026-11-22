@@ -254,14 +254,16 @@ void write_weapon(std::ostream& out, const char* section, const CarriedWeapon& c
         out << "ImpactEffect = " << impact_effect << "\n";
     }
     if (projectile == "grenade") {
-        // A grenade's fuse: an unnamed ordnance property (hash a51be2bb: 2.0
-        // on the thermal detonator, whose LifeSpan is 0.6), else LifeSpan.
-        // ASSUMPTION: that property is the time from the throw to exploding.
-        for (const auto& [hash, value] : ordnance.properties) {
-            if (hash == 0xa51be2bbu) {
-                out << "Fuse = " << value << "\n";
-            }
+        // Its bounce (Friction; Rebound is above) and when its timer (LifeSpan)
+        // starts. A "sticky" grenade (the thermal detonator) says nothing of
+        // StartTimerOnContact. ASSUMPTION: its timer starts when it lands
+        // (0.6 s from the throw would go off in the air).
+        if (const auto friction = ordnance.get("Friction")) {
+            out << "Friction = " << *friction << "\n";
         }
+        const std::string contact =
+            ordnance.get("StartTimerOnContact").value_or(lowercase(ordnance.base) == "sticky" ? "1" : "0");
+        out << "StartTimerOnContact = " << contact << "\n";
         out << "ExplosionImpact = " << (ordnance.get("ExplosionImpact") ? 1 : 0) << "\n";
     }
     std::string explosion_name = ordnance.get("ExplosionName").value_or("");
@@ -281,6 +283,9 @@ void write_weapon(std::ostream& out, const char* section, const CarriedWeapon& c
     for (const auto& [key, ours] : {std::pair{"DamageRadiusInner", "ExplosionRadiusInner"},
                                     std::pair{"DamageRadiusOuter", "ExplosionRadiusOuter"},
                                     std::pair{"PersonScale", "ExplosionPersonScale"},
+                                    std::pair{"Push", "ExplosionPush"},
+                                    std::pair{"PushRadiusInner", "ExplosionPushRadiusInner"},
+                                    std::pair{"PushRadiusOuter", "ExplosionPushRadiusOuter"},
                                     std::pair{"Effect", "ExplosionEffect"}}) {
         if (const auto value = explosion.get(key)) {
             out << ours << " = " << *value << "\n";

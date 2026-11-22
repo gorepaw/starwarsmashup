@@ -109,13 +109,24 @@ struct WeaponDef {
     double damage_transition_period = 0;
     double damage_final = -1;
     double bolt_acceleration = 0;    // ordnance Acceleration (missiles), m/s^2 along its flight
-    double rebound = 0;              // ordnance Rebound: the share of its speed a grenade keeps bouncing
+    double rebound = 0;              // ordnance Rebound: the share of its speed into a surface a grenade bounces back with
+    double friction = 0;             // ordnance Friction: how much of its speed along a surface it loses bouncing
     bool explode_on_impact = true;   // grenades: ExplosionImpact (else they explode when the fuse runs out)
-    double fuse = 0;                 // grenades: seconds from the throw to exploding (ASSUMPTION, see bf2tool)
+    // Grenades: seconds to exploding, from the first thing they touch if
+    // `timer_on_contact` (StartTimerOnContact: the thermal detonator's
+    // LifeSpan, 0.6 s after it lands), else from the throw.
+    double fuse = 0;
+    bool timer_on_contact = false;
     double shot_elevate = 0;         // ShotElevate: radians a throw is aimed above the crosshair
     double explosion_damage = 0;     // explosion Damage: full within the inner radius...
     double explosion_inner = 0;      // DamageRadiusInner, m
     double explosion_outer = 0;      // DamageRadiusOuter, m: ...falling to nothing here (ASSUMPTION: linearly)
+    // Explosion Push: soldiers thrown away from it at this many m/s within
+    // PushRadiusInner, falling to nothing at PushRadiusOuter. ASSUMPTION:
+    // Push is a speed. The thermal detonator's: 10 within 6.5 m.
+    double explosion_push = 0;
+    double push_inner = 0;
+    double push_outer = 0;
     // Looks only (clients draw bolts, models and effects however their settings allow).
     std::array<double, 4> bolt_color{253 / 255.0, 43 / 255.0, 43 / 255.0, 100 / 255.0};  // LaserGlowColor
     double bolt_length = 1.0;        // LaserLength, m

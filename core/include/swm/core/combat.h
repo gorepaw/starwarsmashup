@@ -87,6 +87,10 @@ bool resupply_clips(MoveState& state, const Loadout& loadout, int clips);
 // An explosion's damage to a body standing at `feet`, before mitigation: full
 // within the inner radius of the body, falling linearly to nothing at the
 // outer radius.
+// How hard an explosion throws a soldier standing at `feet` (m/s): its Push
+// within its inner push radius, falling linearly to nothing at the outer.
+double explosion_push(const WeaponDef& weapon, Vec3 center, Vec3 feet);
+
 double explosion_damage(const WeaponDef& weapon, Vec3 center, Vec3 feet);
 
 } // namespace swm::core

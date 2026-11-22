@@ -643,7 +643,10 @@ void GameServer::fire(const Client& shooter, const Shot& shot, double view_tick)
         bolt.position = shot.origin;
         bolt.def = def;
         bolt.velocity = direction * weapon.bolt_speed;
-        bolt.life = weapon.projectile == Projectile::grenade && !weapon.explode_on_impact ? weapon.fuse : weapon.bolt_life;
+        // A grenade timed from where it lands flies at most this long first.
+        constexpr double longest_flight = 10;
+        const bool timed = weapon.projectile == Projectile::grenade && !weapon.explode_on_impact;
+        bolt.life = !timed ? weapon.bolt_life : weapon.timer_on_contact ? longest_flight : weapon.fuse;
         bolt.gravity = weapon.bolt_gravity * shooter.stats.move.gravity;
         bolt.rewind = rewind;
         bolts_.push_back(bolt);
@@ -788,11 +791,19 @@ void GameServer::advance_bolts() {
                 }
                 return true;
             }
-            // A bounce, as off the ground (ASSUMPTION: walls bounce the same;
-            // we don't have surface normals here).
+            // A bounce off the surface it hit: back out of it with Rebound
+            // of the speed it came in with, along it losing some to Friction
+            // (ASSUMPTION: kept 1 / (1 + Friction / 4) of it). It comes to
+            // rest on ground once slow. Its timer may start now.
             bolt.position = from + (to - from) * std::max(0.0, *nearest - 0.05);
-            bolt.velocity = {bolt.velocity.x * def.rebound, -bolt.velocity.y * def.rebound, bolt.velocity.z * def.rebound};
-            if (bolt.velocity.length() < 1.5) {
+            const double into = bolt.velocity.dot(normal);
+            const Vec3 across = bolt.velocity - normal * into;
+            bolt.velocity = across * (1 / (1 + def.friction / 4)) - normal * (into * def.rebound);
+            if (!bolt.touched && def.timer_on_contact) {
+                bolt.life = def.fuse;
+            }
+            bolt.touched = true;
+            if (normal.y > 0.7 && bolt.velocity.length() < 1.5) {
                 bolt.resting = true;
                 bolt.velocity = {};
             }
@@ -848,13 +859,34 @@ void GameServer::explode(const Blast& blast, std::vector<Blast>& blasts) {
         return;
     }
     explosions_.push_back({bolt.owner, bolt.weapon, blast.at, blast.normal, float(def.explosion_outer)});
+    // From a little off the surface it went off at: walls shelter whoever
+    // it can't see (chest or head).
+    const Vec3 center = blast.at + blast.normal * 0.1;
+    const auto sheltered = [&](Vec3 feet) {
+        return world_.raycast(center, feet + Vec3{0, 1.0, 0}) && world_.raycast(center, feet + Vec3{0, 1.6, 0});
+    };
     for (Client& target : clients_) {
         const bool teammate = !blast.droid && bolt.team >= 0 && target.team == bolt.team &&
                               target.entity != bolt.owner && !config_.friendly_fire;
-        if (target.life != Life::alive || teammate) {
+        if (target.life != Life::alive) {
             continue;
         }
         const Vec3 target_pos = blast.droid ? target.state.position : position_at(target, double(tick_) - bolt.rewind);
+        if (sheltered(target_pos)) {
+            continue;
+        }
+        // Thrown away from it (teammates too: a blast doesn't take sides).
+        const double push = explosion_push(def, blast.at, target.state.position);
+        if (push > 0) {
+            Vec3 away = target.state.position + Vec3{0, 1.0, 0} - blast.at;
+            away = away.length() > 1e-3 ? away * (1 / away.length()) : Vec3{0, 1, 0};
+            away.y = std::max(away.y, 0.35);  // and off its feet
+            target.state.velocity += away * (push / away.length());
+            target.state.grounded = false;
+        }
+        if (teammate) {
+            continue;
+        }
         const double amount = explosion_damage(def, blast.at, target_pos);
         if (amount > 0) {
             damage(target, amount, DamageType::explosive, bolt.owner);
@@ -867,7 +899,7 @@ void GameServer::explode(const Blast& blast, std::vector<Blast>& blasts) {
                 continue;
             }
             const double amount = explosion_damage(def, blast.at, stations[i].position);
-            if (amount > 0) {
+            if (amount > 0 && !sheltered(stations[i].position)) {
                 damage_powerup(i, amount, bolt.owner, blasts);
             }
         }

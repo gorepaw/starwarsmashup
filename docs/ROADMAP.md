@@ -93,7 +93,7 @@ Hub notes:
 
 Combat notes:
 - In a match, teammates can't hurt each other (`ServerConfig::friendly_fire`). Outside one, everyone is hostile.
-- Spread uses the weapon's documented values, but how Battlefront combines `SpreadPerShot`, `SpreadThreshold` and `SpreadLimit` is a guess (marked ASSUMPTION in `swm/core/combat.h`). So are a grenade's fuse (an unnamed ordnance property), explosions hurting the thrower, and the linear falloff. Grenades bounce as if off the ground even from walls, explosions aren't blocked by walls, and they don't push. Ammo pickups and headshots aren't in yet. Every soldier holds the E-11 model whatever its weapon, and plays rifle animations.
+- Spread uses the weapon's documented values, but how Battlefront combines `SpreadPerShot`, `SpreadThreshold` and `SpreadLimit` is a guess (marked ASSUMPTION in `swm/core/combat.h`). So are explosions hurting the thrower and the linear falloff. (What was taken for a grenade's fuse, hash a51be2bb, is its Friction: see Stage 2.) Every soldier holds the E-11 model whatever its weapon, and plays rifle animations.
 - Bolts are cheap on the server (a position and velocity, tested as a line segment each tick). How they look is up to each client: color, length and width come from the weapon's ordnance, scaled by graphics settings.
 
 **Bots**
@@ -155,7 +155,10 @@ Matches look, sound and feel finished before Galaxies' gear changes what's in th
   ASSUMPTIONS: the roll's time and slowing, the crouched body's height, what the crouch aim factor does, and which scope is whose.
 - [x] Headshots: a bolt hitting the top 0.3 m of a soldier (standing or crouched) does double damage, so a sniper rifle's 300 kills a 400-health soldier with one headshot and takes two to the body. ASSUMPTION: Battlefront's ODFs give no multiplier; its own tip says sniper headshots are deadly.
 - [x] Damage falloff, from the ordnance (DamageTransitionDelay, DamageTransitionPeriod, DamageFinalDamage): the E-11's bolts fall from 60 to 40 after 0.4 s of flight (some 120 m); sniper bolts don't fall off.
-- [ ] Explosions blocked by walls and pushing soldiers. Grenades bouncing off walls as walls, not as ground.
+- [x] Explosions blocked by walls and pushing soldiers; grenades bouncing off walls as walls:
+  - An explosion hurts only who it can see (their chest or head, from just off the surface it went off at): behind a wall, nobody. Its Push throws soldiers away from it and off their feet, teammates too, at its Push (m/s, ASSUMPTION) within PushRadiusInner, falling to nothing at PushRadiusOuter: the thermal detonator's 10 within 6.5 m.
+  - Grenades bounce off whatever they hit by its surface: back out at Rebound of the speed they came in with, along it losing some to Friction; they rest on ground once slow.
+  - The thermal detonator's timer is its LifeSpan, 0.6 s, from when it first touches something (StartTimerOnContact; its "sticky" class says nothing of it, so ASSUMPTION). What bf2tool had read as its 2 s fuse (an unnamed property) is its Friction, as hashing the mod tools' names showed. Its sticking to vehicles and buildings (StickVehicle, StickBuilding) waits for vehicles and destructible buildings.
 
 **Bots**
 - [ ] Take cover and retreat.

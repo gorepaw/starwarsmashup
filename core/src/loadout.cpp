@@ -209,11 +209,16 @@ WeaponDef load_weapon(const std::filesystem::path& path) {
     w.bolt_acceleration = s.number("Acceleration", 0);
     w.rebound = s.number("Rebound", 0);
     w.explode_on_impact = s.number("ExplosionImpact", w.projectile == Projectile::grenade ? 0 : 1) != 0;
+    w.friction = s.number("Friction", 0);
     w.fuse = s.number("Fuse", w.bolt_life);
+    w.timer_on_contact = s.number("StartTimerOnContact", 0) != 0;
     w.shot_elevate = s.number("ShotElevate", 0);
     w.explosion_damage = s.number("ExplosionDamage", 0) * s.number("ExplosionPersonScale", 1.0);
     w.explosion_inner = s.number("ExplosionRadiusInner", 0);
     w.explosion_outer = std::max(w.explosion_inner, s.number("ExplosionRadiusOuter", 0));
+    w.explosion_push = s.number("ExplosionPush", 0);
+    w.push_inner = s.number("ExplosionPushRadiusInner", 0);
+    w.push_outer = std::max(w.push_inner, s.number("ExplosionPushRadiusOuter", 0));
     const auto read_color = [&](const char* key, std::array<double, 4>& out) {
         if (const auto color = s.get(key)) {
             std::istringstream fields(*color);
