@@ -279,6 +279,31 @@ void test_shader_colors() {
     CHECK(threw);
 }
 
+// How an effect blends, by its first pass's DATA (and a clipping pixel
+// program), and a shader's effect.
+void test_effect_blend() {
+    const auto effect = [](uint8_t depth_write, uint8_t blend, uint8_t source, uint8_t destination,
+                           const std::string& program) {
+        Bytes data(56, 0);
+        data[5] = depth_write, data[7] = blend, data[9] = source, data[10] = destination, data[17] = 0x0f;
+        Bytes program_data{2};
+        const Bytes path = text(program);
+        program_data.insert(program_data.end(), path.begin(), path.end());
+        return form("EFCT", {form("0001", {chunk("DATA", {6, 0}),
+                                           form("IMPL", {form("0005", {form("PASS", {form("0009", {
+                                               chunk("DATA", data),
+                                               form("PPSH", {form("0001", {chunk("DATA", program_data)})})})})})})})});
+    };
+    CHECK(effect_blend(effect(1, 0, 4, 5, "pixel_program/a_simple.psh")) == EffectBlend::opaque);
+    CHECK(effect_blend(effect(0, 1, 4, 5, "pixel_program/a_alpha.psh")) == EffectBlend::alpha);
+    CHECK(effect_blend(effect(0, 1, 1, 1, "pixel_program/a_emisadd.psh")) == EffectBlend::additive);
+    CHECK(effect_blend(effect(1, 0, 4, 5, "pixel_program/a_punchout_ps20.psh")) == EffectBlend::cutout);
+
+    const Bytes shader = form("CSHD", {form("0001", {form("SSHT", {form("0000", {
+                                                         chunk("NAME", text("effect\\h_alpha.eft"))})})})});
+    CHECK(shader_effect(shader) == "effect/h_alpha.eft");
+}
+
 // A datatable: typed columns, rows of strings, numbers and booleans.
 void test_datatable() {
     Bytes columns;
@@ -318,6 +343,7 @@ void test_datatable() {
 int main() {
     test_switching_shader();
     test_shader_colors();
+    test_effect_blend();
     test_datatable();
     test_templates_and_collision();
     test_floor_collision();

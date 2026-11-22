@@ -4,6 +4,8 @@
 extends RefCounted
 
 const CELL_SHADER = preload("res://rendering/swg_cell.gdshader")
+const CELL_ALPHA_SHADER = preload("res://rendering/swg_cell_alpha.gdshader")
+const CELL_CUTOUT_SHADER = preload("res://rendering/swg_cell_cutout.gdshader")
 const MAX_CELL_LIGHTS := 8  # per kind; matches the shader
 
 
@@ -64,10 +66,17 @@ static func apply_cell_lighting(mesh: MeshInstance3D, cell: Dictionary,
 
 	for surface in mesh.mesh.get_surface_count():
 		var material := ShaderMaterial.new()
-		material.shader = CELL_SHADER
 		var original := mesh.get_active_material(surface) as BaseMaterial3D
+		# Drawn as the material's effect draws (swgtool: glTF's alpha modes).
+		material.shader = CELL_SHADER
+		if original != null and original.transparency == BaseMaterial3D.TRANSPARENCY_ALPHA:
+			material.shader = CELL_ALPHA_SHADER
+		elif original != null and original.transparency == BaseMaterial3D.TRANSPARENCY_ALPHA_SCISSOR:
+			material.shader = CELL_CUTOUT_SHADER
 		if original != null and original.albedo_texture != null:
 			material.set_shader_parameter("albedo_texture", original.albedo_texture)
+		if original != null:
+			material.set_shader_parameter("albedo_color", original.albedo_color)
 		material.set_shader_parameter("ambient", ambient)
 		material.set_shader_parameter("parallel_count", parallel_count)
 		material.set_shader_parameter("parallel_direction", parallel_direction)

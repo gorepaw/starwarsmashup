@@ -167,6 +167,56 @@ ShaderCustomization parse_shader_customization(std::span<const uint8_t> bytes) {
     return result;
 }
 
+std::string shader_effect(std::span<const uint8_t> bytes) {
+    const IffNode root = parse_iff_root(bytes);
+    const IffNode* ssht = find_ssht(root);
+    if (!ssht) {
+        return {};
+    }
+    for (const IffNode& version : ssht->children) {
+        if (const IffNode* name = version.form ? version.child("NAME") : nullptr) {
+            return normalize_path(IffReader(name->data).cstring());
+        }
+    }
+    return {};
+}
+
+EffectBlend effect_blend(std::span<const uint8_t> bytes) {
+    const IffNode root = parse_iff_root(bytes);
+    if (root.tag != "EFCT") {
+        throw std::runtime_error("not an effect (" + root.tag + ")");
+    }
+    const IffNode* pass = find_form(root, "PASS");
+    if (!pass) {
+        return EffectBlend::opaque;
+    }
+    for (const IffNode& version : pass->children) {
+        const IffNode* data = version.form ? version.child("DATA") : nullptr;
+        if (!data || data->data.size() < 18) {
+            continue;
+        }
+        const auto& d = data->data;
+        if (d[7] != 0) {
+            return d[9] == 1 && d[10] == 1 ? EffectBlend::additive : EffectBlend::alpha;
+        }
+        // A pixel program that clips: PPSH / <version> / DATA, a byte then
+        // the program's path.
+        if (const IffNode* program = find_form(version, "PPSH")) {
+            for (const IffNode& program_version : program->children) {
+                const IffNode* program_data = program_version.form ? program_version.child("DATA") : nullptr;
+                if (program_data && program_data->data.size() > 1) {
+                    const std::string path = IffReader(program_data->data.subspan(1)).cstring();
+                    if (path.find("punchout") != std::string::npos) {
+                        return EffectBlend::cutout;
+                    }
+                }
+            }
+        }
+        return EffectBlend::opaque;
+    }
+    return EffectBlend::opaque;
+}
+
 std::vector<std::array<uint8_t, 3>> parse_palette(std::span<const uint8_t> bytes) {
     // "RIFF" <size> "PAL " "data" <size> <u16 version> <u16 count> then
     // count entries of r, g, b, flags.

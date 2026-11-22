@@ -23,6 +23,10 @@ inline void append_triangle(std::vector<uint32_t>& indices, uint32_t a, uint32_t
 // Adds SWG meshes and shaders to a glTF document. A shader becomes a material
 // whose main texture is decoded to a PNG in `out_dir`, next to the .gltf.
 //
+// A shader's effect sets how its material blends (see effect_blend): alpha
+// blending as glTF's BLEND, a cutout as MASK (at 0.5). Added light (glowing
+// panels) has no glTF mode: drawn opaque.
+//
 // A customizable shader's colors (see ShaderCustomization) are either baked
 // at their defaults (Colors::bake: into the material's base color; a
 // two-color shader's into a copy of its texture, <material>.hue.png), or
@@ -58,7 +62,8 @@ public:
 private:
     int image_for(const std::string& texture_path);
     int hued_image_for(const std::string& texture_path, const std::string& name, std::array<uint8_t, 3> main,
-                       std::array<uint8_t, 3> hueb);
+                       std::array<uint8_t, 3> hueb, bool keep_alpha);
+    EffectBlend blend_of(const std::string& effect_path);  // cached; opaque if unreadable
 
     TreLibrary& library_;
     Gltf& gltf_;
@@ -70,6 +75,7 @@ private:
     std::map<std::string, std::string> owner_shaders_;
     std::map<std::string, ShaderCustomization> colors_;
     std::map<std::string, std::vector<std::array<uint8_t, 3>>> palettes_;
+    std::map<std::string, EffectBlend> blends_;
 };
 
 // The highest-detail static mesh of an appearance: a mesh (MESH), a level of

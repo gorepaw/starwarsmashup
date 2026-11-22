@@ -56,6 +56,21 @@ struct ShaderCustomization {
 };
 ShaderCustomization parse_shader_customization(std::span<const uint8_t> bytes);
 
+// The effect (.eft) a shader draws with (SSHT's NAME; a CSHD's inner SSHT's),
+// with normalized slashes. Empty if none (e.g. a switching texture shader).
+std::string shader_effect(std::span<const uint8_t> bytes);
+
+// How an effect (.eft: EFCT) blends what it draws, by its first pass (its
+// first implementation's): the pass's DATA, whose leading bytes are the same
+// in every version seen (0008, 0009). Read from comparing effects, not
+// documented: byte 5 writes depth (0 for transparent effects), 7 blends,
+// 9 and 10 the blend's factors (4, 5: by the texture's alpha, as alpha
+// blending; 1, 1: added), 11 alpha tests, 17 the color write mask (7: not
+// alpha). A cutout clips in its pixel program instead ("punchout": clip
+// alpha under 0.5), its pass as an opaque one's.
+enum class EffectBlend { opaque, alpha, additive, cutout };
+EffectBlend effect_blend(std::span<const uint8_t> bytes);
+
 // A palette (.pal: a RIFF "PAL " file, as Windows' logical palettes): its
 // colors, RGB.
 std::vector<std::array<uint8_t, 3>> parse_palette(std::span<const uint8_t> bytes);

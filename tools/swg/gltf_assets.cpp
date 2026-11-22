@@ -42,11 +42,19 @@ int GltfAssets::material_for(const std::string& shader_path) {
                  << "'\n";
         }
         const std::string texture = shader_main_texture(bytes);
+        const std::string effect = shader_effect(bytes);
+        const EffectBlend blend = effect.empty() ? EffectBlend::opaque : blend_of(effect);
+        if (blend == EffectBlend::alpha) {
+            material.alpha_mode = "BLEND";
+        } else if (blend == EffectBlend::cutout) {
+            material.alpha_mode = "MASK";
+            material.alpha_cutoff = 0.5f;
+        }
         if (!customization.colors.empty()) {
             const std::array<uint8_t, 3> main = default_color(customization, "MAIN");
             if (colors_mode_ == Colors::bake && customization.two_colors() && !texture.empty()) {
-                material.texture =
-                    hued_image_for(texture, material.name, main, default_color(customization, "HUEB"));
+                material.texture = hued_image_for(texture, material.name, main, default_color(customization, "HUEB"),
+                                                  blend != EffectBlend::opaque);
             } else {
                 material.color = {linear(main[0]), linear(main[1]), linear(main[2]), 1};
             }
@@ -91,10 +99,25 @@ std::array<uint8_t, 3> GltfAssets::default_color(const ShaderCustomization& cust
     return {255, 255, 255};
 }
 
+EffectBlend GltfAssets::blend_of(const std::string& effect_path) {
+    auto it = blends_.find(effect_path);
+    if (it == blends_.end()) {
+        EffectBlend blend = EffectBlend::opaque;
+        try {
+            blend = effect_blend(library_.read(effect_path));
+        } catch (const std::exception& e) {
+            log_ << "  warning: " << effect_path << ": " << e.what() << "\n";
+        }
+        it = blends_.emplace(effect_path, blend).first;
+    }
+    return it->second;
+}
+
 int GltfAssets::hued_image_for(const std::string& texture_path, const std::string& name, std::array<uint8_t, 3> main,
-                               std::array<uint8_t, 3> hueb) {
+                               std::array<uint8_t, 3> hueb, bool keep_alpha) {
     // As a color2 pixel program: the texture times MAIN blended to HUEB by the
-    // texture's alpha. The alpha is the blend's mask, so the copy is opaque.
+    // texture's alpha. The alpha is the blend's mask, so the copy is opaque,
+    // unless the effect is transparent too (`keep_alpha`).
     ImageRgba image = decode_dds(library_.read(texture_path));
     for (size_t i = 0; i + 3 < image.pixels.size(); i += 4) {
         const int mask = image.pixels[i + 3];
@@ -102,7 +125,9 @@ int GltfAssets::hued_image_for(const std::string& texture_path, const std::strin
             const int hue = (main[size_t(c)] * (255 - mask) + hueb[size_t(c)] * mask) / 255;
             image.pixels[i + size_t(c)] = uint8_t(image.pixels[i + size_t(c)] * hue / 255);
         }
-        image.pixels[i + 3] = 255;
+        if (!keep_alpha) {
+            image.pixels[i + 3] = 255;
+        }
     }
     const std::string file_name = name + ".hue.png";
     write_png(out_dir_ / file_name, image);

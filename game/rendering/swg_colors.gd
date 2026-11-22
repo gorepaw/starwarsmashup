@@ -16,6 +16,8 @@ extends RefCounted
 # default.
 
 const SHADER := preload("res://rendering/swg_person.gdshader")
+const ALPHA_SHADER := preload("res://rendering/swg_person_alpha.gdshader")
+const CUTOUT_SHADER := preload("res://rendering/swg_person_cutout.gdshader")
 const VARIED_ENTRIES := 64   # a varied color is one of a palette's first this many
 const SMALLEST_VARIED := 8   # smaller palettes keep their defaults
 
@@ -55,7 +57,11 @@ static func apply(model: Node, colors: Dictionary, seed: int) -> void:
 				continue
 			var entry: Dictionary = materials[original.resource_name]
 			var material := ShaderMaterial.new()
-			material.shader = SHADER
+			material.shader = SHADER  # as the material's effect draws (glTF's alpha modes)
+			if original.transparency == BaseMaterial3D.TRANSPARENCY_ALPHA:
+				material.shader = ALPHA_SHADER
+			elif original.transparency == BaseMaterial3D.TRANSPARENCY_ALPHA_SCISSOR:
+				material.shader = CUTOUT_SHADER
 			material.set_shader_parameter("albedo_texture", original.albedo_texture)
 			material.set_shader_parameter("roughness", original.roughness)
 			material.set_shader_parameter("metallic", original.metallic)
