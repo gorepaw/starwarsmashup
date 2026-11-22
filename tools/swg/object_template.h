@@ -1,7 +1,10 @@
 #pragma once
 
+#include <cstdint>
 #include <map>
+#include <span>
 #include <string>
+#include <vector>
 
 #include "swg/tre_library.h"
 
@@ -13,7 +16,13 @@ namespace swm::swg {
 struct SharedObjectTemplate {
     std::string appearance;
     std::string portal_layout;
+    std::string client_data;  // .cdf: a person's clothes and hair, sounds, effects
 };
+
+// What a client data file (.cdf, CLDF) says a person wears: the meshes in
+// its WEARs (.lmg or .mgn; a WEAR may hold several, a suit of armor's
+// pieces), worn over its appearance. Throws on malformed data.
+std::vector<std::string> client_data_wearables(std::span<const uint8_t> bytes);
 
 // Reads the shared template's parameters. A template sets some parameters
 // and leaves the rest to the template it derives from (DERV), which is read
@@ -30,7 +39,7 @@ public:
 private:
     struct Read {
         SharedObjectTemplate values;
-        bool has_appearance = false, has_portal_layout = false;
+        bool has_appearance = false, has_portal_layout = false, has_client_data = false;
         std::string base;
     };
     Read read(const std::string& path);

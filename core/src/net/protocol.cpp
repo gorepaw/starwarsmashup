@@ -173,6 +173,10 @@ struct Encoder {
         }
         out.put_string(m.factions[0]);
         out.put_string(m.factions[1]);
+        out.put(uint8_t(std::min<size_t>(m.looks.size(), 255)));
+        for (size_t i = 0; i < m.looks.size() && i < 255; ++i) {
+            out.put_string(m.looks[i]);
+        }
     }
     void operator()(const Refused& m) {
         out.put(uint8_t(Type::refused));
@@ -202,6 +206,8 @@ struct Encoder {
             out.put(entity.kills);
             out.put(entity.deaths);
             out.put(entity.captures);
+            out.put(entity.look);
+            out.put(entity.pose);
         }
         out.put(uint16_t(m.bolts.size()));
         for (const BoltState& bolt : m.bolts) {
@@ -303,6 +309,10 @@ Message decode(std::span<const uint8_t> packet) {
         }
         m.factions[0] = in.get_string();
         m.factions[1] = in.get_string();
+        const size_t looks = in.get<uint8_t>();
+        for (size_t i = 0; i < looks; ++i) {
+            m.looks.push_back(in.get_string());
+        }
         message = m;
         break;
     }
@@ -339,6 +349,8 @@ Message decode(std::span<const uint8_t> packet) {
             entity.kills = in.get<uint16_t>();
             entity.deaths = in.get<uint16_t>();
             entity.captures = in.get<uint16_t>();
+            entity.look = in.get<uint8_t>();
+            entity.pose = in.get<uint8_t>();
             m.entities.push_back(entity);
         }
         const size_t bolts = in.get<uint16_t>();

@@ -90,8 +90,49 @@ std::vector<uint32_t> GameServer::entities() const {
 }
 
 const MoveState* GameServer::state_of(uint32_t entity) const {
-    const Client* client = find(entity);
-    return client ? &client->state : nullptr;
+    if (const Client* client = find(entity)) {
+        return &client->state;
+    }
+    const auto npc = std::find_if(npcs_.begin(), npcs_.end(), [&](const Npc& n) { return n.entity == entity; });
+    return npc == npcs_.end() ? nullptr : &npc->state;
+}
+
+uint32_t GameServer::add_npc(const std::string& name, Vec3 position, double yaw, uint8_t look, uint8_t pose) {
+    constexpr double lift = 1;  // from a meter over where it's put (as spawns are)
+    const MoveParams params;
+    Npc npc;
+    npc.entity = next_entity_++;
+    npc.name = name;
+    npc.look = look;
+    npc.pose = pose;
+    npc.state.position = world_.clamp(position);
+    npc.state.position.y = world_.support_at(npc.state.position.x, npc.state.position.z,
+                                             position.y + lift, params.step_up).height;
+    if (npc.state.position.y < -1e8) {
+        npc.state.position.y = world_.terrain().height_at(npc.state.position.x, npc.state.position.z);
+    }
+    npc.state.yaw = float(yaw);
+    npc.state.grounded = true;
+    npc.input.yaw = float(yaw);
+    npcs_.push_back(npc);
+    return npc.entity;
+}
+
+void GameServer::steer_npc(uint32_t entity, const MoveInput& input) {
+    for (Npc& npc : npcs_) {
+        if (npc.entity == entity) {
+            npc.input = input;
+            npc.input.buttons &= MoveInput::sprint | MoveInput::jump;  // they don't fight
+        }
+    }
+}
+
+std::vector<uint32_t> GameServer::npcs() const {
+    std::vector<uint32_t> ids;
+    for (const Npc& npc : npcs_) {
+        ids.push_back(npc.entity);
+    }
+    return ids;
 }
 
 void GameServer::set_state(uint32_t entity, const MoveState& state) {
@@ -176,7 +217,8 @@ void GameServer::handle(const net::Endpoint& from, const net::Datagram& datagram
             }
         }
         // Also answers a repeated Hello whose Welcome was lost.
-        send(from, net::Welcome{client->entity, config_.tick_rate, tick_, client->character, recruiters_, factions_});
+        send(from, net::Welcome{client->entity, config_.tick_rate, tick_, client->character, recruiters_, factions_,
+                                looks_});
     }
     if (client == nullptr) {
         return;  // not connected: ignore everything but Hello
@@ -330,6 +372,13 @@ void GameServer::step() {
             }
         }
     }
+    // The server's own people, by how they're steered.
+    if (!npcs_.empty()) {
+        const CharacterStats stats = stats_for(config_.loadout, config_.base_stats);
+        for (Npc& npc : npcs_) {
+            simulate_character(npc.state, npc.input, true, world_, config_.loadout, stats, dt);
+        }
+    }
     ++tick_;
 
     // Where everyone is this tick, kept for a second for rewinding.
@@ -355,6 +404,15 @@ void GameServer::step() {
     snapshot.server_tick = tick_;
     for (const Client& client : clients_) {
         snapshot.entities.push_back(describe(client));
+    }
+    for (const Npc& npc : npcs_) {
+        net::EntityState entity;
+        entity.id = npc.entity;
+        entity.state = npc.state;
+        entity.health = float(config_.base_stats.max_health);
+        entity.look = npc.look;
+        entity.pose = npc.pose;
+        snapshot.entities.push_back(entity);
     }
     for (const Bolt& bolt : bolts_) {
         snapshot.bolts.push_back({bolt.id, bolt.owner, bolt.weapon, bolt.def->projectile, bolt.position, bolt.velocity});

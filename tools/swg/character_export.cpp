@@ -48,6 +48,13 @@ public:
             }
         }
 
+        for (const std::string& mesh : request.meshes) {
+            const std::string mgn_path = highest_detail_mgn(mesh);
+            log_ << "  worn: " << mgn_path << "\n";
+            const int mesh_node = add_skinned_mesh(mgn_path);  // first: it may move the nodes
+            gltf_.nodes[size_t(root)].children.push_back(mesh_node);
+        }
+
         if (!request.weapon_lod.empty()) {
             attach_weapon(request.weapon_lod);
         }

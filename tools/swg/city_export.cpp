@@ -13,6 +13,8 @@
 
 #include "swg/appearance_collision.h"
 #include "swg/building_export.h"
+#include "swg/character_export.h"
+#include "swg/keyframe_animation.h"
 #include "swg/datatable.h"
 #include "swg/gltf.h"
 #include "swg/gltf_assets.h"
@@ -117,6 +119,64 @@ std::vector<SnapshotNode> recruiters(const CityExport& city) {
         out.push_back(node);
     }
     return out;
+}
+
+// The hub's people ([npc] and [crowd] templates): each a dressed body
+// (its template's appearance and what its client data file says it wears)
+// with Galaxies' own clips, named walk, idle and sit, in <out_dir>/people/,
+// named by the template's file without "shared_".
+void export_people(TreLibrary& library, const CityExport& city, const std::filesystem::path& out_dir,
+                   std::ostream& log) {
+    const core::Ini hub = core::Ini::load(city.hub);
+    std::vector<std::string> looks;
+    for (const core::Ini::Section& section : hub.sections()) {
+        if (section.name != "npc" && section.name != "crowd") {
+            continue;
+        }
+        for (const auto& [key, value] : section.values) {
+            if (key == "Template" && std::find(looks.begin(), looks.end(), value) == looks.end()) {
+                looks.push_back(value);
+            }
+        }
+    }
+    ObjectTemplates templates(library);
+    for (const std::string& look : looks) {
+        try {
+            const SharedObjectTemplate& shared = templates.shared(look);
+            if (!shared.appearance.ends_with(".sat")) {
+                log << std::format("  person {}: no skeletal appearance ({})\n", look, shared.appearance);
+                continue;
+            }
+            CharacterExport request;
+            request.name = std::filesystem::path(look).stem().string();
+            if (request.name.starts_with("shared_")) {
+                request.name = request.name.substr(7);
+            }
+            request.appearances = {shared.appearance};
+            if (!shared.client_data.empty() && library.contains(shared.client_data)) {
+                request.meshes = client_data_wearables(library.read(shared.client_data));
+            }
+            // A woman walks as one (hum_f.sat, twk_f.sat, ...).
+            const std::string body = std::filesystem::path(shared.appearance).stem().string();
+            const bool female = body.ends_with("_f");
+            const Skeleton skeleton = load_appearance_skeleton(library, shared.appearance);
+            const std::pair<const char*, const char*> clips[] = {
+                {"walk", female ? "appearance/animation/all_b_loc_walk_female.ans" : "appearance/animation/all_b_loc_walk_male.ans"},
+                {"idle", "appearance/animation/all_b_idl_standing_idle1.ans"},
+                {"sit", "appearance/animation/all_b_idl_sitting_chair_idle.ans"},
+            };
+            for (const auto& [name, path] : clips) {
+                if (library.contains(path)) {
+                    request.clips.push_back(sample_animation(parse_keyframe_animation(library.read(path)), skeleton, name));
+                }
+            }
+            std::ostringstream quiet;
+            export_character(library, request, out_dir / "people", quiet);
+            log << std::format("  person {}: {} ({} worn)\n", request.name, shared.appearance, request.meshes.size());
+        } catch (const std::exception& error) {
+            log << std::format("  person {}: {}\n", look, error.what());
+        }
+    }
 }
 
 } // namespace
@@ -398,6 +458,9 @@ void export_city(TreLibrary& library, const CityExport& city, std::ostream& log)
     }
     for (const auto& [kind, count] : collisions.skipped()) {
         log << std::format("  collision not read: {} ({})\n", kind, count);
+    }
+    if (!city.hub.empty()) {
+        export_people(library, city, out_dir, log);
     }
 }
 

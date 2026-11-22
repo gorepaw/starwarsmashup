@@ -14,6 +14,7 @@ namespace swm::swg {
 struct CharacterExport {
     std::string name;                      // output file stem
     std::vector<std::string> appearances;  // .sat paths; the first defines the skeleton
+    std::vector<std::string> meshes;       // further meshes worn (.lmg or .mgn: clothes, hair)
     std::string weapon_lod;                // optional .lod path, attached to "hold_r"
     std::vector<AnimationClip> clips;      // optional, for the skeleton of appearances[0]
 };

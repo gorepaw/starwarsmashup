@@ -15,7 +15,10 @@ struct CityExport {
     std::filesystem::path bake;       // the terrain bake's prefix the city stands on
     // A hub file (game/hubs/) whose war terminals ([recruiter] with a
     // Template, an object template, and Yaw in degrees) stand in the city
-    // too, on the terrain. Optional.
+    // too, on the terrain, and whose people ([npc] and [crowd] templates)
+    // are exported to <bake>_city/people/ (a glTF each, named by the
+    // template's file without "shared_", with clips walk, idle and sit).
+    // Optional.
     std::filesystem::path hub;
 };
 

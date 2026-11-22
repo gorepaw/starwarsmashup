@@ -121,6 +121,9 @@ public:
     godot::Array get_recruiters() const;
     // The two sides a hub's battles are between.
     godot::PackedStringArray get_factions() const;
+    // How the server's people look: Galaxies object templates; a remote's
+    // look (1 and up) indexes these from 1.
+    godot::PackedStringArray get_looks() const;
     // Queue for a battle on a side (0 or 1) at a war terminal; -1 leaves the queue.
     void queue(int64_t team);
     // {queue ("none" or "queued"), team, in_queue, starts_in, battlefield

@@ -17,7 +17,7 @@ namespace swm::core::net {
 // Every packet starts with a magic number, the protocol version and a message
 // type. Peers drop packets with another version. Bump it on any wire change.
 inline constexpr uint16_t protocol_magic = 0x4D53;  // "SM"
-inline constexpr uint16_t protocol_version = 8;
+inline constexpr uint16_t protocol_version = 9;
 
 // Client -> server, repeated until a Welcome or Refused arrives. The name
 // picks the saved character (there are no accounts yet). A match server
@@ -46,6 +46,9 @@ struct Welcome {
     // A hub's war terminals, and the sides its battles are fought between.
     std::vector<Recruiter> recruiters;
     std::array<std::string, 2> factions;
+    // How its people look (a Galaxies object template each): an entity's
+    // look is an index into these, plus one.
+    std::vector<std::string> looks;
 };
 
 // Client -> hub, repeated until the hub's PlayerStatus shows it: queue for a
@@ -108,6 +111,8 @@ struct EntityState {
     uint16_t kills = 0;
     uint16_t deaths = 0;
     uint16_t captures = 0;    // command posts taken or neutralized while in them
+    uint8_t look = 0;         // 0: a player; else the server's looks[look - 1] (a hub's people)
+    uint8_t pose = 0;         // 0: on their feet; 1: sitting
 
     bool alive() const { return life == Life::alive; }
 };

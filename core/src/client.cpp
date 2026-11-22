@@ -170,6 +170,7 @@ void GameClient::handle(const net::Datagram& datagram, double now) {
             tick_rate_ = welcome->tick_rate;
             recruiters_ = welcome->recruiters;
             factions_ = welcome->factions;
+            looks_ = welcome->looks;
         }
         return;
     }

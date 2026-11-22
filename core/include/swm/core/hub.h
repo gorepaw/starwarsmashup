@@ -11,6 +11,7 @@
 #include <vector>
 
 #include "swm/core/bot.h"
+#include "swm/core/nav.h"
 #include "swm/core/conquest.h"
 #include "swm/core/net/link.h"
 #include "swm/core/net/protocol.h"
@@ -27,6 +28,26 @@ struct HubBattlefield {
     std::array<int, 2> teams{0, 1};  // the battlefield's team for each of the hub's sides
 };
 
+// One of a hub's people (an [npc]): standing or sitting somewhere, or
+// walking a route back and forth.
+struct HubPerson {
+    std::string name;
+    int look = 0;              // index into HubConfig::looks
+    Vec3 position;             // game space
+    double yaw = 0;            // game yaw (Godot's rotation.y: 0 faces -Z)
+    uint8_t pose = 0;          // 0 standing, 1 sitting
+    std::vector<Vec3> route;   // if walking: the points walked to in turn, game space
+};
+
+// A hub's crowd (its [crowd]): people who wander its streets, walking from
+// one place to another in an area and lingering there.
+struct HubCrowd {
+    int count = 0;
+    std::vector<int> looks;  // indices into HubConfig::looks, taken in turn
+    Vec3 center;             // game space
+    double radius = 0;       // meters
+};
+
 struct HubConfig {
     std::string name = "Hub";
     std::vector<net::Recruiter> recruiters;
@@ -37,11 +58,18 @@ struct HubConfig {
     int team_size = 8;           // soldiers per team; bots fill the places players don't
     double queue_time = 10;      // seconds from the first player queueing to the battle starting
     double return_delay = 5;     // seconds after a battle's results before it closes
+    // Its people: how they look (Galaxies object templates), the set pieces
+    // and the crowd.
+    std::vector<std::string> looks;
+    std::vector<HubPerson> people;
+    HubCrowd crowd;
 };
 
 // Reads a hub file (see game/hubs/): its war terminals (Galaxies x z), the
-// sides, and the battlefield files it launches battles on (Battlefield =,
-// repeated), relative to it. Throws std::runtime_error if it, or a
+// sides, the battlefield files it launches battles on (Battlefield =,
+// repeated), relative to it, and its people ([npc]: Template, Position x z,
+// Yaw in Galaxies degrees, Pose stand or sit, Route "x z; x z; ..."; [crowd]:
+// Count, Template repeated, Area x z radius). Throws std::runtime_error if it, or a
 // battlefield, can't be read, or a battlefield has no team for a side.
 HubConfig load_hub(const std::filesystem::path& path);
 
@@ -86,8 +114,11 @@ public:
     Hub(const Hub&) = delete;
     Hub& operator=(const Hub&) = delete;
 
-    // Runs the queue and the battles. Call after server.update(now).
+    // Runs the queue and the battles, and walks the hub's people. Call after
+    // server.update(now).
     void update(double now);
+    // Its people (made on the first update).
+    size_t people_count() const { return walkers_.size() + standing_; }
     size_t battle_count() const { return battles_.size(); }
     // The last battle's result, if one has ended.
     const std::optional<MatchResult>& last_result() const { return last_result_; }
@@ -128,6 +159,20 @@ private:
     };
 
     void queue(uint32_t entity, int team);
+    // Someone who walks: the crowd wandering, or a set piece's route.
+    struct Walker {
+        uint32_t entity = 0;
+        std::vector<Vec3> route;      // a set piece's points; empty for the crowd
+        size_t route_index = 0;
+        std::vector<Vec3> path;       // corners to the current goal
+        size_t next = 0;
+        double pause_until = 0;
+        Vec3 checked;                 // where it was when progress was last checked
+        double checked_at = 0;
+    };
+    void add_people();
+    void walk_people();
+    std::optional<Vec3> wander_point();
     void choose_next();
     bool next_ready();
     void start_battle();
@@ -146,6 +191,10 @@ private:
     std::optional<Next> next_;  // after config_: its loading refers to a battlefield there
     std::string last_battlefield_;
     std::map<std::string, std::weak_ptr<const World>> worlds_;  // battlefield id -> loaded world
+    std::unique_ptr<NavGrid> streets_;  // where the hub's people walk
+    std::vector<Walker> walkers_;
+    size_t standing_ = 0;
+    bool people_added_ = false;
     std::map<std::string, std::string> notices_;  // player -> how their battle went, for when they're back
     std::optional<MatchResult> last_result_;
     std::mt19937_64 random_{std::random_device{}()};

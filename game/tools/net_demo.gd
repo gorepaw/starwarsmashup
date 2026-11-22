@@ -33,7 +33,9 @@
 #
 # A city exported with swgtool export-city next to the bake (its buildings,
 # walls and props, and a hub's war terminals) is drawn with it; the server
-# and client collide with it through the bake's collision file.
+# and client collide with it through the bake's collision file. A hub's
+# people (the server's) are drawn from the city's export too, walking,
+# standing and sitting by Galaxies' own clips.
 #
 # A Battlefront II map exported with bf2tool export-map is a bake too: pass
 # its prefix (e.g. imported_assets/maps/dag1/dag1) and it's drawn with its
@@ -183,6 +185,7 @@ var _start_bake := ""             # the hub's (or the only server's), where --bu
 var _buildings: Array = []        # [[gltf, Galaxies position, yaw]] from --building
 var _terrain3d := false
 var _doors: Array[Node3D] = []    # the city's doors (rendering/swg_city.gd)
+var _people := {}                 # look -> a loaded person (swgtool export-city --hub), null if missing
 var _shot_delay := 0
 
 
@@ -363,6 +366,10 @@ func _process(delta: float) -> bool:
 
 
 func _finish() -> bool:
+	for person: Variant in _people.values():  # the loaded looks, never in the scene
+		if person != null:
+			(person as Node).free()
+	_people.clear()
 	var stats: Dictionary = _client.get_stats()
 	var at: Vector3 = _client.get_presented().get("position", Vector3.ZERO)
 	print("left at Galaxies (%.2f, %.2f, %.2f)" % [-at.x, at.y, at.z])
@@ -530,6 +537,8 @@ func _nearest_remote() -> Dictionary:
 	var own_position: Vector3 = _client.get_presented()["position"]
 	var best: Dictionary = {}
 	for remote: Dictionary in _client.get_remotes():
+		if int(remote.get("look", 0)) > 0:
+			continue  # the hub's people
 		if best.is_empty() or own_position.distance_to(remote["position"]) < own_position.distance_to(best["position"]):
 			best = remote
 	return best
@@ -541,7 +550,7 @@ func _nearest_enemy() -> Dictionary:
 	var best: Dictionary = {}
 	for remote: Dictionary in _client.get_remotes():
 		var enemy := int(own["team"]) < 0 or int(remote["team"]) != int(own["team"])
-		if not enemy or not remote["alive"]:
+		if not enemy or not remote["alive"] or int(remote.get("look", 0)) > 0:
 			continue
 		var position: Vector3 = remote["position"]
 		if best.is_empty() or position.distance_to(own["position"]) < (best["position"] as Vector3).distance_to(own["position"]):
@@ -554,6 +563,9 @@ func _update_remotes(own_team: int) -> void:
 	for remote: Dictionary in _client.get_remotes():
 		var id: int = remote["id"]
 		seen[id] = true
+		if int(remote.get("look", 0)) > 0:
+			_update_person(id, remote)  # one of the hub's people
+			continue
 		_saw_remote = true
 		if not _remotes.has(id):
 			var character := _add_character()
@@ -579,6 +591,50 @@ func _update_remotes(own_team: int) -> void:
 		if not seen.has(id):
 			(_remotes[id]["model"] as Node).queue_free()
 			_remotes.erase(id)
+
+
+# One of the hub's people: their look's model (exported with the city, in
+# <bake>_city/people/, named by the template's file without "shared_"),
+# walking, standing about or sitting, by their clips.
+func _update_person(id: int, state: Dictionary) -> void:
+	if not _remotes.has(id):
+		var look := int(state["look"])
+		if not _people.has(look):
+			_people[look] = _load_person(look)
+		if _people[look] == null:
+			return
+		var model := (_people[look] as Node3D).duplicate() as Node3D
+		root.add_child(model)
+		_remotes[id] = {"model": model, "person": true,
+				"player": model.find_child("AnimationPlayer", true, false)}
+	var person: Dictionary = _remotes[id]
+	var model: Node3D = person["model"]
+	model.position = state["position"]
+	model.rotation.y = float(state["yaw"]) + PI  # the model faces +Z; yaw 0 faces -Z
+	var player := person["player"] as AnimationPlayer
+	if player == null:
+		return
+	var velocity: Vector3 = state["velocity"]
+	var speed := Vector2(velocity.x, velocity.z).length()
+	var clip := "sit" if int(state.get("pose", 0)) == 1 else ("walk" if speed > 0.3 else "idle")
+	if player.current_animation != clip and player.has_animation(clip):
+		player.get_animation(clip).loop_mode = Animation.LOOP_LINEAR
+		player.play(clip, 0.25)
+	player.speed_scale = clampf(speed / 1.4, 0.6, 1.6) if clip == "walk" else 1.0
+
+
+func _load_person(look: int) -> Node3D:
+	var looks: PackedStringArray = _client.get_looks()
+	if look < 1 or look > looks.size():
+		return null
+	var stem := looks[look - 1].get_file().get_basename().trim_prefix("shared_")
+	var path := "res://" + _start_bake + "_city/people/" + stem + ".gltf"
+	var document := GLTFDocument.new()
+	var state := GLTFState.new()
+	if document.append_from_file(path, state) != OK:
+		printerr("no person exported for ", looks[look - 1], " (", path, ")")
+		return null
+	return document.generate_scene(state) as Node3D
 
 
 func _pose(character: Dictionary, state: Dictionary) -> void:
@@ -908,7 +964,7 @@ func _aimed_at(_team: int) -> Dictionary:
 	var best := {}
 	var best_angle := TARGET_CONE
 	for remote: Dictionary in _client.get_remotes():
-		if not bool(remote["alive"]):
+		if not bool(remote["alive"]) or int(remote.get("look", 0)) > 0:
 			continue
 		var to: Vector3 = remote["position"] + Vector3.UP * 1.1 - from
 		var distance := to.length()

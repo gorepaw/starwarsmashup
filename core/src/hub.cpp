@@ -2,6 +2,8 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cmath>
+#include <numbers>
 #include <format>
 #include <sstream>
 #include <stdexcept>
@@ -101,6 +103,67 @@ HubConfig load_hub(const std::filesystem::path& path) {
     if (hub.recruiters.empty()) {
         throw std::runtime_error(where + ": no [recruiter] sections");
     }
+    // Its people. A look per template, in the order they come.
+    const auto look_of = [&](const std::string& template_name) {
+        const auto it = std::find(hub.looks.begin(), hub.looks.end(), template_name);
+        if (it != hub.looks.end()) {
+            return int(it - hub.looks.begin());
+        }
+        if (hub.looks.size() >= 255) {
+            throw std::runtime_error(where + ": more than 255 kinds of people");
+        }
+        hub.looks.push_back(template_name);
+        return int(hub.looks.size() - 1);
+    };
+    const auto point = [&](std::string_view text, const std::string& what) {
+        std::istringstream fields{std::string(text)};
+        double x = 0, z = 0;
+        if (!(fields >> x >> z)) {
+            throw std::runtime_error(where + ": " + what + " needs x z");
+        }
+        return Vec3{-x, 0, z};  // Galaxies to game coordinates
+    };
+    for (const Ini::Section& s : ini.sections()) {
+        if (s.name == "npc") {
+            HubPerson person;
+            const auto template_name = s.get("Template");
+            if (!template_name) {
+                throw std::runtime_error(where + ": an [npc] needs a Template");
+            }
+            person.look = look_of(*template_name);
+            person.name = s.get("Name").value_or("Citizen");
+            person.position = point(s.get("Position").value_or(""), "an [npc]'s Position");
+            // Galaxies' yaw faces +Z at 0 and turns toward +X; the game's faces -Z.
+            person.yaw = std::numbers::pi - s.number("Yaw", 0) * std::numbers::pi / 180;
+            person.pose = same_name(s.get("Pose").value_or("stand"), "sit") ? 1 : 0;
+            if (const auto route = s.get("Route")) {
+                std::string_view rest = *route;
+                while (!rest.empty()) {
+                    const size_t semicolon = rest.find(';');
+                    const std::string_view part = rest.substr(0, semicolon);
+                    if (part.find_first_not_of(" \t") != std::string_view::npos) {
+                        person.route.push_back(point(part, "a Route's point"));
+                    }
+                    rest = semicolon == std::string_view::npos ? std::string_view() : rest.substr(semicolon + 1);
+                }
+            }
+            hub.people.push_back(std::move(person));
+        } else if (s.name == "crowd") {
+            hub.crowd.count = std::clamp(int(s.number("Count", 0)), 0, 200);
+            for (const auto& [key, value] : s.values) {
+                if (same_name(key, "Template")) {
+                    hub.crowd.looks.push_back(look_of(value));
+                }
+            }
+            std::istringstream area(s.get("Area").value_or(""));
+            double x = 0, z = 0, radius = 0;
+            if (hub.crowd.count > 0 && (!(area >> x >> z >> radius) || radius <= 0 || hub.crowd.looks.empty())) {
+                throw std::runtime_error(where + ": a [crowd] needs Area = x z radius and a Template");
+            }
+            hub.crowd.center = {-x, 0, z};
+            hub.crowd.radius = radius;
+        }
+    }
     return hub;
 }
 
@@ -135,6 +198,148 @@ Hub::Hub(GameServer& server, uint16_t port, const World& world, HubConfig config
             notices_.erase(it);
         }
     };
+}
+
+namespace {
+
+constexpr int8_t walking = 25;        // of 127: about 1.4 m/s, a walk
+constexpr double arrived = 0.6;       // meters from a corner
+constexpr double stuck_after = 4;     // seconds without getting anywhere
+
+double yaw_to(Vec3 d) {
+    return std::atan2(-d.x, -d.z);  // 0 faces -Z, positive turns left
+}
+
+} // namespace
+
+void Hub::add_people() {
+    if (config_.people.empty() && config_.crowd.count == 0) {
+        return;
+    }
+    server_.set_looks(config_.looks);
+    // Where they walk: the streets around the crowd's area and every route.
+    Battlefield streets;
+    streets.name = config_.name + " streets";
+    double lo_x = 1e30, lo_z = 1e30, hi_x = -1e30, hi_z = -1e30;
+    const auto grow = [&](Vec3 p, double r) {
+        lo_x = std::min(lo_x, p.x - r), hi_x = std::max(hi_x, p.x + r);
+        lo_z = std::min(lo_z, p.z - r), hi_z = std::max(hi_z, p.z + r);
+    };
+    if (config_.crowd.count > 0) {
+        grow(config_.crowd.center, config_.crowd.radius + 20);
+    }
+    for (const HubPerson& person : config_.people) {
+        grow(person.position, 20);
+        for (const Vec3& p : person.route) {
+            grow(p, 20);
+        }
+    }
+    streets.min_x = lo_x, streets.max_x = hi_x, streets.min_z = lo_z, streets.max_z = hi_z;
+    streets_ = std::make_unique<NavGrid>(world_, streets);
+
+    for (const HubPerson& person : config_.people) {
+        Vec3 at = person.position;
+        at.y = world_.terrain().height_at(at.x, at.z);
+        const uint32_t entity = server_.add_npc(person.name, at, person.yaw, uint8_t(person.look + 1), person.pose);
+        if (person.route.size() >= 1) {
+            walkers_.push_back({.entity = entity, .route = person.route});
+        } else {
+            ++standing_;
+        }
+    }
+    for (int i = 0; i < config_.crowd.count; ++i) {
+        const auto at = wander_point();
+        if (!at) {
+            break;
+        }
+        const int look = config_.crowd.looks[size_t(i) % config_.crowd.looks.size()];
+        const double yaw = std::uniform_real_distribution<double>(-std::numbers::pi, std::numbers::pi)(random_);
+        const uint32_t entity = server_.add_npc("Citizen", *at, yaw, uint8_t(look + 1));
+        // Some linger a while before they set off.
+        Walker walker{.entity = entity};
+        walker.pause_until = std::uniform_real_distribution<double>(0, 10)(random_);
+        walkers_.push_back(walker);
+    }
+    say(std::format("{} people in {}: {} walking", walkers_.size() + standing_, config_.name, walkers_.size()));
+}
+
+// Somewhere in the crowd's area to walk to: on the ground (not a roof),
+// where a soldier could stand.
+std::optional<Vec3> Hub::wander_point() {
+    const MoveParams params;
+    std::uniform_real_distribution<double> unit(0, 1);
+    for (int attempt = 0; attempt < 60; ++attempt) {
+        const double angle = unit(random_) * 2 * std::numbers::pi;
+        const double r = config_.crowd.radius * std::sqrt(unit(random_));
+        Vec3 p{config_.crowd.center.x + r * std::cos(angle), 0, config_.crowd.center.z + r * std::sin(angle)};
+        const double ground = world_.terrain().height_at(p.x, p.z);
+        p.y = world_.support_at(p.x, p.z, ground + 1, params.step_up).height;
+        if (p.y > ground - 0.5 && p.y < ground + 1 && streets_->walkable(p)) {
+            return p;
+        }
+    }
+    return std::nullopt;
+}
+
+void Hub::walk_people() {
+    for (Walker& walker : walkers_) {
+        const MoveState* state = server_.state_of(walker.entity);
+        if (state == nullptr) {
+            continue;
+        }
+        MoveInput input;
+        input.yaw = state->yaw;
+        if (now_ < walker.pause_until) {
+            server_.steer_npc(walker.entity, input);
+            continue;
+        }
+        // Somewhere to go: the crowd anywhere in its area, a route its next point.
+        if (walker.next >= walker.path.size()) {
+            std::optional<Vec3> goal;
+            if (walker.route.empty()) {
+                goal = wander_point();
+            } else {
+                goal = walker.route[walker.route_index % walker.route.size()];
+                ++walker.route_index;
+            }
+            walker.path = goal ? streets_->find_path(state->position, *goal) : std::vector<Vec3>{};
+            walker.next = 0;
+            walker.checked = state->position;
+            walker.checked_at = now_;
+            if (walker.path.empty()) {
+                walker.pause_until = now_ + 2;
+                server_.steer_npc(walker.entity, input);
+                continue;
+            }
+        }
+        Vec3 to = walker.path[walker.next] - state->position;
+        to.y = 0;
+        if (to.length() < arrived) {
+            if (++walker.next >= walker.path.size()) {
+                // There: linger (the crowd longer than a route's walker).
+                const double low = walker.route.empty() ? 4 : 2, high = walker.route.empty() ? 15 : 5;
+                walker.pause_until = now_ + std::uniform_real_distribution<double>(low, high)(random_);
+                server_.steer_npc(walker.entity, input);
+                continue;
+            }
+            to = walker.path[walker.next] - state->position;
+            to.y = 0;
+        }
+        // Not getting anywhere (someone in the way): try somewhere else soon.
+        if (now_ - walker.checked_at > stuck_after) {
+            Vec3 moved = state->position - walker.checked;
+            moved.y = 0;
+            if (moved.length() < 0.5) {
+                walker.path.clear();
+                walker.pause_until = now_ + 1;
+            }
+            walker.checked = state->position;
+            walker.checked_at = now_;
+        }
+        input.yaw = float(yaw_to(to));
+        input.forward = walking;
+        server_.steer_npc(walker.entity, input);
+    }
 }
 
 Hub::~Hub() {
@@ -316,6 +521,11 @@ void Hub::start_battle() {
 
 void Hub::update(double now) {
     now_ = now;
+    if (!people_added_) {
+        people_added_ = true;  // on the first update, so the log says so
+        add_people();
+    }
+    walk_people();
     // Players who left the hub leave the queue.
     std::erase_if(queue_, [&](const Queued& q) { return server_.name_of(q.entity) != q.name; });
     // Join a battle that's on, or start one once the first player has waited.

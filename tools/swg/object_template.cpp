@@ -39,7 +39,7 @@ ObjectTemplates::Read ObjectTemplates::read(const std::string& path) {
     for (const IffNode* parameter : parameters) {
         IffReader r(parameter->data);
         const std::string name = r.cstring();
-        if (name != "appearanceFilename" && name != "portalLayoutFilename") {
+        if (name != "appearanceFilename" && name != "portalLayoutFilename" && name != "clientDataFile") {
             continue;
         }
         if (r.remaining() == 0 || r.u8() == 0) {
@@ -49,6 +49,9 @@ ObjectTemplates::Read ObjectTemplates::read(const std::string& path) {
         if (name == "appearanceFilename") {
             out.values.appearance = value;
             out.has_appearance = true;
+        } else if (name == "clientDataFile") {
+            out.values.client_data = value;
+            out.has_client_data = true;
         } else {
             out.values.portal_layout = value;
             out.has_portal_layout = true;
@@ -66,7 +69,8 @@ const SharedObjectTemplate& ObjectTemplates::shared(const std::string& path_in) 
     SharedObjectTemplate values = r.values;
     // What this template leaves unset comes from its base, and so on.
     std::string base = r.base;
-    for (int depth = 0; !base.empty() && (!r.has_appearance || !r.has_portal_layout) && depth < 16; ++depth) {
+    for (int depth = 0; !base.empty() && (!r.has_appearance || !r.has_portal_layout || !r.has_client_data) && depth < 16;
+         ++depth) {
         if (!library_.contains(normalize_path(base))) {
             break;
         }
@@ -79,9 +83,32 @@ const SharedObjectTemplate& ObjectTemplates::shared(const std::string& path_in) 
             values.portal_layout = b.values.portal_layout;
             r.has_portal_layout = true;
         }
+        if (!r.has_client_data && b.has_client_data) {
+            values.client_data = b.values.client_data;
+            r.has_client_data = true;
+        }
         base = b.base;
     }
     return cache_.emplace(path, values).first->second;
+}
+
+std::vector<std::string> client_data_wearables(std::span<const uint8_t> bytes) {
+    const IffNode root = parse_iff_root(bytes);
+    if (root.tag != "CLDF") {
+        throw std::runtime_error("not a client data file (" + root.tag + ")");
+    }
+    std::vector<std::string> wearables;
+    for (const IffNode& version : root.children) {
+        if (!version.form) {
+            continue;
+        }
+        for (const IffNode* wear : version.children_with("WEAR")) {
+            for (const IffNode* mesh : wear->children_with("MESH")) {  // a suit of armor: a mesh per piece
+                wearables.push_back(normalize_path(IffReader(mesh->data).cstring()));
+            }
+        }
+    }
+    return wearables;
 }
 
 } // namespace swm::swg

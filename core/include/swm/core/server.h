@@ -86,6 +86,7 @@ public:
     uint32_t tick() const { return tick_; }
     size_t client_count() const { return clients_.size(); }
     std::vector<uint32_t> entities() const;
+    // A player's or an NPC's.
     const MoveState* state_of(uint32_t entity) const;
     // Moves a character, e.g. a teleport. Its client gets corrected.
     void set_state(uint32_t entity, const MoveState& state);
@@ -113,6 +114,17 @@ public:
     void transfer(uint32_t entity, const net::Transfer& transfer);
     void transfer_all(const net::Transfer& transfer);
     std::string name_of(uint32_t entity) const;
+
+    // People the server runs itself (a hub's: its crowd and the people
+    // standing or sitting about), drawn by `looks` (told to clients as
+    // they join; an NPC's look is an index into them). They walk as players
+    // do, by the input they're steered with, and take no harm.
+    void set_looks(std::vector<std::string> looks) { looks_ = std::move(looks); }
+    // Adds one standing on the ground under `position` (from a meter
+    // over it), facing `yaw`; returns its entity.
+    uint32_t add_npc(const std::string& name, Vec3 position, double yaw, uint8_t look, uint8_t pose = 0);
+    void steer_npc(uint32_t entity, const MoveInput& input);
+    std::vector<uint32_t> npcs() const;
 
     std::function<void(const std::string&)> log;
     // Decides who may join: their team (-1: the smaller one), or nullopt to
@@ -148,6 +160,13 @@ private:
         net::PlayerStatus status;
         std::optional<net::Transfer> transfer;  // sent every tick until it leaves
         uint32_t transfer_tick = 0;            // dropped then if it hasn't left
+    };
+    struct Npc {
+        uint32_t entity = 0;
+        std::string name;
+        MoveState state;
+        MoveInput input;
+        uint8_t look = 0, pose = 0;
     };
     struct Bolt {
         uint32_t id = 0;
@@ -194,6 +213,8 @@ private:
     CharacterStore* store_;
     std::optional<Conquest> conquest_;
     std::vector<Client> clients_;
+    std::vector<Npc> npcs_;
+    std::vector<std::string> looks_;
     std::vector<Bolt> bolts_;
     std::vector<net::CombatEvent> events_;  // this tick's
     std::vector<net::Explosion> explosions_;  // this tick's

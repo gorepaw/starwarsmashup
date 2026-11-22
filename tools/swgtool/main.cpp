@@ -24,6 +24,7 @@
 #include "swg/city_export.h"
 #include "swg/datatable.h"
 #include "swg/keyframe_animation.h"
+#include "swg/object_template.h"
 #include "swg/gltf_assets.h"
 #include "swg/iff.h"
 #include "swg/image.h"
@@ -48,7 +49,8 @@ constexpr const char* usage = R"(usage:
   swgtool iff-check <dir>
   swgtool extract <dir> <path> <out_file>
   swgtool datatable <dir> <path.iff> [--match <text>]
-  swgtool export-character <dir> <out_dir> --name <name> --sat <path.sat>... [--weapon <path.lod>]
+  swgtool export-character <dir> <out_dir> (--name <name> --sat <path.sat>... | --template <object/mobile/...iff>)
+                           [--weapon <path.lod>]
                            [--bf2-lvl <ingame.lvl> --bf2-bank <bank> --anim <name>...] [--swg-anim <path.ans>...]
   swgtool bake-terrain <dir> <out_prefix> --trn <path.trn> --center <x> <z> --samples <n> --spacing <m>
                        [--snapshot <path.ws>]
@@ -466,11 +468,38 @@ int cmd_export_character(const std::vector<std::string>& args) {
     request.name = option(args, "--name");
     request.appearances = options(args, "--sat");
     request.weapon_lod = option(args, "--weapon");
-    if (args.size() < 2 || request.name.empty() || request.appearances.empty()) {
+    const std::string from_template = option(args, "--template");
+    if (args.size() < 2 || (request.appearances.empty() && from_template.empty())) {
         std::cerr << usage;
         return 2;
     }
     TreLibrary library(args[0]);
+    // A person by their object template: its appearance (a body), and what
+    // its client data file says it wears.
+    if (!from_template.empty()) {
+        ObjectTemplates templates(library);
+        const SharedObjectTemplate& look = templates.shared(from_template);
+        if (look.appearance.empty() || !look.appearance.ends_with(".sat")) {
+            std::cerr << from_template << " has no skeletal appearance (" << look.appearance << ")\n";
+            return 1;
+        }
+        request.appearances.insert(request.appearances.begin(), look.appearance);
+        if (!look.client_data.empty() && library.contains(look.client_data)) {
+            for (const std::string& mesh : client_data_wearables(library.read(look.client_data))) {
+                request.meshes.push_back(mesh);
+            }
+        }
+        if (request.name.empty()) {
+            request.name = std::filesystem::path(from_template).stem().string();
+            if (request.name.starts_with("shared_")) {
+                request.name = request.name.substr(7);
+            }
+        }
+    }
+    if (request.name.empty()) {
+        std::cerr << usage;
+        return 2;
+    }
 
     const std::string bf2_lvl = option(args, "--bf2-lvl");
     const std::vector<std::string> anim_names = options(args, "--anim");

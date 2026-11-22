@@ -52,6 +52,8 @@ swgtool export-city <dir> <bake_prefix> --snapshot <path.ws> --center <x> <z> --
 
   With `--bf2-lvl`, `--bf2-bank`, and one or more `--anim`, Battlefront II animations are retargeted onto the character and written as glTF animations, e.g. `--bf2-lvl <Battlefront>\GameData\Data\_lvl_pc\ingame.lvl --bf2-bank human_0 --anim human_rifle_stand_idle_emote_full --anim human_rifle_stand_runforward`. Clips play in place. The client (`game/rendering/soldier.gd`) uses these `human_0` clips, all `human_rifle_stand_*`: `idle_emote_full`, `runforward`, `runbackward`, `shoot_full`, `reload_full`, `shoot_secondary_full`, `hitfront`, `death_forward` and `death_backward`.
 
+  With `--template <object/mobile/...iff>` instead of `--name` and `--sat`, a person by their object template: its appearance (a body) and what its client data file (`.cdf`) says it wears (`WEAR`: clothes, hair, a suit of armor's pieces), named by the template's file.
+
   With `--swg-anim <path.ans>` (repeatable), Galaxies' own animations are sampled onto the skeleton and written as glTF animations named by their files (`all_b_loc_walk_male`, `all_b_idl_sitting_chair_idle`, ...): both the plain format (`KFAT`) and the compressed one (`CKAT`), whose rotations were worked out from the files (`swg/keyframe_animation.cpp`). `game/tools/pose_clips.gd` screenshots a character's clips.
 
   Not handled yet: occlusion zones (hiding body triangles under armor), customization (skin palettes, blend shapes), and LOD levels below the most detailed.
@@ -95,7 +97,7 @@ swgtool export-city <dir> <bake_prefix> --snapshot <path.ws> --center <x> <z> --
   - `<bake_prefix>.holes`: where the buildings' rooms are (every cell's floor but the outside's), on a 25 cm grid: there's no terrain there (`core::TerrainHoles`), as in Galaxies a room has none; the cantina's main room is a meter under the street.
   - `<bake_prefix>.collision`: what stops characters and shots, in the map collision format `core::World` loads next to a bake (so the hub's server and clients collide with the city with nothing else to load): each model's collision extent (its collision mesh, boxes, cylinders; composite and detail extents), the floors it names (roofs, stairs, a building's every cell), facing up, and walls where a floor can't be left, facing both ways.
 
-  With `--hub`, the hub's war terminals stand in the city too, on the terrain: each `[recruiter]` with a `Template` (an object template) and `Yaw`. Not yet: particle effects and skeletal appearances; the log counts them. Mos Eisley, 700 m around its middle (2,663 objects: 900 of them furniture, 140 doors; 314 models, 93,886 collision triangles, in 10 seconds):
+  With `--hub`, the hub's war terminals stand in the city too, on the terrain: each `[recruiter]` with a `Template` (an object template) and `Yaw`. And its people (`[npc]` and `[crowd]` templates) are exported to `<bake_prefix>_city/people/`, a character each (as `export-character --template`) with Galaxies' clips `walk` (a woman's walk for a female body), `idle` and `sit`. Not yet: particle effects and skeletal appearances; the log counts them. Mos Eisley, 700 m around its middle (2,663 objects: 900 of them furniture, 140 doors; 314 models, 93,886 collision triangles, in 10 seconds):
 
   ```powershell
   swgtool export-city E:\swg_te\extracted\Star_Wars_files game\imported_assets\terrain\tatooine_mos_eisley `

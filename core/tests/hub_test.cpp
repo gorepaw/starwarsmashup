@@ -2,6 +2,8 @@
 // filling the teams, transfers there and back, and admission by ticket.
 
 #include <cmath>
+#include <map>
+#include <numbers>
 #include <filesystem>
 #include <fstream>
 #include <memory>
@@ -228,10 +230,86 @@ void test_queue_battle_and_back() {
     CHECK(hub.battle_count() == 0 && stranger && stranger->status() == GameClient::Status::refused);
 }
 
+// A hub's people: parsed from its file, made by the hub's server, walking
+// (the crowd wanders, a guard walks his route, a drinker sits), and seen by
+// a player with their looks.
+void test_people() {
+    const auto dir = std::filesystem::temp_directory_path() / "swm_hub_people_test";
+    std::filesystem::create_directories(dir / "fields");
+    std::filesystem::create_directories(dir / "loadouts");
+    std::filesystem::create_directories(dir / "items");
+    std::ofstream(dir / "items" / "rifle.ini") << "[weapon]\nName = rifle\n";
+    std::ofstream(dir / "loadouts" / "trooper.ini") << "[loadout]\nPrimary = rifle\n";
+    std::ofstream(dir / "fields" / "dunes.ini") << "[battlefield]\nName = Dunes\n"
+                                                   "[team]\nName = Empire\nLoadout = ../loadouts/trooper.ini\n"
+                                                   "[team]\nName = Rebellion\nLoadout = ../loadouts/trooper.ini\n"
+                                                   "[post]\nPosition = 0 0\nOwner = Empire\n"
+                                                   "[post]\nPosition = 50 0\nOwner = Rebellion\n";
+    std::ofstream(dir / "hub.ini") << "[hub]\nBattlefield = fields/dunes.ini\n[recruiter]\nPosition = 0 20\n"
+                                      "[npc]\nName = Guard\nTemplate = object/mobile/shared_guard.iff\n"
+                                      "Position = 10 10\nRoute = 10 10; -10 10\n"
+                                      "[npc]\nName = Drinker\nTemplate = object/mobile/shared_commoner.iff\n"
+                                      "Position = 0 -10\nYaw = 90\nPose = sit\n"
+                                      "[crowd]\nCount = 6\nArea = 0 0 30\nTemplate = object/mobile/shared_commoner.iff\n"
+                                      "Template = object/mobile/shared_twilek.iff\n";
+    const HubConfig config = load_hub(dir / "hub.ini");
+    std::filesystem::remove_all(dir);
+    CHECK(config.looks.size() == 3 && config.looks[0] == "object/mobile/shared_guard.iff");
+    CHECK(config.people.size() == 2 && config.people[0].route.size() == 2 && config.people[0].route[1] == Vec3(10, 0, 10));
+    CHECK(config.people[1].pose == 1 && config.people[1].look == 1);
+    // Galaxies' yaw 90 faces its +X, the game's -X: a game yaw of pi/2.
+    CHECK(std::abs(config.people[1].yaw - std::numbers::pi / 2) < 1e-9);
+    CHECK(config.crowd.count == 6 && config.crowd.looks == (std::vector<int>{1, 2}) && config.crowd.radius == 30);
+
+    Heightfield ground{201, 1.0, -100, -100, std::vector<float>(201 * 201, 0.0f)};
+    World world{ground};
+    net::LoopbackHub links;
+    TestNetwork network(links);
+    net::LoopbackLink hub_link{links, {1, 1}};
+    ServerConfig server_config;
+    GameServer server(hub_link, world, server_config);
+    Hub hub(server, 1, world, config, network);
+    hub.update(0);
+    CHECK(hub.people_count() == 8 && server.npcs().size() == 8);
+
+    net::LoopbackLink player_link{links, {10, 1}};
+    GameClient player(player_link, world, ClientConfig{.server = {1, 1}, .name = "visitor"});
+    std::map<uint32_t, Vec3> first;
+    double now = 0;
+    for (; now < 40; now += 1.0 / 30) {
+        player.update(now);
+        server.update(now);
+        hub.update(now);
+        if (first.empty() && now > 0.5) {
+            for (const uint32_t id : server.npcs()) {
+                first[id] = server.state_of(id)->position;
+            }
+        }
+    }
+    // The crowd and the guard got somewhere; the drinker sat where he was.
+    int moved = 0;
+    for (const auto& [id, at] : first) {
+        Vec3 d = server.state_of(id)->position - at;
+        d.y = 0;
+        moved += d.length() > 2;
+    }
+    std::printf("hub people: %d of %zu moved in 40 s\n", moved, first.size());
+    CHECK(moved >= 5);
+    // The player sees them, and how they look.
+    CHECK(player.looks().size() == 3 && player.looks()[2] == "object/mobile/shared_twilek.iff");
+    int seen = 0, sitting = 0;
+    for (const auto& remote : player.remotes()) {
+        seen += remote.look > 0;
+        sitting += remote.pose == 1;
+    }
+    CHECK(seen == 8 && sitting == 1);
+}
+
 } // namespace
 
 int main() {
     test_hub_file();
     test_queue_battle_and_back();
+    test_people();
     return swm::test::finish("hub_test");
 }

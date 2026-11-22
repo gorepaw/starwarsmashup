@@ -68,8 +68,14 @@ NavGrid::NavGrid(const World& world, const Battlefield& field, const MoveParams&
     max_rise_ = std::tan(slope_degrees() * std::numbers::pi / 180);
     // The battlefield's bounds, within the terrain (and within reason, for
     // a battlefield without bounds on a world without terrain).
-    constexpr double far = 4096;
-    const Vec3 low = world.clamp({-far, 0, -far}), high = world.clamp({far, 0, far});
+    // (From far out, to the terrain's edges wherever it lies: a Galaxies
+    // city's is thousands of meters from the origin.)
+    constexpr double far = 4096, beyond = 1e9;
+    Vec3 low = world.clamp({-beyond, 0, -beyond}), high = world.clamp({beyond, 0, beyond});
+    if (world.terrain().empty()) {
+        low = {-far, 0, -far};
+        high = {far, 0, far};
+    }
     const double min_x = std::max(field.min_x, low.x), max_x = std::min(field.max_x, high.x);
     const double min_z = std::max(field.min_z, low.z), max_z = std::min(field.max_z, high.z);
     x0_ = min_x;

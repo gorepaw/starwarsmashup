@@ -63,6 +63,8 @@ void describe(godot::Dictionary& out, const core::net::EntityState& entity) {
     out["kills"] = int64_t(entity.kills);
     out["deaths"] = int64_t(entity.deaths);
     out["captures"] = int64_t(entity.captures);
+    out["look"] = int64_t(entity.look);  // 0: a player; else get_looks()[look - 1]
+    out["pose"] = int64_t(entity.pose);  // 0 on their feet, 1 sitting
 }
 
 void add_bolt_look(godot::Dictionary& entry, const core::WeaponDef& w) {
@@ -600,6 +602,16 @@ double SwmClient::get_max_health() const {
     return client() ? client()->character_stats().max_health : core::stats_for(loadout_).max_health;
 }
 
+godot::PackedStringArray SwmClient::get_looks() const {
+    godot::PackedStringArray out;
+    if (client()) {
+        for (const std::string& look : client()->looks()) {
+            out.push_back(godot::String::utf8(look.c_str()));
+        }
+    }
+    return out;
+}
+
 godot::Array SwmClient::get_remotes() const {
     godot::Array out;
     if (client()) {
@@ -697,6 +709,7 @@ void SwmClient::_bind_methods() {
     ClassDB::bind_method(D_METHOD("get_refusal"), &SwmClient::get_refusal);
     ClassDB::bind_method(D_METHOD("get_presented"), &SwmClient::get_presented);
     ClassDB::bind_method(D_METHOD("get_remotes"), &SwmClient::get_remotes);
+    ClassDB::bind_method(D_METHOD("get_looks"), &SwmClient::get_looks);
     ClassDB::bind_method(D_METHOD("get_stats"), &SwmClient::get_stats);
     ClassDB::bind_method(D_METHOD("get_ground_height", "x", "z", "below"), &SwmClient::get_ground_height,
                          DEFVAL(1e9));

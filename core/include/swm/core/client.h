@@ -116,6 +116,8 @@ public:
     // A hub's war terminals and the sides its battles are between.
     const std::vector<net::Recruiter>& recruiters() const { return recruiters_; }
     const std::array<std::string, 2>& factions() const { return factions_; }
+    // How the server's people look (an entity's look - 1 indexes these).
+    const std::vector<std::string>& looks() const { return looks_; }
     // Queue for a battle on a side (0 or 1) while at a war terminal, or
     // leave the queue (-1). Repeated until the server's status shows it.
     void queue(int team);
@@ -185,6 +187,7 @@ private:
     // Hubs
     std::vector<net::Recruiter> recruiters_;
     std::array<std::string, 2> factions_;
+    std::vector<std::string> looks_;
     net::PlayerStatus player_status_;
     int wanted_queue_ = -2;  // -2: no request
     double last_queue_request_ = -1e9;
