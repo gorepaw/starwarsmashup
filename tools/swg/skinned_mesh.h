@@ -30,6 +30,15 @@ struct SkinnedMesh {
     std::vector<std::vector<std::pair<uint32_t, float>>> weights;  // per position: (bone, weight)
     std::vector<Part> parts;
     int16_t occlusion_layer = 0;
+
+    // Textures composited at runtime (TRTS): a texture renderer (.trt) whose
+    // result replaces a part's shader's texture (by tag, e.g. MAIN). Faces:
+    // skin, brows, makeup, freckles, a Zabrak's tattoos.
+    struct TextureRenderer {
+        std::string path;  // texturerenderer/....trt
+        std::vector<std::pair<int, std::string>> targets;  // (part, texture tag)
+    };
+    std::vector<TextureRenderer> texture_renderers;
 };
 
 // Throws std::runtime_error on unsupported or malformed data.

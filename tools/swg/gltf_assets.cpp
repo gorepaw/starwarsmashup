@@ -135,12 +135,19 @@ int GltfAssets::hued_image_for(const std::string& texture_path, const std::strin
     return int(gltf_.images.size() - 1);
 }
 
+std::string GltfAssets::texture_file(const std::string& texture_path) {
+    const std::string file_name = std::filesystem::path(texture_path).stem().string() + ".png";
+    if (texture_files_.insert(texture_path).second) {
+        write_png(out_dir_ / file_name, decode_dds(library_.read(texture_path)));
+    }
+    return file_name;
+}
+
 int GltfAssets::image_for(const std::string& texture_path) {
     if (const auto it = images_.find(texture_path); it != images_.end()) {
         return it->second;
     }
-    const std::string file_name = std::filesystem::path(texture_path).stem().string() + ".png";
-    write_png(out_dir_ / file_name, decode_dds(library_.read(texture_path)));
+    const std::string file_name = texture_file(texture_path);
     gltf_.images.push_back(file_name);
     images_[texture_path] = int(gltf_.images.size() - 1);
     return images_[texture_path];

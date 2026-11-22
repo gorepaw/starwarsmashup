@@ -68,6 +68,8 @@ std::string shader_effect(std::span<const uint8_t> bytes);
 // blending; 1, 1: added), 11 alpha tests, 17 the color write mask (7: not
 // alpha). A cutout clips in its pixel program instead ("punchout": clip
 // alpha under 0.5), its pass as an opaque one's.
+// Also takes a shader with its effect inside it (SSHT / EFCT: a texture
+// renderer's shaders).
 enum class EffectBlend { opaque, alpha, additive, cutout };
 EffectBlend effect_blend(std::span<const uint8_t> bytes);
 

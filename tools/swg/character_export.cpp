@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <format>
 #include <fstream>
+#include <map>
 #include <ostream>
 #include <set>
 #include <stdexcept>
@@ -13,6 +14,7 @@
 #include "swg/skeleton.h"
 #include "swg/skinned_mesh.h"
 #include "swg/static_mesh.h"
+#include "swg/texture_renderer.h"
 
 namespace swm::swg {
 namespace {
@@ -116,6 +118,15 @@ private:
             for (const SkinnedMesh::Part& part : mesh.parts) {
                 if (std::filesystem::path(part.shader).stem().string().ends_with("_body")) {
                     assets_.set_owner_shader("body", part.shader);
+                }
+            }
+        }
+        // Textures composited at runtime (a face's), by the material they
+        // replace the main texture of.
+        for (const SkinnedMesh::TextureRenderer& renderer : mesh.texture_renderers) {
+            for (const auto& [part, tag] : renderer.targets) {
+                if (tag == "MAIN") {
+                    renderers_[std::filesystem::path(mesh.parts[size_t(part)].shader).stem().string()] = renderer.path;
                 }
             }
         }
@@ -242,9 +253,12 @@ private:
     // to choose (see CharacterExport).
     void write_colors(const std::filesystem::path& path) {
         std::set<std::string> palettes;
-        std::string materials;
+        std::map<std::string, std::string> entries;  // material -> its fields
+        const auto add = [&](const std::string& material, const std::string& field) {
+            std::string& entry = entries[material];
+            entry += (entry.empty() ? "" : ",") + field;
+        };
         for (const auto& [name, customization] : assets_.colors()) {
-            std::string factors;
             for (const char* factor : {"MAIN", "HUEB"}) {
                 if (std::string_view(factor) == "HUEB" && !customization.two_colors()) {
                     continue;
@@ -259,9 +273,19 @@ private:
                 } else {
                     value = "\"" + hex(assets_.default_color(customization, factor)) + "\"";
                 }
-                factors += std::format(R"({}"{}":{})", factors.empty() ? "" : ",", factor, value);
+                add(name, std::format(R"("{}":{})", factor, value));
             }
-            materials += std::format("{}\n    \"{}\": {{{}}}", materials.empty() ? "" : ",", name, factors);
+        }
+        for (const auto& [name, renderer_path] : renderers_) {
+            try {
+                add(name, "\"layers\":" + layers_json(renderer_path, palettes));
+            } catch (const std::exception& e) {
+                log_ << "  warning: " << renderer_path << ": " << e.what() << "\n";
+            }
+        }
+        std::string materials;
+        for (const auto& [name, fields] : entries) {
+            materials += std::format("{}\n    \"{}\": {{{}}}", materials.empty() ? "" : ",", name, fields);
         }
         std::string palette_json;
         for (const std::string& palette : palettes) {
@@ -276,6 +300,47 @@ private:
         if (!out) {
             throw std::runtime_error("can't write " + path.string());
         }
+    }
+
+    // A texture renderer's layers, as the client composites them (see
+    // CharacterExport): each one's place, how it blends, its textures (the
+    // choices of a style variable, or one), and its color.
+    std::string layers_json(const std::string& renderer_path, std::set<std::string>& palettes) {
+        const TextureRenderer renderer = parse_texture_renderer(library_.read(renderer_path));
+        log_ << "  texture renderer " << renderer_path << ": " << renderer.layers.size() << " layers\n";
+        std::string out;
+        for (const TextureRendererLayer& layer : renderer.layers) {
+            const bool blend = effect_blend(library_.read(layer.shader)) == EffectBlend::alpha;
+            std::string textures;
+            for (const std::string& texture : layer.textures) {
+                textures += std::format(R"({}"{}")", textures.empty() ? "" : ",", assets_.texture_file(texture));
+            }
+            std::string color = "\"ffffff\"";
+            if (!layer.palette.empty()) {
+                palettes.insert(layer.palette);
+                color = std::format(R"({{"variable":"{}","shared":{},"palette":"{}","index":{}}})",
+                                    layer.color_variable, layer.color_shared, layer.palette,
+                                    default_index(layer.color_variable));
+            }
+            out += std::format(
+                R"({}{{"rect":[{},{},{},{}],"uv":[{},{},{},{}],"blend":{},"textures":[{}],"style":"{}","color":{}}})",
+                out.empty() ? "" : ",", layer.rect[0], layer.rect[1], layer.rect[2], layer.rect[3], layer.uv[0],
+                layer.uv[1], layer.uv[2], layer.uv[3], blend, textures, layer.style_variable, color);
+        }
+        return "[" + out + "]";
+    }
+
+    // A layer's color has no default of its own: the same variable's in the
+    // body's shaders (a face's skin as its head's), else the palette's first.
+    int default_index(const std::string& variable) const {
+        for (const auto& [name, customization] : assets_.colors()) {
+            for (const PaletteColor& color : customization.colors) {
+                if (color.variable == variable) {
+                    return color.default_index;
+                }
+            }
+        }
+        return 0;
     }
 
     static std::string hex(std::array<uint8_t, 3> color) {
@@ -293,6 +358,7 @@ private:
     Gltf gltf_;
     GltfAssets assets_;
     Skeleton skeleton_;
+    std::map<std::string, std::string> renderers_;  // material -> its main texture's renderer (.trt)
 };
 
 } // namespace

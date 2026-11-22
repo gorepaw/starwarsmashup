@@ -15,6 +15,7 @@
 #include "swg/appearance_collision.h"
 #include "swg/datatable.h"
 #include "swg/object_template.h"
+#include "swg/texture_renderer.h"
 #include "swg/tre_archive.h"
 #include "swg/tre_library.h"
 
@@ -304,6 +305,87 @@ void test_effect_blend() {
     CHECK(shader_effect(shader) == "effect/h_alpha.eft");
 }
 
+// A texture renderer: two layers (a skin copied whole, brows blended into a
+// corner, drawn first-shader-last to check the drawing order), their
+// textures, styles and colors.
+void test_texture_renderer() {
+    const auto u32 = [](Bytes& out, uint32_t v) {
+        const auto* b = reinterpret_cast<const uint8_t*>(&v);
+        out.insert(out.end(), b, b + 4);
+    };
+    const auto f32s = [](Bytes& out, std::initializer_list<float> values) {
+        for (const float v : values) {
+            const auto* b = reinterpret_cast<const uint8_t*>(&v);
+            out.insert(out.end(), b, b + 4);
+        }
+    };
+    const auto append = [](Bytes& out, const Bytes& more) { out.insert(out.end(), more.begin(), more.end()); };
+    const auto quad = [&](float x0, float y0, float x1, float y1) {
+        Bytes info, data;
+        u32(info, 0x1101);
+        u32(info, 4);
+        f32s(data, {x0, y0, 3, 0, 0, x1, y0, 3, 1, 0, x1, y1, 3, 1, 1, x0, y1, 3, 0, 1});
+        return form("VTXA", {form("0003", {chunk("INFO", info), chunk("DATA", data)})});
+    };
+    const auto command = [&](const char* tag, const Bytes& payload) {
+        Bytes one;
+        u32(one, 1);
+        return form("PCMD", {form("TOPS", {chunk("INFO", one), chunk(tag, payload)})});
+    };
+    const auto render = [&](uint32_t shader, uint32_t buffer) {
+        Bytes info, rtfc;
+        u32(info, shader);
+        u32(info, 1);
+        u32(rtfc, buffer);
+        return form("SRSC", {chunk("INFO", info), chunk("RTFC", rtfc)});
+    };
+
+    Bytes dest, textures, sstc, sst1, stfp;
+    u32(dest, 128);
+    u32(dest, 256);
+    u32(textures, 3);
+    append(textures, text("texture\\face.dds"));
+    append(textures, text("texture\\brow_s01.dds"));
+    append(textures, text("texture\\brow_s02.dds"));
+    u32(sstc, 1);  // shader 1 (the skin): texture 0
+    append(sstc, {'N', 'I', 'A', 'M'});
+    u32(sstc, 0);
+    u32(sst1, 0);  // shader 0 (the brows): one of textures 1 and 2
+    append(sst1, {'N', 'I', 'A', 'M'});
+    u32(sst1, 1);
+    append(sst1, text("index_style_eyebrow"));
+    u32(sst1, 2);
+    stfp = {1, 0, 'N', 'I', 'A', 'M'};  // shader 1's color: skin, shared
+    append(stfp, text("palette/skin.pal"));
+    append(stfp, text("index_color_skin"));
+    stfp.push_back(0);
+
+    const Bytes trt = form(
+        "BTRT", {form("0001", {chunk("DEST", dest),
+                               form("SHTM", {chunk("NAME", text("shader\\texren_alphablend.sht")),
+                                             chunk("NAME", text("shader\\texren_copy.sht"))}),
+                               form("TXTS", {chunk("INFO", textures)}),
+                               form("VBS ", {quad(0, 0, 1, 1), quad(0.5f, 0.25f, 0.75f, 0.5f)}),
+                               form("RCMS", {render(1, 0), render(0, 1)}),
+                               form("PCMS", {command("SSTC", sstc), command("SST1", sst1), command("STFP", stfp)})})});
+    const TextureRenderer renderer = parse_texture_renderer(trt);
+    CHECK(renderer.width == 128 && renderer.height == 256);
+    CHECK(renderer.layers.size() == 2);
+    if (renderer.layers.size() == 2) {
+        const TextureRendererLayer& skin = renderer.layers[0];
+        CHECK(skin.shader == "shader/texren_copy.sht");
+        CHECK(skin.textures == std::vector<std::string>{"texture/face.dds"} && skin.style_variable.empty());
+        CHECK(skin.palette == "palette/skin.pal" && skin.color_variable == "index_color_skin" && skin.color_shared);
+        CHECK((skin.rect == std::array<float, 4>{0, 0, 1, 1}));
+        const TextureRendererLayer& brows = renderer.layers[1];
+        CHECK(brows.shader == "shader/texren_alphablend.sht");
+        CHECK((brows.textures == std::vector<std::string>{"texture/brow_s01.dds", "texture/brow_s02.dds"}));
+        CHECK(brows.style_variable == "index_style_eyebrow" && brows.palette.empty());
+        CHECK((brows.rect == std::array<float, 4>{0.5f, 0.25f, 0.75f, 0.5f}));
+        CHECK((brows.uv == std::array<float, 4>{0, 0, 1, 1}));
+    }
+}
+
 // A datatable: typed columns, rows of strings, numbers and booleans.
 void test_datatable() {
     Bytes columns;
@@ -344,6 +426,7 @@ int main() {
     test_switching_shader();
     test_shader_colors();
     test_effect_blend();
+    test_texture_renderer();
     test_datatable();
     test_templates_and_collision();
     test_floor_collision();

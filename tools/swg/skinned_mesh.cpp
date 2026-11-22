@@ -3,6 +3,7 @@
 #include <stdexcept>
 
 #include "swg/iff.h"
+#include "swg/manifest.h"
 
 namespace swm::swg {
 namespace {
@@ -132,6 +133,27 @@ SkinnedMesh parse_skinned_mesh(std::span<const uint8_t> bytes) {
             if (index >= mesh.normals.size()) {
                 throw std::runtime_error("SKMG: normal index out of range");
             }
+        }
+    }
+
+    // TRTS: INFO (renderer count, target count), then a TRT chunk each: the
+    // renderer's path, a target count, and per target the part (PSDT index)
+    // and the texture's tag (little-endian: "NIAM" for MAIN).
+    if (const IffNode* renderers = version.child("TRTS")) {
+        for (const IffNode* trt : renderers->children_with("TRT ")) {
+            IffReader r(trt->data);
+            SkinnedMesh::TextureRenderer renderer{.path = normalize_path(r.cstring())};
+            const uint32_t targets = r.u32();
+            for (uint32_t i = 0; i < targets; ++i) {
+                const uint32_t part = r.u32();
+                const uint32_t tag = r.u32();
+                if (part >= mesh.parts.size()) {
+                    throw std::runtime_error("SKMG: texture renderer targets a missing part");
+                }
+                const auto* t = reinterpret_cast<const char*>(&tag);
+                renderer.targets.push_back({int(part), std::string{t[3], t[2], t[1], t[0]}});
+            }
+            mesh.texture_renderers.push_back(std::move(renderer));
         }
     }
     return mesh;

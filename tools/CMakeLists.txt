@@ -17,6 +17,7 @@ add_library(swm_swg STATIC
   swg/sha256.cpp
   swg/skeleton.cpp
   swg/skinned_mesh.cpp
+  swg/texture_renderer.cpp
   swg/static_mesh.cpp
   swg/terrain.cpp
   swg/tre_archive.cpp

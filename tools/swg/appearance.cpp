@@ -183,10 +183,11 @@ std::string shader_effect(std::span<const uint8_t> bytes) {
 
 EffectBlend effect_blend(std::span<const uint8_t> bytes) {
     const IffNode root = parse_iff_root(bytes);
-    if (root.tag != "EFCT") {
-        throw std::runtime_error("not an effect (" + root.tag + ")");
+    const IffNode* effect = find_form(root, "EFCT");
+    if (!effect) {
+        throw std::runtime_error("no effect in " + root.tag);
     }
-    const IffNode* pass = find_form(root, "PASS");
+    const IffNode* pass = find_form(*effect, "PASS");
     if (!pass) {
         return EffectBlend::opaque;
     }

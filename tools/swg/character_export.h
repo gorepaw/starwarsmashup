@@ -34,6 +34,12 @@ Skeleton load_appearance_skeleton(TreLibrary& library, const std::string& sat_pa
 // or a fixed "rrggbb". A two-color material is the texture times MAIN
 // blended to HUEB by the texture's alpha.
 //
+// A material whose texture a texture renderer composites (a face's: see
+// TextureRenderer) has "layers" instead, in drawing order: {"rect", "uv",
+// "blend" (else copied), "textures" (PNGs next to the model: the choices of
+// "style", a style variable, or one), "color" (a factor; its default index
+// the same variable's in the body's shaders, else 0)}.
+//
 // A garment's bare skin (an owner proxy shader, "body") is drawn with the
 // body's own material.
 void export_character(TreLibrary& library, const CharacterExport& request, const std::filesystem::path& out_dir,

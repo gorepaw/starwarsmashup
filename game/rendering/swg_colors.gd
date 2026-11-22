@@ -18,6 +18,8 @@ extends RefCounted
 const SHADER := preload("res://rendering/swg_person.gdshader")
 const ALPHA_SHADER := preload("res://rendering/swg_person_alpha.gdshader")
 const CUTOUT_SHADER := preload("res://rendering/swg_person_cutout.gdshader")
+const FACE_SHADER := preload("res://rendering/swg_face.gdshader")
+const FACE_LAYERS := 8       # swg_face.gdshader's MAX_LAYERS
 const VARIED_ENTRIES := 64   # a varied color is one of a palette's first this many
 const SMALLEST_VARIED := 8   # smaller palettes keep their defaults
 
@@ -36,7 +38,8 @@ static func load_colors(model_path: String) -> Dictionary:
 	var listed: Dictionary = (data as Dictionary).get("palettes", {})
 	for name: String in listed:
 		palettes[name] = String(listed[name]).hex_decode()
-	return {"palettes": palettes, "materials": (data as Dictionary).get("materials", {})}
+	return {"palettes": palettes, "materials": (data as Dictionary).get("materials", {}),
+			"dir": model_path.get_base_dir(), "textures": {}}
 
 
 # Colors a model (an instance of the character): its look's own colors for
@@ -56,6 +59,10 @@ static func apply(model: Node, colors: Dictionary, seed: int) -> void:
 			if original == null or not materials.has(original.resource_name):
 				continue
 			var entry: Dictionary = materials[original.resource_name]
+			if entry.has("layers"):
+				mesh_instance.set_surface_override_material(surface,
+						_face(entry["layers"], original, seed, colors))
+				continue
 			var material := ShaderMaterial.new()
 			material.shader = SHADER  # as the material's effect draws (glTF's alpha modes)
 			if original.transparency == BaseMaterial3D.TRANSPARENCY_ALPHA:
@@ -70,6 +77,64 @@ static func apply(model: Node, colors: Dictionary, seed: int) -> void:
 				material.set_shader_parameter("two_colors", true)
 				material.set_shader_parameter("hueb_color", _color(entry["HUEB"], item, seed, palettes))
 			mesh_instance.set_surface_override_material(surface, material)
+
+
+# A texture renderer's texture (a face), composited as it's drawn
+# (swg_face.gdshader): each layer's texture (a style variable's choice, or
+# its one) and color. A style's default is its first (ASSUMPTION: Galaxies'
+# renderers give none; its first is a plain one, e.g. a Zabrak's no tattoo).
+static func _face(layers: Array, original: BaseMaterial3D, seed: int, colors: Dictionary) -> ShaderMaterial:
+	var textures: Array[Texture2D] = []
+	var rects := PackedVector4Array()
+	var uvs := PackedVector4Array()
+	var layer_colors := PackedVector3Array()
+	var blends := PackedInt32Array()
+	for layer: Dictionary in layers.slice(0, FACE_LAYERS):
+		var choices: Array = layer["textures"]
+		var index := 0
+		var style := String(layer.get("style", ""))
+		if seed != 0 and not style.is_empty():
+			index = hash("%d/%s" % [seed, style]) % choices.size()
+		textures.append(_texture(colors, String(choices[index])))
+		var r: Array = layer["rect"]
+		var u: Array = layer["uv"]
+		rects.append(Vector4(r[0], r[1], r[2], r[3]))
+		uvs.append(Vector4(u[0], u[1], u[2], u[3]))
+		var color := _color(layer["color"], "face", seed, colors["palettes"]).srgb_to_linear()
+		layer_colors.append(Vector3(color.r, color.g, color.b))
+		blends.append(1 if bool(layer["blend"]) else 0)
+	var count := textures.size()
+	while textures.size() < FACE_LAYERS:  # unused layers still need a texture
+		textures.append(textures[0] if count > 0 else null)
+		rects.append(Vector4())
+		uvs.append(Vector4())
+		layer_colors.append(Vector3.ONE)
+		blends.append(0)
+	var material := ShaderMaterial.new()
+	material.shader = FACE_SHADER
+	material.set_shader_parameter("layer_count", count)
+	material.set_shader_parameter("layer_textures", textures)
+	material.set_shader_parameter("layer_rects", rects)
+	material.set_shader_parameter("layer_uvs", uvs)
+	material.set_shader_parameter("layer_colors", layer_colors)
+	material.set_shader_parameter("layer_blends", blends)
+	material.set_shader_parameter("roughness", original.roughness)
+	material.set_shader_parameter("metallic", original.metallic)
+	return material
+
+
+# A texture exported next to the model (cached with its colors).
+static func _texture(colors: Dictionary, file: String) -> Texture2D:
+	var cache: Dictionary = colors["textures"]
+	if not cache.has(file):
+		var image := Image.load_from_file(String(colors["dir"]).path_join(file))
+		if image != null and not image.is_empty():
+			image.generate_mipmaps()
+			cache[file] = ImageTexture.create_from_image(image)
+		else:
+			push_warning("missing texture: " + file)
+			cache[file] = null
+	return cache[file]
 
 
 # A factor's color: fixed ("rrggbb"), or a palette's entry by its variable.

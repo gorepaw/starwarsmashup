@@ -2,12 +2,13 @@
 # by side from the side and the front, to check how they move (Galaxies'
 # own clips, swgtool export-character --swg-anim, or retargeted ones).
 #
-#   godot --path game --script res://tools/pose_clips.gd -- <character.gltf> <output_prefix> [--varied] [clip...]
+#   godot --path game --script res://tools/pose_clips.gd -- <character.gltf> <output_prefix> [--varied] [--face] [clip...]
 #
 # Writes <output_prefix><clip>.png: four moments through the clip in a row
 # (the side view), and the same under them from the front. All clips when
 # none are named. In the character's own colors (its .colors.json, if any),
-# or with --varied, each in colors varied as a hub's crowd's are. Needs a
+# or with --varied, each in colors varied as a hub's crowd's are. --face
+# looks closely at the four front views' faces instead. Needs a
 # real window.
 extends SceneTree
 
@@ -30,6 +31,8 @@ func _initialize() -> void:
 	_out = args[1]
 	var varied := args.has("--varied")
 	args.erase("--varied")
+	var face := args.has("--face")
+	args.erase("--face")
 	var colors := SwgColors.load_colors(args[0])
 	DisplayServer.window_set_size(Vector2i(1280, 720))
 	var environment := Environment.new()
@@ -62,6 +65,9 @@ func _initialize() -> void:
 	var camera := Camera3D.new()
 	camera.position = Vector3(0, 1.4, 9.5)
 	camera.fov = 50
+	if face:  # the front row's heads, about 1.65 m up
+		camera.position = Vector3(0, 1.62, 3.2)
+		camera.fov = 22
 	root.add_child(camera)
 	_clips = args.slice(2) if args.size() > 2 else _players[0].get_animation_list()
 	_next()

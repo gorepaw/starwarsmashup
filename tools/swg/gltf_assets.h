@@ -4,6 +4,7 @@
 #include <filesystem>
 #include <iosfwd>
 #include <map>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -52,6 +53,9 @@ public:
     // Colors::describe: each customizable material's colors, by its name.
     const std::map<std::string, ShaderCustomization>& colors() const { return colors_; }
 
+    // A texture decoded to a PNG next to the glTF (once); its file's name.
+    std::string texture_file(const std::string& texture_path);
+
     // A palette's colors (cached). Throws std::runtime_error.
     const std::vector<std::array<uint8_t, 3>>& palette(const std::string& path);
 
@@ -76,6 +80,7 @@ private:
     std::map<std::string, ShaderCustomization> colors_;
     std::map<std::string, std::vector<std::array<uint8_t, 3>>> palettes_;
     std::map<std::string, EffectBlend> blends_;
+    std::set<std::string> texture_files_;
 };
 
 // The highest-detail static mesh of an appearance: a mesh (MESH), a level of
