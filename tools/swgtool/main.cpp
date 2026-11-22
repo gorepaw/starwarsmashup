@@ -23,6 +23,7 @@
 #include "swg/character_export.h"
 #include "swg/city_export.h"
 #include "swg/datatable.h"
+#include "swg/keyframe_animation.h"
 #include "swg/gltf_assets.h"
 #include "swg/iff.h"
 #include "swg/image.h"
@@ -43,11 +44,12 @@ constexpr const char* usage = R"(usage:
   swgtool manifest <dir> --name <name> --source <text> -o <out.tsv>
   swgtool coverage <manifest.tsv> <dir> [--missing <out.tsv>]
   swgtool groups <manifest.tsv> [--list <group>]
-  swgtool iff <archive.tre|dir> <path>
+  swgtool iff <archive.tre|dir> <path> [--full]
   swgtool iff-check <dir>
+  swgtool extract <dir> <path> <out_file>
   swgtool datatable <dir> <path.iff> [--match <text>]
   swgtool export-character <dir> <out_dir> --name <name> --sat <path.sat>... [--weapon <path.lod>]
-                           [--bf2-lvl <ingame.lvl> --bf2-bank <bank> --anim <name>...]
+                           [--bf2-lvl <ingame.lvl> --bf2-bank <bank> --anim <name>...] [--swg-anim <path.ans>...]
   swgtool bake-terrain <dir> <out_prefix> --trn <path.trn> --center <x> <z> --samples <n> --spacing <m>
                        [--snapshot <path.ws>]
   swgtool terrain-trace <dir> --trn <path.trn> --at <x> <z>
@@ -329,16 +331,18 @@ std::string extension_of(const std::string& path) {
     return dot == std::string::npos || (slash != std::string::npos && dot < slash) ? "(none)" : path.substr(dot);
 }
 
-void print_iff_tree(const std::vector<IffNode>& nodes, int depth) {
+// `full`: every byte of each chunk (up to 4 KB) instead of the first 16.
+void print_iff_tree(const std::vector<IffNode>& nodes, int depth, bool full = false) {
     for (const IffNode& node : nodes) {
         const std::string indent(size_t(depth) * 2, ' ');
         if (node.form) {
             std::cout << indent << "FORM " << node.tag << "\n";
-            print_iff_tree(node.children, depth + 1);
+            print_iff_tree(node.children, depth + 1, full);
             continue;
         }
         std::string preview;
-        for (size_t i = 0; i < node.data.size() && i < 16; ++i) {
+        const size_t shown = full ? 4096 : 16;
+        for (size_t i = 0; i < node.data.size() && i < shown; ++i) {
             preview += std::format("{:02x} ", node.data[i]);
         }
         // And as text, where it's mostly text (template parameters, file names).
@@ -351,7 +355,7 @@ void print_iff_tree(const std::vector<IffNode>& nodes, int depth) {
         }
         const bool show_text = !text.empty() && printable * 2 >= text.size();
         std::cout << std::format("{}{} {:>8}  {}{}{}{}\n", indent, node.tag, node.data.size(), preview,
-                                 node.data.size() > 16 ? "..." : "", show_text ? "  " : "", show_text ? text : "");
+                                 node.data.size() > shown ? "..." : "", show_text ? "  " : "", show_text ? text : "");
     }
 }
 
@@ -362,7 +366,8 @@ int cmd_iff(const std::vector<std::string>& args) {
     }
     if (std::filesystem::is_directory(args[0])) {
         TreLibrary library(args[0]);
-        print_iff_tree(parse_iff(library.read(normalize_path(args[1]))), 0);
+        print_iff_tree(parse_iff(library.read(normalize_path(args[1]))), 0,
+                       std::find(args.begin(), args.end(), "--full") != args.end());
         return 0;
     }
     TreArchive tre(args[0]);
@@ -496,6 +501,15 @@ int cmd_export_character(const std::vector<std::string>& args) {
             }
             request.clips.push_back(
                 retarget::retarget_animation(skeleton, bf2_skeleton, *it, retarget::humanoid_mapping(), anim_name));
+        }
+    }
+
+    // Galaxies' own animations (.ans), named by their file's stem.
+    if (const std::vector<std::string> ans = options(args, "--swg-anim"); !ans.empty()) {
+        const Skeleton skeleton = load_appearance_skeleton(library, request.appearances.front());
+        for (const std::string& path : ans) {
+            const KeyframeAnimation animation = parse_keyframe_animation(library.read(normalize_path(path)));
+            request.clips.push_back(sample_animation(animation, skeleton, std::filesystem::path(path).stem().string()));
         }
     }
 
@@ -728,6 +742,20 @@ int cmd_pob_check(const std::vector<std::string>& args) {
     return failed == 0 ? 0 : 1;
 }
 
+// One file out of the archives, as stored (decompressed). Write it only to
+// gitignored places (game/imported_assets/, a scratch directory).
+int cmd_extract(const std::vector<std::string>& args) {
+    if (args.size() < 3) {
+        std::cerr << usage;
+        return 2;
+    }
+    TreLibrary library(args[0]);
+    const std::vector<uint8_t> data = library.read(normalize_path(args[1]));
+    std::ofstream out(args[2], std::ios::binary);
+    out.write(reinterpret_cast<const char*>(data.data()), std::streamsize(data.size()));
+    return out ? 0 : 1;
+}
+
 int cmd_datatable(const std::vector<std::string>& args) {
     if (args.size() < 2) {
         std::cerr << usage;
@@ -861,6 +889,9 @@ int main(int argc, char** argv) {
         }
         if (command == "datatable") {
             return cmd_datatable(args);
+        }
+        if (command == "extract") {
+            return cmd_extract(args);
         }
     } catch (const std::exception& e) {
         std::cerr << "error: " << e.what() << "\n";

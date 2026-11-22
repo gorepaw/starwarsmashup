@@ -15,6 +15,9 @@ struct Joint {
     int parent = -1;   // index into Skeleton::joints, -1 for roots; parents precede children
     Vec3 translation;  // bind pose, relative to parent (SWG space)
     Quat rotation;     // bind pose, relative to parent (SWG space)
+    // The skeleton's pre- and post-multiply rotations: rotation is
+    // post * bind * pre, and an animation's rotation takes bind's place.
+    Quat pre, post;
 };
 
 struct Skeleton {
@@ -35,8 +38,8 @@ struct Skeleton {
 //
 // Each joint's local rotation is post * bind * pre (RPST * BPRO * RPRE). That
 // order fits the human meshes' vertex weights best (mean 1.6 cm; the reverse
-// order is 6 cm off). PROVISIONAL: the conjugate fits nearly as well
-// (1.7 cm), so an animation must confirm it.
+// order is 6 cm off). Galaxies' own animations confirm it: with their
+// rotations in bind's place, the human walks, runs and sits as it should.
 Skeleton parse_skeleton(std::span<const uint8_t> bytes);
 
 } // namespace swm::swg

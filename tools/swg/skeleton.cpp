@@ -52,6 +52,8 @@ Skeleton parse_sktm(const IffNode& sktm) {
         const Quat post_rotation = read_quat(post);
         joint.translation = {translations.f32(), translations.f32(), translations.f32()};
         joint.rotation = normalized(post_rotation * read_quat(bind) * pre_rotation);
+        joint.pre = pre_rotation;
+        joint.post = post_rotation;
     }
     return skeleton;
 }

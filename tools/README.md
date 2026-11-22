@@ -19,9 +19,10 @@ swgtool list <archive.tre>
 swgtool manifest <dir> --name <name> --source <text> -o <out.tsv>
 swgtool coverage <manifest.tsv> <dir> [--missing <out.tsv>]
 swgtool groups <manifest.tsv> [--list <group>]
-swgtool iff <archive.tre|dir> <path>
+swgtool iff <archive.tre|dir> <path> [--full]
 swgtool iff-check <dir>
 swgtool datatable <dir> <path.iff> [--match <text>]
+swgtool extract <dir> <path> <out_file>
 swgtool export-character <dir> <out_dir> --name <name> --sat <path.sat>... [--weapon <path.lod>]
                          [--bf2-lvl <ingame.lvl> --bf2-bank <bank> --anim <name>...]
 swgtool bake-terrain <dir> <out_prefix> --trn <path.trn> --center <x> <z> --samples <n> --spacing <m>
@@ -50,6 +51,8 @@ swgtool export-city <dir> <bake_prefix> --snapshot <path.ws> --center <x> <z> --
   ```
 
   With `--bf2-lvl`, `--bf2-bank`, and one or more `--anim`, Battlefront II animations are retargeted onto the character and written as glTF animations, e.g. `--bf2-lvl <Battlefront>\GameData\Data\_lvl_pc\ingame.lvl --bf2-bank human_0 --anim human_rifle_stand_idle_emote_full --anim human_rifle_stand_runforward`. Clips play in place. The client (`game/rendering/soldier.gd`) uses these `human_0` clips, all `human_rifle_stand_*`: `idle_emote_full`, `runforward`, `runbackward`, `shoot_full`, `reload_full`, `shoot_secondary_full`, `hitfront`, `death_forward` and `death_backward`.
+
+  With `--swg-anim <path.ans>` (repeatable), Galaxies' own animations are sampled onto the skeleton and written as glTF animations named by their files (`all_b_loc_walk_male`, `all_b_idl_sitting_chair_idle`, ...): both the plain format (`KFAT`) and the compressed one (`CKAT`), whose rotations were worked out from the files (`swg/keyframe_animation.cpp`). `game/tools/pose_clips.gd` screenshots a character's clips.
 
   Not handled yet: occlusion zones (hiding body triangles under armor), customization (skin palettes, blend shapes), and LOD levels below the most detailed.
 
@@ -82,6 +85,7 @@ swgtool export-city <dir> <bake_prefix> --snapshot <path.ws> --center <x> <z> --
 
   Not handled yet: doors and the objects placed inside cells.
 - **pob-check**: parse every building and floor, and load every cell mesh. On the Total Experience set: 223 buildings (2,669 cells, 12,617 lights) and 3,896 floors load. 93 files are deleted by later patches (shipped empty), and 3 buildings use an older layout (`PRTO 0001`) that isn't supported.
+- **extract**: write one file out of the archives as stored, for looking into a format. Only to gitignored places.
 - **datatable**: print a datatable (`DTII`): its columns with their types, then a row per line, those containing `--match` text only.
 - **snapshot**: list a world snapshot's top-level objects (id, position, yaw in degrees, number of objects inside, template), filtered by template substring and/or distance. For example, `--match cantina` finds the Mos Eisley cantina at (3432.35, 5.00, -4818.13), yaw 38.09. A building's object template names its `.pob` (`portalLayoutFilename`). `--inside <id>` lists what's inside an object instead, with the cell it's in: a building holds its cells, a cell its furniture.
 
