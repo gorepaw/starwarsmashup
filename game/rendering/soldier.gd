@@ -26,7 +26,7 @@ const RELOAD := &"human_rifle_stand_reload_full"
 const THROW := &"human_rifle_stand_shoot_secondary_full"
 const HIT := &"human_rifle_stand_hitfront"
 const DEATHS: Array[StringName] = [&"human_rifle_stand_death_forward", &"human_rifle_stand_death_backward"]
-const RUN_SPEED := 4.5       # m/s the run cycle matches
+const RUN_SPEED := 6.0       # m/s the run cycle plays at its own pace (faster, faster; tuned by eye: 4.5 looked hurried)
 const AIM_HOLD := 1.2        # seconds the rifle stays raised after a shot
 const AIM_BLEND := 8.0       # per second, raising and lowering it
 const MAX_LEG_TURN := deg_to_rad(70)
@@ -45,7 +45,7 @@ const KICK_DECAY := 14.0         # per second, the first-person recoil settling
 const KICK_BACK := 0.025         # m a shot pushes the arms back
 const KICK_UP := deg_to_rad(2.5) # and turns the muzzle up
 const BOB := Vector2(0.007, 0.005)  # m sideways and up at a full run
-const STRIDE := 1.7              # m a full run cycle (two steps) covers
+const STRIDE := 2.27             # m a full run cycle (two steps) covers, as RUN_SPEED plays it
 const SWAY := 0.012              # radians of lag per radian a second of turning
 const SWAY_LIMIT := 0.05
 const STEP_SNAP := 0.06          # m: a height change in one frame this big is a step
@@ -321,7 +321,7 @@ func pose(state: Dictionary, delta: float) -> void:
 		blend *= clampf(speed / 2.0, 0.0, 1.0)
 	_leg_yaw = lerp_angle(_leg_yaw, leg_yaw, minf(1.0, 10.0 * delta))
 	_tree.set("parameters/move/blend_position", blend)
-	_tree.set("parameters/move_speed/scale", clampf(speed / RUN_SPEED, 0.6, 1.9) if speed > 0.5 else 1.0)
+	_tree.set("parameters/move_speed/scale", clampf(speed / RUN_SPEED, 0.6, 1.5) if speed > 0.5 else 1.0)
 
 	_since_shot += delta
 	if first_person:
@@ -382,7 +382,7 @@ func _pose_simple(state: Dictionary) -> void:
 	var animation := RUN if speed > 0.5 else IDLE
 	if _player.current_animation != animation and _player.has_animation(animation):
 		_player.play(animation, 0.15)
-	_player.speed_scale = clampf(speed / RUN_SPEED, 0.6, 1.9) if speed > 0.5 else 1.0
+	_player.speed_scale = clampf(speed / RUN_SPEED, 0.6, 1.5) if speed > 0.5 else 1.0
 
 
 # A shot: raise the rifle (if it isn't) and play the recoil from the start.
