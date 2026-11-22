@@ -30,7 +30,10 @@ static func load_lit(path: String) -> Node3D:
 
 
 # Replaces each surface's material with the cell shader and the cell's lights.
-static func apply_cell_lighting(mesh: MeshInstance3D, cell: Dictionary) -> void:
+# `to_building` takes the mesh's space to the building's (furniture in it;
+# a cell's own mesh is in the building's already).
+static func apply_cell_lighting(mesh: MeshInstance3D, cell: Dictionary,
+		to_building := Transform3D.IDENTITY) -> void:
 	var ambient := Vector3.ZERO
 	var parallel_direction := PackedVector3Array()
 	var parallel_color := PackedVector3Array()
@@ -73,6 +76,7 @@ static func apply_cell_lighting(mesh: MeshInstance3D, cell: Dictionary) -> void:
 		material.set_shader_parameter("point_position", point_position)
 		material.set_shader_parameter("point_color", point_color)
 		material.set_shader_parameter("point_attenuation", point_attenuation)
+		material.set_shader_parameter("to_building", Projection(to_building))
 		mesh.set_surface_override_material(surface, material)
 
 

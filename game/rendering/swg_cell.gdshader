@@ -1,7 +1,8 @@
 // Galaxies interior cell lighting. Each cell of a building is lit only by its
 // own lights (from the .pob: ambient, parallel, and point), so this replaces
 // Godot's lighting for cell geometry. Lights are in building space, which is
-// the mesh's own space (cell meshes sit at the building origin).
+// the mesh's own space for cell meshes (they sit at the building origin);
+// furniture in a cell gives its own place in the building (to_building).
 //
 // Lighting is computed on sRGB values, then converted to linear, to keep
 // Galaxies' original look (its fixed-function lighting worked in sRGB).
@@ -20,12 +21,14 @@ uniform vec3 point_position[MAX_LIGHTS];
 uniform vec3 point_color[MAX_LIGHTS];
 uniform vec3 point_attenuation[MAX_LIGHTS];  // constant, linear, quadratic
 
+uniform mat4 to_building = mat4(1.0);  // the mesh's space to the building's
+
 varying vec3 building_position;
 varying vec3 building_normal;
 
 void vertex() {
-	building_position = VERTEX;
-	building_normal = NORMAL;
+	building_position = (to_building * vec4(VERTEX, 1.0)).xyz;
+	building_normal = mat3(to_building) * NORMAL;
 }
 
 void fragment() {

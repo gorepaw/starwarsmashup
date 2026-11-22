@@ -73,7 +73,72 @@ bool TerrainCut::contains(Vec3 point) const {
     return !planes.empty();
 }
 
+bool TerrainHoles::at(double x, double z) const {
+    const double column = std::floor((x - x0) / cell);
+    const double row = std::floor((z - z0) / cell);
+    if (cells.empty() || column < 0 || row < 0 || column >= width || row >= height) {
+        return false;
+    }
+    return cells[size_t(row) * size_t(width) + size_t(column)] != 0;
+}
+
+namespace {
+
+constexpr uint32_t holes_magic = 0x4C4F4848;  // "HHOL"
+constexpr uint32_t holes_version = 1;
+
+} // namespace
+
+void save_terrain_holes(const TerrainHoles& holes, const std::filesystem::path& path) {
+    std::ofstream out(path, std::ios::binary);
+    const auto put = [&](const auto& value) { out.write(reinterpret_cast<const char*>(&value), sizeof(value)); };
+    put(holes_magic);
+    put(holes_version);
+    put(holes.x0);
+    put(holes.z0);
+    put(holes.cell);
+    put(int32_t(holes.width));
+    put(int32_t(holes.height));
+    out.write(reinterpret_cast<const char*>(holes.cells.data()), std::streamsize(holes.cells.size()));
+    if (!out) {
+        throw std::runtime_error("cannot write " + path.string());
+    }
+}
+
+TerrainHoles load_terrain_holes(const std::filesystem::path& path) {
+    std::ifstream in(path, std::ios::binary);
+    if (!in) {
+        throw std::runtime_error("cannot open " + path.string());
+    }
+    const auto get = [&](auto& value) { in.read(reinterpret_cast<char*>(&value), sizeof(value)); };
+    uint32_t magic = 0, version = 0;
+    int32_t width = 0, height = 0;
+    TerrainHoles holes;
+    get(magic);
+    get(version);
+    get(holes.x0);
+    get(holes.z0);
+    get(holes.cell);
+    get(width);
+    get(height);
+    if (!in || magic != holes_magic || version != holes_version || width < 0 || height < 0 || holes.cell <= 0 ||
+        int64_t(width) * height > (int64_t(1) << 28)) {
+        throw std::runtime_error(path.string() + ": not a terrain holes file");
+    }
+    holes.width = width;
+    holes.height = height;
+    holes.cells.resize(size_t(width) * size_t(height));
+    in.read(reinterpret_cast<char*>(holes.cells.data()), std::streamsize(holes.cells.size()));
+    if (!in) {
+        throw std::runtime_error(path.string() + ": truncated");
+    }
+    return holes;
+}
+
 bool Heightfield::cut_at(double x, double z) const {
+    if (holes_.at(x, z)) {
+        return true;
+    }
     if (cuts_.empty()) {
         return false;
     }
@@ -152,6 +217,9 @@ Heightfield load_bake(const std::filesystem::path& prefix) {
             cuts.push_back(std::move(cut));
         }
         field.set_cuts(std::move(cuts));
+    }
+    if (const std::filesystem::path holes = prefix.string() + ".holes"; std::filesystem::exists(holes)) {
+        field.set_holes(load_terrain_holes(holes));
     }
     return field;
 }

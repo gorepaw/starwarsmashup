@@ -12,11 +12,18 @@ uniform float family_size[MAX_FAMILIES];  // meters per texture repeat
 uniform vec2 map_origin;                  // SWG (x, z) of sample (0, 0)
 uniform float map_spacing;
 uniform int map_samples;
+// Where the terrain is taken away (a city's rooms: core::TerrainHoles), game x z.
+uniform sampler2D holes : filter_nearest, repeat_disable;  // R > 0: a hole
+uniform bool has_holes = false;
+uniform vec2 holes_origin;  // game (x, z) of cell (0, 0)'s corner
+uniform vec2 holes_size;    // in meters
 
 varying vec2 swg_xz;
+varying vec2 game_xz;
 
 void vertex() {
 	swg_xz = vec2(-VERTEX.x, VERTEX.z);
+	game_xz = VERTEX.xz;
 }
 
 vec3 family_color(ivec2 sample_index) {
@@ -30,6 +37,12 @@ vec3 family_color(ivec2 sample_index) {
 }
 
 void fragment() {
+	if (has_holes) {
+		vec2 h = (game_xz - holes_origin) / holes_size;
+		if (all(greaterThanEqual(h, vec2(0.0))) && all(lessThan(h, vec2(1.0))) && texture(holes, h).r > 0.001) {
+			discard;
+		}
+	}
 	vec2 grid = (swg_xz - map_origin) / map_spacing;
 	ivec2 base = ivec2(floor(grid));
 	vec2 f = fract(grid);

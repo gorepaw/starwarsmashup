@@ -123,6 +123,18 @@ static func build_material(prefix: String, meta: Dictionary) -> Material:
 	material.set_shader_parameter("map_origin", Vector2(meta["origin_x"], meta["origin_z"]))
 	material.set_shader_parameter("map_spacing", float(meta["spacing"]))
 	material.set_shader_parameter("map_samples", samples)
+	# Where a city's rooms take the terrain away (swgtool export-city).
+	var holes := FileAccess.get_file_as_bytes(prefix + ".holes")
+	if holes.size() > 40:
+		var width := holes.decode_s32(32)
+		var height := holes.decode_s32(36)
+		if holes.size() >= 40 + width * height:
+			var cell := holes.decode_double(24)
+			var image := Image.create_from_data(width, height, false, Image.FORMAT_R8, holes.slice(40, 40 + width * height))
+			material.set_shader_parameter("holes", ImageTexture.create_from_image(image))
+			material.set_shader_parameter("has_holes", true)
+			material.set_shader_parameter("holes_origin", Vector2(holes.decode_double(8), holes.decode_double(16)))
+			material.set_shader_parameter("holes_size", Vector2(width, height) * cell)
 	return material
 
 

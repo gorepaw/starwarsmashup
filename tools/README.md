@@ -21,6 +21,7 @@ swgtool coverage <manifest.tsv> <dir> [--missing <out.tsv>]
 swgtool groups <manifest.tsv> [--list <group>]
 swgtool iff <archive.tre|dir> <path>
 swgtool iff-check <dir>
+swgtool datatable <dir> <path.iff> [--match <text>]
 swgtool export-character <dir> <out_dir> --name <name> --sat <path.sat>... [--weapon <path.lod>]
                          [--bf2-lvl <ingame.lvl> --bf2-bank <bank> --anim <name>...]
 swgtool bake-terrain <dir> <out_prefix> --trn <path.trn> --center <x> <z> --samples <n> --spacing <m>
@@ -28,7 +29,7 @@ swgtool bake-terrain <dir> <out_prefix> --trn <path.trn> --center <x> <z> --samp
 swgtool terrain-trace <dir> --trn <path.trn> --at <x> <z>
 swgtool export-building <dir> <out_dir> --pob <path.pob> --name <name>
 swgtool pob-check <dir>
-swgtool snapshot <dir> <path.ws> [--match <text>] [--near <x> <z> <radius>]
+swgtool snapshot <dir> <path.ws> [--match <text>] [--near <x> <z> <radius>] [--inside <id>]
 swgtool export-city <dir> <bake_prefix> --snapshot <path.ws> --center <x> <z> --radius <m> [--hub <hub.ini>]
 ```
 
@@ -81,14 +82,16 @@ swgtool export-city <dir> <bake_prefix> --snapshot <path.ws> --center <x> <z> --
 
   Not handled yet: doors and the objects placed inside cells.
 - **pob-check**: parse every building and floor, and load every cell mesh. On the Total Experience set: 223 buildings (2,669 cells, 12,617 lights) and 3,896 floors load. 93 files are deleted by later patches (shipped empty), and 3 buildings use an older layout (`PRTO 0001`) that isn't supported.
-- **snapshot**: list a world snapshot's top-level objects (id, position, yaw in degrees, number of objects inside, template), filtered by template substring and/or distance. For example, `--match cantina` finds the Mos Eisley cantina at (3432.35, 5.00, -4818.13), yaw 38.09. A building's object template names its `.pob` (`portalLayoutFilename`).
+- **datatable**: print a datatable (`DTII`): its columns with their types, then a row per line, those containing `--match` text only.
+- **snapshot**: list a world snapshot's top-level objects (id, position, yaw in degrees, number of objects inside, template), filtered by template substring and/or distance. For example, `--match cantina` finds the Mos Eisley cantina at (3432.35, 5.00, -4818.13), yaw 38.09. A building's object template names its `.pob` (`portalLayoutFilename`). `--inside <id>` lists what's inside an object instead, with the cell it's in: a building holds its cells, a cell its furniture.
 
 - **export-city**: export a city: the objects the world snapshot places within `--radius` of `--center` (buildings, walls, props, terminals), next to the terrain bake it stands on. Each object's template names its look (`appearanceFilename`, or `portalLayoutFilename` for a building), set in it or in a template it derives from. It writes:
   - `<bake_prefix>_city/`: a glTF per model with its textures. Buildings as `export-building` writes them (every cell, its lights and sidecar); the rest as their appearance's most detailed mesh.
-  - `<bake_prefix>.objects.json`: each object's model, position and rotation in game space (bf2tool's map objects' format), buildings and the hub's war terminals marked.
+  - `<bake_prefix>.objects.json`: each object's model, position and rotation in game space (bf2tool's map objects' format), buildings and the hub's war terminals marked. A building's furniture (what the snapshot puts in its cells) follows it, with the cell whose lights light it; and its doors, one per doorway naming a door style (`datatables/appearance/door_style.iff`: the door's model, how far it slides, how fast, and how near someone must come), placed at the doorway's hardpoint.
+  - `<bake_prefix>.holes`: where the buildings' rooms are (every cell's floor but the outside's), on a 25 cm grid: there's no terrain there (`core::TerrainHoles`), as in Galaxies a room has none; the cantina's main room is a meter under the street.
   - `<bake_prefix>.collision`: what stops characters and shots, in the map collision format `core::World` loads next to a bake (so the hub's server and clients collide with the city with nothing else to load): each model's collision extent (its collision mesh, boxes, cylinders; composite and detail extents), the floors it names (roofs, stairs, a building's every cell), facing up, and walls where a floor can't be left, facing both ways.
 
-  With `--hub`, the hub's war terminals stand in the city too, on the terrain: each `[recruiter]` with a `Template` (an object template) and `Yaw`. Not yet: objects inside buildings (the cantina's furniture), particle effects and skeletal appearances; the log counts them. Mos Eisley, 700 m around its middle (1,623 objects, 180 models, 93,082 collision triangles, in 8 seconds):
+  With `--hub`, the hub's war terminals stand in the city too, on the terrain: each `[recruiter]` with a `Template` (an object template) and `Yaw`. Not yet: particle effects and skeletal appearances; the log counts them. Mos Eisley, 700 m around its middle (2,663 objects: 900 of them furniture, 140 doors; 314 models, 93,886 collision triangles, in 10 seconds):
 
   ```powershell
   swgtool export-city E:\swg_te\extracted\Star_Wars_files game\imported_assets\terrain\tatooine_mos_eisley `

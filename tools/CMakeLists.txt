@@ -5,6 +5,7 @@ add_library(swm_swg STATIC
   swg/building_export.cpp
   swg/character_export.cpp
   swg/city_export.cpp
+  swg/datatable.cpp
   swg/gltf.cpp
   swg/gltf_assets.cpp
   swg/iff.cpp

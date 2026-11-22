@@ -1,5 +1,6 @@
 #include "swg/city_export.h"
 
+#include <algorithm>
 #include <cmath>
 #include <format>
 #include <fstream>
@@ -12,6 +13,7 @@
 
 #include "swg/appearance_collision.h"
 #include "swg/building_export.h"
+#include "swg/datatable.h"
 #include "swg/gltf.h"
 #include "swg/gltf_assets.h"
 #include "swg/manifest.h"
@@ -31,6 +33,14 @@ struct Model {
     std::string file;  // relative to the bake's directory, "" if it couldn't be exported
     bool building = false;
     AppearanceCollision collision;  // glTF space
+    std::vector<std::array<Vec3, 3>> rooms;  // a building's rooms' floors (every cell but the outside)
+    // A building's doors: one per doorway that names a door style.
+    struct Door {
+        std::string style;
+        int cell = 0;    // the cell whose link names it (lit by its lights)
+        Mat4 transform;  // SWG building space
+    };
+    std::vector<Door> doors;
 };
 
 std::string stem_of(const std::string& path) {
@@ -59,6 +69,19 @@ Placed placed(const SnapshotNode& node) {
         }
     }
     p.position = to_gltf(node.position);
+    return p;
+}
+
+// The same from a rotation + translation matrix in SWG space.
+Placed placed(const Mat4& m) {
+    const float sign[3] = {-1, 1, 1};
+    Placed p;
+    for (int row = 0; row < 3; ++row) {
+        for (int column = 0; column < 3; ++column) {
+            p.basis[row * 3 + column] = m.at(row, column) * sign[row] * sign[column];
+        }
+    }
+    p.position = to_gltf(Vec3{m.at(0, 3), m.at(1, 3), m.at(2, 3)});
     return p;
 }
 
@@ -113,44 +136,43 @@ void export_city(TreLibrary& library, const CityExport& city, std::ostream& log)
     AppearanceCollisions collisions(library);
     std::map<std::string, Model> models;  // appearance or portal layout path -> model
     std::map<std::string, int> skipped;   // why objects weren't placed
-    std::map<int32_t, int> contents;      // objects inside each building
+    // What's inside what: a building holds its cells, a cell its furniture.
+    std::map<int32_t, std::vector<const SnapshotNode*>> children;
     for (const SnapshotNode& node : nodes) {
         if (node.parent_id > 0) {
-            ++contents[node.parent_id];
+            children[node.parent_id].push_back(&node);
         }
     }
 
     std::ostringstream objects;
     objects << "{\n  \"city\": " << std::format("\"{}\"", out_name) << ",\n  \"objects\": [";
     core::MapCollision collision;
-    size_t placed_count = 0, inside = 0;
-    for (const SnapshotNode& node : nodes) {
-        const bool recruiter = node.parent_id == -1;
-        if (node.parent_id != 0 && !recruiter) {
-            continue;
+    std::vector<std::array<Vec3, 3>> rooms;  // every building's rooms' floors, game space
+    size_t placed_count = 0, furniture = 0, doors = 0;
+    // Galaxies' door styles: each one's door, how far it slides and how fast.
+    struct DoorStyle {
+        std::string appearance;
+        Vec3 move;
+        float open_time = 0.5f, close_time = 0.5f, radius = 3;
+    };
+    std::map<std::string, DoorStyle> door_styles;
+    if (library.contains("datatables/appearance/door_style.iff")) {
+        const DataTable table = parse_datatable(library.read("datatables/appearance/door_style.iff"));
+        for (size_t row = 0; row < table.rows.size(); ++row) {
+            DoorStyle style;
+            style.appearance = normalize_path(table.text(row, table.column("doorAppearance")));
+            style.move = {table.number(row, table.column("doorMoveX")), table.number(row, table.column("doorMoveY")),
+                          table.number(row, table.column("doorMoveZ"))};
+            style.open_time = table.number(row, table.column("openTime"));
+            style.close_time = table.number(row, table.column("closeTime"));
+            style.radius = table.number(row, table.column("triggerRadius"));
+            door_styles[table.text(row, table.column("doorStyleName"))] = style;
         }
-        if (std::hypot(node.position.x - city.center_x, node.position.z - city.center_z) > city.radius) {
-            continue;
-        }
-        SharedObjectTemplate look;
-        try {
-            look = templates.shared(node.template_name);
-        } catch (const std::exception& error) {
-            ++skipped["template unreadable"];
-            log << std::format("  {}: {}\n", node.template_name, error.what());
-            continue;
-        }
-        const bool building = !look.portal_layout.empty();
-        const std::string source = building ? look.portal_layout : look.appearance;
-        if (source.empty()) {
-            ++skipped["no appearance"];
-            continue;
-        }
-        const std::string extension = std::filesystem::path(source).extension().string();
-        if (!building && extension != ".apt" && extension != ".msh" && extension != ".lod" && extension != ".cmp") {
-            ++skipped["appearance " + extension];
-            continue;
-        }
+    }
+    // Places one object; `inside` is the index of the building it's in
+    // (-1 if none) and `cell` its cell there. Returns whether it was placed.
+    // A model, exported the first time it's asked for; null if it couldn't be.
+    const auto model_for = [&](const std::string& source, bool building) -> const Model* {
         auto found = models.find(source);
         if (found == models.end()) {
             Model model;
@@ -161,15 +183,31 @@ void export_city(TreLibrary& library, const CityExport& city, std::ostream& log)
                     std::ostringstream quiet;
                     export_building(library, source, stem_of(source), out_dir, quiet);
                     const PortalLayout layout = parse_portal_layout(library.read(source));
+                    std::set<int32_t> doorways;
                     for (size_t c = 0; c < layout.cells.size(); ++c) {
-                        const PortalLayout::Cell& cell = layout.cells[c];
+                        const PortalLayout::Cell& cell_layout = layout.cells[c];
                         if (c == 0) {
-                            model.collision = collisions.load(cell.appearance);  // the outside
+                            model.collision = collisions.load(cell_layout.appearance);  // the outside
                             model.collision.floors.clear();  // its own floors come with the cells below
                             model.collision.walls.clear();
                         }
-                        if (!cell.floor.empty()) {
-                            add_floor_collision(parse_floor(library.read(cell.floor)), Mat4{}, model.collision);
+                        if (!cell_layout.floor.empty()) {
+                            const FloorMesh floor = parse_floor(library.read(cell_layout.floor));
+                            add_floor_collision(floor, Mat4{}, model.collision);
+                            if (c > 0) {
+                                AppearanceCollision room;
+                                add_floor_collision(floor, Mat4{}, room);
+                                model.rooms.insert(model.rooms.end(), room.floors.begin(), room.floors.end());
+                            }
+                        }
+                        // A doorway's door, named on either side: once.
+                        for (const PortalLayout::CellPortal& link : cell_layout.portals) {
+                            if (!link.door_style.empty() && link.has_door_hardpoint &&
+                                doorways.insert(link.portal).second) {
+                                model.doors.push_back({link.door_style, int(c), link.door_transform});
+                            } else if (!link.door_style.empty() && !link.has_door_hardpoint) {
+                                ++skipped["door without a hardpoint"];
+                            }
                         }
                     }
                     model.building = true;
@@ -189,33 +227,123 @@ void export_city(TreLibrary& library, const CityExport& city, std::ostream& log)
                 for (const auto& t : model.collision.solids) {
                     volume += dot(t[0], cross(t[1], t[2])) / 6.0;
                 }
-                log << std::format("  {} {}: {} solid ({:.1f} m3), {} floor, {} wall triangles\n",
+                log << std::format("  {} {}: {} solid ({:.1f} m3), {} floor, {} wall triangles{}\n",
                                    building ? "building" : "model", source, model.collision.solids.size(), volume,
-                                   model.collision.floors.size(), model.collision.walls.size());
+                                   model.collision.floors.size(), model.collision.walls.size(),
+                                   building ? std::format(", {} doors", model.doors.size()) : "");
             } catch (const std::exception& error) {
                 log << std::format("  {}: {}\n", source, error.what());
             }
             found = models.emplace(source, std::move(model)).first;
         }
-        const Model& model = found->second;
-        if (model.file.empty()) {
-            ++skipped["model failed"];
-            continue;
+        return found->second.file.empty() ? nullptr : &found->second;
+    };
+
+    const auto place = [&](const SnapshotNode& node, bool recruiter, int inside, int cell) -> bool {
+        SharedObjectTemplate look;
+        try {
+            look = templates.shared(node.template_name);
+        } catch (const std::exception& error) {
+            ++skipped["template unreadable"];
+            log << std::format("  {}: {}\n", node.template_name, error.what());
+            return false;
         }
+        const bool building = !look.portal_layout.empty();
+        const std::string source = building ? look.portal_layout : look.appearance;
+        if (source.empty()) {
+            ++skipped["no appearance"];
+            return false;
+        }
+        const std::string extension = std::filesystem::path(source).extension().string();
+        if (!building && extension != ".apt" && extension != ".msh" && extension != ".lod" && extension != ".cmp") {
+            ++skipped["appearance " + extension];
+            return false;
+        }
+        const Model* found = model_for(source, building);
+        if (found == nullptr) {
+            ++skipped["model failed"];
+            return false;
+        }
+        const Model& model = *found;
         const Placed p = placed(node);
+        std::string marks = model.building ? "\"building\": true, " : recruiter ? "\"recruiter\": true, " : "";
+        if (inside >= 0) {
+            marks += std::format("\"inside\": {}, \"cell\": {}, ", inside, cell);
+        }
         objects << (placed_count == 0 ? "\n" : ",\n")
                 << std::format("    {{\"template\": \"{}\", \"model\": \"{}\", {}\"position\": [{}, {}, {}], \"basis\": [{}, "
                                "{}, {}, {}, {}, {}, {}, {}, {}]}}",
-                               node.template_name, model.file,
-                               model.building ? "\"building\": true, " : recruiter ? "\"recruiter\": true, " : "",
-                               p.position.x, p.position.y, p.position.z, p.basis[0], p.basis[1], p.basis[2], p.basis[3],
-                               p.basis[4], p.basis[5], p.basis[6], p.basis[7], p.basis[8]);
+                               node.template_name, model.file, marks, p.position.x, p.position.y, p.position.z,
+                               p.basis[0], p.basis[1], p.basis[2], p.basis[3], p.basis[4], p.basis[5], p.basis[6],
+                               p.basis[7], p.basis[8]);
         ++placed_count;
-        inside += size_t(contents[node.id]);
         for (const auto* list : {&model.collision.solids, &model.collision.floors, &model.collision.walls}) {
             for (const auto& t : *list) {
                 collision.triangles.push_back({to_core(p.apply(t[0])), to_core(p.apply(t[1])), to_core(p.apply(t[2]))});
             }
+        }
+        for (const auto& t : model.rooms) {
+            rooms.push_back({p.apply(t[0]), p.apply(t[1]), p.apply(t[2])});
+        }
+        return true;
+    };
+
+    for (const SnapshotNode& node : nodes) {
+        const bool recruiter = node.parent_id == -1;
+        if (node.parent_id != 0 && !recruiter) {
+            continue;
+        }
+        if (std::hypot(node.position.x - city.center_x, node.position.z - city.center_z) > city.radius) {
+            continue;
+        }
+        const int index = int(placed_count);
+        if (!place(node, recruiter, -1, 0)) {
+            continue;
+        }
+        // A building's furniture: in its cells, placed in building space
+        // (its cells sit at its origin), moved with it.
+        for (const SnapshotNode* cell : children[node.id]) {
+            for (const SnapshotNode* item : children[cell->id]) {
+                SnapshotNode world = *item;
+                world.rotation = node.rotation * item->rotation;
+                world.position = rotate(node.rotation, item->position) + node.position;
+                furniture += place(world, false, index, cell->cell_index) ? 1 : 0;
+            }
+        }
+        // Its doors: in their doorways, sliding open as Galaxies' door style
+        // says when someone comes near (drawn only: doorways don't block).
+        const SharedObjectTemplate& look = templates.shared(node.template_name);
+        const Model* building = look.portal_layout.empty() ? nullptr : model_for(look.portal_layout, true);
+        if (building == nullptr) {
+            continue;
+        }
+        const Mat4 at = Mat4::from_rotation_translation(normalized(node.rotation), node.position);
+        for (const Model::Door& door : building->doors) {
+            const auto style = door_styles.find(door.style);
+            if (style == door_styles.end() || style->second.appearance.empty()) {
+                ++skipped["door style unknown"];
+                continue;
+            }
+            const Model* model = model_for(style->second.appearance, false);
+            if (model == nullptr) {
+                ++skipped["door model failed"];
+                continue;
+            }
+            const Mat4 world = at * door.transform;
+            const Placed p = placed(world);
+            // The slide, from the door's own space to the world's (game).
+            const Vec3 m = style->second.move;
+            const Vec3 slide = to_gltf(transform_point(world, m) - transform_point(world, Vec3{}));
+            objects << ",\n"
+                    << std::format("    {{\"template\": \"door:{}\", \"model\": \"{}\", \"inside\": {}, \"cell\": {}, "
+                                   "\"door\": {{\"slide\": [{}, {}, {}], \"open\": {}, \"close\": {}, \"radius\": {}}}, "
+                                   "\"position\": [{}, {}, {}], \"basis\": [{}, {}, {}, {}, {}, {}, {}, {}, {}]}}",
+                                   door.style, model->file, index, door.cell, slide.x, slide.y, slide.z,
+                                   style->second.open_time, style->second.close_time, style->second.radius,
+                                   p.position.x, p.position.y, p.position.z, p.basis[0], p.basis[1], p.basis[2],
+                                   p.basis[3], p.basis[4], p.basis[5], p.basis[6], p.basis[7], p.basis[8]);
+            ++placed_count;
+            ++doors;
         }
     }
     objects << "\n  ]\n}\n";
@@ -223,9 +351,48 @@ void export_city(TreLibrary& library, const CityExport& city, std::ostream& log)
     const std::filesystem::path objects_path = city.bake.string() + ".objects.json";
     std::ofstream(objects_path, std::ios::binary) << objects.str();
     core::save_map_collision(collision, core::map_collision_path(city.bake));
-    log << std::format("placed {} objects ({} models) in {}; {} collision triangles; {} objects inside buildings "
-                       "not placed yet\n",
-                       placed_count, models.size(), out_dir.string(), collision.triangles.size(), inside);
+    // No terrain in the buildings' rooms: where a cell's center is over a
+    // room's floor (so the holes stay inside the rooms, under their walls).
+    core::TerrainHoles holes;
+    if (!rooms.empty()) {
+        float lo_x = 1e30f, lo_z = 1e30f, hi_x = -1e30f, hi_z = -1e30f;
+        for (const auto& t : rooms) {
+            for (const Vec3& v : t) {
+                lo_x = std::min(lo_x, v.x), hi_x = std::max(hi_x, v.x);
+                lo_z = std::min(lo_z, v.z), hi_z = std::max(hi_z, v.z);
+            }
+        }
+        holes.x0 = std::floor(lo_x) - 1;
+        holes.z0 = std::floor(lo_z) - 1;
+        holes.width = int(std::ceil((hi_x + 1 - holes.x0) / holes.cell));
+        holes.height = int(std::ceil((hi_z + 1 - holes.z0) / holes.cell));
+        holes.cells.assign(size_t(holes.width) * size_t(holes.height), 0);
+        const auto side = [](double ax, double az, double bx, double bz, double px, double pz) {
+            return (bx - ax) * (pz - az) - (bz - az) * (px - ax);
+        };
+        for (const auto& t : rooms) {
+            const double x_lo = std::min({t[0].x, t[1].x, t[2].x}), x_hi = std::max({t[0].x, t[1].x, t[2].x});
+            const double z_lo = std::min({t[0].z, t[1].z, t[2].z}), z_hi = std::max({t[0].z, t[1].z, t[2].z});
+            for (int row = int((z_lo - holes.z0) / holes.cell); row <= int((z_hi - holes.z0) / holes.cell); ++row) {
+                for (int column = int((x_lo - holes.x0) / holes.cell); column <= int((x_hi - holes.x0) / holes.cell);
+                     ++column) {
+                    const double px = holes.x0 + (column + 0.5) * holes.cell;
+                    const double pz = holes.z0 + (row + 0.5) * holes.cell;
+                    const double a = side(t[0].x, t[0].z, t[1].x, t[1].z, px, pz);
+                    const double b = side(t[1].x, t[1].z, t[2].x, t[2].z, px, pz);
+                    const double c = side(t[2].x, t[2].z, t[0].x, t[0].z, px, pz);
+                    if ((a >= 0 && b >= 0 && c >= 0) || (a <= 0 && b <= 0 && c <= 0)) {
+                        holes.set(column, row);
+                    }
+                }
+            }
+        }
+        core::save_terrain_holes(holes, city.bake.string() + ".holes");
+    }
+    log << std::format("placed {} objects ({} inside buildings, {} doors, {} models) in {}; {} collision triangles; "
+                       "terrain holes {} x {} cells over the rooms\n",
+                       placed_count, furniture, doors, models.size(), out_dir.string(), collision.triangles.size(),
+                       holes.width, holes.height);
     for (const auto& [why, count] : skipped) {
         log << std::format("  not placed: {} ({})\n", why, count);
     }

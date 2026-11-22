@@ -182,6 +182,7 @@ var _world_bake := ""             # its bake (relative to game/)
 var _start_bake := ""             # the hub's (or the only server's), where --building stands
 var _buildings: Array = []        # [[gltf, Galaxies position, yaw]] from --building
 var _terrain3d := false
+var _doors: Array[Node3D] = []    # the city's doors (rendering/swg_city.gd)
 var _shot_delay := 0
 
 
@@ -328,6 +329,12 @@ func _process(delta: float) -> bool:
 			_update_camera(own["position"], delta)
 		_update_bolts(delta)
 		_update_events()
+		if not _doors.is_empty():
+			var people: Array[Vector3] = [own["position"]]
+			for remote: Dictionary in _client.get_remotes():
+				if bool(remote["alive"]):
+					people.append(remote["position"])
+			SwgCity.update_doors(_doors, people, delta)
 	_update_hud(delta)
 	if _sky_dome != null:
 		_sky_dome.global_position = _camera.global_position
@@ -1249,6 +1256,7 @@ func _build_world(bake: String) -> bool:
 		Bf2Map.add_objects(_world, bake)
 	elif SwgCity.has_city(bake):
 		SwgCity.add_objects(_world, bake)  # a city's buildings and props (swgtool export-city)
+	_doors = SwgCity.doors_in(_world)
 	if bake == _start_bake:
 		for building: Array in _buildings:
 			if not _add_building(building[0], building[1], building[2]):

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <array>
+#include <cstdint>
 #include <filesystem>
 #include <vector>
 
@@ -24,6 +25,26 @@ struct TerrainCut {
     bool contains(Vec3 point) const;
 };
 
+// Where the terrain is taken away on a fine grid over part of it (game x
+// and z), as a building's rooms are: in Galaxies a room is a space of its
+// own with no terrain in it, and some floors lie under the ground (the
+// cantina's main room, a meter down). Written by `swgtool export-city` next
+// to the bake (<prefix>.holes).
+struct TerrainHoles {
+    double x0 = 0, z0 = 0;  // game x and z of cell (0, 0)'s corner
+    double cell = 0.25;     // meters
+    int width = 0, height = 0;  // cells along +x and +z
+    std::vector<uint8_t> cells;  // 1 where the terrain is taken away; rows along +z
+
+    bool empty() const { return cells.empty(); }
+    bool at(double x, double z) const;
+    void set(int column, int row) { cells[size_t(row) * size_t(width) + size_t(column)] = 1; }
+};
+
+void save_terrain_holes(const TerrainHoles& holes, const std::filesystem::path& path);
+// Throws std::runtime_error on a missing or malformed file.
+TerrainHoles load_terrain_holes(const std::filesystem::path& path);
+
 class Heightfield {
 public:
     Heightfield() = default;
@@ -42,11 +63,13 @@ public:
     // Clamps a game-space position's x and z to the grid.
     Vec3 clamp(Vec3 position) const;
     // Whether the terrain is cut away at a game-space position: its surface
-    // there is inside a cut. There, it neither holds anyone up nor stops
-    // anything.
+    // there is inside a cut, or it's in a hole. There, it neither holds
+    // anyone up nor stops anything.
     bool cut_at(double x, double z) const;
     const std::vector<TerrainCut>& cuts() const { return cuts_; }
     void set_cuts(std::vector<TerrainCut> cuts) { cuts_ = std::move(cuts); }
+    const TerrainHoles& holes() const { return holes_; }
+    void set_holes(TerrainHoles holes) { holes_ = std::move(holes); }
     // The lowest height in the grid.
     double lowest() const;
 
@@ -63,12 +86,14 @@ private:
     double origin_z_ = 0;
     std::vector<float> heights_;
     std::vector<TerrainCut> cuts_;
+    TerrainHoles holes_;
 };
 
 // Loads `<prefix>.r32` and the grid layout from `<prefix>.json`, as written by
 // `swgtool bake-terrain` (or `bf2tool export-map`), and its cuts from
 // `<prefix>.cuts` if there is one (a line per cut: center x y z, radius, then
-// each plane's nx ny nz d; game space). Throws std::runtime_error on failure.
+// each plane's nx ny nz d; game space), and its holes from `<prefix>.holes`
+// if there are any. Throws std::runtime_error on failure.
 Heightfield load_bake(const std::filesystem::path& prefix);
 
 } // namespace swm::core

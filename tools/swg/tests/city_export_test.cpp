@@ -7,9 +7,12 @@
 #include <filesystem>
 #include <fstream>
 #include <string>
+#include <tuple>
 #include <vector>
 
+#include "swg/appearance.h"
 #include "swg/appearance_collision.h"
+#include "swg/datatable.h"
 #include "swg/object_template.h"
 #include "swg/tre_archive.h"
 #include "swg/tre_library.h"
@@ -211,9 +214,55 @@ void test_floor_collision() {
     }
 }
 
+// A switching texture shader (a screen's frames): its first frame's main texture.
+void test_switching_shader() {
+    Bytes first(4);
+    std::memcpy(first.data(), "NIAM", 4);
+    const Bytes path = text("texture/screen_1.dds");
+    first.insert(first.end(), path.begin(), path.end());
+    const Bytes shader = form("SWTS", {form("0000", {chunk("NAME", text("shader/screen.sht")), chunk("TEXT", first)})});
+    CHECK(shader_main_texture(shader) == "texture/screen_1.dds");
+}
+
+// A datatable: typed columns, rows of strings, numbers and booleans.
+void test_datatable() {
+    Bytes columns;
+    const auto put_i32 = [](Bytes& out, int32_t v) {
+        const auto* b = reinterpret_cast<const uint8_t*>(&v);
+        out.insert(out.end(), b, b + 4);
+    };
+    put_i32(columns, 3);
+    for (const char* name : {"doorStyleName", "doorMoveX", "isForceField"}) {
+        const Bytes t = text(name);
+        columns.insert(columns.end(), t.begin(), t.end());
+    }
+    Bytes types;
+    for (const char* type : {"s", "f", "b"}) {
+        const Bytes t = text(type);
+        types.insert(types.end(), t.begin(), t.end());
+    }
+    Bytes rows;
+    put_i32(rows, 2);
+    for (const auto& [name, move, force] : {std::tuple{"cantina_door", -2.1f, 0}, std::tuple{"shield", 0.0f, 1}}) {
+        const Bytes t = text(name);
+        rows.insert(rows.end(), t.begin(), t.end());
+        const Bytes f = floats({move});
+        rows.insert(rows.end(), f.begin(), f.end());
+        put_i32(rows, force);
+    }
+    const DataTable table = parse_datatable(
+        form("DTII", {form("0001", {chunk("COLS", columns), chunk("TYPE", types), chunk("ROWS", rows)})}));
+    CHECK(table.columns.size() == 3 && table.rows.size() == 2);
+    CHECK(table.text(0, table.column("doorStyleName")) == "cantina_door");
+    CHECK(std::abs(table.number(0, table.column("doorMoveX")) + 2.1f) < 1e-6f);
+    CHECK(table.number(1, table.column("isForceField")) == 1 && table.column("nothing") == -1);
+}
+
 } // namespace
 
 int main() {
+    test_switching_shader();
+    test_datatable();
     test_templates_and_collision();
     test_floor_collision();
     if (failures == 0) {

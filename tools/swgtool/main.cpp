@@ -22,6 +22,7 @@
 #include "swg/building_export.h"
 #include "swg/character_export.h"
 #include "swg/city_export.h"
+#include "swg/datatable.h"
 #include "swg/gltf_assets.h"
 #include "swg/iff.h"
 #include "swg/image.h"
@@ -44,6 +45,7 @@ constexpr const char* usage = R"(usage:
   swgtool groups <manifest.tsv> [--list <group>]
   swgtool iff <archive.tre|dir> <path>
   swgtool iff-check <dir>
+  swgtool datatable <dir> <path.iff> [--match <text>]
   swgtool export-character <dir> <out_dir> --name <name> --sat <path.sat>... [--weapon <path.lod>]
                            [--bf2-lvl <ingame.lvl> --bf2-bank <bank> --anim <name>...]
   swgtool bake-terrain <dir> <out_prefix> --trn <path.trn> --center <x> <z> --samples <n> --spacing <m>
@@ -51,7 +53,7 @@ constexpr const char* usage = R"(usage:
   swgtool terrain-trace <dir> --trn <path.trn> --at <x> <z>
   swgtool export-building <dir> <out_dir> --pob <path.pob> --name <name>
   swgtool pob-check <dir>
-  swgtool snapshot <dir> <path.ws> [--match <text>] [--near <x> <z> <radius>]
+  swgtool snapshot <dir> <path.ws> [--match <text>] [--near <x> <z> <radius>] [--inside <id>]
   swgtool export-city <dir> <bake_prefix> --snapshot <path.ws> --center <x> <z> --radius <m> [--hub <hub.ini>]
 )";
 
@@ -726,6 +728,30 @@ int cmd_pob_check(const std::vector<std::string>& args) {
     return failed == 0 ? 0 : 1;
 }
 
+int cmd_datatable(const std::vector<std::string>& args) {
+    if (args.size() < 2) {
+        std::cerr << usage;
+        return 2;
+    }
+    TreLibrary library(args[0]);
+    const DataTable table = parse_datatable(library.read(normalize_path(args[1])));
+    const std::string match = option(args, "--match");
+    for (size_t c = 0; c < table.columns.size(); ++c) {
+        std::cout << (c ? "\t" : "") << table.columns[c] << " (" << table.types[c] << ")";
+    }
+    std::cout << "\n";
+    for (size_t row = 0; row < table.rows.size(); ++row) {
+        std::string line;
+        for (size_t c = 0; c < table.columns.size(); ++c) {
+            line += (c ? "\t" : "") + table.text(row, int(c));
+        }
+        if (match.empty() || line.find(match) != std::string::npos) {
+            std::cout << line << "\n";
+        }
+    }
+    return 0;
+}
+
 int cmd_export_city(const std::vector<std::string>& args) {
     const auto center = std::find(args.begin(), args.end(), "--center");
     if (args.size() < 2 || option(args, "--snapshot").empty() || option(args, "--radius").empty() ||
@@ -755,6 +781,9 @@ int cmd_snapshot(const std::vector<std::string>& args) {
     const bool use_near = near != args.end() && near + 3 < args.end();
     const double nx = use_near ? std::stod(*(near + 1)) : 0, nz = use_near ? std::stod(*(near + 2)) : 0;
     const double radius = use_near ? std::stod(*(near + 3)) : 0;
+    // --inside <id>: the objects inside that building instead, with their cell.
+    const std::string inside_text = option(args, "--inside");
+    const int32_t inside = inside_text.empty() ? 0 : int32_t(std::stol(inside_text));
 
     TreLibrary library(args[0]);
     const std::vector<SnapshotNode> nodes = parse_world_snapshot(library.read(args[1]));
@@ -764,16 +793,17 @@ int cmd_snapshot(const std::vector<std::string>& args) {
     }
     size_t shown = 0;
     for (const SnapshotNode& node : nodes) {
-        if (node.parent_id != 0 || (!match.empty() && node.template_name.find(match) == std::string::npos) ||
+        if (node.parent_id != inside || (!match.empty() && node.template_name.find(match) == std::string::npos) ||
             (use_near && std::hypot(node.position.x - nx, node.position.z - nz) > radius)) {
             continue;
         }
         // Yaw about +Y, in degrees, from the (w, x, y, z) rotation.
         const Quat& q = node.rotation;
         const double yaw = std::atan2(2.0 * (q.w * q.y + q.x * q.z), 1.0 - 2.0 * (q.y * q.y + q.x * q.x)) * 180.0 / 3.14159265358979;
-        std::cout << std::format("{:>10}  ({:9.2f}, {:7.2f}, {:9.2f})  yaw {:7.2f}  {:>3} contents  {}\n", node.id,
-                                 node.position.x, node.position.y, node.position.z, yaw, children[node.id],
-                                 node.template_name);
+        std::cout << std::format("{:>10}  ({:9.2f}, {:7.2f}, {:9.2f})  yaw {:7.2f}  {:>3} {}  {}\n", node.id,
+                                 node.position.x, node.position.y, node.position.z, yaw,
+                                 inside != 0 ? node.cell_index : int32_t(children[node.id]),
+                                 inside != 0 ? "cell    " : "contents", node.template_name);
         ++shown;
     }
     std::cerr << std::format("{} of {} objects\n", shown, nodes.size());
@@ -828,6 +858,9 @@ int main(int argc, char** argv) {
         }
         if (command == "export-city") {
             return cmd_export_city(args);
+        }
+        if (command == "datatable") {
+            return cmd_datatable(args);
         }
     } catch (const std::exception& e) {
         std::cerr << "error: " << e.what() << "\n";

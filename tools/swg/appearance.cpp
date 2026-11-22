@@ -54,6 +54,19 @@ std::vector<std::string> parse_mesh_lod_list(std::span<const uint8_t> bytes) {
 
 std::string shader_main_texture(std::span<const uint8_t> bytes) {
     const IffNode root = parse_iff_root(bytes);
+    if (root.tag == "SWTS") {
+        // A switching texture shader (screens, signs): its frames' textures,
+        // each a TEXT chunk (the texture's tag, then its path). The first
+        // frame's main texture stands for it.
+        for (const IffNode& version : root.children) {
+            for (const IffNode* text : version.children_with("TEXT")) {
+                if (text->data.size() > 4 && std::memcmp(text->data.data(), "NIAM", 4) == 0) {
+                    return normalize_path(iff_strings(text->data.subspan(4)).at(0));
+                }
+            }
+        }
+        return {};
+    }
     const IffNode* ssht = find_ssht(root);
     if (!ssht) {
         return {};

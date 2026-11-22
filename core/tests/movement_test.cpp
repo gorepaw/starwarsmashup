@@ -413,6 +413,52 @@ void test_terrain_cuts() {
     }
 }
 
+// A building's room under the ground (the Mos Eisley cantina's main room,
+// a meter down): the terrain's taken away over its floor (TerrainHoles), so
+// a body stands on the floor, not the ground over it, and walks out up its
+// steps onto the ground.
+void test_terrain_holes() {
+    Heightfield flat = make_ground([](double, double) { return 0.0; });
+    TerrainHoles holes;
+    holes.x0 = -50;
+    holes.z0 = 40;
+    holes.cell = 0.25;
+    holes.width = 40;   // x -50..-40
+    holes.height = 80;  // z 40..60
+    holes.cells.assign(size_t(holes.width * holes.height), 0);
+    for (int row = 0; row < holes.height; ++row) {
+        for (int column = 0; column < holes.width; ++column) {
+            holes.set(column, row);
+        }
+    }
+    CHECK(holes.at(-45, 50) && !holes.at(-39.9, 50) && !holes.at(-45, 60.1));
+    flat.set_holes(holes);
+    CHECK(flat.cut_at(-45, 50) && !flat.cut_at(-35, 50));
+    // The room's floor a meter down.
+    MapCollision floor;
+    add_box(floor, {-50, -2, 40}, {-40, -1, 60});
+    World world(flat);
+    world.add_map_collision(floor);
+    CHECK(near(world.ground_at(-45, 50, -1, 0.5).height, -1));
+    CHECK(near(world.ground_at(-35, 50, 0, 0.5).height, 0));
+    MoveState start;
+    start.position = {-45, 0.5, 50};
+    const MoveState stood = run(start, MoveInput{}, world, 45);
+    CHECK(near(stood.position.y, -1) && stood.grounded);
+
+    // Saved and read back with the bake.
+    const auto prefix = std::filesystem::temp_directory_path() / "swm_movement_test_holes";
+    std::ofstream(prefix.string() + ".json") << "{\"samples\": 2, \"spacing\": 100, \"origin_x\": 0, \"origin_z\": 0}";
+    const float heights[4] = {0, 0, 0, 0};
+    std::ofstream(prefix.string() + ".r32", std::ios::binary).write(reinterpret_cast<const char*>(heights), sizeof heights);
+    save_terrain_holes(holes, prefix.string() + ".holes");
+    const Heightfield baked = load_bake(prefix);
+    CHECK(baked.holes().width == 40 && baked.cut_at(-45, 50) && !baked.cut_at(-30, 50));
+    for (const char* extension : {".json", ".r32", ".holes"}) {
+        std::filesystem::remove(prefix.string() + extension);
+    }
+}
+
 // A body standing over a seam in a floor narrower than itself (one in
 // Mygeeto's, under a spawn point) stands on the floor both sides of it;
 // over a wider gap, or just past a ledge's edge, it falls.
@@ -482,6 +528,7 @@ int main() {
     test_map_collision();
     test_overhead_floors();
     test_terrain_cuts();
+    test_terrain_holes();
     test_seams();
     test_determinism();
     return swm::test::finish("movement_test");
