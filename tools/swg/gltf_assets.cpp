@@ -49,6 +49,11 @@ int GltfAssets::material_for(const std::string& shader_path) {
         } else if (blend == EffectBlend::cutout) {
             material.alpha_mode = "MASK";
             material.alpha_cutoff = 0.5f;
+        } else if (blend == EffectBlend::additive) {
+            // Galaxies' emissive additive programs: lit by nothing but itself.
+            material.alpha_mode = "BLEND";
+            material.additive = true;
+            material.unlit = true;
         }
         if (!customization.colors.empty()) {
             const std::array<uint8_t, 3> main = default_color(customization, "MAIN");

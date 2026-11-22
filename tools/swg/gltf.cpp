@@ -193,6 +193,9 @@ void Gltf::write(const std::filesystem::path& path) const {
         if (m.unlit) {
             json += R"(,"extensions":{"KHR_materials_unlit":{}})";
         }
+        if (m.additive) {
+            json += R"(,"extras":{"blend":"add"})";
+        }
         json += "}";
     }
     json += "],";

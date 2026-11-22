@@ -46,6 +46,9 @@ public:
         float alpha_cutoff = 0.5f;                // MASK only
         bool double_sided = false;
         bool unlit = false;  // KHR_materials_unlit
+        // Added to what's behind it (Galaxies' glowing panels), which glTF
+        // has no mode for: alphaMode BLEND and extras {"blend": "add"}.
+        bool additive = false;
     };
     struct AnimationChannel {
         int node = -1;

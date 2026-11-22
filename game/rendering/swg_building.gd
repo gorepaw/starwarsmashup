@@ -6,6 +6,7 @@ extends RefCounted
 const CELL_SHADER = preload("res://rendering/swg_cell.gdshader")
 const CELL_ALPHA_SHADER = preload("res://rendering/swg_cell_alpha.gdshader")
 const CELL_CUTOUT_SHADER = preload("res://rendering/swg_cell_cutout.gdshader")
+const ADD_SHADER = preload("res://rendering/swg_add.gdshader")
 const MAX_CELL_LIGHTS := 8  # per kind; matches the shader
 
 
@@ -28,7 +29,38 @@ static func load_lit(path: String) -> Node3D:
 			var collision := building.find_child(cell["name"] + suffix, true, false) as Node3D
 			if collision != null:
 				collision.visible = false
+	draw_additive(building)
 	return building
+
+
+# The additive material for a glTF material swgtool marked as one (extras
+# {"blend": "add"}: Galaxies' glowing panels), else null. Unlit, so the same
+# inside and out.
+static func additive_material(original: Material) -> ShaderMaterial:
+	if original == null or not original.has_meta("extras"):
+		return null
+	var extras: Variant = original.get_meta("extras")
+	if not extras is Dictionary or (extras as Dictionary).get("blend", "") != "add":
+		return null
+	var material := ShaderMaterial.new()
+	material.shader = ADD_SHADER
+	var base := original as BaseMaterial3D
+	if base != null:
+		if base.albedo_texture != null:
+			material.set_shader_parameter("albedo_texture", base.albedo_texture)
+		material.set_shader_parameter("albedo_color", base.albedo_color)
+	return material
+
+
+# Draws a model's additive materials (additive_material) as they are drawn.
+static func draw_additive(model: Node) -> void:
+	for mesh: MeshInstance3D in model.find_children("*", "MeshInstance3D", true, false):
+		if mesh.mesh == null:
+			continue
+		for surface in mesh.mesh.get_surface_count():
+			var material := additive_material(mesh.get_active_material(surface))
+			if material != null:
+				mesh.set_surface_override_material(surface, material)
 
 
 # Replaces each surface's material with the cell shader and the cell's lights.
@@ -65,8 +97,15 @@ static func apply_cell_lighting(mesh: MeshInstance3D, cell: Dictionary,
 	point_attenuation.resize(MAX_CELL_LIGHTS)
 
 	for surface in mesh.mesh.get_surface_count():
+		var active := mesh.get_active_material(surface)
+		if active is ShaderMaterial and (active as ShaderMaterial).shader == ADD_SHADER:
+			continue  # lit by nothing but itself (draw_additive)
+		var additive := additive_material(active)
+		if additive != null:
+			mesh.set_surface_override_material(surface, additive)
+			continue
 		var material := ShaderMaterial.new()
-		var original := mesh.get_active_material(surface) as BaseMaterial3D
+		var original := active as BaseMaterial3D
 		# Drawn as the material's effect draws (swgtool: glTF's alpha modes).
 		material.shader = CELL_SHADER
 		if original != null and original.transparency == BaseMaterial3D.TRANSPARENCY_ALPHA:

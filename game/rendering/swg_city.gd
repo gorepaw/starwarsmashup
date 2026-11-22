@@ -120,4 +120,6 @@ static func _load_model(path: String) -> Node3D:
 	if document.append_from_file(path, state) != OK:
 		printerr("cannot load ", path)
 		return null
-	return document.generate_scene(state) as Node3D
+	var model := document.generate_scene(state) as Node3D
+	SwgBuilding.draw_additive(model)
+	return model

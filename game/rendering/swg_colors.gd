@@ -127,8 +127,10 @@ static func _face(layers: Array, original: BaseMaterial3D, seed: int, colors: Di
 static func _texture(colors: Dictionary, file: String) -> Texture2D:
 	var cache: Dictionary = colors["textures"]
 	if not cache.has(file):
-		var image := Image.load_from_file(String(colors["dir"]).path_join(file))
-		if image != null and not image.is_empty():
+		# Read as bytes, as GLTFDocument reads a model's, not as an import.
+		var image := Image.new()
+		var bytes := FileAccess.get_file_as_bytes(String(colors["dir"]).path_join(file))
+		if not bytes.is_empty() and image.load_png_from_buffer(bytes) == OK:
 			image.generate_mipmaps()
 			cache[file] = ImageTexture.create_from_image(image)
 		else:

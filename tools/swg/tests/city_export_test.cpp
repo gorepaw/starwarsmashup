@@ -6,6 +6,7 @@
 #include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <sstream>
 #include <stdexcept>
 #include <string>
 #include <tuple>
@@ -14,6 +15,7 @@
 #include "swg/appearance.h"
 #include "swg/appearance_collision.h"
 #include "swg/datatable.h"
+#include "swg/gltf.h"
 #include "swg/object_template.h"
 #include "swg/texture_renderer.h"
 #include "swg/tre_archive.h"
@@ -303,6 +305,23 @@ void test_effect_blend() {
     const Bytes shader = form("CSHD", {form("0001", {form("SSHT", {form("0000", {
                                                          chunk("NAME", text("effect\\h_alpha.eft"))})})})});
     CHECK(shader_effect(shader) == "effect/h_alpha.eft");
+
+    // An additive material, which glTF has no mode for: blended, marked in
+    // its extras, unlit.
+    Gltf gltf;
+    gltf.materials.push_back({.name = "glow", .alpha_mode = "BLEND", .unlit = true, .additive = true});
+    gltf.materials.push_back({.name = "plain"});
+    const std::filesystem::path path = std::filesystem::temp_directory_path() / "swm_additive_test.gltf";
+    gltf.write(path);
+    std::stringstream json;
+    json << std::ifstream(path).rdbuf();
+    const std::string text_json = json.str();
+    CHECK(text_json.find(R"("alphaMode":"BLEND","extensions":{"KHR_materials_unlit":{}},"extras":{"blend":"add"}})") !=
+          std::string::npos);
+    CHECK(text_json.find(R"("extras")") == text_json.rfind(R"("extras")"));  // the plain one has none
+    std::filesystem::remove(path);
+    std::filesystem::path bin = path;
+    std::filesystem::remove(bin.replace_extension(".bin"));
 }
 
 // A texture renderer: two layers (a skin copied whole, brows blended into a
