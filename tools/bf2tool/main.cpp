@@ -1346,17 +1346,34 @@ int cmd_export_hud(const std::vector<std::string>& args) {
         layouts.emplace_back(tree.front().text, std::move(tree));
     });
 
-    // Textures and models the layouts name; every texture in common.lvl.
+    // Textures and models the layouts name; dropped pickup models from
+    // ingame.lvl (class "powerupitem"); every texture in ingame.lvl and
+    // common.lvl.
     std::set<std::string> textures;
+    std::set<std::string> exported_models;
     std::vector<std::string> models;
+    const auto maybe_export_model = [&](const std::string& name) {
+        const std::string key = lowercase(name);
+        if (key.empty() || exported_models.contains(key) || library.model(key) == nullptr) {
+            return;
+        }
+        const ModelExport written = export_model(library, key, model_dir, texture_dir, textures);
+        if (written.segments > 0) {
+            exported_models.insert(key);
+            models.push_back(key);
+        }
+    };
     for (const std::string& name : strings) {
         if (library.texture(name) != nullptr && export_texture(library, name, texture_dir / (name + ".png"))) {
             textures.insert(name);
         }
-        if (library.model(name) != nullptr) {
-            const ModelExport written = export_model(library, name, model_dir, texture_dir, textures);
-            if (written.segments > 0) {
-                models.push_back(name);
+        maybe_export_model(name);
+    }
+    for (const OdfClass& odf : library.classes().all()) {
+        const OdfClass resolved = library.classes().resolve(odf.type);
+        if (lowercase(resolved.base) == "powerupitem") {
+            if (const auto geom = resolved.get("GeometryName")) {
+                maybe_export_model(*geom);
             }
         }
     }

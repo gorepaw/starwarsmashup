@@ -564,6 +564,39 @@ godot::Array SwmClient::take_explosions() {
     return out;
 }
 
+godot::Array SwmClient::get_pickups() const {
+    godot::Array out;
+    if (client()) {
+        for (const core::net::PickupState& p : client()->pickups()) {
+            const core::PickupDef& def = core::pickup_def(p.kind);
+            godot::Dictionary entry;
+            entry["id"] = int64_t(p.id);
+            switch (p.kind) {
+            case core::PickupKind::health_small:
+                entry["kind"] = "health_small";
+                break;
+            case core::PickupKind::health_large:
+                entry["kind"] = "health_large";
+                break;
+            case core::PickupKind::ammo:
+                entry["kind"] = "ammo";
+                break;
+            case core::PickupKind::dual:
+                entry["kind"] = "dual";
+                break;
+            case core::PickupKind::energy:
+                entry["kind"] = "energy";
+                break;
+            }
+            entry["model"] = godot::String::utf8(def.model);
+            entry["position"] = to_godot(p.position);
+            entry["time_left"] = double(p.time_left);
+            out.push_back(entry);
+        }
+    }
+    return out;
+}
+
 godot::Dictionary SwmClient::get_secondary() const {
     godot::Dictionary out;
     if (const core::WeaponDef* secondary = core::weapon_in_slot(loadout(), core::secondary_slot)) {
@@ -698,6 +731,7 @@ void SwmClient::_bind_methods() {
     ClassDB::bind_method(D_METHOD("take_shots"), &SwmClient::take_shots);
     ClassDB::bind_method(D_METHOD("take_events"), &SwmClient::take_events);
     ClassDB::bind_method(D_METHOD("take_explosions"), &SwmClient::take_explosions);
+    ClassDB::bind_method(D_METHOD("get_pickups"), &SwmClient::get_pickups);
     ClassDB::bind_method(D_METHOD("get_secondary"), &SwmClient::get_secondary);
     ClassDB::bind_method(D_METHOD("get_weapons"), &SwmClient::get_weapons);
     ClassDB::bind_method(D_METHOD("get_max_health"), &SwmClient::get_max_health);

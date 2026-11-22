@@ -310,12 +310,15 @@ Vec3 Bot::steer(Vec3 position, Vec3 destination, double now) {
                                                                                                  : path_[corner_];
 }
 
-// Hurt below this (of full health), a bot looks for a health droid; it
-// stays until this much.
+// Hurt below this (of full health), a bot looks for a health droid or pickup;
+// it stays at a droid until this much.
 constexpr double needs_health = 0.5, patched_up = 0.95;
-// Its primary's ammo (clip and spare) below this (of full), for an ammo droid.
+// Its primary's ammo (clip and spare) below this (of full), for an ammo droid
+// or pickup.
 constexpr double needs_ammo = 0.3;
-constexpr double powerup_reach = 45;    // m: a droid further than this isn't worth the walk
+constexpr double powerup_reach = 45;     // m: a droid further than this isn't worth the walk
+constexpr double dropped_reach = 25;     // m: a dropped pickup further than this isn't worth detours
+constexpr double nearby_pickup = 10;     // m: grab a close dropped pack even when only lightly hurt/spent
 constexpr double powerup_patience = 25;  // s: gives up on one after this
 
 void Bot::choose_powerup(const GameClient& client, double now) {
@@ -329,6 +332,27 @@ void Bot::choose_powerup(const GameClient& client, double now) {
         const WeaponState& w = me.combat.weapons[primary_slot];
         ammo = double(w.rounds + w.reserve) / double(primary->ammo * primary->rounds_per_clip);
     }
+    const auto pickup_helps = [&](PickupKind kind, bool urgent) {
+        const PickupDef& def = pickup_def(kind);
+        const double h_need = urgent ? needs_health : 0.8;
+        const double a_need = urgent ? needs_ammo : 0.7;
+        return (def.health > 0 && health < h_need) || (def.ammo_clips > 0 && ammo < a_need);
+    };
+    if (pickup_ != 0) {
+        const auto& pickups = client.pickups();
+        const auto it = std::find_if(pickups.begin(), pickups.end(),
+                                     [&](const net::PickupState& p) { return p.id == pickup_; });
+        const bool still_useful =
+            it != pickups.end() &&
+            ((pickup_def(it->kind).health > 0 && health < 0.99) || (pickup_def(it->kind).ammo_clips > 0 && ammo < 0.99));
+        if (!still_useful || now >= powerup_until_) {
+            pickup_ = 0;
+            next_powerup_ = now + 2;
+        } else {
+            powerup_spot_ = it->position;
+        }
+        return;
+    }
     if (powerup_ >= 0) {
         const PowerupStation& station = field.powerups[size_t(powerup_)];
         const bool done = (station.health <= 0 || health >= patched_up) && (station.ammo <= 0 || ammo >= 0.99);
@@ -338,21 +362,47 @@ void Bot::choose_powerup(const GameClient& client, double now) {
         }
         return;
     }
-    if (now < next_powerup_ || (health >= needs_health && ammo >= needs_ammo)) {
+    if (now < next_powerup_) {
         return;
     }
-    double best = powerup_reach;
-    for (size_t i = 0; i < field.powerups.size(); ++i) {
-        const PowerupStation& station = field.powerups[i];
-        const bool helps = (health < needs_health && station.health > 0) || (ammo < needs_ammo && station.ammo > 0);
-        const double distance = horizontal_distance(station.position, me.position);
-        if (helps && distance < best && std::abs(station.position.y - me.position.y) < 15) {
-            best = distance;
-            powerup_ = int(i);
+    const bool urgent = health < needs_health || ammo < needs_ammo;
+    // Check dropped pickups first (within dropped_reach if urgent, or nearby_pickup opportunistically).
+    double best_distance = urgent ? powerup_reach : nearby_pickup;
+    uint32_t best_pickup = 0;
+    Vec3 best_pickup_pos;
+    for (const net::PickupState& p : client.pickups()) {
+        const double distance = horizontal_distance(p.position, me.position);
+        const double max_range = pickup_helps(p.kind, true) ? dropped_reach
+                                 : pickup_helps(p.kind, false) ? nearby_pickup
+                                                               : 0.0;
+        if (max_range > 0 && distance < std::min(best_distance, max_range) &&
+            std::abs(p.position.y - me.position.y) < 10) {
+            best_distance = distance;
+            best_pickup = p.id;
+            best_pickup_pos = p.position;
         }
     }
-    next_powerup_ = now + 2;
-    if (powerup_ >= 0) {
+    // Check health and ammo droids when urgent; whichever is nearer wins.
+    int best_station = -1;
+    if (urgent) {
+        for (size_t i = 0; i < field.powerups.size(); ++i) {
+            const PowerupStation& station = field.powerups[i];
+            const bool helps = (health < needs_health && station.health > 0) || (ammo < needs_ammo && station.ammo > 0);
+            const double distance = horizontal_distance(station.position, me.position);
+            if (helps && distance < best_distance && std::abs(station.position.y - me.position.y) < 15) {
+                best_distance = distance;
+                best_station = int(i);
+                best_pickup = 0;
+            }
+        }
+    }
+    next_powerup_ = now + 0.5;
+    if (best_pickup != 0) {
+        pickup_ = best_pickup;
+        powerup_spot_ = best_pickup_pos;
+        powerup_until_ = now + 12;
+    } else if (best_station >= 0) {
+        powerup_ = best_station;
         // Beside it, on the side it comes from: the droid itself is solid.
         const PowerupStation& station = field.powerups[size_t(powerup_)];
         Vec3 away{me.position.x - station.position.x, 0, me.position.z - station.position.z};
@@ -385,6 +435,7 @@ void Bot::update(GameClient& client, const World& world, double now) {
         }
         objective_ = -1;
         powerup_ = -1;
+        pickup_ = 0;
         slow_since_ = -1;  // a new life isn't stuck
         unstick_until_ = 0;
         target_ = 0;
@@ -420,7 +471,7 @@ void Bot::update(GameClient& client, const World& world, double now) {
             destination->y = post.console->y;
         }
         choose_powerup(client, now);
-        if (powerup_ >= 0) {
+        if (powerup_ >= 0 || pickup_ != 0) {
             destination = powerup_spot_;
         }
     }
@@ -461,12 +512,13 @@ void Bot::update(GameClient& client, const World& world, double now) {
         // Over or under a post (on the hillside over Polis Massa's CP3, in
         // its cave) isn't there yet.
         double off_height = 0;
-        if (in_match && powerup_ < 0) {
+        if (in_match && powerup_ < 0 && pickup_ == 0) {
             const CommandPost& post = client.config().battlefield->posts[size_t(objective_)];
             off_height = std::max({0.0, post.low - 0.5 - me.position.y, me.position.y - post.high});
         }
         to_go = horizontal_distance(*destination, me.position) + off_height;
-        if (to_go > 1.5) {
+        const double stop = pickup_ != 0 ? 0.4 : 1.5;
+        if (to_go > stop) {
             const Vec3 toward = steer(me.position, *destination, now);
             const Vec3 d{toward.x - me.position.x, 0, toward.z - me.position.z};
             route_reach = d.length();

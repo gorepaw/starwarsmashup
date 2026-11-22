@@ -78,6 +78,7 @@ const Bf2Map = preload("res://rendering/bf2_map.gd")
 const SwgCity = preload("res://rendering/swg_city.gd")
 const Soldier = preload("res://rendering/soldier.gd")
 const TeamTags = preload("res://rendering/team_tags.gd")
+const Pickups = preload("res://rendering/pickups.gd")
 const Bf2Hud = preload("res://ui/bf2_hud.gd")
 const Settings = preload("res://ui/settings.gd")
 const SpawnScreen = preload("res://ui/spawn_screen.gd")
@@ -152,6 +153,7 @@ var _battlefield: Dictionary = {} # from SwmClient.get_battlefield; empty outsid
 var _posts: Array = []            # per command post: {hologram} (its model's), or {material, label} (a beam)
 var _cone_shader: Shader         # the command post holograms' cone (_holo_cone_shader)
 var _team_tags: TeamTags         # in a match on a Battlefront map: the holograms over soldiers' heads
+var _pickups: Pickups            # dropped health, ammo, dual and energy canisters
 var _spawn_loadout := 0
 var _spawn_post := -1
 var _spawn_requested := false
@@ -342,6 +344,8 @@ func _process(delta: float) -> bool:
 		if _team_tags != null:
 			_team_tags.update(_camera, delta, _client.raycast)
 		Bf2Map.animate_powerups(self, _elapsed)
+		if _pickups != null:
+			_pickups.update(_client.get_pickups(), delta)
 		_update_bolts(delta)
 		_update_events()
 		if not _doors.is_empty():
@@ -383,6 +387,8 @@ func _finish() -> bool:
 			(person as Node).free()
 	_people.clear()
 	_people_colors.clear()
+	if _pickups != null:
+		_pickups.dispose()
 	var stats: Dictionary = _client.get_stats()
 	var at: Vector3 = _client.get_presented().get("position", Vector3.ZERO)
 	print("left at Galaxies (%.2f, %.2f, %.2f)" % [-at.x, at.y, at.z])
@@ -1468,6 +1474,7 @@ func _setup_scene() -> void:
 
 	_bolt_mesh = BoxMesh.new()
 	_bolt_mesh.size = Vector3(1, 1, 1)
+	_pickups = Pickups.new(root, HUD_DIR)
 
 
 # Command posts: a beam, a ring around the capture region and a name, in the
@@ -1665,6 +1672,8 @@ func _arrive() -> void:
 	for bolt: Dictionary in _own_bolts:
 		(bolt["node"] as Node).queue_free()
 	_own_bolts.clear()
+	if _pickups != null:
+		_pickups.clear()
 	if _terminal_screen != null and _terminal_screen.visible:
 		_close_terminal()
 	_battlefield = _client.get_battlefield()

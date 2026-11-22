@@ -94,6 +94,9 @@ public:
     godot::Array take_events();
     // Explosions since the last call: [{position, radius, owner}].
     godot::Array take_explosions();
+    // Dropped health, ammo, dual and energy canisters on the ground:
+    // [{id, kind, model, position, time_left}].
+    godot::Array get_pickups() const;
     // The current loadout's secondary (a throwable): {name}, or empty.
     godot::Dictionary get_secondary() const;
     // The current loadout's held weapons, by slot (primary, sidearm; {} for an

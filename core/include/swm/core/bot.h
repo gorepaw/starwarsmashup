@@ -49,6 +49,8 @@ public:
     // The health or ammo droid (index into the battlefield's powerups) it's
     // going to, or -1.
     int powerup() const { return powerup_; }
+    // The dropped health/ammo pickup id it's heading for, or 0.
+    uint32_t pickup() const { return pickup_; }
     // The side it queues for in a hub (default: picked from the seed).
     void set_queue_team(int team) { queue_team_ = team; }
     // The walkable grid of the battlefield it plays on (shared between bots;
@@ -77,7 +79,8 @@ private:
     int spawn_post_ = -1;     // the post it asked to spawn at
     int objective_ = -1;
     int powerup_ = -1;
-    Vec3 powerup_spot_;       // beside the droid, where it stands
+    uint32_t pickup_ = 0;     // dropped pickup id it's heading for
+    Vec3 powerup_spot_;       // beside the droid, or on the pickup, where it goes
     double powerup_until_ = 0;  // gives up then
     double next_powerup_ = 0;   // looks for one again then
     Vec3 offset_;            // where in the post it stands

@@ -134,6 +134,8 @@ public:
     std::vector<net::CombatEvent> take_events();
     // Explosions since the last call.
     std::vector<net::Explosion> take_explosions();
+    // Dropped health, ammo, dual and energy canisters from the newest snapshot.
+    const std::vector<net::PickupState>& pickups() const { return pickups_; }
 
 private:
     struct Pending {
@@ -197,6 +199,7 @@ private:
     std::vector<Shot> shots_;
     std::vector<net::CombatEvent> events_;
     std::vector<net::Explosion> explosions_;
+    std::vector<net::PickupState> pickups_;
 };
 
 // A client that follows the server's transfers, from a hub to a match and

@@ -423,6 +423,125 @@ void test_health_droid() {
     CHECK(a.alive() && near(a.health(), before, 60) && a.health() <= a.character_stats().max_health);
 }
 
+// Dropped health, ammo, dual and energy canisters: left untouched when full,
+// consumed when needed, expire after 30 s, and hurt bots walk over to grab one.
+void test_dropped_pickups() {
+    // Drop table rolls match Battlefront's com_inf_default probabilities.
+    CHECK(roll_pickup(0.0) == PickupKind::health_small);
+    CHECK(roll_pickup(0.16) == PickupKind::health_large);
+    CHECK(roll_pickup(0.25) == PickupKind::ammo);
+    CHECK(roll_pickup(0.50) == PickupKind::dual);
+    CHECK(roll_pickup(0.60) == PickupKind::energy);
+    CHECK(!roll_pickup(0.80));
+
+    Battlefield battlefield = three_posts();
+    // Give team 0 a limited-ammo rifle and grenades so ammo pickups can be tested.
+    WeaponDef rifle;
+    rifle.ammo = 5;
+    rifle.rounds_per_clip = 50;
+    WeaponDef grenade;
+    grenade.projectile = Projectile::grenade;
+    grenade.ammo = 3;
+    grenade.rounds_per_clip = 1;
+    battlefield.teams[0].loadouts[0].weapons[primary_slot] = rifle;
+    battlefield.teams[0].loadouts[0].weapons[secondary_slot] = grenade;
+    battlefield.warmup = 60;
+    Field field(battlefield);
+    GameClient& a = field.join("a");
+    field.run(0.5);
+    a.request_spawn(0, 0);
+    field.run(0.2);
+    CHECK(a.alive());
+
+    const Vec3 at = a.predicted().position;
+    // Full health and full ammo: walking over a health or ammo canister leaves it alone.
+    field.server->spawn_pickup(PickupKind::health_small, at);
+    field.server->spawn_pickup(PickupKind::ammo, at);
+    field.run(0.2);
+    CHECK(field.server->pickup_count() == 2 && a.pickups().size() == 2);
+
+    // Spend some ammo and grenades: the ammo canister is picked up at once (+1 clip).
+    MoveState spent = *field.server->state_of(a.entity_id());
+    spent.combat.weapons[primary_slot].reserve = 0;
+    spent.combat.weapons[secondary_slot].rounds = 0;
+    spent.combat.weapons[secondary_slot].reserve = 0;
+    field.server->set_state(a.entity_id(), spent);
+    field.run(0.2);
+    CHECK(field.server->pickup_count() == 1);  // health canister still waits
+    const MoveState* after_ammo = field.server->state_of(a.entity_id());
+    CHECK(after_ammo != nullptr && after_ammo->combat.weapons[primary_slot].reserve == 50 &&
+          after_ammo->combat.weapons[secondary_slot].rounds == 1);
+
+    // Drop an energy pack and drain stamina: it refills stamina and disappears.
+    MoveState tired = *after_ammo;
+    tired.energy = 10;
+    field.server->set_state(a.entity_id(), tired);
+    field.server->spawn_pickup(PickupKind::energy, at);
+    field.run(0.2);
+    CHECK(field.server->pickup_count() == 1 &&
+          near(field.server->state_of(a.entity_id())->energy, a.character_stats().move.max_energy, 1));
+
+    // A canister no one picks up expires after its 30 s lifespan.
+    field.run(30.5);
+    CHECK(field.server->pickup_count() == 0 && a.pickups().empty());
+
+    // A hurt bot walks over to a nearby dropped health canister and heals.
+    Battlefield hurt_field = three_posts();
+    hurt_field.warmup = 60;
+    Field bot_field(hurt_field);
+    GameClient& bot_client = bot_field.join("bot");
+    GameClient& shooter = bot_field.join("shooter");
+    Bot bot(7);
+    bot_field.run(0.3);
+    bot_client.request_spawn(0, 0);
+    shooter.request_spawn(0, 2);
+    bot_field.run(0.3);
+    CHECK(bot_client.alive() && shooter.alive());
+    // Put shooter 10 m from bot and shoot bot below half health, then disconnect shooter.
+    MoveState s_state = *bot_field.server->state_of(shooter.entity_id());
+    s_state.position = bot_client.predicted().position + Vec3{0, 0, 10};
+    bot_field.server->set_state(shooter.entity_id(), s_state);
+    bot_field.run(0.2);
+    bot_field.run(2.0, [&] {
+        const Vec3 d = bot_client.predicted().position + Vec3{0, 1.0, 0} -
+                       (shooter.predicted().position + Vec3{0, eye_height, 0});
+        shooter.set_input({.yaw = std::atan2(-d.x, -d.z), .pitch = std::atan2(d.y, std::hypot(d.x, d.z)),
+                           .fire = bot_client.health() > 180});
+    });
+    shooter.disconnect();
+    bot_field.run(0.2);
+    CHECK(bot_client.alive() && bot_client.health() < 200);
+    // Drop a large health pack 12 m away (off the bot's straight line to Middle):
+    // it detours to grab the canister and heals +200.
+    const Vec3 pack_at = bot_client.predicted().position + Vec3{0, 0, -12};
+    bot_field.server->spawn_pickup(PickupKind::health_large, pack_at);
+    bot_field.run(0.1);  // deliver the snapshot with the pickup
+    const double before_pickup = bot_client.health();
+    bool healed = false;
+    bot_field.run(5.0, [&] {
+        bot.update(bot_client, bot_field.world, bot_field.now);
+        if (bot_field.server->pickup_count() == 0) {
+            healed = true;
+        }
+    }, 1.0 / 30);
+    std::printf("hurt bot and dropped health pack: before %.0f, after %.0f, picked up %d\n", before_pickup,
+                bot_client.health(), int(healed));
+    CHECK(healed && near(bot_client.health(), before_pickup + 200, 1));
+
+    // Dying in a death region never drops a pickup there.
+    Battlefield pit = three_posts();
+    pit.death_regions.push_back({.center = {-60, 0, 0}, .size = {20, 2, 20}});
+    pit.warmup = 60;
+    Field pit_field(pit);
+    GameClient& doomed = pit_field.join("doomed");
+    pit_field.run(0.3);
+    for (int i = 0; i < 6; ++i) {
+        doomed.request_spawn(0, 0);
+        pit_field.run(2.5);
+    }
+    CHECK(pit_field.server->pickup_count() == 0);
+}
+
 // A spawn point a little under its floor (one of Utapau's, a meter down)
 // puts a soldier on the floor, not under it.
 void test_spawn_under_floor() {
@@ -470,15 +589,20 @@ void test_bots_play_a_match() {
     }
     bool ended = false;
     MatchState result;
-    int captures = 0, kills = 0;
+    int captures = 0, kills = 0, max_pickups = 0;
     std::vector<bool> healed(bots.size());  // reached a droid it was going to
+    std::vector<bool> scavenged(bots.size());  // went for a dropped pickup
     while (field.now < 900 && !ended) {
         field.run(10, [&] {
+            max_pickups = std::max(max_pickups, int(field.server->pickup_count()));
             for (size_t i = 0; i < bots.size(); ++i) {
                 bots[i].update(*field.clients[i], field.world, field.now);
                 if (const int droid = bots[i].powerup(); droid >= 0) {
                     healed[i] = healed[i] || battlefield.powerups[size_t(droid)].reaches(
                                                  field.clients[i]->predicted().position);
+                }
+                if (bots[i].pickup() != 0) {
+                    scavenged[i] = true;
                 }
                 for (const auto& event : field.clients[i]->take_events()) {
                     if (i == 0) {
@@ -497,9 +621,10 @@ void test_bots_play_a_match() {
         }, 1.0 / 30);
     }
     const auto at_droids = std::count(healed.begin(), healed.end(), true);
-    std::printf("bots: %d captures, %d kills; %d of %zu went to a health droid\n", captures, kills, int(at_droids),
-                bots.size());
-    CHECK(result.winner >= 0 && at_droids >= 1);
+    const auto went_for_drops = std::count(scavenged.begin(), scavenged.end(), true);
+    std::printf("bots: %d captures, %d kills; %d of %zu went to a health droid, %d went for dropped pickups (peak %d on ground)\n",
+                captures, kills, int(at_droids), bots.size(), int(went_for_drops), max_pickups);
+    CHECK(result.winner >= 0 && at_droids >= 1 && max_pickups >= 1);
     CHECK(ended && captures >= 2 && kills >= 5);
 }
 
@@ -523,6 +648,7 @@ int main() {
     test_death_region();
     test_damage_region();
     test_health_droid();
+    test_dropped_pickups();
     test_spawn_under_floor();
     test_bots_play_a_match();
     return swm::test::finish("match_test");

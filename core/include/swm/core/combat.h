@@ -53,15 +53,20 @@ std::optional<double> ballistic_pitch(double speed, double gravity, double dx, d
 // standing at `feet`, if it does.
 std::optional<double> segment_hits_cylinder(Vec3 a, Vec3 b, Vec3 feet, double radius, double height);
 
+// A droid's resupply: each weapon that carries limited ammo gets `fraction`
+// of its full ammunition back (clip and spare clips together), up to full:
+// a gun's as spare rounds, a secondary's (grenades) into its clip first.
+// Returns whether anything changed.
+bool resupply(MoveState& state, const Loadout& loadout, double fraction);
+
+// A dropped ammo or dual pack's resupply: each weapon that carries limited
+// ammo gets `clips` clips back (Battlefront's SoldierAmmo on a powerupitem),
+// up to full. Returns whether anything changed.
+bool resupply_clips(MoveState& state, const Loadout& loadout, int clips);
+
 // An explosion's damage to a body standing at `feet`, before mitigation: full
 // within the inner radius of the body, falling linearly to nothing at the
 // outer radius.
-// A droid's resupply: each weapon that carries limited ammo gets `fraction`
-// of its full ammunition back (clip and spare clips together), up to full:
-// a gun's as spare rounds, a secondary's (grenades) into its clip first. Returns whether anything
-// changed.
-bool resupply(MoveState& state, const Loadout& loadout, double fraction);
-
 double explosion_damage(const WeaponDef& weapon, Vec3 center, Vec3 feet);
 
 } // namespace swm::core

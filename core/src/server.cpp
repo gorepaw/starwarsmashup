@@ -404,6 +404,7 @@ void GameServer::step() {
             }
         }
     }
+    advance_pickups();
 
     net::Snapshot snapshot;
     snapshot.server_tick = tick_;
@@ -427,6 +428,9 @@ void GameServer::step() {
     events_.clear();
     snapshot.explosions = std::move(explosions_);
     explosions_.clear();
+    for (const Pickup& pickup : pickups_) {
+        snapshot.pickups.push_back({pickup.id, pickup.kind, pickup.position, float(pickup.life)});
+    }
     if (conquest_) {
         snapshot.match = conquest_->state();
     }
@@ -511,6 +515,7 @@ void GameServer::run_match() {
         case MatchEvent::went_live:
             say("the match is live");
             bolts_.clear();
+            pickups_.clear();
             for (Client& client : clients_) {
                 client.kills = client.deaths = client.captures = 0;
                 return_to_waiting(client);
@@ -518,6 +523,7 @@ void GameServer::run_match() {
             break;
         case MatchEvent::restarted:
             say("warmup for the next match");
+            pickups_.clear();
             for (Client& client : clients_) {
                 return_to_waiting(client);
             }
@@ -782,9 +788,92 @@ void GameServer::kill(Client& victim, uint32_t attacker) {
     }
     if (conquest_) {
         conquest_->killed(victim.team);
+        drop_pickup(victim.state.position);
     }
     say(killer != nullptr ? std::format("{} killed {}", killer->name, victim.name)
                           : std::format("{} died", victim.name));
+}
+
+double GameServer::random_unit() {
+    uint64_t z = (rng_ += 0x9E3779B97F4A7C15ull);
+    z = (z ^ (z >> 30)) * 0xBF58476D1CE4E5B9ull;
+    z = (z ^ (z >> 27)) * 0x94D049BB133111EBull;
+    z ^= z >> 31;
+    return double(z >> 11) / double(1ull << 53);
+}
+
+void GameServer::spawn_pickup(PickupKind kind, Vec3 position) {
+    constexpr size_t max_pickups = 64;
+    if (pickups_.size() >= max_pickups) {
+        pickups_.erase(pickups_.begin());
+    }
+    pickups_.push_back({next_pickup_++, kind, position, pickup_def(kind).lifespan});
+}
+
+void GameServer::drop_pickup(Vec3 at) {
+    const auto kind = roll_pickup(random_unit());
+    if (!kind) {
+        return;
+    }
+    // Rest on the floor right under where the soldier fell; nothing dropped
+    // over a chasm, in lava, or out of bounds.
+    const double ground = world_.ground_at(at.x, at.z, at.y + 0.5, 0).height;
+    if (ground < -1e8 || ground > at.y + 1.0 || at.y - ground > 3.0) {
+        return;
+    }
+    const Vec3 landed{at.x, ground, at.z};
+    if (conquest_) {
+        const Battlefield& field = conquest_->battlefield();
+        if (!field.contains(landed) || field.harmful(landed)) {
+            return;
+        }
+    }
+    spawn_pickup(*kind, landed);
+}
+
+void GameServer::advance_pickups() {
+    if (pickups_.empty()) {
+        return;
+    }
+    const double dt = 1 / config_.tick_rate;
+    constexpr double reach2 = pickup_radius * pickup_radius;
+    constexpr double vertical_reach = 1.5;
+    std::erase_if(pickups_, [&](Pickup& pickup) {
+        pickup.life -= dt;
+        if (pickup.life <= 0) {
+            return true;
+        }
+        const PickupDef& def = pickup_def(pickup.kind);
+        for (Client& client : clients_) {
+            if (client.life != Life::alive) {
+                continue;
+            }
+            const double dx = client.state.position.x - pickup.position.x;
+            const double dz = client.state.position.z - pickup.position.z;
+            if (dx * dx + dz * dz > reach2 || std::abs(client.state.position.y - pickup.position.y) > vertical_reach) {
+                continue;
+            }
+            // Only consumed if the soldier can actually use some of it:
+            // walking over a health pack at full health leaves it for someone
+            // else, as in Battlefront.
+            bool used = false;
+            if (def.health > 0 && client.health < client.stats.max_health) {
+                client.health = std::min(client.stats.max_health, client.health + def.health);
+                used = true;
+            }
+            if (def.ammo_clips > 0 && resupply_clips(client.state, loadout_of(client), def.ammo_clips)) {
+                used = true;
+            }
+            if (def.energy > 0 && client.state.energy < client.stats.move.max_energy) {
+                client.state.energy = std::min(client.stats.move.max_energy, client.state.energy + def.energy);
+                used = true;
+            }
+            if (used) {
+                return true;
+            }
+        }
+        return false;
+    });
 }
 
 Vec3 GameServer::spawn_point(uint32_t index) const {

@@ -271,6 +271,34 @@ bool PowerupStation::reaches(Vec3 feet) const {
     return dx * dx + dz * dz <= radius * radius && std::abs(feet.y - position.y) <= 2.0;
 }
 
+const PickupDef& pickup_def(PickupKind kind) {
+    // From Battlefront II's ingame.lvl (com_inf_default and powerupitem classes).
+    static constexpr std::array<PickupDef, pickup_kind_count> defs{{
+        {PickupKind::health_small, "com_item_powerup_health25", "item_powerup_health25", 0.15, 100, 0, 0, 30},
+        {PickupKind::health_large, "com_item_powerup_health100", "item_powerup_health100", 0.08, 200, 0, 0, 30},
+        {PickupKind::ammo, "com_item_powerup_ammo", "item_powerup_ammo", 0.25, 0, 1, 0, 30},
+        {PickupKind::dual, "com_item_powerup_dual", "com_item_powerup_dual", 0.08, 200, 2, 0, 30},
+        {PickupKind::energy, "com_item_powerup_energy", "item_powerup_energy", 0.10, 0, 0, 150, 30},
+    }};
+    const size_t index = size_t(kind);
+    return defs[index < defs.size() ? index : 0];
+}
+
+std::optional<PickupKind> roll_pickup(double roll) {
+    if (roll < 0) {
+        return std::nullopt;
+    }
+    double sum = 0;
+    for (size_t i = 0; i < pickup_kind_count; ++i) {
+        const PickupDef& def = pickup_def(PickupKind(i));
+        sum += def.probability;
+        if (roll < sum) {
+            return def.kind;
+        }
+    }
+    return std::nullopt;
+}
+
 Vec3 Battlefield::center() const {
     return {(min_x + max_x) / 2, 0, (min_z + max_z) / 2};
 }

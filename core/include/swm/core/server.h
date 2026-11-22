@@ -95,6 +95,9 @@ public:
     // The entity as snapshots describe it, if it's connected.
     std::optional<net::EntityState> describe(uint32_t entity) const;
     size_t bolt_count() const { return bolts_.size(); }
+    size_t pickup_count() const { return pickups_.size(); }
+    // Drops a health, ammo, dual or energy canister on the ground at `position`.
+    void spawn_pickup(PickupKind kind, Vec3 position);
     // The match, if there is one.
     const Conquest* match() const { return conquest_ ? &*conquest_ : nullptr; }
     // A single match is over once its results have shown.
@@ -188,6 +191,13 @@ private:
         bool resting = false;  // a grenade that stopped bouncing
     };
 
+    struct Pickup {
+        uint32_t id = 0;
+        PickupKind kind = PickupKind::health_small;
+        Vec3 position;
+        double life = 0;  // seconds left
+    };
+
     void receive(double now);
     void handle(const net::Endpoint& from, const net::Datagram& datagram, double now);
     Client* join(const net::Endpoint& from, const std::string& name, uint64_t ticket);
@@ -196,6 +206,9 @@ private:
     void run_match();
     void fire(const Client& shooter, const Shot& shot, double view_tick);
     void advance_bolts();
+    void advance_pickups();
+    void drop_pickup(Vec3 at);
+    double random_unit();
     void damage(Client& victim, double raw, DamageType type, uint32_t attacker);
     void explode(const Bolt& bolt, Vec3 at);
     void kill(Client& victim, uint32_t attacker);
@@ -222,6 +235,7 @@ private:
     std::vector<Npc> npcs_;
     std::vector<std::string> looks_;
     std::vector<Bolt> bolts_;
+    std::vector<Pickup> pickups_;
     std::vector<net::CombatEvent> events_;  // this tick's
     std::vector<net::Explosion> explosions_;  // this tick's
     std::vector<net::Recruiter> recruiters_;
@@ -229,6 +243,8 @@ private:
     uint32_t tick_ = 0;
     uint32_t next_entity_ = 1;
     uint32_t next_bolt_ = 1;
+    uint32_t next_pickup_ = 1;
+    uint64_t rng_ = 0x574D5049434B5550ull;
     uint32_t next_spawn_slot_ = 0;  // spreads spawns around a post
     double next_tick_time_ = 0;
     double next_save_time_ = 0;

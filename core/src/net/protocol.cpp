@@ -233,6 +233,13 @@ struct Encoder {
             put_vec3(out, e.position);
             out.put(e.radius);
         }
+        out.put(uint16_t(m.pickups.size()));
+        for (const PickupState& p : m.pickups) {
+            out.put(p.id);
+            out.put(uint8_t(p.kind));
+            put_vec3(out, p.position);
+            out.put(p.time_left);
+        }
         out.put(uint8_t(m.match.has_value()));
         if (m.match) {
             put_match(out, *m.match);
@@ -391,6 +398,19 @@ Message decode(std::span<const uint8_t> packet) {
             e.position = get_vec3(in);
             e.radius = in.get<float>();
             m.explosions.push_back(e);
+        }
+        const size_t pickups = in.get<uint16_t>();
+        for (size_t i = 0; i < pickups; ++i) {
+            PickupState p;
+            p.id = in.get<uint32_t>();
+            const uint8_t kind = in.get<uint8_t>();
+            if (kind >= pickup_kind_count) {
+                throw PacketError("bad pickup kind");
+            }
+            p.kind = PickupKind(kind);
+            p.position = get_vec3(in);
+            p.time_left = in.get<float>();
+            m.pickups.push_back(p);
         }
         if (in.get<uint8_t>() != 0) {
             m.match = get_match(in);

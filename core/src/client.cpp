@@ -209,6 +209,7 @@ void GameClient::handle(const net::Datagram& datagram, double now) {
     bolts_time_ = now;
     events_.insert(events_.end(), snapshot->events.begin(), snapshot->events.end());
     explosions_.insert(explosions_.end(), snapshot->explosions.begin(), snapshot->explosions.end());
+    pickups_ = snapshot->pickups;
     match_ = snapshot->match;
     player_status_ = snapshot->you;
 

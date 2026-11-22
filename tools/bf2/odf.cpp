@@ -56,6 +56,10 @@ constexpr std::array known_names = {
     "HurtSound", "DeathSound", "ChunkSound", "FoleyFXGroup", "VOSound", "PointsToUnlock", "IconTexture",
     "SoldierCollision", "OrdnanceCollision", "VehicleCollision", "BuildingCollision", "TargetableCollision",
     "TerrainCollision", "FlyerCollision",
+    // powerups (powerupitem, powerupstation)
+    "SoldierHealth", "SoldierAmmo", "SoldierEnergy", "PowerupDelay", "PowerupSound", "Lighting", "Friction",
+    "BuffOffenseTimer", "BuffOffenseMult", "BuffDefenseTimer", "BuffDefenseMult", "IdleRotateSpeed", "IdleWaitTime",
+    "IdleWobbleFactor", "MapTexture", "MapScale",
 };
 
 const std::map<uint32_t, std::string_view>& name_table() {

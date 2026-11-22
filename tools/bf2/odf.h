@@ -38,6 +38,7 @@ public:
     // returns the most derived value. `base` becomes the built-in class label
     // at the root of the chain (e.g. "soldier", "cannon", "bolt").
     OdfClass resolve(std::string_view type) const;
+    const std::vector<OdfClass>& all() const { return classes_; }
 
 private:
     std::vector<OdfClass> classes_;

@@ -93,6 +93,39 @@ struct PowerupStation {
     bool reaches(Vec3 feet) const;
 };
 
+// Dropped pickups left by dead soldiers (Battlefront's com_inf_default drop
+// table and powerupitem classes in ingame.lvl): small and large health
+// canisters, ammo canisters, dual health+ammo packs, and stamina packs.
+// Offense and defense buffs wait until temporary buffs exist.
+enum class PickupKind : uint8_t {
+    health_small = 0,  // com_item_powerup_health25:  +100 health (0.15)
+    health_large = 1,  // com_item_powerup_health100: +200 health (0.08)
+    ammo = 2,          // com_item_powerup_ammo:      +1 clip (0.25)
+    dual = 3,          // com_item_powerup_dual:      +200 health, +2 clips (0.08)
+    energy = 4,        // com_item_powerup_energy:    +150 stamina (0.10)
+};
+inline constexpr size_t pickup_kind_count = 5;
+
+// How near a soldier walks to pick up a dropped canister (ASSUMPTION:
+// Battlefront's powerupitem ODF sets no radius).
+inline constexpr double pickup_radius = 1.2;
+
+struct PickupDef {
+    PickupKind kind = PickupKind::health_small;
+    const char* name = "";   // Battlefront class name
+    const char* model = "";  // GeometryName in ingame.lvl
+    double probability = 0;  // DropItemProbability in com_inf_default
+    double health = 0;       // SoldierHealth
+    int ammo_clips = 0;      // SoldierAmmo (clips)
+    double energy = 0;       // SoldierEnergy
+    double lifespan = 30;    // LifeSpan, seconds
+};
+
+const PickupDef& pickup_def(PickupKind kind);
+// Rolls Battlefront's com_inf_default drop table for `roll` in [0, 1).
+// Returns nullopt when nothing drops (~34% of deaths).
+std::optional<PickupKind> roll_pickup(double roll);
+
 struct Team {
     std::string name;
     // Loadouts its soldiers can spawn with: a stand-in for testing until the

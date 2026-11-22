@@ -17,7 +17,7 @@ namespace swm::core::net {
 // Every packet starts with a magic number, the protocol version and a message
 // type. Peers drop packets with another version. Bump it on any wire change.
 inline constexpr uint16_t protocol_magic = 0x4D53;  // "SM"
-inline constexpr uint16_t protocol_version = 10;
+inline constexpr uint16_t protocol_version = 11;
 
 // Client -> server, repeated until a Welcome or Refused arrives. The name
 // picks the saved character (there are no accounts yet). A match server
@@ -149,6 +149,16 @@ struct CombatEvent {
     friend bool operator==(const CombatEvent&, const CombatEvent&) = default;
 };
 
+// A dropped health, ammo, dual or energy canister lying on the ground.
+struct PickupState {
+    uint32_t id = 0;
+    PickupKind kind = PickupKind::health_small;
+    Vec3 position;
+    float time_left = 0;  // seconds until it disappears
+
+    friend bool operator==(const PickupState&, const PickupState&) = default;
+};
+
 // Server -> client, every tick: the world as the server sees it.
 struct Snapshot {
     uint32_t server_tick = 0;
@@ -159,6 +169,7 @@ struct Snapshot {
     // snapshots stays right.
     std::vector<CombatEvent> events;
     std::vector<Explosion> explosions;  // this tick's
+    std::vector<PickupState> pickups;   // dropped canisters on the ground
     std::optional<MatchState> match;  // in a conquest match
     PlayerStatus you;                 // differs per client
 };

@@ -405,6 +405,21 @@ void test_grenades_and_ammo() {
     CHECK(state.combat.weapons[0].reserve == launcher.ammo * launcher.rounds_per_clip &&
           state.combat.weapons[secondary_slot].reserve == (grenades.ammo - 1) * grenades.rounds_per_clip);
     CHECK(!resupply(state, loadout, 1.0));
+    // Dropped ammo and dual packs give whole clips (SoldierAmmo: 1 or 2).
+    state.combat.weapons[0].rounds = 0;
+    state.combat.weapons[0].reserve = 0;
+    state.combat.weapons[secondary_slot].rounds = 0;
+    state.combat.weapons[secondary_slot].reserve = 0;
+    CHECK(resupply_clips(state, loadout, 1));
+    CHECK(state.combat.weapons[0].reserve == launcher.rounds_per_clip &&
+          state.combat.weapons[secondary_slot].rounds == grenades.rounds_per_clip &&
+          state.combat.weapons[secondary_slot].reserve == 0);
+    CHECK(resupply_clips(state, loadout, 2));
+    CHECK(state.combat.weapons[0].reserve == launcher.ammo * launcher.rounds_per_clip &&
+          state.combat.weapons[secondary_slot].rounds == grenades.rounds_per_clip &&
+          state.combat.weapons[secondary_slot].reserve == 2 * grenades.rounds_per_clip);
+    CHECK(resupply_clips(state, loadout, 1));  // finishes the 4th grenade
+    CHECK(!resupply_clips(state, loadout, 1));  // already full: nothing changed
 }
 
 void test_explosion_falloff() {
