@@ -1481,8 +1481,11 @@ void GameServer::spawn_at_post(Client& client, size_t loadout_index, size_t post
 void GameServer::fire(Client& shooter, const Shot& shot, double view_tick) {
     const auto classes = vehicle_classes();
     const bool driving = shooter.state.vehicle >= 0 && size_t(shooter.state.vehicle) < classes.size();
-    const WeaponDef* def =
-        weapon_in_slot(driving ? classes[size_t(shooter.state.vehicle)].loadout : loadout_of(shooter), shot.weapon);
+    const VehicleSeat* seat = driving ? vehicle_seat(classes[size_t(shooter.state.vehicle)], shooter.state.seat) : nullptr;
+    const WeaponDef* def = weapon_in_slot(seat       ? seat->loadout
+                                          : driving ? classes[size_t(shooter.state.vehicle)].loadout
+                                                    : loadout_of(shooter),
+                                          shot.weapon);
     if (def == nullptr) {
         return;
     }

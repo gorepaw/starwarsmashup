@@ -214,7 +214,16 @@ std::string projectile_of(const OdfClass& weapon, const OdfClass& ordnance) {
     if (gun && (ordnance.base == "bolt" || ordnance.base == "bullet")) {
         return "bolt";
     }
+    // ASSUMPTION: a beam (the hover tank's turret laser) as a bolt, written
+    // faster than its ordnance says (write_weapon); a guided rocket (the
+    // AT-ST's, steered by its gunner in Battlefront) as a plain missile.
+    if (gun && ordnance.base == "beam") {
+        return "beam";
+    }
     if ((weapon.base == "launcher" || weapon.base == "weapon") && ordnance.base == "missile") {
+        return "missile";
+    }
+    if (weapon.base == "remote") {
         return "missile";
     }
     if (weapon.base == "grenade" && (ordnance.base == "sticky" || ordnance.base == "shell" || ordnance.base == "grenade")) {
@@ -238,7 +247,9 @@ void write_weapon(std::ostream& out, const char* section, const CarriedWeapon& c
                   const std::string& projectile) {
     const OdfClass weapon = library.resolve(carried.name);
     const OdfClass ordnance = ordnance_of(weapon, library);
-    out << "\n[" << section << "]\nName = " << carried.name << "\nProjectile = " << projectile << "\n";
+    const bool beam = projectile == "beam";
+    out << "\n[" << section << "]\nName = " << carried.name << "\nProjectile = " << (beam ? "bolt" : projectile)
+        << "\n";
     if (!carried.ammo.empty()) {
         out << "WeaponAmmo = " << carried.ammo << "\n";
     }
@@ -281,6 +292,11 @@ void write_weapon(std::ostream& out, const char* section, const CarriedWeapon& c
         if (const auto value = ordnance.get(key)) {
             out << key << " = " << *value << "\n";
         }
+    }
+    if (beam) {
+        // Near instant, to its weapon's range (later lines win).
+        const double range = std::atof(weapon.get("MaxRange").value_or("150").c_str());
+        out << std::format("Velocity = 1500\nGravity = 0\nLifeSpan = {:.3f}\n", std::max(50.0, range) / 1500);
     }
     for (const char* key : {"OrdnanceSound", "CollisionOtherSound"}) {
         if (const auto value = ordnance.get(key)) {
@@ -475,6 +491,22 @@ int cmd_export_vehicle(const std::vector<std::string>& args) {
     out << "; " << name << " from Battlefront II (" << args[1] << ".lvl, ingame.lvl), written by bf2tool "
         << "export-vehicle.\n; Game data from your own install: don't commit or share it.\n\n[vehicle]\nName = "
         << name << "\nKind = " << kind << "\n";
+    // Most classes name themselves only in Battlefront's localization (not
+    // read): a name from the class's, for those without a Label.
+    if (!vehicle.get("Label")) {
+        static const std::map<std::string, std::string> known{
+            {"combatspeeder", "Combat Speeder"}, {"bos_combatspeeder", "Combat Speeder"},
+            {"fightertank", "Hover Tank"},        {"speederbike", "Speeder Bike"},
+            {"barcspeeder", "BARC Speeder"},      {"aat", "AAT"},
+            {"stap", "STAP"},                     {"atat", "AT-AT"},
+            {"atte", "AT-TE"},                    {"oneman_atst", "AT-RT"},
+            {"spider", "Spider Walker"},          {"tauntaun", "Tauntaun"}};
+        const std::string tail = name.substr(std::min(name.size(), name.find('_', name.find('_') + 1) + 1));
+        const auto it = known.find(tail);
+        std::string label = it != known.end() ? it->second : tail;
+        if (it == known.end() && !label.empty()) label[0] = char(std::toupper(static_cast<unsigned char>(label[0])));
+        out << "Label = " << label << "\n";
+    }
     const std::string geometry = vehicle.get("GeometryName").value_or(name);
     // The driver's body's values: those before a second Flyer- or
     // WalkerSection (a gunner's seat: the jungle AT-ST's TURRET1 has its own
@@ -636,6 +668,57 @@ int cmd_export_vehicle(const std::vector<std::string>& args) {
         write_weapon(out, "weapon", weapon, library.classes(), projectile);
         std::cerr << std::format("  weapon {} ({}, {})\n", weapon.name, projectile, ordnance.type);
         ++weapons;
+    }
+    // Its gunners' seats: each later section (the hover tank's TURRET1) with
+    // its eye, aim limits and weapons ([weapon]s with Seat = its number);
+    // one without weapons is left out.
+    struct Seat {
+        std::string name;
+        std::map<std::string, std::string> values;
+        std::vector<CarriedWeapon> weapons;
+    };
+    std::vector<Seat> seats;
+    sections = 0;
+    for (const auto& [hash, value] : vehicle.properties) {
+        if (hash == odf_hash("FlyerSection") || hash == odf_hash("WalkerSection")) {
+            if (++sections >= 2) seats.push_back({value, {}, {}});
+        } else if (seats.empty()) {
+            continue;
+        } else if (hash == odf_hash("WeaponName")) {
+            seats.back().weapons.push_back({value});
+        } else if (hash == odf_hash("WeaponAmmo") && !seats.back().weapons.empty()) {
+            seats.back().weapons.back().ammo = value;
+        } else {
+            for (const char* key : {"EyePointOffset", "YawLimits", "PitchLimits", "TrackCenter", "TrackOffset"}) {
+                if (hash == odf_hash(key)) seats.back().values[key] = value;
+            }
+        }
+    }
+    int seat_number = 0;
+    for (const Seat& seat : seats) {
+        std::vector<std::pair<CarriedWeapon, std::string>> usable;
+        for (const CarriedWeapon& weapon : seat.weapons) {
+            const OdfClass def = library.classes().resolve(weapon.name);
+            const std::string projectile = projectile_of(def, ordnance_of(def, library.classes()));
+            if (!projectile.empty() && usable.size() < 2) {
+                usable.push_back({weapon, projectile});
+            } else {
+                std::cerr << std::format("  seat {}: skipped {}\n", seat.name, weapon.name);
+            }
+        }
+        if (usable.empty()) {
+            continue;
+        }
+        ++seat_number;
+        out << "\n[seat]\nName = " << seat.name << "\n";
+        for (const auto& [key, value] : seat.values) {
+            out << key << " = " << value << "\n";
+        }
+        for (const auto& [weapon, projectile] : usable) {
+            write_weapon(out, "weapon", weapon, library.classes(), projectile);
+            out << "Seat = " << seat_number << "\n";
+            std::cerr << std::format("  seat {} ({}): weapon {} ({})\n", seat_number, seat.name, weapon.name, projectile);
+        }
     }
     if (!out) {
         throw std::runtime_error("cannot write " + (out_dir / (name + ".ini")).string());

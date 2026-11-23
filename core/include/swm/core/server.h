@@ -327,6 +327,8 @@ private:
         double health = 0;
         uint32_t driver = 0;
         CombatState driver_combat;
+        std::vector<uint32_t> gunners;            // per seat: who sits there (0: no one)
+        std::vector<CombatState> gunner_combat;   // per seat: its gunner's own weapons, waiting
         double away = 0;        // seconds empty away from its spawn
         double dead_for = -1;   // seconds since destroyed; -1 alive
     };
@@ -441,6 +443,7 @@ private:
     void use_vehicle(Client& client);
     void leave_vehicle(Client& client);
     Vehicle* vehicle_of(uint32_t driver);
+    Vehicle* vehicle_gunned_by(uint32_t gunner);  // the one it sits in as a gunner
     void damage_vehicle(Vehicle& vehicle, double amount, uint32_t attacker, std::vector<Blast>& blasts);
     net::VehicleState describe(const Vehicle& vehicle) const;
     // Professions (server_professions.cpp).

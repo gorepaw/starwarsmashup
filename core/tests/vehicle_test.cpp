@@ -289,10 +289,13 @@ void test_match_vehicles() {
     CHECK((a.predicted().position - start).length() > 30);
     CHECK(a.stats().corrections - corrections <= 1);
 
-    // Out again: on foot beside it, holding its own gun.
+    // Out again, going fast: thrown clear (ejected), then on foot beside
+    // it, holding its own gun.
     f.run(0.1, [&] { a.set_input({.use = true}); });
-    f.run(0.3, [&] { a.set_input({}); });
+    f.run(0.1, [&] { a.set_input({}); });
     CHECK(a.predicted().vehicle == -1 && a.vehicles()[0].driver == 0);
+    CHECK(a.predicted().position.y > 0.05 && !a.predicted().grounded);
+    f.run(1.5, [&] { a.set_input({}); });
     CHECK(near(a.predicted().position.y, 0, 1e-6));
     // It coasted on a little: back to it, and in.
     f.run(3, [&] { a.set_input(walk_to(a, a.vehicles()[0].position)); });
@@ -322,6 +325,96 @@ void test_match_vehicles() {
     CHECK(a.vehicles().size() == 1 && a.vehicles()[0].alive && a.vehicles()[0].driver == 0);
 }
 
+// A gunner's seat: a teammate gets in behind the driver, rides where the
+// vehicle goes, can't be joined by the other side, gets out with its own
+// gun, and dies with the vehicle.
+void test_gunner_seat() {
+    VehicleClass tank = bike();
+    tank.label = "Tank";
+    VehicleSeat turret;
+    turret.name = "TURRET1";
+    turret.eye = {0, 2, 0};
+    turret.loadout.weapons = {WeaponDef{}, std::nullopt, std::nullopt};
+    turret.loadout.weapons[0]->name = "turret_laser";
+    tank.seats = {turret};
+    Battlefield field;
+    field.teams[0] = {"Empire", {Loadout{}}, "imp"};
+    field.teams[1] = {"Rebellion", {Loadout{}}, "all"};
+    field.min_x = field.min_z = -150;
+    field.max_x = field.max_z = 150;
+    field.posts = {{.name = "West", .position = {-60, 0, 0}, .owner = 0},
+                   {.name = "East", .position = {60, 0, 0}, .owner = 1}};
+    field.warmup = 100;
+    field.vehicles = {tank};
+    VehicleSpawn spawn;
+    spawn.name = "tank";
+    spawn.position = {-55, 0, 10};
+    spawn.post = 0;
+    spawn.vehicle = {0, -1};
+    spawn.respawn_time = 30;
+    field.vehicle_spawns = {spawn};
+    Field f(field);
+    GameClient& a = f.join("a");  // the Empire
+    GameClient& b = f.join("b");  // the Rebellion
+    GameClient& c = f.join("c");  // the Empire
+    f.run(0.3);
+    a.request_spawn(0, 0);
+    b.request_spawn(0, 1);
+    c.request_spawn(0, 0);
+    f.run(0.5);
+    CHECK(a.self().team == 0 && b.self().team == 1 && c.self().team == 0);
+    const Vec3 at = a.vehicles().empty() ? Vec3{} : a.vehicles()[0].position;
+    const auto walk_to = [&](GameClient& who, Vec3 to) {
+        const Vec3 d = to - who.predicted().position;
+        return GameClient::Controls{.forward = std::hypot(d.x, d.z) > 1.5 ? 1.0 : 0.0, .yaw = std::atan2(-d.x, -d.z)};
+    };
+    f.run(4, [&] {
+        a.set_input(walk_to(a, at));
+        c.set_input(walk_to(c, at));
+    });
+    // A drives; C, beside it, takes the gun.
+    f.run(0.1, [&] { a.set_input({.use = true}); });
+    f.run(0.2, [&] { a.set_input({}); });
+    f.run(0.1, [&] { c.set_input({.use = true}); });
+    f.run(0.3, [&] { c.set_input({}); });
+    CHECK(a.self().state.vehicle == 0 && a.self().state.seat == 0);
+    CHECK(c.self().state.vehicle == 0 && c.self().state.seat == 1);
+    CHECK(!a.vehicles().empty() && a.vehicles()[0].driver == a.entity_id() &&
+          a.vehicles()[0].gunners == std::vector<uint32_t>{c.entity_id()});
+    // Driven off, the gunner rides along.
+    f.run(1.5, [&] { a.set_input({.forward = 1, .yaw = 0}); });
+    f.run(0.5, [&] { a.set_input({}); });
+    const Vec3 tank_at = a.vehicles().empty() ? Vec3{} : a.vehicles()[0].position;
+    CHECK((tank_at - at).length() > 10);
+    CHECK((c.self().state.position - tank_at).length() < 1.5);
+    // The gunner out (it's slowed: on its feet) with its own gun, and back in.
+    f.run(2, [&] { a.set_input({}); });
+    f.run(0.1, [&] { c.set_input({.use = true}); });
+    f.run(0.3, [&] { c.set_input({}); });
+    CHECK(c.self().state.vehicle == -1 && c.self().state.seat == 0);
+    CHECK(!a.vehicles().empty() && a.vehicles()[0].gunners == std::vector<uint32_t>{0});
+    f.run(0.1, [&] { c.set_input({.use = true}); });
+    f.run(0.3, [&] { c.set_input({}); });
+    CHECK(c.self().state.seat == 1);
+    // Destroyed: both aboard die.
+    bool destroyed = false;
+    f.run(8, [&] {
+        GameClient::Controls controls;
+        if (!b.vehicles().empty() && b.vehicles()[0].alive) {
+            const Vec3 target = b.vehicles()[0].position + Vec3{0, 0.4, 0};
+            const Vec3 d = target - (b.predicted().position + Vec3{0, eye_height, 0});
+            controls.yaw = std::atan2(-d.x, -d.z);
+            controls.pitch = std::atan2(d.y, std::hypot(d.x, d.z));
+            controls.fire = true;
+            controls.forward = std::hypot(d.x, d.z) > 30 ? 1.0 : 0.0;
+        }
+        b.set_input(controls);
+        for (const auto& v : b.vehicles()) destroyed |= !v.alive;
+    });
+    CHECK(destroyed);
+    CHECK(!a.alive() && !c.alive() && b.self().kills == 2);
+}
+
 } // namespace
 
 int main() {
@@ -329,5 +422,6 @@ int main() {
     test_walker();
     test_vehicle_file();
     test_match_vehicles();
+    test_gunner_seat();
     return swm::test::finish("vehicle_test");
 }

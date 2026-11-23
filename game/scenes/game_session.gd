@@ -660,8 +660,9 @@ func _driven_vehicle() -> Dictionary:
 		return {}
 	var out := _vehicles.class_of(index).duplicate()
 	out["health"] = out.get("max_health", 1.0)
+	var me: int = _client.get_entity_id()
 	for v: Dictionary in _client.get_vehicles():
-		if int(v["driver"]) == _client.get_entity_id():
+		if int(v["driver"]) == me or (v.get("gunners", []) as Array).has(me):
 			out["health"] = v["health"]
 			out["max_health"] = v["max_health"]
 	return out
@@ -675,10 +676,12 @@ func _show_vehicle_prompt() -> void:
 	var label := _battle_ui.center_label()
 	if int(own.get("vehicle", -1)) >= 0 or not bool(own["alive"]) or label == null or label.text != "":
 		return
-	var v := _vehicles.enterable(_client.get_vehicles(), own["position"])
-	if not v.is_empty():
+	var found := _vehicles.enterable(_client.get_vehicles(), own["position"], int(own["team"]))
+	if not found.is_empty():
 		var key := Settings.binding_name(_settings.bindings["interact"]) if _settings.bindings.has("interact") else "E"
-		label.text = "Press %s to get in the %s" % [key, str(_vehicles.class_of(int(v["vehicle"])).get("label", "vehicle"))]
+		var label_text := str(_vehicles.class_of(int(found["vehicle"]["vehicle"])).get("label", "vehicle"))
+		label.text = ("Press %s to get in the %s" if int(found["seat"]) == 0 else "Press %s to man the %s's gun") \
+				% [key, label_text]
 
 
 func _aim() -> Vector2:
@@ -689,7 +692,14 @@ func _aim() -> Vector2:
 			else float(_own.get("eye_height", EYE_HEIGHT))
 	var eye: Vector3 = own["position"] + Vector3.UP * eye_h
 	var driving := int(own.get("vehicle", -1))
-	if driving >= 0:
+	var seat := int(own.get("seat", 0))
+	if driving >= 0 and seat > 0:
+		# A gunner's guns fire from its seat's eye, on the vehicle as it's drawn.
+		var at := _vehicles.riding(_client.get_entity_id())
+		var seats: Array = _vehicles.class_of(driving).get("seats", [])
+		if not at.is_empty() and seat <= seats.size():
+			eye = Vehicles.to_world(at["position"], float(at["yaw"]), (seats[seat - 1] as Dictionary)["eye"])
+	elif driving >= 0:
 		# Its guns fire from its eye point.
 		eye = Vehicles.to_world(own["position"], float(own["yaw"]),
 				_vehicles.class_of(driving).get("eye", Vector3.UP))
@@ -949,7 +959,9 @@ func _load_person(look: int) -> Node3D:
 func _pose(character: Dictionary, state: Dictionary) -> void:
 	var soldier := character["soldier"] as Soldier
 	var vehicle := int(state.get("vehicle", -1))
-	soldier.model.visible = vehicle < 0 or str(_vehicles.class_of(vehicle).get("kind", "")) == "hover"
+	# A gunner sits inside, at its gun: not seen.
+	soldier.model.visible = vehicle < 0 or (str(_vehicles.class_of(vehicle).get("kind", "")) == "hover"
+			and int(state.get("seat", 0)) == 0 and _vehicles.class_of(vehicle).get("seats", []).is_empty())
 	if vehicle >= 0:
 		# Inside a walker's cab: not seen. On a hover vehicle: crouched on it.
 		if soldier.model.visible:
@@ -1019,6 +1031,12 @@ func _update_camera(target: Vector3, delta: float) -> void:
 		var look := _camera_basis()
 		# At TrackCenter's height; ASSUMPTION: a little nearer than its and
 		# TrackOffset's distance, which frame it small.
+		# A gunner's view follows the vehicle as it's drawn (its own state
+		# lags: the server carries it).
+		if int(_client.get_presented().get("seat", 0)) > 0:
+			var at := _vehicles.riding(_client.get_entity_id())
+			if not at.is_empty():
+				target = at["position"]
 		var pivot := target + Vector3.UP * track.y
 		var at := pivot + look * Vector3(0, 0.3, maxf(3.5, (offset.z - track.z) * 0.75))
 		at.y = maxf(at.y, _client.get_ground_height(at.x, at.z, pivot.y) + 0.5)

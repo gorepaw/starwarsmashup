@@ -82,6 +82,7 @@ func update(vehicles: Array, shown: Dictionary, delta: float) -> void:
 				"player": players[0] if not players.is_empty() else null, "state": "", "next": "a",
 				"last": node.position, "yaw": node.rotation.y, "speed": 0.0, "turn": 0.0}}
 		var entry: Dictionary = _nodes[id]
+		entry["state"] = v
 		var node: Node3D = entry["node"]
 		node.visible = bool(v["alive"])
 		var driver := int(v["driver"])
@@ -166,15 +167,43 @@ func _play(walk: Dictionary, clip: String, rate: float, backward := false) -> vo
 		player.play(clip)
 
 
-# The empty vehicle nearest `position` within reach of getting in (as the
-# server reckons it: 2.5 m from its body, ASSUMPTION a little less to be
-# sure), or {}.
-func enterable(vehicles: Array, position: Vector3) -> Dictionary:
+# Where the vehicle `entity` drives or gunners is drawn: {position, yaw,
+# seat (0 driving)}, or {} if it rides in none.
+func riding(entity: int) -> Dictionary:
+	for entry: Dictionary in _nodes.values():
+		var v: Dictionary = entry.get("state", {})
+		var seat := -1
+		if int(v.get("driver", 0)) == entity:
+			seat = 0
+		else:
+			var gunners: Array = v.get("gunners", [])
+			if gunners.has(entity):
+				seat = gunners.find(entity) + 1
+		if seat >= 0:
+			var node: Node3D = entry["node"]
+			return {"position": node.position, "yaw": node.rotation.y - PI, "seat": seat, "class": entry["class"]}
+	return {}
+
+
+# The seat a soldier of `team` would get in the nearest vehicle within reach
+# (as the server reckons it: 2.5 m from its body, ASSUMPTION a little less
+# to be sure): {vehicle: its state, seat: 0 the driver's, 1.. a gunner's},
+# or {}. A gunner's seat only beside one's own side.
+func enterable(vehicles: Array, position: Vector3, team := -1) -> Dictionary:
 	var best := {}
 	var best_d := 2.2
 	var chest := position + Vector3.UP
 	for v: Dictionary in vehicles:
-		if int(v["driver"]) != 0 or not bool(v["alive"]):
+		if not bool(v["alive"]):
+			continue
+		var seat := -1
+		var gunners: Array = v.get("gunners", [])
+		var aboard := int(v["driver"]) != 0 or gunners.any(func(g: int) -> bool: return g != 0)
+		if int(v["driver"]) == 0 and not (aboard and int(v["team"]) != team):
+			seat = 0
+		elif int(v["team"]) == team and gunners.has(0):
+			seat = gunners.find(0) + 1
+		if seat < 0:
 			continue
 		var c := class_of(int(v["vehicle"]))
 		if c.is_empty():
@@ -186,7 +215,7 @@ func enterable(vehicles: Array, position: Vector3) -> Dictionary:
 				maxf(maxf(lo.z - local.z, 0.0), local.z - hi.z)).length()
 		if d <= best_d:
 			best_d = d
-			best = v
+			best = {"vehicle": v, "seat": seat}
 	return best
 
 

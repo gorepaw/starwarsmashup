@@ -127,6 +127,7 @@ void put_state(ByteWriter& out, const MoveState& state) {
     out.put(state.parry_window);
     out.put(state.stagger);
     out.put(state.vehicle);
+    out.put(state.seat);
     const CombatState& c = state.combat;
     out.put(c.weapon);
     out.put(c.cooldown);
@@ -158,6 +159,7 @@ MoveState get_state(ByteReader& in) {
     state.parry_window = in.get<float>();
     state.stagger = in.get<float>();
     state.vehicle = in.get<int8_t>();
+    state.seat = in.get<int8_t>();
     CombatState& c = state.combat;
     c.weapon = in.get<uint8_t>();
     c.cooldown = in.get<double>();
@@ -698,6 +700,10 @@ struct Encoder {
             out.put(v.driver);
             out.put(v.team);
             out.put(uint8_t(v.alive));
+            out.put(uint8_t(std::min<size_t>(v.gunners.size(), 8)));
+            for (size_t g = 0; g < v.gunners.size() && g < 8; ++g) {
+                out.put(v.gunners[g]);
+            }
         }
         const uint8_t ccount = uint8_t(std::min<size_t>(m.corpses.size(), 255));
         out.put(ccount);
@@ -1159,6 +1165,11 @@ Message decode(std::span<const uint8_t> packet) {
             v.driver = in.get<uint32_t>();
             v.team = in.get<int8_t>();
             v.alive = in.get<uint8_t>() != 0;
+            const size_t gunners = in.get<uint8_t>();
+            if (gunners > 8) throw PacketError("too many gunners");
+            for (size_t g = 0; g < gunners; ++g) {
+                v.gunners.push_back(in.get<uint32_t>());
+            }
             m.vehicles.push_back(v);
         }
         const size_t corpses = in.get<uint8_t>();

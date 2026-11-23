@@ -87,6 +87,10 @@ struct MoveState {
     // classes), -1 on foot. Driving, the state is the vehicle's: its yaw is
     // its heading, its weapons and energy (boost) the vehicle's.
     int8_t vehicle = -1;
+    // Riding in `vehicle` as its gunner: 1 for its first gunner's seat; 0
+    // driving (or on foot). A gunner doesn't move itself: the server keeps
+    // its place and yaw the vehicle's; its look turns the seat's guns.
+    int8_t seat = 0;
     CombatState combat;
 
     bool rolling() const { return roll > 0; }

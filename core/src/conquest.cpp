@@ -460,11 +460,11 @@ std::string side_for(const std::string& name) {
 // A map file's vehicle spawns ([vehicle_spawn]: Position x z y, Forward x
 // z, Post, SpawnTime, ExpireTimeField, Class = <side> <atk|def> <class>),
 // their classes read from `vehicles` (<class>/<class>.ini, as bf2tool
-// export-vehicle writes them). The first team attacks, the second defends,
-// as Battlefront's conquest scripts set them (ATT = 1, DEF = 2). A spawn
+// export-vehicle writes them). Team `attacker` attacks (Battlefront's ATT:
+// on Endor the Rebellion, on Yavin the Empire), the other defends. A spawn
 // whose classes aren't exported is left out.
 void read_vehicle_spawns(Battlefield& field, const Ini& ini, const std::filesystem::path& vehicles,
-                         const std::string& where) {
+                         const std::string& where, size_t attacker = 0) {
     for (const Ini::Section& s : ini.sections()) {
         if (s.name != "vehicle_spawn") {
             continue;
@@ -496,7 +496,7 @@ void read_vehicle_spawns(Battlefield& field, const Ini& ini, const std::filesyst
             std::string side, role, name;
             if (!(fields >> side >> role >> name)) continue;
             for (size_t t = 0; t < field.teams.size(); ++t) {
-                if (!iequals(field.teams[t].side, side) || !iequals(role, t == 0 ? "atk" : "def")) continue;
+                if (!iequals(field.teams[t].side, side) || !iequals(role, t == attacker ? "atk" : "def")) continue;
                 auto it = std::find_if(field.vehicles.begin(), field.vehicles.end(),
                                        [&](const VehicleClass& v) { return iequals(v.name, name); });
                 if (it == field.vehicles.end()) {
@@ -609,8 +609,18 @@ Battlefield load_battlefield(const std::filesystem::path& path) {
         read_posts(field, map_ini, map_path.string());
         // Its vehicles, where bf2tool export-vehicle wrote them (Vehicles =
         // a directory, relative to this file).
+        // Attacker = the team Battlefront's mission has attack (default the first).
         if (const auto vehicles = main->get("Vehicles")) {
-            read_vehicle_spawns(field, map_ini, path.parent_path() / *vehicles, map_path.string());
+            size_t attacker = 0;
+            if (const auto name = main->get("Attacker")) {
+                const auto it = std::find_if(field.teams.begin(), field.teams.end(),
+                                             [&](const Team& team) { return iequals(team.name, *name); });
+                if (it == field.teams.end()) {
+                    throw std::runtime_error(where + ": Attacker names no team: " + *name);
+                }
+                attacker = size_t(it - field.teams.begin());
+            }
+            read_vehicle_spawns(field, map_ini, path.parent_path() / *vehicles, map_path.string(), attacker);
         }
     }
     read_posts(field, ini, where);

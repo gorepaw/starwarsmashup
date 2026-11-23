@@ -36,7 +36,8 @@ godot::Dictionary to_dictionary(const core::MoveState& state) {
     out["roll_yaw"] = double(state.roll_yaw);  // the way it rolls
     out["blocking"] = state.blocking;
     out["stagger"] = double(state.stagger);
-    out["vehicle"] = int64_t(state.vehicle);    // the vehicle class it drives; -1 on foot
+    out["vehicle"] = int64_t(state.vehicle);    // the vehicle class it rides in; -1 on foot
+    out["seat"] = int64_t(state.seat);          // 0 driving; 1.. a gunner's seat
     const core::CombatState& c = state.combat;
     out["weapon"] = int64_t(c.weapon);
     out["rounds"] = int64_t(c.weapons[c.weapon].rounds);
@@ -299,16 +300,22 @@ godot::Array SwmClient::get_vendors() const {
 
 const core::Loadout& SwmClient::weapons_of(uint32_t entity) const {
     const auto classes = client() ? client()->vehicle_classes() : std::span<const core::VehicleClass>{};
+    // Riding: the seat's guns (the driver's are the vehicle's own).
+    const auto ridden = [&](const core::MoveState& state) -> const core::Loadout* {
+        if (state.vehicle < 0 || size_t(state.vehicle) >= classes.size()) return nullptr;
+        const core::VehicleClass& vehicle = classes[size_t(state.vehicle)];
+        const core::VehicleSeat* seat = core::vehicle_seat(vehicle, state.seat);
+        return seat ? &seat->loadout : &vehicle.loadout;
+    };
     if (client() && entity == uint32_t(client()->entity_id())) {
-        const int v = client()->predicted().vehicle;
-        return v >= 0 && size_t(v) < classes.size() ? classes[size_t(v)].loadout : loadout();
+        const core::Loadout* riding = ridden(client()->predicted());
+        return riding ? *riding : loadout();
     }
     if (client()) {
         for (const auto& remote : client()->remotes()) {
             if (remote.id == entity) {
-                const int v = remote.state.vehicle;
-                if (v >= 0 && size_t(v) < classes.size()) {
-                    return classes[size_t(v)].loadout;
+                if (const core::Loadout* riding = ridden(remote.state)) {
+                    return *riding;
                 }
                 return loadout_of(remote.team, remote.loadout);
             }
@@ -333,6 +340,11 @@ godot::Array SwmClient::get_vehicles() const {
             entry["driver"] = int64_t(v.driver);
             entry["team"] = int64_t(v.team);
             entry["alive"] = v.alive;
+            godot::Array gunners;
+            for (const uint32_t g : v.gunners) {
+                gunners.push_back(int64_t(g));
+            }
+            entry["gunners"] = gunners;
             out.push_back(entry);
         }
     }
@@ -819,6 +831,14 @@ godot::Dictionary SwmClient::get_battlefield() const {
         entry["max_health"] = v.max_health;
         entry["altitude"] = v.altitude;
         entry["eye"] = to_godot(v.eye);
+        godot::Array seats;
+        for (const core::VehicleSeat& seat : v.seats) {
+            godot::Dictionary s;
+            s["name"] = godot::String::utf8(seat.name.c_str());
+            s["eye"] = to_godot(seat.eye);
+            seats.push_back(s);
+        }
+        entry["seats"] = seats;
         entry["track_center"] = to_godot(v.track_center);
         entry["track_offset"] = to_godot(v.track_offset);
         entry["bounds_min"] = to_godot(v.bounds_min);

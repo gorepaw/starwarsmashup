@@ -1,6 +1,7 @@
 #pragma once
 
 #include <filesystem>
+#include <numbers>
 #include <optional>
 #include <string>
 #include <vector>
@@ -19,6 +20,17 @@ enum class VehicleKind : uint8_t { hover, walker };
 
 // A Battlefront vehicle (written by `bf2tool export-vehicle` from its class):
 // its handling, body, health and the pilot's weapons.
+// A gunner's seat (a later FlyerSection or WalkerSection: the hover tank's
+// TURRET1): where its guns fire from and how far they turn from the
+// vehicle's heading, as the pilot's do, and its guns.
+struct VehicleSeat {
+    std::string name;
+    Vec3 eye{0, 1, 0};
+    double yaw_min = -std::numbers::pi, yaw_max = std::numbers::pi;
+    double pitch_min = -0.5, pitch_max = 0.5;
+    Loadout loadout;
+};
+
 struct VehicleClass {
     std::string name;   // its Battlefront class, e.g. "imp_hover_speederbike"
     std::string label;  // e.g. "Speederbike"
@@ -63,6 +75,8 @@ struct VehicleClass {
     Vec3 track_offset;  // TrackOffset: the chase camera further back (z) from TrackCenter
     // The pilot's weapons, as a loadout's primary and sidearm.
     Loadout loadout;
+    // Gunners' seats ([seat]s, their [weapon]s marked Seat = 1, 2, ...).
+    std::vector<VehicleSeat> seats;
     // Destroyed: its explosion (whoever's near takes it), and its look.
     double explosion_damage = 0, explosion_inner = 0, explosion_outer = 0;
     std::string explosion_effect;
@@ -89,6 +103,11 @@ void simulate_vehicle(MoveState& state, const MoveInput& input, const World& wor
 std::pair<double, double> vehicle_aim(const MoveState& state, const MoveInput& input, const VehicleClass& vehicle);
 // Where its guns fire from, in the world.
 Vec3 vehicle_muzzle(const MoveState& state, const VehicleClass& vehicle);
+// A gunner's: `state` is the gunner's (riding: the vehicle's place and
+// heading), `seat` 1 for the first gunner's seat. Out of range: the pilot's.
+const VehicleSeat* vehicle_seat(const VehicleClass& vehicle, int seat);
+std::pair<double, double> seat_aim(const MoveState& state, const MoveInput& input, const VehicleSeat& seat);
+Vec3 seat_muzzle(const MoveState& state, const VehicleSeat& seat);
 // A point in the vehicle's model space (+z forward), in the world, for a
 // vehicle at `position` facing `yaw`.
 Vec3 vehicle_to_world(Vec3 position, double yaw, Vec3 local);

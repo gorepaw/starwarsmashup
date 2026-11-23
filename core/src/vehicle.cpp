@@ -130,11 +130,27 @@ VehicleClass load_vehicle_class(const std::filesystem::path& path) {
     v.health_texture = s.get("HealthTexture").value_or("");
     v.loadout.name = v.name;
     v.loadout.weapons = {};
-    int slot = 0;
-    for (size_t i = 0; i < ini.sections().size() && slot < hand_slots; ++i) {
-        if (ini.sections()[i].name == "weapon") {
-            v.loadout.weapons[size_t(slot++)] = weapon_from_section(ini, i, where, v.name + "_weapon");
-        }
+    for (const Ini::Section& section : ini.sections()) {
+        if (section.name != "seat") continue;
+        VehicleSeat seat;
+        seat.name = section.get("Name").value_or("seat");
+        seat.loadout.name = v.name + "_" + seat.name;
+        seat.loadout.weapons = {};
+        seat.eye = read_vec3(section, "EyePointOffset", v.eye);
+        if (seat.eye.y <= 0) seat.eye = v.eye;
+        const auto [syaw_lo, syaw_hi] = read_pair(section, "YawLimits", {-180, 180});
+        const auto [spitch_lo, spitch_hi] = read_pair(section, "PitchLimits", {-30, 30});
+        seat.yaw_min = syaw_lo * degrees, seat.yaw_max = syaw_hi * degrees;
+        seat.pitch_min = spitch_lo * degrees, seat.pitch_max = spitch_hi * degrees;
+        v.seats.push_back(std::move(seat));
+    }
+    std::vector<int> slots(v.seats.size() + 1, 0);
+    for (size_t i = 0; i < ini.sections().size(); ++i) {
+        if (ini.sections()[i].name != "weapon") continue;
+        const int seat = int(ini.sections()[i].number("Seat", 0));
+        if (seat < 0 || seat > int(v.seats.size()) || slots[size_t(seat)] >= hand_slots) continue;
+        Loadout& loadout = seat == 0 ? v.loadout : v.seats[size_t(seat - 1)].loadout;
+        loadout.weapons[size_t(slots[size_t(seat)]++)] = weapon_from_section(ini, i, where, v.name + "_weapon");
     }
     return v;
 }
@@ -256,6 +272,21 @@ Vec3 vehicle_to_world(Vec3 position, double yaw, Vec3 local) {
 
 Vec3 vehicle_muzzle(const MoveState& state, const VehicleClass& vehicle) {
     return vehicle_to_world(state.position, state.yaw, vehicle.eye);
+}
+
+const VehicleSeat* vehicle_seat(const VehicleClass& vehicle, int seat) {
+    return seat >= 1 && size_t(seat) <= vehicle.seats.size() ? &vehicle.seats[size_t(seat - 1)] : nullptr;
+}
+
+std::pair<double, double> seat_aim(const MoveState& state, const MoveInput& input, const VehicleSeat& seat) {
+    const double yaw = double(state.yaw) +
+                       std::clamp(wrap_angle(double(input.yaw) - double(state.yaw)), seat.yaw_min, seat.yaw_max);
+    const double pitch = std::clamp(double(input.pitch), seat.pitch_min, seat.pitch_max);
+    return {yaw, pitch};
+}
+
+Vec3 seat_muzzle(const MoveState& state, const VehicleSeat& seat) {
+    return vehicle_to_world(state.position, state.yaw, seat.eye);
 }
 
 std::optional<double> segment_hits_vehicle(Vec3 a, Vec3 b, Vec3 position, double yaw, const VehicleClass& vehicle) {
