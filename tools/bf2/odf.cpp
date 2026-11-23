@@ -45,7 +45,8 @@ constexpr std::array known_names = {
     "CollisionOtherSound", "CollisionWaterSound", "MaxRange", "ImpactSound",
     // explosions
     "Damage", "DamageRadiusInner", "DamageRadiusOuter", "Push", "PushRadiusInner", "PushRadiusOuter",
-    "Shake", "ShakeLength", "ShakeRadiusInner", "ShakeRadiusOuter", "Effect", "Sound",
+    "Shake", "ShakeLength", "ShakeRadiusInner", "ShakeRadiusOuter", "Effect", "Sound", "SoundProperty",
+    "OrdnanceSound", "OpenSound", "CloseSound", "LockedSound", "AmbientSound", "DischargeSound", "DamageEffectSound",
     // soldiers
     "MaxHealth", "MaxSpeed", "MaxStrafeSpeed", "MaxTurnSpeed", "JumpHeight", "JumpForwardSpeedFactor",
     "JumpStrafeSpeedFactor", "RollSpeedFactor", "Acceleration", "SprintAccelerateTime", "AddHealth",

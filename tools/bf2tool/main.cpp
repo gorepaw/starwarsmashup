@@ -21,6 +21,7 @@
 #include "bf2/level.h"
 #include "bf2/model_export.h"
 #include "bf2/odf.h"
+#include "bf2/sound.h"
 #include "bf2/ucfb.h"
 #include "swg/image.h"
 #include "swm/core/conquest.h"
@@ -46,6 +47,7 @@ constexpr const char* usage = R"(usage:
                      [--kill-stops <object>=<animation group>]... [--kill-removes <object>=<death region>]...
   bf2tool export-hud <_lvl_pc dir> -o <out dir>
   bf2tool export-effects <_lvl_pc dir> -o <out dir>
+  bf2tool export-audio <_lvl_pc dir> -o <out dir>
 )";
 
 std::vector<uint8_t> read_file(const std::filesystem::path& path);
@@ -217,6 +219,16 @@ std::string projectile_of(const OdfClass& weapon, const OdfClass& ordnance) {
     return "";
 }
 
+// First whitespace-delimited token (strips trailing " defer" flags on sound names).
+std::string first_token(std::string_view text) {
+    const size_t start = text.find_first_not_of(" \t\r\n");
+    if (start == std::string_view::npos) {
+        return {};
+    }
+    const size_t end = text.find_first_of(" \t\r\n", start);
+    return std::string(text.substr(start, end == std::string_view::npos ? std::string_view::npos : end - start));
+}
+
 // Writes one weapon section: the weapon, its ordnance and its explosion.
 void write_weapon(std::ostream& out, const char* section, const CarriedWeapon& carried, const OdfLibrary& library,
                   const std::string& projectile) {
@@ -235,6 +247,28 @@ void write_weapon(std::ostream& out, const char* section, const CarriedWeapon& c
             out << key << " = " << *value << "\n";
         }
     }
+    std::string fire_sound = first_token(weapon.get("FireSound").value_or(""));
+    if (fire_sound.empty()) {
+        fire_sound = first_token(weapon.get("FireLoopSound").value_or(""));
+    }
+    if (!fire_sound.empty()) {
+        out << "FireSound = " << fire_sound << "\n";
+    }
+    for (const char* key : {"FireEmptySound", "ReloadSound", "OverheatSound", "OverheatStopSound"}) {
+        if (const auto value = weapon.get(key)) {
+            const std::string tok = first_token(*value);
+            if (!tok.empty()) {
+                out << key << " = " << tok << "\n";
+            }
+        }
+    }
+    std::string change_sound = first_token(weapon.get("WeaponChangeSound").value_or(""));
+    if (change_sound.empty()) {
+        change_sound = first_token(weapon.get("ChangeModeSound").value_or(""));
+    }
+    if (!change_sound.empty()) {
+        out << "WeaponChangeSound = " << change_sound << "\n";
+    }
     out << "; ordnance: " << ordnance.type << " (" << ordnance.base << ")\n";
     for (const char* key : {"MaxDamage", "PersonScale", "Velocity", "Acceleration", "Gravity", "Rebound", "LifeSpan",
                             "DamageTransitionDelay", "DamageTransitionPeriod", "DamageFinalDamage",
@@ -242,6 +276,14 @@ void write_weapon(std::ostream& out, const char* section, const CarriedWeapon& c
                             "LightColor", "LightRadius", "GeometryName", "TrailEffect"}) {
         if (const auto value = ordnance.get(key)) {
             out << key << " = " << *value << "\n";
+        }
+    }
+    for (const char* key : {"OrdnanceSound", "CollisionOtherSound"}) {
+        if (const auto value = ordnance.get(key)) {
+            const std::string tok = first_token(*value);
+            if (!tok.empty()) {
+                out << key << " = " << tok << "\n";
+            }
         }
     }
     std::string impact_effect;
@@ -291,6 +333,12 @@ void write_weapon(std::ostream& out, const char* section, const CarriedWeapon& c
                                     std::pair{"Effect", "ExplosionEffect"}}) {
         if (const auto value = explosion.get(key)) {
             out << ours << " = " << *value << "\n";
+        }
+    }
+    if (const auto sound = explosion.get("SoundProperty")) {
+        const std::string tok = first_token(*sound);
+        if (!tok.empty()) {
+            out << "ExplosionSound = " << tok << "\n";
         }
     }
 }
@@ -1131,9 +1179,13 @@ int cmd_export_map(const std::vector<std::string>& args) {
                                     line += std::format(" {:.4f}", r[size_t(column * 3 + row)]);
                                 }
                             }
-                            door_json = std::format(", \"door\": {{\"index\": {}, \"animation\": {}, \"time\": {:.3f}}}",
-                                                    doors.size(), json_string(clips.empty() ? "" : clips[0].name),
-                                                    open_time);
+                            const std::string open_sound = lowercase(first_token(resolved.get("OpenSound").value_or("")));
+                            const std::string close_sound = lowercase(first_token(resolved.get("CloseSound").value_or("")));
+                            door_json = std::format(
+                                ", \"door\": {{\"index\": {}, \"animation\": {}, \"time\": {:.3f}, "
+                                "\"open_sound\": {}, \"close_sound\": {}}}",
+                                doors.size(), json_string(clips.empty() ? "" : clips[0].name), open_time,
+                                json_string(open_sound), json_string(close_sound));
                             doors.push_back(line);
                         } else {
                             std::cerr << std::format("door {}: no collision for its box\n", object.name);
@@ -1210,6 +1262,7 @@ int cmd_export_map(const std::vector<std::string>& args) {
                         }
                         double damage = 0, inner = 0, outer = 0;
                         std::string effect;
+                        std::string explosion_sound;
                         if (const auto name = resolved.get("ExplosionName")) {
                             const OdfClass explosion = library.classes().resolve(*name);
                             damage = std::atof(explosion.get("Damage").value_or("0").c_str());
@@ -1219,13 +1272,15 @@ int cmd_export_map(const std::vector<std::string>& args) {
                             outer = std::atof(
                                 explosion.get("DamageRadiusOuter").value_or(explosion.get("DamageRadius").value_or("0")).c_str());
                             effect = lowercase(explosion.get("Effect").value_or(""));
+                            explosion_sound = lowercase(first_token(explosion.get("SoundProperty").value_or("")));
                         }
                         const core::Vec3 center = (low + high) * 0.5, half = (high - low) * 0.5;
                         destructible_json = std::format(
                             ", \"destructible\": {{\"index\": {}, \"health\": {:g}, \"destroyed_model\": {}, "
-                            "\"explosion_effect\": {}, \"explosion_radius\": {:g}, \"center\": [{:.2f}, {:.2f}, {:.2f}]}}",
-                            destructibles.size(), max_health, json_string(wreck), json_string(effect), outer, center.x,
-                            center.y, center.z);
+                            "\"explosion_effect\": {}, \"explosion_sound\": {}, \"explosion_radius\": {:g}, "
+                            "\"center\": [{:.2f}, {:.2f}, {:.2f}]}}",
+                            destructibles.size(), max_health, json_string(wreck), json_string(effect),
+                            json_string(explosion_sound), outer, center.x, center.y, center.z);
                         const auto regen = regens.find(lowercase(object.name));
                         destructibles.push_back(std::format(
                             "Destructible = {:g} {:.2f} {:.2f} {:.2f} {:.2f} {:.2f} {:.2f} {:g} {:g} {:g} {:g} {}",
@@ -1912,6 +1967,229 @@ int cmd_export_effects(const std::vector<std::string>& args) {
     return 0;
 }
 
+// Writes Battlefront II's sound effects, voice-overs, and music as WAV files
+// plus `sounds.json` from `sound/` banks and streams.
+int cmd_export_audio(const std::vector<std::string>& args) {
+    if (args.empty()) {
+        std::cerr << usage;
+        return 2;
+    }
+    const std::filesystem::path lvl_dir = args[0];
+    const std::filesystem::path out_dir = option(args, "-o");
+    if (out_dir.empty()) {
+        std::cerr << usage;
+        return 2;
+    }
+    std::filesystem::create_directories(out_dir / "sfx");
+    std::filesystem::create_directories(out_dir / "vo");
+    std::filesystem::create_directories(out_dir / "music");
+
+    SoundLibrary library;
+    const std::filesystem::path sound_dir = lvl_dir / "sound";
+    for (const char* priority : {"common.bnk", "global.lvl", "shell.lvl"}) {
+        if (const auto p = sound_dir / priority; std::filesystem::exists(p)) {
+            library.add_file(p);
+        }
+    }
+    if (std::filesystem::exists(sound_dir)) {
+        std::vector<std::filesystem::path> extra;
+        for (const auto& entry : std::filesystem::directory_iterator(sound_dir)) {
+            if (!entry.is_regular_file() || entry.path().extension() != ".lvl") {
+                continue;
+            }
+            const std::string name = lowercase(entry.path().filename().string());
+            if (name == "global.lvl" || name == "shell.lvl") {
+                continue;
+            }
+            extra.push_back(entry.path());
+        }
+        std::sort(extra.begin(), extra.end());
+        for (const auto& p : extra) {
+            library.add_file(p);
+        }
+    }
+
+    // Collect sound names referenced by ODFs in ingame.lvl and side/*.lvl.
+    std::set<std::string> names;
+    {
+        OdfLibrary odfs;
+        std::vector<std::filesystem::path> lvl_files{lvl_dir / "ingame.lvl"};
+        for (const char* side : {"imp", "all", "rep", "cis"}) {
+            if (const auto p = lvl_dir / "side" / (std::string(side) + ".lvl"); std::filesystem::exists(p)) {
+                lvl_files.push_back(p);
+            }
+        }
+        for (const auto& file : lvl_files) {
+            if (std::filesystem::exists(file)) {
+                const std::vector<uint8_t> bytes = read_file(file);
+                odfs.add(parse_ucfb(bytes));
+            }
+        }
+        for (const OdfClass& odf : odfs.all()) {
+            const OdfClass resolved = odfs.resolve(odf.type);
+            for (const char* key : {"FireSound", "FireEmptySound", "ReloadSound", "OverheatSound", "OverheatStopSound",
+                                    "WeaponChangeSound", "ChangeModeSound", "FireLoopSound", "OrdnanceSound",
+                                    "CollisionOtherSound", "SoundProperty", "PowerupSound", "HurtSound", "DeathSound",
+                                    "OpenSound", "CloseSound"}) {
+                if (const auto v = resolved.get(key)) {
+                    const std::string tok = lowercase(first_token(*v));
+                    if (!tok.empty()) {
+                        names.insert(tok);
+                    }
+                }
+            }
+        }
+    }
+
+    // Core gameplay, impacts, doors, pickups, command posts, and UI sounds.
+    for (const char* core_name : {
+             "imp_weap_ord_exp", "imp_weap_ord_exp_lg", "com_weap_throw", "com_weap_inf_grenade_bounce",
+             "com_weap_inf_ammo_empty", "com_weap_powerup_pickup", "com_weap_ammo_pickup", "health_recharge",
+             "com_item_gonkrecharge", "com_weap_obj_small_exp", "com_weap_obj_med_exp", "com_weap_obj_large_exp",
+             "com_weap_obj_huge_exp", "com_blg_commandpost_capture", "com_blg_commandpost_lost",
+             "com_blg_commandpost_charge", "com_blg_commandpost_discharge", "com_blg_commandpost_dispute",
+             "door_open", "door_close", "big_door_open", "big_door_close", "blast_door_open", "blast_door_close",
+             "shell_select_unit", "shell_menu_enter", "shell_menu_exit", "shell_select_change", "droid_death"}) {
+        names.insert(core_name);
+    }
+
+    // Faction VO & soldier chatter.
+    for (const char* side : {"all", "imp", "rep", "cis"}) {
+        for (const char* suffix : {"_off_com_report_captured_commandpost", "_off_com_report_lost_commandpost",
+                                   "_off_com_report_us_overwhelmed", "_off_com_report_enemy_losing",
+                                   "_off_victory_im", "_off_defeat_im", "_inf_com_chatter_wound",
+                                   "_inf_com_chatter_death"}) {
+            names.insert(std::string(side) + suffix);
+        }
+    }
+
+    // Per-planet/faction music cues.
+    for (const char* side : {"all", "imp", "rep", "cis"}) {
+        for (const char* planet : {"cor", "dag", "dea", "end", "fel", "geo", "hot", "kam", "kas", "mus", "myg",
+                                   "nab", "pol", "tan", "tat", "uta", "yav"}) {
+            for (const char* cue : {"start", "middle", "end", "victory", "defeat"}) {
+                names.insert(std::string(side) + "_" + planet + "_amb_" + cue);
+            }
+        }
+    }
+
+    struct ExportedClip {
+        std::string rel_path;
+        std::string category;
+        float weight = 1.0f;
+    };
+    std::map<std::tuple<std::string, uint32_t, uint32_t>, std::string> written_clips;
+    size_t sfx_count = 0, vo_count = 0, music_count = 0;
+    uint64_t total_bytes = 0;
+
+    auto ensure_clip = [&](const SoundClipRef& clip) -> std::string {
+        const std::string cat = clip.stream_hash == 0 ? "sfx" : (clip.channels > 1 ? "music" : "vo");
+        const auto key = std::make_tuple(cat, clip.stream_hash, clip.sample_hash);
+        if (const auto it = written_clips.find(key); it != written_clips.end()) {
+            return it->second;
+        }
+        const std::string file_name = std::format("{:08x}.wav", clip.sample_hash);
+        const std::string rel = cat + "/" + file_name;
+        const std::filesystem::path dst = out_dir / cat / file_name;
+        const std::vector<int16_t> pcm = decode_clip(clip);
+        write_wav(dst, pcm, clip.sample_rate, clip.channels);
+        total_bytes += std::filesystem::file_size(dst);
+        if (cat == "sfx") ++sfx_count;
+        else if (cat == "vo") ++vo_count;
+        else ++music_count;
+        written_clips.emplace(key, rel);
+        return rel;
+    };
+
+    auto collect_clips = [&](const SoundProp& prop) -> std::pair<std::string, std::vector<ExportedClip>> {
+        std::vector<ExportedClip> out;
+        std::string cat = prop.kind == SoundProp::Kind::sample ? "sfx" : "vo";
+        for (const auto& [hash, weight] : prop.entries) {
+            const SoundClipRef* clip = prop.kind == SoundProp::Kind::sample
+                                           ? library.find_sample(hash)
+                                           : library.find_segment(prop.stream_hash, hash);
+            if (!clip) {
+                continue;
+            }
+            const std::string rel = ensure_clip(*clip);
+            cat = clip->stream_hash == 0 ? "sfx" : (clip->channels > 1 ? "music" : "vo");
+            out.push_back({rel, cat, weight});
+        }
+        return {cat, out};
+    };
+
+    std::ofstream json(out_dir / "sounds.json", std::ios::binary);
+    json << "{\n  \"sounds\": {\n";
+    size_t resolved_count = 0;
+    for (const std::string& name : names) {
+        const auto prop_opt = library.resolve(sound_name_hash(name));
+        if (!prop_opt) {
+            continue;
+        }
+        const SoundProp& prop = *prop_opt;
+        if (prop.kind == SoundProp::Kind::layered) {
+            struct ResolvedLayer {
+                float delay = 0.0f;
+                SoundProp child;
+                std::vector<ExportedClip> clips;
+            };
+            std::vector<ResolvedLayer> layers;
+            for (const auto& layer : prop.layers) {
+                const auto child_opt = library.resolve(layer.prop_hash);
+                if (!child_opt) {
+                    continue;
+                }
+                auto [_, clips] = collect_clips(*child_opt);
+                if (!clips.empty()) {
+                    layers.push_back({layer.delay, *child_opt, std::move(clips)});
+                }
+            }
+            if (layers.empty()) {
+                continue;
+            }
+            json << (resolved_count++ ? ",\n" : "") << "    " << json_string(name) << ": {\"kind\": \"layered\", \"layers\": [";
+            for (size_t i = 0; i < layers.size(); ++i) {
+                const auto& l = layers[i];
+                json << (i ? ", " : "")
+                     << std::format("{{\"delay\": {:g}, \"gain\": {:g}, \"pitch\": {:g}, \"min_distance\": {:g}, "
+                                    "\"max_distance\": {:g}, \"mode_3d\": {}, \"clips\": [",
+                                    l.delay, l.child.gain, l.child.pitch, l.child.min_distance, l.child.max_distance,
+                                    l.child.mode_3d ? "true" : "false");
+                for (size_t c = 0; c < l.clips.size(); ++c) {
+                    json << (c ? ", " : "")
+                         << std::format("{{\"file\": {}, \"weight\": {:g}}}", json_string(l.clips[c].rel_path),
+                                        l.clips[c].weight);
+                }
+                json << "]}";
+            }
+            json << "]}";
+            continue;
+        }
+
+        auto [cat, clips] = collect_clips(prop);
+        if (clips.empty()) {
+            continue;
+        }
+        json << (resolved_count++ ? ",\n" : "") << "    " << json_string(name)
+             << std::format(": {{\"kind\": {}, \"gain\": {:g}, \"gain_dev\": {:g}, \"pitch\": {:g}, \"pitch_dev\": {:g}, "
+                            "\"min_distance\": {:g}, \"max_distance\": {:g}, \"rolloff\": {:g}, "
+                            "\"play_probability\": {:g}, \"looping\": {}, \"mode_3d\": {}, \"clips\": [",
+                            json_string(cat), prop.gain, prop.gain_dev, prop.pitch, prop.pitch_dev, prop.min_distance,
+                            prop.max_distance, prop.rolloff, prop.play_probability, prop.looping ? "true" : "false",
+                            prop.mode_3d ? "true" : "false");
+        for (size_t c = 0; c < clips.size(); ++c) {
+            json << (c ? ", " : "")
+                 << std::format("{{\"file\": {}, \"weight\": {:g}}}", json_string(clips[c].rel_path), clips[c].weight);
+        }
+        json << "]}";
+    }
+    json << "\n  }\n}\n";
+
+    std::cout << std::format("{} sounds ({} sfx, {} vo, {} music, {:.1f} MB)\n", resolved_count, sfx_count, vo_count,
+                             music_count, double(total_bytes) / (1024.0 * 1024.0));
+    return 0;
+}
+
 int cmd_check(const std::vector<std::string>& args) {
     if (args.empty()) {
         std::cerr << usage;
@@ -1999,6 +2277,9 @@ int main(int argc, char** argv) {
         }
         if (command == "export-effects") {
             return cmd_export_effects(args);
+        }
+        if (command == "export-audio") {
+            return cmd_export_audio(args);
         }
     } catch (const std::exception& e) {
         std::cerr << "error: " << e.what() << "\n";

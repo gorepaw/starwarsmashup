@@ -123,6 +123,7 @@ bf2tool export-map <_lvl_pc dir> <map> -o <out dir> [--mode conquest] [--skip <l
                    [--drop-boundary <path>]... [--set <object>.<property>=<value>]...
 bf2tool export-hud <_lvl_pc dir> -o <out dir>
 bf2tool export-effects <_lvl_pc dir> -o <out dir>
+bf2tool export-audio <_lvl_pc dir> -o <out dir>
 ```
 
 Battlefront II munged files (`.lvl`) are `ucfb` chunk trees: `lvl_` sub-levels holding models (`modl`), textures (`tex_`), skeletons (`skel`), animations (`zaa_`/`zaf_`), entity classes (`entc`/`ordc`/`wpnc`/`expc`), and more.
@@ -203,6 +204,12 @@ Battlefront II munged files (`.lvl`) are `ucfb` chunk trees: `lvl_` sub-levels h
 
   ```powershell
   bf2tool export-effects "<Battlefront>\GameData\Data\_lvl_pc" -o game\imported_assets\effects
+  ```
+
+- **export-audio**: export Battlefront II's weapon, impact, explosion, door, pickup, droid, command post, voice-over, and music sounds from `sound/` (`common.bnk`, `global.lvl`, `shell.lvl`, and `sound/*.lvl`) as PCM16 `.wav` files in `sfx/`, `vo/`, and `music/`, plus `sounds.json` for `game/audio/bf2_audio.gd`. Sound banks (`SampleBank`, PCM16 mono) and streams (`emo_` in `StreamList`, mono and stereo IMA ADPCM) are indexed by seeking through `ucfb` and `lvl_` chunks without loading full archives into memory, and `snd_` config records (`SoundProperties`, `SoundStreamProperties`, `SoundStream`, `SoundLayered`) are resolved across `Inherit` chains using 32-bit FNV-1a hashes over `c | 0x20` (`bf2/sound.h`). Game data from your install: write it to `game/imported_assets/audio/`:
+
+  ```powershell
+  bf2tool export-audio "<Battlefront>\GameData\Data\_lvl_pc" -o game\imported_assets\audio
   ```
 
 Animation data uses its own block format inside `BIN_` (byte-reversed tags) and identifies bones and clips by name hash (`bf2/hash.h`). See `bf2/animation.h` for the stream encoding.

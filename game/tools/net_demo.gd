@@ -81,6 +81,7 @@ const TeamTags = preload("res://rendering/team_tags.gd")
 const ScopeOverlay = preload("res://ui/scope_overlay.gd")
 const Pickups = preload("res://rendering/pickups.gd")
 const Bf2Effects = preload("res://rendering/bf2_effects.gd")
+const Bf2Audio = preload("res://audio/bf2_audio.gd")
 const Bf2Hud = preload("res://ui/bf2_hud.gd")
 const Settings = preload("res://ui/settings.gd")
 const SpawnScreen = preload("res://ui/spawn_screen.gd")
@@ -90,6 +91,7 @@ const WarTerminalScreen = preload("res://ui/war_terminal_screen.gd")
 const HubHud = preload("res://ui/hub_hud.gd")
 const HUD_DIR := "res://imported_assets/hud"  # bf2tool export-hud
 const EFFECTS_DIR := "res://imported_assets/effects"  # bf2tool export-effects
+const AUDIO_DIR := "res://imported_assets/audio"  # bf2tool export-audio
 const MAX_ENERGY := 100.0     # core::MoveParams::max_energy
 const TARGET_CONE := 0.035    # radians: a character this close to the crosshair is its target
 const TARGET_RANGE := 150.0
@@ -167,6 +169,22 @@ var _zoom_weapon := -1           # the weapon zoomed with: switching weapons bac
 var _scope: ScopeOverlay         # a scoped weapon's overlay (the sniper rifles')
 var _pickups: Pickups            # dropped health, ammo, dual and energy canisters
 var _effects: Bf2Effects         # Battlefront bolts, projectile models, muzzle flashes, sparks, trails, explosions
+var _audio: Bf2Audio             # Battlefront sounds, VO, and music
+var _prev_reloading := false
+var _prev_overheated := false
+var _prev_weapon := -1
+var _prev_health := -1.0
+var _prev_rounds := -1
+var _prev_reserve := -1
+var _prev_grenades := -1
+var _empty_click_cd := 0.0
+var _hurt_vo_cd := {}            # entity id -> last wound VO time
+var _prev_pickups := {}          # pickup id -> {kind, position}
+var _prev_post_owners: Array[int] = []
+var _prev_phase := ""
+var _start_tickets := [0.0, 0.0]
+var _vo_enemy_low := false
+var _vo_us_low := false
 var _spawn_loadout := 0
 var _spawn_post := -1
 var _spawn_requested := false
@@ -328,6 +346,7 @@ func _init() -> void:
 func _process(delta: float) -> bool:
 	_elapsed += delta
 	_delta = delta
+	_empty_click_cd = maxf(0.0, _empty_click_cd - delta)
 	_fire_lockout = maxf(0.0, _fire_lockout - delta)
 	if _wait_fire_release and not Input.is_action_pressed("fire"):
 		_wait_fire_release = false
@@ -365,13 +384,19 @@ func _process(delta: float) -> bool:
 		var game: Dictionary = _client.get_match()
 		_update_posts(game, int(own["team"]))
 		_update_powerups(game, delta)
-		Bf2Map.animate_doors(self, game.get("doors", PackedFloat32Array()))
+		for door_snd: Dictionary in Bf2Map.animate_doors(self, game.get("doors", PackedFloat32Array())):
+			if _audio != null:
+				_audio.play_3d(str(door_snd["sound"]), door_snd["position"], _camera.global_position)
 		Bf2Map.animate_world(self, delta, game.get("destructibles", PackedFloat32Array()))
 		for blast: Dictionary in Bf2Map.update_destructibles(self, game.get("destructibles", PackedFloat32Array())):
 			if _effects != null:
 				var radius := float(blast["radius"])
 				_effects.spawn_explosion(blast["position"], Vector3.UP, radius, str(blast["effect"]),
 						Color(1.0, 0.7, 0.3), radius * 2.0)
+			if _audio != null:
+				var exp_snd := str(blast.get("sound", ""))
+				_audio.play_3d(exp_snd if exp_snd != "" else "com_weap_obj_med_exp",
+						blast["position"], _camera.global_position)
 		if own["life"] == "waiting" and not game.is_empty():
 			_choose_spawn(game, own)
 		else:
@@ -384,6 +409,8 @@ func _process(delta: float) -> bool:
 			_pickups.update(_client.get_pickups(), delta)
 		_update_bolts(delta)
 		_update_events()
+		_update_own_audio(own, game)
+		_update_match_audio(game, own)
 		if not _doors.is_empty():
 			var people: Array[Vector3] = [own["position"]]
 			for remote: Dictionary in _client.get_remotes():
@@ -391,6 +418,8 @@ func _process(delta: float) -> bool:
 					people.append(remote["position"])
 			SwgCity.update_doors(_doors, people, delta)
 	_update_hud(delta)
+	if _audio != null:
+		_audio.update(delta, _camera.global_position)
 	if _sky_dome != null:
 		_sky_dome.global_position = _camera.global_position
 
@@ -427,6 +456,8 @@ func _finish() -> bool:
 		_pickups.dispose()
 	if _effects != null:
 		_effects.dispose()
+	if _audio != null:
+		_audio.dispose()
 	var stats: Dictionary = _client.get_stats()
 	var at: Vector3 = _client.get_presented().get("position", Vector3.ZERO)
 	print("left at Galaxies (%.2f, %.2f, %.2f)" % [-at.x, at.y, at.z])
@@ -1084,6 +1115,159 @@ func _team_icon(team: int) -> String:
 	return "all_icon" if team == 0 else "imp_icon"
 
 
+func _side_code(team: int) -> String:
+	if team < 0 or _battlefield.is_empty():
+		return ""
+	match _team_icon(team):
+		"all_icon": return "all"
+		"imp_icon": return "imp"
+		"rep_icon": return "rep"
+		"cis_icon": return "cis"
+	return ""
+
+
+func _map_code() -> String:
+	var stem := _world_bake.get_file().get_basename().to_lower()
+	if stem.length() >= 3:
+		return stem.substr(0, 3)
+	return "dag"
+
+
+func _entity_team(id: int) -> int:
+	if id == _client.get_entity_id():
+		return int(_client.get_presented().get("team", -1))
+	for remote: Dictionary in _client.get_remotes():
+		if int(remote["id"]) == id:
+			return int(remote.get("team", -1))
+	return -1
+
+
+# Own weapon transitions (reload, overheat, weapon switch, empty click),
+# droid resupplies, and canister pickups.
+func _update_own_audio(own: Dictionary, _game: Dictionary) -> void:
+	if _audio == null:
+		return
+	var alive := bool(own.get("alive", false)) and str(own.get("life", "alive")) == "alive"
+	var slot := int(own.get("weapon", 0))
+	var weapon: Dictionary = _weapons[slot] if slot < _weapons.size() else {}
+	var reloading := bool(own.get("reloading", false))
+	var overheated := bool(own.get("overheated", false))
+	var health := float(own.get("health", 0.0))
+	var rounds := int(own.get("rounds", 0))
+	var reserve := int(own.get("reserve", 0))
+	var grenades := int(own.get("grenades", 0))
+	if alive:
+		if _prev_weapon >= 0 and slot != _prev_weapon:
+			_audio.play_2d(str(weapon.get("weapon_change_sound", "")))
+		if reloading and not _prev_reloading:
+			_audio.play_2d(str(weapon.get("reload_sound", "")))
+		if overheated and not _prev_overheated:
+			_audio.play_2d(str(weapon.get("overheat_sound", "")))
+		elif not overheated and _prev_overheated:
+			_audio.play_2d(str(weapon.get("overheat_stop_sound", "")))
+		if _mouse_captured and Input.is_action_pressed("fire") and _fire_lockout <= 0.0 and not _wait_fire_release \
+				and int(weapon.get("rounds_per_clip", 0)) > 0 and rounds <= 0 and reserve == 0 and not reloading \
+				and _empty_click_cd <= 0.0:
+			_audio.play_2d(str(weapon.get("fire_empty_sound", "com_weap_inf_ammo_empty")))
+			_empty_click_cd = 0.28
+		var own_pos: Vector3 = own["position"]
+		if _prev_health >= 0.0 and health > _prev_health + 1.0:
+			for node: Node3D in get_nodes_in_group(Bf2Map.POWERUPS):
+				if node.visible and str((node.get_meta("powerup") as Dictionary).get("kind", "")) == "health" \
+						and node.global_position.distance_squared_to(own_pos) <= 25.0:
+					_audio.play_2d("health_recharge")
+					break
+		if (_prev_reserve >= 0 and reserve > _prev_reserve) or (_prev_grenades >= 0 and grenades > _prev_grenades):
+			for node: Node3D in get_nodes_in_group(Bf2Map.POWERUPS):
+				if node.visible and str((node.get_meta("powerup") as Dictionary).get("kind", "")) == "ammo" \
+						and node.global_position.distance_squared_to(own_pos) <= 25.0:
+					_audio.play_2d("com_item_gonkrecharge")
+					break
+	_prev_reloading = reloading and alive
+	_prev_overheated = overheated and alive
+	_prev_weapon = slot if alive else -1
+	_prev_health = health if alive else -1.0
+	_prev_rounds = rounds if alive else -1
+	_prev_reserve = reserve if alive else -1
+	_prev_grenades = grenades if alive else -1
+
+	var cur_pickups := {}
+	for p: Dictionary in _client.get_pickups():
+		cur_pickups[int(p["id"])] = {"kind": str(p["kind"]), "position": p["position"]}
+	if alive:
+		var own_pos: Vector3 = own["position"]
+		for pid: int in _prev_pickups:
+			if not cur_pickups.has(pid):
+				var old: Dictionary = _prev_pickups[pid]
+				if (old["position"] as Vector3).distance_squared_to(own_pos) <= 6.25:
+					_audio.play_2d("com_weap_ammo_pickup" if str(old["kind"]) == "ammo" else "com_weap_powerup_pickup")
+	_prev_pickups = cur_pickups
+
+
+# Match music cues, ticket VO, and post owner tracking.
+func _update_match_audio(game: Dictionary, own: Dictionary) -> void:
+	if _audio == null:
+		return
+	if game.is_empty():
+		if _prev_phase != "":
+			_audio.stop_music()
+			_prev_phase = ""
+		return
+	var posts: Array = game.get("posts", [])
+	_prev_post_owners.resize(posts.size())
+	for i in posts.size():
+		_prev_post_owners[i] = int(posts[i]["owner"])
+	var own_team := int(own.get("team", -1))
+	var side := _side_code(own_team)
+	if side == "":
+		return
+	var planet := _map_code()
+	var phase := str(game.get("phase", ""))
+	var tickets: Array = game.get("tickets", [0.0, 0.0])
+	if phase != _prev_phase:
+		if phase == "warmup" or phase == "live":
+			_start_tickets = [maxf(1.0, float(tickets[0])), maxf(1.0, float(tickets[1]))]
+			_vo_enemy_low = false
+			_vo_us_low = false
+		elif phase == "ended":
+			var winner := int(game.get("winner", -1))
+			if winner == own_team:
+				_audio.queue_vo(side + "_off_victory_im", true)
+				_play_music_cue(side, planet, "victory", false)
+			elif winner >= 0:
+				_audio.queue_vo(side + "_off_defeat_im", true)
+				_play_music_cue(side, planet, "defeat", false)
+	_prev_phase = phase
+	if phase == "warmup":
+		_play_music_cue(side, planet, "start", true)
+	elif phase == "live":
+		var enemy := 1 - own_team
+		var own_ratio := float(tickets[own_team]) / maxf(1.0, float(_start_tickets[own_team]))
+		var enemy_ratio := float(tickets[enemy]) / maxf(1.0, float(_start_tickets[enemy]))
+		if not _vo_enemy_low and enemy_ratio <= 0.35:
+			_vo_enemy_low = true
+			_audio.queue_vo(side + "_off_com_report_enemy_losing")
+		if not _vo_us_low and own_ratio <= 0.35:
+			_vo_us_low = true
+			_audio.queue_vo(side + "_off_com_report_us_overwhelmed")
+		var min_ratio := minf(own_ratio, enemy_ratio)
+		var cue := "start" if min_ratio > 0.70 else ("middle" if min_ratio > 0.35 else "end")
+		if int(game.get("dominant", -1)) >= 0:
+			cue = "end"
+		_play_music_cue(side, planet, cue, true)
+
+
+func _play_music_cue(side: String, planet: String, cue: String, loop: bool) -> void:
+	var primary := "%s_%s_amb_%s" % [side, planet, cue]
+	if _audio.has_sound(primary):
+		_audio.set_music(primary, loop)
+		return
+	var fallback_planet := "dag" if side in ["all", "imp"] else "geo"
+	var fallback := "%s_%s_amb_%s" % [side, fallback_planet, cue]
+	if _audio.has_sound(fallback):
+		_audio.set_music(fallback, loop)
+
+
 # A loadout's name for the spawn screen (imp_inf_rifleman -> Rifleman). Test
 # loadouts only: gear, not classes, decides what a soldier is.
 static func _unit_name(loadout: String) -> String:
@@ -1103,28 +1287,61 @@ static func _display_name(weapon_class: String) -> String:
 	return name.replace("thermaldetonator", "thermal_detonator").replace("_", " ").capitalize()
 
 
-# Hit markers and the kill feed.
+# Hit markers, hurt/death chatter, command post chimes/VO, and the kill feed.
 func _update_events() -> void:
 	var me: int = _client.get_entity_id()
+	var own_team := int(_client.get_presented().get("team", -1)) if _client.is_spawned() else -1
 	for event: Dictionary in _client.take_events():
 		var mine := int(event["attacker"]) == me
 		if event["kind"] == "hit":
-			var victim := _soldier_of(int(event["victim"]))
+			var vid := int(event["victim"])
+			var victim := _soldier_of(vid)
 			if victim != null:
 				victim.flinch()
+			if _audio != null and _elapsed - float(_hurt_vo_cd.get(vid, -10.0)) >= 1.0:
+				var vteam := _entity_team(vid)
+				var vside := _side_code(vteam)
+				if vside != "" and vside != "cis" and victim != null:
+					_hurt_vo_cd[vid] = _elapsed
+					_audio.play_3d(vside + "_inf_com_chatter_wound", victim.model.global_position,
+							_camera.global_position)
 		if event["kind"] == "hit" and mine:
 			_hits += 1
 			_hit_flash = 0.15
 		elif event["kind"] == "kill":
-			_kills += 1 if mine and int(event["victim"]) != me else 0
-			_deaths += 1 if int(event["victim"]) == me else 0
+			var vid := int(event["victim"])
+			_kills += 1 if mine and vid != me else 0
+			_deaths += 1 if vid == me else 0
+			if _audio != null:
+				var victim := _soldier_of(vid)
+				var vside := _side_code(_entity_team(vid))
+				if victim != null and vside != "":
+					var dsnd := "droid_death" if vside == "cis" else (vside + "_inf_com_chatter_death")
+					_audio.play_3d(dsnd, victim.model.global_position, _camera.global_position)
 			if int(event["attacker"]) == 0:
 				_feed_lines.append("%s died" % _who(event["victim"]))
 			else:
 				_feed_lines.append("%s eliminated %s" % [_who(event["attacker"]), _who(event["victim"])])
 		elif event["kind"] in ["captured", "neutralized"] and not _battlefield.is_empty():
-			_feed_lines.append("%s %s %s" % [_team_name(int(event["attacker"])), event["kind"],
-					_battlefield["posts"][int(event["victim"])]["name"]])
+			var post_idx := int(event["victim"])
+			var att_team := int(event["attacker"])
+			if _audio != null and own_team >= 0:
+				var oside := _side_code(own_team)
+				if event["kind"] == "captured":
+					if att_team == own_team:
+						_audio.play_2d("com_blg_commandpost_capture")
+						if oside != "":
+							_audio.queue_vo(oside + "_off_com_report_captured_commandpost")
+					else:
+						_audio.play_2d("com_blg_commandpost_lost")
+				elif event["kind"] == "neutralized":
+					var prev_owner := _prev_post_owners[post_idx] if post_idx < _prev_post_owners.size() else -1
+					if prev_owner == own_team:
+						_audio.play_2d("com_blg_commandpost_lost")
+						if oside != "":
+							_audio.queue_vo(oside + "_off_com_report_lost_commandpost")
+			_feed_lines.append("%s %s %s" % [_team_name(att_team), event["kind"],
+					_battlefield["posts"][post_idx]["name"]])
 		if _feed_lines.size() > 5:
 			_feed_lines.remove_at(0)
 		if _bf2_hud != null and not _feed_lines.is_empty() and event["kind"] in ["kill", "captured", "neutralized"]:
@@ -1184,6 +1401,8 @@ func _update_bolts(delta: float) -> void:
 		var dirs: Array = shot["directions"]
 		if not dirs.is_empty():
 			_effects.spawn_muzzle_flash(origin + offset, dirs[0], shot)
+			if _audio != null:
+				_audio.play_2d(str(shot.get("fire_sound", "")))
 		for direction: Vector3 in dirs:
 			var node := _effects.make_projectile(shot)
 			var velocity: Vector3 = direction * float(weapon["bolt_speed"])
@@ -1208,10 +1427,15 @@ func _update_bolts(delta: float) -> void:
 	for impact: Dictionary in _client.take_impacts():
 		_effects.spawn_impact(impact["position"], impact["normal"], bool(impact["hit_character"]),
 				str(impact.get("effect", "")))
+		if _audio != null and not bool(impact["hit_character"]):
+			_audio.play_3d(str(impact.get("sound", "imp_weap_ord_exp")), impact["position"], _camera.global_position)
 	for explosion: Dictionary in _client.take_explosions():
 		_effects.spawn_explosion(explosion["position"], explosion.get("normal", Vector3.UP),
 				float(explosion["radius"]), str(explosion.get("effect", "")),
 				explosion.get("light_color", Color(1.0, 0.7, 0.3)), float(explosion.get("light_radius", 7.0)))
+		if _audio != null:
+			_audio.play_3d(str(explosion.get("sound", "com_weap_thermaldetonator_exp")),
+					explosion["position"], _camera.global_position)
 		_explosions_seen += 1
 	_effects.update(delta)
 
@@ -1224,8 +1448,21 @@ func _update_bolts(delta: float) -> void:
 			var node := _effects.make_projectile(bolt)
 			var trail_name := str(bolt.get("trail_effect", ""))
 			var trail := _effects.attach_trail(node, trail_name) if trail_name != "" else null
-			_remote_bolts[id] = {"node": node, "trail": trail, "origin": start["origin"], "offset": start["offset"]}
+			_remote_bolts[id] = {"node": node, "trail": trail, "origin": start["origin"], "offset": start["offset"],
+					"prev_vel": bolt["velocity"], "bounce_cd": 0.0}
 		var entry: Dictionary = _remote_bolts[id]
+		entry["bounce_cd"] = maxf(0.0, float(entry["bounce_cd"]) - delta)
+		if _audio != null and str(bolt.get("kind", "")) == "grenade":
+			var prev_v: Vector3 = entry["prev_vel"]
+			var cur_v: Vector3 = bolt["velocity"]
+			var bounced := (prev_v.y < -1.5 and cur_v.y > 0.5) \
+					or (prev_v.length() > 3.0 and cur_v.length() > 0.5 and prev_v.normalized().dot(cur_v.normalized()) < 0.3)
+			if bounced and float(entry["bounce_cd"]) <= 0.0:
+				var bsnd := str(bolt.get("bounce_sound", ""))
+				_audio.play_3d(bsnd if bsnd != "" else "com_weap_inf_grenade_bounce",
+						bolt["position"], _camera.global_position)
+				entry["bounce_cd"] = 0.12
+		entry["prev_vel"] = bolt["velocity"]
 		_place_drawn_bolt(entry["node"], {"position": bolt["position"], "velocity": bolt["velocity"],
 				"origin": entry["origin"], "offset": entry["offset"]}, delta)
 	for id: int in _remote_bolts.keys():
@@ -1252,6 +1489,13 @@ func _bolt_start(bolt: Dictionary) -> Dictionary:
 			soldier.throw()
 		else:
 			soldier.fire()
+	if _audio != null:
+		var fsnd := str(bolt.get("fire_sound", ""))
+		if fsnd != "":
+			if owner == _client.get_entity_id():
+				_audio.play_2d(fsnd)
+			else:
+				_audio.play_3d(fsnd, soldier.muzzle(), _camera.global_position)
 	var origin := soldier.model.global_position + Vector3.UP * EYE_HEIGHT
 	var muzzle := soldier.muzzle()
 	if bolt["kind"] != "grenade":
@@ -1391,8 +1635,14 @@ func _setup_scene() -> void:
 		layer.add_child(_bf2_hud)
 		_spawn_screen = SpawnScreen.new(_bf2_hud.art)
 		_spawn_screen.visible = false
-		_spawn_screen.loadout_chosen.connect(func(i: int) -> void: _spawn_loadout = i)
-		_spawn_screen.post_chosen.connect(func(i: int) -> void: _spawn_post = i)
+		_spawn_screen.loadout_chosen.connect(func(i: int) -> void:
+			_spawn_loadout = i
+			if _audio != null:
+				_audio.play_2d("shell_select_unit"))
+		_spawn_screen.post_chosen.connect(func(i: int) -> void:
+			_spawn_post = i
+			if _audio != null:
+				_audio.play_2d("shell_select_unit"))
 		_spawn_screen.spawn_requested.connect(_request_spawn)
 		_score_screen = ScoreScreen.new(_bf2_hud.art)
 		_score_screen.visible = false
@@ -1464,6 +1714,8 @@ func _setup_scene() -> void:
 
 	_pickups = Pickups.new(root, HUD_DIR)
 	_effects = Bf2Effects.new(root, EFFECTS_DIR)
+	_audio = Bf2Audio.new(root, AUDIO_DIR)
+	_audio.apply_volumes(_settings)
 
 
 # Command posts: a beam, a ring around the capture region and a name, in the
@@ -1710,6 +1962,17 @@ func _arrive() -> void:
 		_pickups.clear()
 	if _effects != null:
 		_effects.clear()
+	if _audio != null:
+		_audio.clear()
+	_prev_post_owners.clear()
+	_prev_phase = ""
+	_start_tickets = [0.0, 0.0]
+	_vo_enemy_low = false
+	_vo_us_low = false
+	_prev_pickups.clear()
+	_hurt_vo_cd.clear()
+	_prev_health = -1.0
+	_prev_weapon = -1
 	if _terminal_screen != null and _terminal_screen.visible:
 		_close_terminal()
 	_battlefield = _client.get_battlefield()

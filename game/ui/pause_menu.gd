@@ -46,43 +46,53 @@ func _paint_main() -> void:
 
 
 func _paint_options() -> void:
-	var box := centered(780, 500)
+	var box := centered(780, 580)
 	frame(box)
 	text("gamefont_large", "Options", Vector2(box.get_center().x, box.position.y + 14 * u), "Center", ACCENT)
-	# Left: mouse, view, display.
+	# Left: mouse, view, display, audio, bots.
 	var x := box.position.x + 30 * u
-	var y := box.position.y + 60 * u
+	var y := box.position.y + 56 * u
 	text("gamefont_medium", "Mouse", Vector2(x, y), "Left", ACCENT)
-	y += 30 * u
+	y += 26 * u
 	_slider(Vector2(x, y), "Sensitivity", "sensitivity", (settings.mouse_sensitivity - 0.2) / 2.8,
 			"%.1f" % settings.mouse_sensitivity)
-	y += 34 * u
+	y += 30 * u
 	_toggle(Vector2(x, y), "Invert Mouse", "invert", settings.invert_mouse)
-	y += 46 * u
+	y += 36 * u
 	text("gamefont_medium", "View", Vector2(x, y), "Left", ACCENT)
-	y += 30 * u
+	y += 26 * u
 	_slider(Vector2(x, y), "Field of View", "fov", (settings.field_of_view - 50.0) / 50.0, "%d" % roundi(settings.field_of_view))
-	y += 34 * u
+	y += 30 * u
 	_toggle(Vector2(x, y), "First Person", "first_person", settings.first_person)
-	y += 46 * u
+	y += 36 * u
 	text("gamefont_medium", "Display", Vector2(x, y), "Left", ACCENT)
-	y += 30 * u
+	y += 26 * u
 	_toggle(Vector2(x, y), "Fullscreen", "fullscreen", settings.fullscreen)
-	y += 34 * u
-	_toggle(Vector2(x, y), "Vertical Sync", "vsync", settings.vsync)
-	y += 46 * u
-	text("gamefont_medium", "Bots", Vector2(x, y), "Left", ACCENT)
 	y += 30 * u
+	_toggle(Vector2(x, y), "Vertical Sync", "vsync", settings.vsync)
+	y += 36 * u
+	text("gamefont_medium", "Audio", Vector2(x, y), "Left", ACCENT)
+	y += 26 * u
+	_slider(Vector2(x, y), "Master", "master_volume", settings.master_volume, "%d%%" % roundi(settings.master_volume * 100.0))
+	y += 28 * u
+	_slider(Vector2(x, y), "Effects", "sfx_volume", settings.sfx_volume, "%d%%" % roundi(settings.sfx_volume * 100.0))
+	y += 28 * u
+	_slider(Vector2(x, y), "Music", "music_volume", settings.music_volume, "%d%%" % roundi(settings.music_volume * 100.0))
+	y += 28 * u
+	_slider(Vector2(x, y), "Voice", "voice_volume", settings.voice_volume, "%d%%" % roundi(settings.voice_volume * 100.0))
+	y += 34 * u
+	text("gamefont_medium", "Bots", Vector2(x, y), "Left", ACCENT)
+	y += 26 * u
 	text("gamefont_small", "Difficulty", Vector2(x, y + 3 * u), "Left", TEXT)
 	button(Rect2(Vector2(x + 140 * u, y - 2 * u), Vector2(160, 26) * u), settings.bot_difficulty.capitalize(),
 			"difficulty", false)
 	# Right: controls.
 	var cx := box.position.x + 400 * u
-	var cy := box.position.y + 60 * u
+	var cy := box.position.y + 56 * u
 	text("gamefont_medium", "Controls", Vector2(cx, cy), "Left", ACCENT)
-	cy += 30 * u
+	cy += 28 * u
 	# Rows as tall as fit above the Back button.
-	var row := minf(27.0, 345.0 / Settings.ACTIONS.size())
+	var row := minf(27.0, 425.0 / Settings.ACTIONS.size())
 	for action: Array in Settings.ACTIONS:
 		var name: String = action[0]
 		text("gamefont_small", action[1], Vector2(cx, cy + (row - 22) * u), "Left", TEXT)
@@ -164,6 +174,18 @@ func _on_drag(id: String, at: Vector2) -> void:
 	match id.substr(7):
 		"sensitivity": settings.mouse_sensitivity = snappedf(0.2 + fraction * 2.8, 0.1)
 		"fov": settings.field_of_view = roundf(50.0 + fraction * 50.0)
+		"master_volume":
+			settings.master_volume = snappedf(fraction, 0.05)
+			settings.apply()
+		"sfx_volume":
+			settings.sfx_volume = snappedf(fraction, 0.05)
+			settings.apply()
+		"music_volume":
+			settings.music_volume = snappedf(fraction, 0.05)
+			settings.apply()
+		"voice_volume":
+			settings.voice_volume = snappedf(fraction, 0.05)
+			settings.apply()
 
 
 func _gui_input(event: InputEvent) -> void:

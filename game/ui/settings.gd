@@ -37,6 +37,10 @@ var field_of_view := 65.0    # degrees, vertical
 var first_person := false
 var fullscreen := false
 var vsync := true
+var master_volume := 0.8
+var sfx_volume := 1.0
+var music_volume := 0.65
+var voice_volume := 1.0
 var bot_difficulty := "normal"  # easy, normal or hard: bots on a server this game hosts
 const DIFFICULTIES := ["easy", "normal", "hard"]
 
@@ -55,6 +59,10 @@ func load_file() -> void:
 		first_person = bool(file.get_value("view", "first_person", first_person))
 		fullscreen = bool(file.get_value("display", "fullscreen", fullscreen))
 		vsync = bool(file.get_value("display", "vsync", vsync))
+		master_volume = clampf(float(file.get_value("audio", "master", master_volume)), 0.0, 1.0)
+		sfx_volume = clampf(float(file.get_value("audio", "sfx", sfx_volume)), 0.0, 1.0)
+		music_volume = clampf(float(file.get_value("audio", "music", music_volume)), 0.0, 1.0)
+		voice_volume = clampf(float(file.get_value("audio", "voice", voice_volume)), 0.0, 1.0)
 		bot_difficulty = str(file.get_value("bots", "difficulty", bot_difficulty))
 		if not DIFFICULTIES.has(bot_difficulty):
 			bot_difficulty = "normal"
@@ -71,6 +79,10 @@ func save_file() -> void:
 	file.set_value("view", "first_person", first_person)
 	file.set_value("display", "fullscreen", fullscreen)
 	file.set_value("display", "vsync", vsync)
+	file.set_value("audio", "master", master_volume)
+	file.set_value("audio", "sfx", sfx_volume)
+	file.set_value("audio", "music", music_volume)
+	file.set_value("audio", "voice", voice_volume)
 	file.set_value("bots", "difficulty", bot_difficulty)
 	for action: Array in ACTIONS:
 		file.set_value("controls", action[0], bindings[action[0]])
@@ -89,6 +101,12 @@ func apply() -> void:
 		DisplayServer.window_set_mode(DisplayServer.WINDOW_MODE_FULLSCREEN if fullscreen
 				else DisplayServer.WINDOW_MODE_WINDOWED)
 		DisplayServer.window_set_vsync_mode(DisplayServer.VSYNC_ENABLED if vsync else DisplayServer.VSYNC_DISABLED)
+	for pair: Array in [["Master", master_volume], ["SFX", sfx_volume], ["Music", music_volume], ["Voice", voice_volume]]:
+		var idx := AudioServer.get_bus_index(pair[0])
+		if idx >= 0:
+			var v := clampf(float(pair[1]), 0.0, 1.0)
+			AudioServer.set_bus_mute(idx, v <= 0.001)
+			AudioServer.set_bus_volume_db(idx, linear_to_db(maxf(v, 0.0001)))
 
 
 static func event_for(binding: Variant) -> InputEvent:

@@ -149,6 +149,7 @@ static func add_objects(parent: Node, prefix: String) -> int:
 				node.set_meta("bf2_door", door)
 				node.set_meta("player", player)
 				node.set_meta("open", -1.0)
+				node.set_meta("door_dir", 0)
 				node.add_to_group(DOORS)
 		if object.has("animations"):
 			# The one that moves it here: a destroyed object's doing (it plays,
@@ -216,6 +217,7 @@ static func update_destructibles(tree: SceneTree, health: PackedFloat32Array) ->
 		if was == 1 and standing == 0:
 			var c: Array = spec.get("center", [0, 0, 0])
 			explosions.append({"position": Vector3(c[0], c[1], c[2]), "effect": str(spec.get("explosion_effect", "")),
+					"sound": str(spec.get("explosion_sound", "")),
 					"radius": maxf(2.0, float(spec.get("explosion_radius", 0)))})
 	return explosions
 
@@ -269,17 +271,31 @@ static func _key_at(keys: Array, time: float) -> Vector3:
 
 # The doors, as open as the server says (`open`: 0 shut .. 1, by the
 # battlefield's door index; doors it doesn't say are shut), along their
-# opening clip.
-static func animate_doors(tree: SceneTree, open: PackedFloat32Array) -> void:
+# opening clip. Returns sound events [{position, sound}] when a door starts
+# opening or closing.
+static func animate_doors(tree: SceneTree, open: PackedFloat32Array) -> Array[Dictionary]:
+	var sounds: Array[Dictionary] = []
 	for node: Node3D in tree.get_nodes_in_group(DOORS):
 		var door: Dictionary = node.get_meta("bf2_door")
 		var index := int(door["index"])
 		var amount := open[index] if index < open.size() else 0.0
-		if is_equal_approx(amount, float(node.get_meta("open"))):
+		var prev := float(node.get_meta("open"))
+		if is_equal_approx(amount, prev):
 			continue
 		node.set_meta("open", amount)
 		var player: AnimationPlayer = node.get_meta("player")
 		player.seek(amount * player.current_animation_length, true)
+		if prev >= 0.0:
+			var dir := 1 if amount > prev + 0.001 else (-1 if amount < prev - 0.001 else 0)
+			var prev_dir := int(node.get_meta("door_dir", 0))
+			if dir != 0 and dir != prev_dir:
+				var snd := str(door.get("open_sound", "")) if dir > 0 else str(door.get("close_sound", ""))
+				if snd == "":
+					snd = "door_open" if dir > 0 else "door_close"
+				sounds.append({"position": node.global_position, "sound": snd})
+			if dir != 0:
+				node.set_meta("door_dir", dir)
+	return sounds
 
 
 # Fog, ambient light, the sun, local lights and the sky dome. Returns the

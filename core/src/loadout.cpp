@@ -252,6 +252,20 @@ WeaponDef load_weapon(const std::filesystem::path& path) {
     read_color("FlashLightColor", w.flash_light_color);
     w.flash_light_radius = s.number("FlashLightRadius", w.flash_light_radius);
     w.flash_light_duration = s.number("FlashLightDuration", w.flash_light_duration);
+    if (w.projectile == Projectile::grenade) {
+        w.fire_sound = "com_weap_throw";
+        w.reload_sound.clear();
+        w.weapon_change_sound.clear();
+    }
+    w.fire_sound = s.get("FireSound").value_or(w.fire_sound);
+    w.fire_empty_sound = s.get("FireEmptySound").value_or(w.fire_empty_sound);
+    w.reload_sound = s.get("ReloadSound").value_or(w.reload_sound);
+    w.overheat_sound = s.get("OverheatSound").value_or("");
+    w.overheat_stop_sound = s.get("OverheatStopSound").value_or("");
+    w.weapon_change_sound = s.get("WeaponChangeSound").value_or(w.weapon_change_sound);
+    w.ordnance_sound = s.get("OrdnanceSound").value_or("");
+    w.bounce_sound = s.get("CollisionOtherSound").value_or("");
+    w.explosion_sound = s.get("ExplosionSound").value_or("");
     w.modifiers = read_modifiers(s, where);
     return w;
 }

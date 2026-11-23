@@ -92,6 +92,9 @@ void add_bolt_look(godot::Dictionary& entry, const core::WeaponDef& w) {
     entry["flash_light_color"] = to_color(w.flash_light_color);
     entry["flash_light_radius"] = w.flash_light_radius;
     entry["flash_light_duration"] = w.flash_light_duration;
+    entry["fire_sound"] = godot::String::utf8(w.fire_sound.c_str());
+    entry["ordnance_sound"] = godot::String::utf8(w.ordnance_sound.c_str());
+    entry["bounce_sound"] = godot::String::utf8(w.bounce_sound.c_str());
 }
 
 godot::Error load_battlefield_file(std::optional<core::Battlefield>& battlefield, const godot::String& path) {
@@ -618,6 +621,7 @@ godot::Array SwmClient::take_explosions() {
             }
             if (e.weapon == core::net::droid_explosion_weapon) {
                 entry["effect"] = godot::String("com_sfx_explosion_sm");
+                entry["sound"] = godot::String("com_weap_obj_small_exp");
                 entry["light_color"] = godot::Color(1.0f, 0.72f, 0.3f, 1.0f);
                 entry["light_radius"] = 6.0;
                 out.push_back(entry);
@@ -636,6 +640,9 @@ godot::Array SwmClient::take_explosions() {
             }
             const core::WeaponDef* weapon = core::weapon_in_slot(*owner_def, e.weapon);
             entry["effect"] = weapon ? godot::String::utf8(weapon->explosion_effect.c_str()) : godot::String();
+            entry["sound"] = weapon && !weapon->explosion_sound.empty()
+                                 ? godot::String::utf8(weapon->explosion_sound.c_str())
+                                 : godot::String("com_weap_thermaldetonator_exp");
             entry["light_color"] = weapon ? to_color(weapon->light_color) : godot::Color(1.0f, 0.7f, 0.3f, 1.0f);
             entry["light_radius"] = weapon && weapon->light_radius > 0 ? weapon->light_radius : double(e.radius) * 2.0;
             out.push_back(entry);
@@ -666,6 +673,7 @@ godot::Array SwmClient::take_impacts() {
             entry["normal"] = to_godot(imp.normal);
             entry["hit_character"] = imp.hit_character;
             entry["effect"] = weapon ? godot::String::utf8(weapon->impact_effect.c_str()) : godot::String("com_sfx_ord_exp");
+            entry["sound"] = godot::String("imp_weap_ord_exp");
             entry["color"] = weapon ? to_color(weapon->bolt_color) : godot::Color(1.0f, 0.5f, 0.2f, 1.0f);
             out.push_back(entry);
         }
@@ -710,6 +718,7 @@ godot::Dictionary SwmClient::get_secondary() const {
     godot::Dictionary out;
     if (const core::WeaponDef* secondary = core::weapon_in_slot(loadout(), core::secondary_slot)) {
         out["name"] = godot::String::utf8(secondary->name.c_str());
+        out["fire_sound"] = godot::String::utf8(secondary->fire_sound.c_str());
     }
     return out;
 }
@@ -739,6 +748,12 @@ godot::Array SwmClient::get_weapons() const {
                                            float(w.bolt_color[3]));
         entry["bolt_length"] = w.bolt_length;
         entry["bolt_width"] = w.bolt_width;
+        entry["fire_sound"] = godot::String::utf8(w.fire_sound.c_str());
+        entry["fire_empty_sound"] = godot::String::utf8(w.fire_empty_sound.c_str());
+        entry["reload_sound"] = godot::String::utf8(w.reload_sound.c_str());
+        entry["overheat_sound"] = godot::String::utf8(w.overheat_sound.c_str());
+        entry["overheat_stop_sound"] = godot::String::utf8(w.overheat_stop_sound.c_str());
+        entry["weapon_change_sound"] = godot::String::utf8(w.weapon_change_sound.c_str());
         out.push_back(entry);
     }
     return out;

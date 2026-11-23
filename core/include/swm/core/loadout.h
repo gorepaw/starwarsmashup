@@ -146,6 +146,15 @@ struct WeaponDef {
     std::array<double, 4> flash_light_color{1.0, 220 / 255.0, 220 / 255.0, 175 / 255.0};  // FlashLightColor
     double flash_light_radius = 2.0;    // FlashLightRadius, m
     double flash_light_duration = 0.25; // FlashLightDuration, s
+    std::string fire_sound = "imp_weap_inf_rifle_fire";
+    std::string fire_empty_sound = "com_weap_inf_ammo_empty";
+    std::string reload_sound = "com_weap_inf_reload_med";
+    std::string overheat_sound;
+    std::string overheat_stop_sound;
+    std::string weapon_change_sound = "com_weap_inf_equip_med";
+    std::string ordnance_sound;
+    std::string bounce_sound;
+    std::string explosion_sound;
     std::vector<StatModifier> modifiers;  // while carried
 };
 
