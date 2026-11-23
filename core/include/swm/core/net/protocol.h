@@ -18,7 +18,7 @@ namespace swm::core::net {
 // Every packet starts with a magic number, the protocol version and a message
 // type. Peers drop packets with another version. Bump it on any wire change.
 inline constexpr uint16_t protocol_magic = 0x4D53;  // "SM"
-inline constexpr uint16_t protocol_version = 19;
+inline constexpr uint16_t protocol_version = 20;
 inline constexpr uint8_t droid_explosion_weapon = 0xFF;  // Explosion::weapon sentinel for destroyed health/ammo droids
 // ...for a destroyed object (Battlefield::destructibles); clients draw it
 // from the object's own explosion as they see it go.
@@ -43,6 +43,29 @@ struct Recruiter {
     friend bool operator==(const Recruiter&, const Recruiter&) = default;
 };
 
+// A hub's faction quartermaster: standing within `radius` of it, a player can
+// browse and buy standard-issue gear for faction points or credits.
+struct Quartermaster {
+    std::string name;
+    std::string faction;  // "empire", "rebellion", or "neutral"
+    Vec3 position;        // game space
+    double radius = 4;
+
+    friend bool operator==(const Quartermaster&, const Quartermaster&) = default;
+};
+
+// A shooting-range target in a hub.
+struct TargetState {
+    uint32_t id = 0;
+    std::string name;
+    Vec3 position;
+    float health = 0;
+    float max_health = 400;
+    bool alive = true;
+
+    friend bool operator==(const TargetState&, const TargetState&) = default;
+};
+
 // Server -> client: the handshake answer.
 struct Welcome {
     uint32_t entity_id = 0;  // the client's own character
@@ -55,12 +78,14 @@ struct Welcome {
     // How its people look (a Galaxies object template each): an entity's
     // look is an index into these, plus one.
     std::vector<std::string> looks;
+    std::vector<Quartermaster> quartermasters;
 };
 
 // Client -> hub, repeated until the hub's PlayerStatus shows it: queue for a
 // battle on a side (0 or 1), near a war terminal; -1 leaves the queue.
 struct QueueRequest {
     int8_t team = -1;
+    QueueMode mode = QueueMode::standard;
 };
 
 // Server -> client, repeated until the client leaves: go to another server
@@ -79,11 +104,19 @@ struct PlayerStatus {
     enum Queue : uint8_t { none, queued };
     Queue queue = none;
     int8_t team = -1;          // queued for
+    QueueMode queue_mode = QueueMode::standard;
     uint16_t in_queue = 0;     // players queued for the next battle
     float starts_in = 0;       // seconds until it starts
     std::string battlefield;   // where it's fought (its name)
     uint16_t notice_id = 0;    // changes with each new notice
     std::string notice;        // e.g. how the last battle went
+    int64_t credits = 0;
+    int64_t faction_points = 0;
+    int64_t experience = 0;
+    uint8_t active_loadout = 0;
+    int8_t switching_loadout = -1;
+    float switch_progress = 0.0f;
+    uint32_t inventory_rev = 0;
 
     friend bool operator==(const PlayerStatus&, const PlayerStatus&) = default;
 };
@@ -124,6 +157,9 @@ struct EntityState {
     uint8_t gender = 0;       // 0 = male, 1 = female
     std::string name;         // player name (empty for NPCs)
     std::string appearance;   // player customization JSON (empty for NPCs/bots)
+    std::string weapon_model; // active weapon glTF (empty: use team loadout)
+    std::string anim_set;     // active weapon anim set (empty: use team loadout)
+    std::string worn;         // comma-separated worn armor/clothing glTFs
 
     bool alive() const { return life == Life::alive; }
 };
@@ -193,6 +229,7 @@ struct Snapshot {
     std::vector<Explosion> explosions;  // this tick's
     std::vector<Impact> impacts;        // this tick's bolt hits on surfaces and bodies
     std::vector<PickupState> pickups;   // dropped canisters on the ground
+    std::vector<TargetState> targets;   // shooting-range targets in a hub
     std::optional<MatchState> match;  // in a conquest match
     PlayerStatus you;                 // differs per client
 };
@@ -200,8 +237,45 @@ struct Snapshot {
 // Either direction: leaving.
 struct Goodbye {};
 
-using Message =
-    std::variant<Hello, Welcome, Refused, InputBatch, Snapshot, Goodbye, SpawnRequest, QueueRequest, Transfer>;
+// Server -> client: authoritative inventory, saved loadouts, and resolved combat loadouts.
+struct InventorySync {
+    uint32_t revision = 0;
+    std::vector<ItemInstance> items;
+    std::vector<CharacterLoadout> loadouts;
+    std::vector<Loadout> resolved_loadouts;
+
+    friend bool operator==(const InventorySync&, const InventorySync&) = default;
+};
+
+// Client -> server: acknowledges receipt of InventorySync `revision`.
+struct InventoryAck {
+    uint32_t revision = 0;
+};
+
+// Client -> server: save one of the character's 3 loadouts.
+struct SaveLoadoutRequest {
+    CharacterLoadout loadout;
+};
+
+// Client -> server: begin channeling a switch to saved loadout `slot` (0..2).
+struct SwitchLoadoutRequest {
+    uint8_t slot = 0;
+};
+
+// Client -> server: purchase an item from a nearby quartermaster.
+struct ShopBuyRequest {
+    std::string def_id;
+    bool use_faction_points = true;
+};
+
+// Client -> server: destroy an owned item instance.
+struct DestroyItemRequest {
+    uint64_t item_id = 0;
+};
+
+using Message = std::variant<Hello, Welcome, Refused, InputBatch, Snapshot, Goodbye, SpawnRequest, QueueRequest,
+                             Transfer, InventorySync, InventoryAck, SaveLoadoutRequest, SwitchLoadoutRequest,
+                             ShopBuyRequest, DestroyItemRequest>;
 
 std::vector<uint8_t> encode(const Message& message);
 // Throws PacketError on malformed packets or another protocol version.

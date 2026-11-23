@@ -79,6 +79,8 @@ godot::Dictionary to_dict(const core::ItemDef& d, const core::ItemCatalog& catal
     for (const core::StatModifier& m : d.modifiers) {
         godot::Dictionary md;
         md["stat"] = int64_t(m.stat);
+        const std::string_view sname = core::stat_name(m.stat);
+        md["stat_name"] = godot::String::utf8(sname.data(), int(sname.size()));
         md["add"] = m.add;
         md["multiply"] = m.multiply;
         mods.push_back(md);
@@ -97,6 +99,12 @@ godot::Dictionary to_dict(const core::ItemDef& d, const core::ItemCatalog& catal
         ws["bolt_life"] = w.bolt_life;
         ws["yaw_spread"] = w.yaw_spread;
         ws["shots_per_salvo"] = int64_t(w.shots_per_salvo);
+        ws["zoom_max"] = w.zoom_max;
+        ws["explosion_damage"] = w.explosion_damage;
+        ws["explosion_outer"] = w.explosion_outer;
+        const std::string_view dt_name = core::damage_type_name(w.damage_type);
+        ws["damage_type"] = godot::String::utf8(dt_name.data(), int(dt_name.size()));
+        ws["bolt_color"] = godot::String::utf8(d.bolt_color_name.c_str());
         out["weapon_stats"] = ws;
     }
     return out;
@@ -294,45 +302,95 @@ godot::Error SwmCharacterStore::ensure_starter_kit(int64_t char_id) {
         return godot::ERR_UNCONFIGURED;
     }
     try {
-        const auto existing = store_->list_items(core::PersistentId(char_id));
-        if (!existing.empty()) {
-            return godot::OK;
-        }
         const auto ch = store_->find(core::PersistentId(char_id));
         if (!ch) {
             last_error_ = "character not found";
             return godot::ERR_DOES_NOT_EXIST;
         }
-        const auto grant = [&](const char* def_id) {
-            return store_->grant_item({0, ch->id, def_id, 0.5, "", "{}"});
-        };
-        const auto primary = grant("wp_rifle_e11");
-        const auto sidearm = grant("wp_pistol_dh17");
-        const auto grenade = grant("wp_grenade_c22");
-        const auto psg = grant("psg_mark1");
-        const auto shirt = grant("cloth_shirt_tunic");
-        const auto pants = grant("cloth_pants_cargo");
-        const auto boots = grant("cloth_boots_leather");
-
-        core::CharacterLoadout lo;
-        lo.slot_index = 0;
-        lo.name = "Standard Issue";
-        lo.primary_id = primary.id;
-        lo.sidearm_id = sidearm.id;
-        lo.secondary_id = grenade.id;
-        lo.gear_ids["deflector_shield"] = psg.id;
-        lo.appearance_ids["shirt"] = shirt.id;
-        lo.appearance_ids["pants"] = pants.id;
-        lo.appearance_ids["boots_cosmetic"] = boots.id;
-        store_->save_loadout(ch->id, lo);
-        if (ch->credits == 0 && ch->faction_points == 0) {
-            store_->update_economy(ch->id, 500, 100, ch->experience, 0);
-        }
+        core::ensure_starter_kit(*store_, ch->id);
         return godot::OK;
     } catch (const std::exception& e) {
         last_error_ = e.what();
         return godot::FAILED;
     }
+}
+
+godot::Dictionary SwmCharacterStore::resolve_item_stats(const godot::String& def_id, double quality,
+                                                        bool apply_quality) const {
+    godot::Dictionary out;
+    const core::ItemDef* def = catalog_.find(to_std(def_id));
+    if (def == nullptr) return out;
+    if (def->kind == core::ItemKind::weapon) {
+        const core::WeaponDef w = catalog_.resolve_weapon(*def, quality, apply_quality);
+        out["damage"] = w.damage;
+        out["shot_delay"] = w.shot_delay;
+        out["rounds_per_clip"] = int64_t(w.rounds_per_clip);
+        out["heat_per_shot"] = w.heat_per_shot;
+        out["reload_time"] = w.reload_time;
+        out["bolt_speed"] = w.bolt_speed;
+        out["bolt_life"] = w.bolt_life;
+        out["yaw_spread"] = w.yaw_spread;
+        out["shots_per_salvo"] = int64_t(w.shots_per_salvo);
+        out["zoom_max"] = w.zoom_max;
+        out["explosion_damage"] = w.explosion_damage;
+        out["explosion_outer"] = w.explosion_outer;
+        const std::string_view dt_name = core::damage_type_name(w.damage_type);
+        out["damage_type"] = godot::String::utf8(dt_name.data(), int(dt_name.size()));
+    }
+    const core::Gear g = catalog_.resolve_gear(*def, quality, apply_quality);
+    godot::Array mods;
+    for (const core::StatModifier& m : g.modifiers) {
+        godot::Dictionary md;
+        const std::string_view sname = core::stat_name(m.stat);
+        md["stat_name"] = godot::String::utf8(sname.data(), int(sname.size()));
+        md["add"] = m.add;
+        md["multiply"] = m.multiply;
+        mods.push_back(md);
+    }
+    out["modifiers"] = mods;
+    return out;
+}
+
+godot::Dictionary SwmCharacterStore::compute_loadout_stats(const godot::String& species, const godot::Dictionary& loadout,
+                                                           const godot::Array& items, bool apply_quality) const {
+    core::CharacterLoadout cl;
+    cl.primary_id = loadout.has("primary_id") ? uint64_t(int64_t(loadout["primary_id"])) : 0;
+    cl.sidearm_id = loadout.has("sidearm_id") ? uint64_t(int64_t(loadout["sidearm_id"])) : 0;
+    cl.secondary_id = loadout.has("secondary_id") ? uint64_t(int64_t(loadout["secondary_id"])) : 0;
+    if (loadout.has("gear_ids")) {
+        godot::Dictionary gear = loadout["gear_ids"];
+        godot::Array keys = gear.keys();
+        for (int i = 0; i < keys.size(); ++i) {
+            cl.gear_ids[to_std(keys[i])] = uint64_t(int64_t(gear[keys[i]]));
+        }
+    }
+    std::vector<core::ItemInstance> inv;
+    inv.reserve(size_t(items.size()));
+    for (int i = 0; i < items.size(); ++i) {
+        godot::Dictionary d = items[i];
+        core::ItemInstance inst;
+        inst.id = d.has("id") ? uint64_t(int64_t(d["id"])) : 0;
+        inst.def_id = d.has("def_id") ? to_std(d["def_id"]) : "";
+        inst.quality = d.has("quality") ? double(d["quality"]) : 0.5;
+        inv.push_back(std::move(inst));
+    }
+    const core::Species sp = core::species_from_name(to_std(species)).value_or(core::Species::human);
+    const core::Loadout built = catalog_.build_loadout(cl, inv, sp, apply_quality);
+    const core::CharacterStats stats = core::stats_for(built, sp);
+    godot::Dictionary out;
+    out["max_health"] = stats.max_health;
+    out["run_speed"] = stats.move.run_speed;
+    out["sprint_factor"] = stats.move.sprint_factor;
+    out["max_energy"] = stats.move.max_energy;
+    out["energy_restore"] = stats.move.energy_restore;
+    out["mitigation"] = stats.mitigation;
+    out["mitigation_ballistic"] = stats.mitigation_by_type[size_t(core::DamageType::ballistic)];
+    out["mitigation_laser"] = stats.mitigation_by_type[size_t(core::DamageType::laser)];
+    out["mitigation_electro"] = stats.mitigation_by_type[size_t(core::DamageType::electro)];
+    out["mitigation_bio"] = stats.mitigation_by_type[size_t(core::DamageType::bio)];
+    out["mitigation_explosive"] = stats.mitigation_by_type[size_t(core::DamageType::explosive)];
+    out["mitigation_melee"] = stats.mitigation_by_type[size_t(core::DamageType::melee)];
+    return out;
 }
 
 godot::Dictionary SwmCharacterStore::buy_item(int64_t char_id, const godot::String& def_id,
@@ -468,6 +526,10 @@ void SwmCharacterStore::_bind_methods() {
                          &SwmCharacterStore::add_rewards);
     ClassDB::bind_method(D_METHOD("set_active_loadout", "char_id", "slot_index"),
                          &SwmCharacterStore::set_active_loadout);
+    ClassDB::bind_method(D_METHOD("resolve_item_stats", "def_id", "quality", "apply_quality"),
+                         &SwmCharacterStore::resolve_item_stats, DEFVAL(0.5), DEFVAL(true));
+    ClassDB::bind_method(D_METHOD("compute_loadout_stats", "species", "loadout", "items", "apply_quality"),
+                         &SwmCharacterStore::compute_loadout_stats, DEFVAL(true));
     ClassDB::bind_static_method("SwmCharacterStore", D_METHOD("get_species_list"),
                                 &SwmCharacterStore::get_species_list);
 }

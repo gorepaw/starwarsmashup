@@ -101,6 +101,15 @@ std::optional<Stat> stat_from_name(std::string_view name) {
     return std::nullopt;
 }
 
+std::string_view stat_name(Stat stat) {
+    for (const auto& [text, s] : stat_names) {
+        if (s == stat) {
+            return text;
+        }
+    }
+    return "max_health";
+}
+
 std::optional<DamageType> damage_type_from_name(std::string_view name) {
     for (size_t i = 0; i < damage_type_names.size(); ++i) {
         if (damage_type_names[i] == name) {
@@ -108,6 +117,11 @@ std::optional<DamageType> damage_type_from_name(std::string_view name) {
         }
     }
     return std::nullopt;
+}
+
+std::string_view damage_type_name(DamageType type) {
+    const size_t i = size_t(type);
+    return i < damage_type_names.size() ? damage_type_names[i] : "laser";
 }
 
 double mitigated_damage(const CharacterStats& stats, double amount, DamageType type) {

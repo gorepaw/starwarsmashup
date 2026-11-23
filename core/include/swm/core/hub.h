@@ -49,9 +49,21 @@ struct HubCrowd {
     double radius = 0;       // meters
 };
 
+struct HubRangeTarget {
+    std::string name = "Target";
+    Vec3 position;
+    Vec3 patrol_end;
+    double speed = 0;
+    double health = 400;
+    double mitigation = 0;
+    double respawn = 2.5;
+};
+
 struct HubConfig {
     std::string name = "Hub";
     std::vector<net::Recruiter> recruiters;
+    std::vector<net::Quartermaster> quartermasters;
+    std::vector<HubRangeTarget> range_targets;
     // The sides players queue for. Each battlefield has teams by these
     // names, in either order (Battlefront's team 1 attacks on some maps).
     std::array<std::string, 2> sides;
@@ -145,6 +157,7 @@ private:
     struct Battle {
         std::shared_ptr<const World> world;  // null: the hub's; outlives the server and bots below
         HubBattlefield field;
+        QueueMode mode = QueueMode::standard;
         int id = 0;
         uint16_t port = 0;
         std::unique_ptr<net::Link> link;
@@ -152,6 +165,8 @@ private:
         std::unique_ptr<BotPlayers> bots;
         std::map<uint64_t, std::pair<std::string, int>> tickets;  // -> player and team
         std::map<std::string, PlayerProfile> profiles;            // player name -> species & appearance
+        std::map<std::string, std::vector<Loadout>> player_loadouts;
+        std::map<std::string, std::vector<std::string>> player_worn;
         uint64_t bot_ticket = 0;
         std::array<int, 2> soldiers{};  // sent or admitted per team
         std::array<int, 2> players{};   // players (not bots) sent per team
@@ -164,7 +179,7 @@ private:
         std::shared_future<std::shared_ptr<const World>> world;
     };
 
-    void queue(uint32_t entity, int team);
+    void queue(uint32_t entity, int team, QueueMode mode);
     // Someone who walks: the crowd wandering, or a set piece's route.
     struct Walker {
         uint32_t entity = 0;
@@ -179,11 +194,11 @@ private:
     void add_people();
     void walk_people();
     std::optional<Vec3> wander_point();
-    void choose_next();
-    bool next_ready();
-    void start_battle();
+    void choose_next(QueueMode mode);
+    bool next_ready(QueueMode mode);
+    void start_battle(QueueMode mode);
     void send(Battle& battle, const Queued& player);
-    bool has_room(const Battle& battle, int side) const;
+    bool has_room(const Battle& battle, int side, QueueMode mode) const;
     bool players_connected(const Battle& battle) const;
     void say(const std::string& text) const;
 
@@ -192,9 +207,9 @@ private:
     const World& world_;
     HubConfig config_;
     HubNetwork& network_;
-    std::vector<Queued> queue_;
+    std::array<std::vector<Queued>, 2> queues_;
     std::vector<std::unique_ptr<Battle>> battles_;
-    std::optional<Next> next_;  // after config_: its loading refers to a battlefield there
+    std::array<std::optional<Next>, 2> next_;  // after config_: its loading refers to a battlefield there
     std::string last_battlefield_;
     std::map<std::string, std::weak_ptr<const World>> worlds_;  // battlefield id -> loaded world
     std::unique_ptr<NavGrid> streets_;  // where the hub's people walk

@@ -41,6 +41,9 @@ GameClient::GameClient(net::Link& link, const World& world, ClientConfig config)
     : link_(link), world_(world), config_(std::move(config)), character_stats_(stats_for(config_.loadout, config_.base_stats)) {}
 
 const Loadout& GameClient::loadout() const {
+    if (!custom_loadouts_.empty()) {
+        return custom_loadouts_[std::min<size_t>(self_.loadout, custom_loadouts_.size() - 1)];
+    }
     if (config_.battlefield && self_.team >= 0) {
         const auto& loadouts = config_.battlefield->team(self_.team).loadouts;
         return loadouts[std::min<size_t>(self_.loadout, loadouts.size() - 1)];
@@ -48,9 +51,34 @@ const Loadout& GameClient::loadout() const {
     return config_.loadout;
 }
 
-void GameClient::queue(int team) {
+void GameClient::queue(int team, QueueMode mode) {
     wanted_queue_ = std::clamp(team, -1, 1);
+    wanted_queue_mode_ = mode;
     last_queue_request_ = -1e9;
+}
+
+void GameClient::save_loadout(const CharacterLoadout& loadout) {
+    if (status_ == Status::connected) {
+        link_.send(config_.server, net::encode(net::SaveLoadoutRequest{loadout}));
+    }
+}
+
+void GameClient::switch_loadout(int slot) {
+    if (status_ == Status::connected && slot >= 0 && slot < max_character_loadouts) {
+        link_.send(config_.server, net::encode(net::SwitchLoadoutRequest{uint8_t(slot)}));
+    }
+}
+
+void GameClient::buy_item(const std::string& def_id, bool use_faction_points) {
+    if (status_ == Status::connected) {
+        link_.send(config_.server, net::encode(net::ShopBuyRequest{def_id, use_faction_points}));
+    }
+}
+
+void GameClient::destroy_item(uint64_t item_id) {
+    if (status_ == Status::connected && item_id != 0) {
+        link_.send(config_.server, net::encode(net::DestroyItemRequest{item_id}));
+    }
 }
 
 void GameClient::request_spawn(int loadout, int post) {
@@ -121,11 +149,12 @@ void GameClient::update(double now) {
     if (status_ == Status::connected && wanted_queue_ != -2 && now - last_queue_request_ >= 0.5) {
         const bool done = wanted_queue_ < 0 ? player_status_.queue == net::PlayerStatus::none
                                             : player_status_.queue == net::PlayerStatus::queued &&
-                                                  player_status_.team == wanted_queue_;
+                                                  player_status_.team == wanted_queue_ &&
+                                                  player_status_.queue_mode == wanted_queue_mode_;
         if (done) {
             wanted_queue_ = -2;
         } else {
-            link_.send(config_.server, net::encode(net::QueueRequest{int8_t(wanted_queue_)}));
+            link_.send(config_.server, net::encode(net::QueueRequest{int8_t(wanted_queue_), wanted_queue_mode_}));
             last_queue_request_ = now;
         }
     }
@@ -175,8 +204,25 @@ void GameClient::handle(const net::Datagram& datagram, double now) {
             character_ = welcome->character_id;
             tick_rate_ = welcome->tick_rate;
             recruiters_ = welcome->recruiters;
+            quartermasters_ = welcome->quartermasters;
             factions_ = welcome->factions;
             looks_ = welcome->looks;
+        }
+        return;
+    }
+    if (const auto* sync = std::get_if<net::InventorySync>(&message)) {
+        if (status_ == Status::connected) {
+            if (sync->revision >= inventory_rev_) {
+                inventory_rev_ = sync->revision;
+                items_ = sync->items;
+                char_loadouts_ = sync->loadouts;
+                custom_loadouts_ = sync->resolved_loadouts;
+                if (spawned_) {
+                    const Species sp = Species(std::min<size_t>(self_.species, species_count - 1));
+                    character_stats_ = stats_for(loadout(), sp, config_.base_stats);
+                }
+            }
+            link_.send(config_.server, net::encode(net::InventoryAck{sync->revision}));
         }
         return;
     }
@@ -217,6 +263,7 @@ void GameClient::handle(const net::Datagram& datagram, double now) {
     explosions_.insert(explosions_.end(), snapshot->explosions.begin(), snapshot->explosions.end());
     impacts_.insert(impacts_.end(), snapshot->impacts.begin(), snapshot->impacts.end());
     pickups_ = snapshot->pickups;
+    targets_ = snapshot->targets;
     match_ = snapshot->match;
     if (match_) {
         // What's been destroyed, gone from our world too (so we move as the

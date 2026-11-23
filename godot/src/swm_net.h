@@ -19,6 +19,7 @@
 #include "swm/core/conquest.h"
 #include "swm/core/heightfield.h"
 #include "swm/core/hub.h"
+#include "swm/core/items.h"
 #include "swm/core/nav.h"
 #include "swm/core/net/link.h"
 #include "swm/core/net/udp.h"
@@ -135,10 +136,24 @@ public:
     // look (1 and up) indexes these from 1.
     godot::PackedStringArray get_looks() const;
     // Queue for a battle on a side (0 or 1) at a war terminal; -1 leaves the queue.
-    void queue(int64_t team);
-    // {queue ("none" or "queued"), team, in_queue, starts_in, battlefield
-    // (the next battle's name), notice_id, notice}.
+    // `mode` is "standard" or "gear".
+    void queue(int64_t team, const godot::String& mode = "standard");
+    // {queue ("none" or "queued"), team, queue_mode, in_queue, starts_in, battlefield,
+    // notice_id, notice, credits, faction_points, experience, active_loadout,
+    // switching_loadout, switch_progress, inventory_rev}.
     godot::Dictionary get_player_status() const;
+    // Quartermasters in the hub: [{name, faction, position, radius}].
+    godot::Array get_quartermasters() const;
+    // Shooting-range targets in the hub: [{id, name, position, health, max_health, alive}].
+    godot::Array get_targets() const;
+    // Authoritative inventory & loadouts synced from the server.
+    godot::Array get_inventory() const;
+    godot::Array get_character_loadouts() const;
+    godot::Array get_custom_loadouts() const;
+    void save_loadout(int64_t slot_index, const godot::Dictionary& loadout);
+    void switch_loadout(int64_t slot_index);
+    void buy_item(const godot::String& def_id, bool use_faction_points = true);
+    void destroy_item(int64_t item_id);
     // The terrain bake (prefix) of the world the client is in now: a
     // battle's own (its battlefield's map), or the one start() was given.
     godot::String get_bake() const;
@@ -208,6 +223,8 @@ public:
     // Makes the server a hub (a hub file, an OS path; see game/hubs/): its
     // war terminals queue players for battles it launches. Call before start().
     godot::Error set_hub(const godot::String& path);
+    // Loads the item catalog for hub inventory, quartermasters, and loadouts.
+    godot::Error set_catalog(const godot::String& catalog_ini, const godot::String& bf2_items_dir);
     // `spawn` is where new characters start, in Galaxies coordinates (x, z).
     godot::Error start(int64_t port, const godot::String& bake_prefix, const godot::Vector2& spawn);
     void update();
@@ -234,6 +251,8 @@ private:
     std::unique_ptr<core::GameServer> server_;
     std::unique_ptr<core::BotPlayers> bots_;
     std::optional<core::HubConfig> hub_config_;
+    core::ItemCatalog catalog_;
+    bool has_catalog_ = false;
     core::UdpHubNetwork hub_network_;
     std::unique_ptr<core::Hub> hub_;
 };

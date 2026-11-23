@@ -418,11 +418,156 @@ void test_wookiee_profile_in_battle() {
     CHECK(saw_wookiee_in_battle);
 }
 
+void test_stage4_hub_loop() {
+    std::vector<float> flat(4, 0.0f);
+    const Heightfield ground(2, 200.0, -100, -100, flat);
+    const World world(ground);
+
+    const auto cat_path = std::filesystem::temp_directory_path() / "swm_stage4_hub_catalog.ini";
+    {
+        std::ofstream out(cat_path);
+        out << "[item]\nId = wp_rifle_e11\nName = E-11\nKind = weapon\nArchetype = rifle_auto\nSlot = primary\n"
+            << "Faction = neutral\nCostFactionPoints = 0\nCostCredits = 100\nModel = weapons/wp_carbine_e11/wp_carbine_e11.gltf\n"
+            << "[item]\nId = wp_pistol_dh17\nName = DH-17\nKind = weapon\nArchetype = pistol\nSlot = sidearm\n"
+            << "Faction = neutral\nCostFactionPoints = 0\nCostCredits = 80\nModel = weapons/wp_pistol_d18/wp_pistol_d18.gltf\n"
+            << "[item]\nId = wp_grenade_c22\nName = C-22\nKind = weapon\nArchetype = grenade\nSlot = secondary\n"
+            << "Faction = neutral\nCostFactionPoints = 0\nCostCredits = 60\nModel = weapons/wp_grenade_c22/wp_grenade_c22.gltf\n"
+            << "[item]\nId = wp_rifle_t21\nName = T-21\nKind = weapon\nArchetype = rifle_auto\nSlot = primary\n"
+            << "Faction = empire\nCostFactionPoints = 50\nCostCredits = 200\nDamageMult = 1.25\n"
+            << "Model = weapons/wp_rifle_t21/wp_rifle_t21.gltf\n"
+            << "[item]\nId = psg_mark1\nName = PSG Mk I\nKind = deflector_shield\nSlot = deflector_shield\n"
+            << "Faction = neutral\nCostFactionPoints = 0\nCostCredits = 100\nModifier = mitigation_laser + 0.08\n"
+            << "[item]\nId = cloth_jacket_rebel\nName = Jacket\nKind = clothing\nSlot = jacket\nFaction = neutral\n"
+            << "[item]\nId = cloth_pants_cargo\nName = Pants\nKind = clothing\nSlot = pants\nFaction = neutral\n"
+            << "[item]\nId = cloth_boots_leather\nName = Boots\nKind = clothing\nSlot = boots_cosmetic\nFaction = neutral\n";
+    }
+    ItemCatalog catalog;
+    catalog.load(cat_path);
+    std::filesystem::remove(cat_path);
+
+    MemoryCharacterStore store;
+    const auto hero = store.create_character({0, "Luke", {0, 0, 0}, 0, "human", "male"});
+    ensure_starter_kit(store, hero.id);
+    // Grant a high-quality (1.0) T-21 directly as well as testing quartermaster buy.
+    const auto hq_t21 = store.grant_item({0, hero.id, "wp_rifle_t21", 1.0, "", "{}"});
+
+    Battlefield field;
+    field.name = "Dunes";
+    field.min_x = field.min_z = -90;
+    field.max_x = field.max_z = 90;
+    Team reb{"Rebellion"}, imp{"Empire"};
+    Loadout stock;
+    stock.name = "Stock";
+    reb.loadouts = {stock};
+    imp.loadouts = {stock};
+    field.teams = {reb, imp};
+    field.posts = {{"North", {0, 0, -20}, 5, 0, true}, {"South", {0, 0, 20}, 5, 1, true}};
+    field.tickets = 4;
+    field.warmup = 0.2;
+    field.results = 0.2;
+
+    HubConfig hub_cfg;
+    hub_cfg.name = "Mos Eisley";
+    hub_cfg.sides = {"Rebellion", "Empire"};
+    hub_cfg.battlefields = {{"dunes", field, {0, 1}}};
+    hub_cfg.recruiters = {{"Terminal", {0, 0, 0}, 10}};
+    hub_cfg.quartermasters = {{"Imperial QM", "empire", {0, 0, 0}, 10}};
+    hub_cfg.range_targets = {{"Range Dummy", {0, 0, -15}, {0, 0, -15}, 0, 100, 0.0, 0.5}};
+    hub_cfg.team_size = 1;
+    hub_cfg.queue_time = 0.05;
+    hub_cfg.return_delay = 0.1;
+
+    struct LoopNet : HubNetwork {
+        net::LoopbackHub hub;
+        uint16_t next_port = 100;
+        std::unique_ptr<net::Link> open_server(uint16_t& port) override {
+            port = next_port++;
+            return std::make_unique<net::LoopbackLink>(hub, net::Endpoint{1, port});
+        }
+        std::unique_ptr<net::Link> open_client() override {
+            return std::make_unique<net::LoopbackLink>(hub, net::Endpoint{2, next_port++});
+        }
+        net::Endpoint local(uint16_t port) const override { return {1, port}; }
+    } net;
+
+    uint16_t hub_port = 0;
+    auto hub_link = net.open_server(hub_port);
+    ServerConfig hub_scfg;
+    hub_scfg.catalog = &catalog;
+    GameServer hub_server(*hub_link, world, hub_scfg, &store);
+    Hub hub(hub_server, hub_port, world, hub_cfg, net);
+    hub.load_battle_world = [](const Battlefield&) { return std::shared_ptr<const World>{}; };
+
+    auto client_link = net.open_client();
+    ClientSession session(*client_link, world, ClientConfig{.server = {1, hub_port}, .name = "Luke"},
+                          [&](const std::string&) { return field; });
+
+    double now = 0;
+    auto step_for = [&](double secs) {
+        for (double end = now + secs; now < end; now += 1.0 / 60) {
+            session.update(now);
+            hub_server.update(now);
+            hub.update(now);
+        }
+    };
+
+    step_for(0.25);
+    CHECK(session.client().spawned());
+    CHECK(session.client().items().size() >= 8);
+    CHECK(session.client().quartermasters().size() == 1);
+    CHECK(session.client().targets().size() == 1);
+
+    // Shoot the range target until it's knocked down, then verify it respawns.
+    const double start_hp = session.client().targets()[0].health;
+    session.client().set_input({.yaw = 0, .pitch = 0.0, .fire = true});
+    step_for(0.6);
+    session.client().set_input({});
+    CHECK(session.client().targets()[0].health < start_hp || !session.client().targets()[0].alive);
+
+    // Buy an item from the quartermaster (costs 50 FP).
+    const size_t before_buy = session.client().items().size();
+    session.client().buy_item("wp_rifle_t21", true);
+    step_for(0.35);
+    CHECK(session.client().items().size() == before_buy + 1);
+    CHECK(session.client().player_status().faction_points == 50);
+
+    // Save Loadout 1 with the high-quality T-21 and switch to it in the hub (takes 3s).
+    CharacterLoadout lo1;
+    lo1.slot_index = 1;
+    lo1.name = "Heavy";
+    lo1.primary_id = hq_t21.id;
+    session.client().save_loadout(lo1);
+    step_for(0.35);
+    CHECK(session.client().char_loadouts().size() == 2);
+    session.client().switch_loadout(1);
+    step_for(3.2);
+    CHECK(session.client().player_status().active_loadout == 1);
+    CHECK(session.client().loadout().name == "Heavy");
+
+    // Queue in Gear mode -> match receives custom loadouts with +8% quality!
+    session.client().queue(0, QueueMode::gear);
+    bool checked_gear = false;
+    for (double limit = now + 4.0; now < limit; now += 1.0 / 60) {
+        session.update(now);
+        hub_server.update(now);
+        hub.update(now);
+        if (session.generation() == 1 && session.client().spawned() && !checked_gear) {
+            CHECK(session.client().custom_loadouts().size() == 2);
+            const auto* w = weapon_in_slot(session.client().custom_loadouts()[1], primary_slot);
+            CHECK(w != nullptr && w->damage > 60.0 * 1.25 * 1.05);
+            checked_gear = true;
+            break;
+        }
+    }
+    CHECK(checked_gear);
+}
+
 int main() {
     test_hub_file();
     test_creature_body();
     test_queue_battle_and_back();
     test_people();
     test_wookiee_profile_in_battle();
+    test_stage4_hub_loop();
     return swm::test::finish("hub_test");
 }

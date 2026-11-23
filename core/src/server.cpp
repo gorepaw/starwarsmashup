@@ -26,6 +26,91 @@ void GameServer::set_recruiters(std::vector<net::Recruiter> recruiters, std::arr
     factions_ = std::move(factions);
 }
 
+void GameServer::set_quartermasters(std::vector<net::Quartermaster> quartermasters) {
+    quartermasters_ = std::move(quartermasters);
+}
+
+uint32_t GameServer::add_range_target(std::string name, Vec3 home, Vec3 patrol_end, double speed, double max_health,
+                                      double mitigation, double respawn_time) {
+    RangeTarget t;
+    t.entity = next_entity_++;
+    t.name = std::move(name);
+    t.home = world_.clamp(home);
+    t.home.y = world_.ground_at(t.home.x, t.home.z, t.home.y + 1.0, 0.5).height;
+    if (t.home.y < -1e8) t.home.y = world_.terrain().height_at(t.home.x, t.home.z);
+    t.patrol_end = world_.clamp(patrol_end);
+    t.patrol_end.y = world_.ground_at(t.patrol_end.x, t.patrol_end.z, t.patrol_end.y + 1.0, 0.5).height;
+    if (t.patrol_end.y < -1e8) t.patrol_end.y = world_.terrain().height_at(t.patrol_end.x, t.patrol_end.z);
+    t.position = t.home;
+    t.speed = std::max(0.0, speed);
+    t.max_health = std::max(1.0, max_health);
+    t.health = t.max_health;
+    t.mitigation = std::clamp(mitigation, 0.0, 0.9);
+    t.respawn_time = std::max(0.2, respawn_time);
+    targets_.push_back(std::move(t));
+    return targets_.back().entity;
+}
+
+void GameServer::set_player_loadouts(uint32_t entity, std::vector<Loadout> loadouts,
+                                     std::vector<std::string> worn_per_loadout) {
+    Client* client = find(entity);
+    if (client == nullptr || loadouts.empty()) {
+        return;
+    }
+    client->custom_loadouts = std::move(loadouts);
+    client->worn_per_loadout = std::move(worn_per_loadout);
+    if (client->loadout >= client->custom_loadouts.size()) {
+        client->loadout = 0;
+    }
+    client->stats = stats_for(loadout_of(*client), client->species, config_.base_stats);
+    if (client->life == Life::waiting || client->health <= 0 || client->health > client->stats.max_health) {
+        client->health = client->stats.max_health;
+    }
+    reset_loadout(client->state, loadout_of(*client), client->stats);
+    ++client->inventory_rev;
+    client->last_sync_tick = 0;
+}
+
+std::vector<Loadout> GameServer::build_player_loadouts(uint32_t entity, bool apply_quality,
+                                                       std::vector<std::string>* out_worn) const {
+    const Client* client = find(entity);
+    if (client == nullptr || config_.catalog == nullptr) {
+        return {};
+    }
+    std::vector<Loadout> out;
+    if (out_worn) out_worn->clear();
+    for (const CharacterLoadout& cl : client->char_loadouts) {
+        out.push_back(config_.catalog->build_loadout(cl, client->items, client->species, apply_quality));
+        if (out_worn) {
+            out_worn->push_back(resolve_worn_models(*config_.catalog, cl, client->items, client->species, client->gender));
+        }
+    }
+    return out;
+}
+
+void GameServer::award_battle_rewards(const std::string& name, const BattleReward& reward) {
+    if (store_ == nullptr) {
+        return;
+    }
+    try {
+        if (const auto saved = store_->find_by_name(name)) {
+            const int64_t cr = saved->credits + reward.credits;
+            const int64_t fp = saved->faction_points + reward.faction_points;
+            const int64_t xp = saved->experience + reward.xp;
+            store_->update_economy(saved->id, cr, fp, xp, saved->active_loadout);
+            for (Client& c : clients_) {
+                if (c.name == name) {
+                    c.credits = cr;
+                    c.faction_points = fp;
+                    c.experience = xp;
+                }
+            }
+        }
+    } catch (const std::exception& e) {
+        say(std::format("reward save error for {}: {}", name, e.what()));
+    }
+}
+
 net::PlayerStatus* GameServer::status(uint32_t entity) {
     Client* client = find(entity);
     return client ? &client->status : nullptr;
@@ -190,15 +275,55 @@ net::EntityState GameServer::describe(const Client& c) const {
     out.gender = uint8_t(c.gender);
     out.name = c.name;
     out.appearance = c.appearance;
+    if (!c.custom_loadouts.empty()) {
+        const Loadout& lo = loadout_of(c);
+        if (const WeaponDef* w = weapon_in_slot(lo, c.state.combat.weapon)) {
+            out.weapon_model = w->model;
+            out.anim_set = w->anim_set;
+        }
+        if (c.loadout < c.worn_per_loadout.size()) {
+            out.worn = c.worn_per_loadout[c.loadout];
+        }
+    }
     return out;
 }
 
 const Loadout& GameServer::loadout_of(const Client& client) const {
+    if (!client.custom_loadouts.empty()) {
+        return client.custom_loadouts[std::min(client.loadout, client.custom_loadouts.size() - 1)];
+    }
     if (config_.battlefield && client.team >= 0) {
         const auto& loadouts = config_.battlefield->team(client.team).loadouts;
         return loadouts[std::min(client.loadout, loadouts.size() - 1)];
     }
     return config_.loadout;
+}
+
+void GameServer::rebuild_client_loadouts(Client& client) {
+    if (config_.catalog == nullptr) {
+        return;
+    }
+    client.custom_loadouts.clear();
+    client.worn_per_loadout.clear();
+    for (const CharacterLoadout& cl : client.char_loadouts) {
+        client.custom_loadouts.push_back(
+            config_.catalog->build_loadout(cl, client.items, client.species, true));
+        client.worn_per_loadout.push_back(
+            resolve_worn_models(*config_.catalog, cl, client.items, client.species, client.gender));
+    }
+    if (!client.custom_loadouts.empty() && client.loadout >= client.custom_loadouts.size()) {
+        client.loadout = 0;
+    }
+}
+
+void GameServer::send_inventory_sync(Client& client) {
+    net::InventorySync sync;
+    sync.revision = client.inventory_rev;
+    sync.items = client.items;
+    sync.loadouts = client.char_loadouts;
+    sync.resolved_loadouts = client.custom_loadouts;
+    send(client.endpoint, sync);
+    client.last_sync_tick = tick_;
 }
 
 void GameServer::update(double now) {
@@ -250,7 +375,7 @@ void GameServer::handle(const net::Endpoint& from, const net::Datagram& datagram
         }
         // Also answers a repeated Hello whose Welcome was lost.
         send(from, net::Welcome{client->entity, config_.tick_rate, tick_, client->character, recruiters_, factions_,
-                                looks_});
+                                looks_, quartermasters_});
     }
     if (client == nullptr) {
         return;  // not connected: ignore everything but Hello
@@ -278,7 +403,119 @@ void GameServer::handle(const net::Endpoint& from, const net::Datagram& datagram
             return std::hypot(d.x, d.z) <= r.radius + 1;
         });
         if (on_queue && !client->transfer && (queue->team < 0 || (client->life == Life::alive && at_terminal))) {
-            on_queue(client->entity, queue->team);
+            on_queue(client->entity, queue->team, queue->mode);
+        }
+    } else if (const auto* ack = std::get_if<net::InventoryAck>(&message)) {
+        if (ack->revision == client->inventory_rev) {
+            client->acked_inventory_rev = ack->revision;
+        }
+    } else if (const auto* save_lo = std::get_if<net::SaveLoadoutRequest>(&message)) {
+        if (!conquest_ && store_ != nullptr && config_.catalog != nullptr && client->character != 0 &&
+            save_lo->loadout.slot_index >= 0 && save_lo->loadout.slot_index < max_character_loadouts) {
+            const auto owns = [&](uint64_t id) {
+                if (id == 0) return true;
+                return std::any_of(client->items.begin(), client->items.end(),
+                                   [id](const ItemInstance& inst) { return inst.id == id; });
+            };
+            CharacterLoadout clean = save_lo->loadout;
+            if (!owns(clean.primary_id)) clean.primary_id = 0;
+            if (!owns(clean.sidearm_id)) clean.sidearm_id = 0;
+            if (!owns(clean.secondary_id)) clean.secondary_id = 0;
+            for (auto it = clean.gear_ids.begin(); it != clean.gear_ids.end();) {
+                if (!owns(it->second) || !species_can_wear_slot(client->species, it->first)) {
+                    it = clean.gear_ids.erase(it);
+                } else {
+                    ++it;
+                }
+            }
+            for (auto it = clean.appearance_ids.begin(); it != clean.appearance_ids.end();) {
+                if (!owns(it->second)) {
+                    it = clean.appearance_ids.erase(it);
+                } else {
+                    ++it;
+                }
+            }
+            if (clean.name.empty()) {
+                clean.name = "Loadout " + std::to_string(clean.slot_index + 1);
+            }
+            store_->save_loadout(client->character, clean);
+            client->char_loadouts = store_->list_loadouts(client->character);
+            rebuild_client_loadouts(*client);
+            ++client->inventory_rev;
+            client->last_sync_tick = 0;
+            if (client->loadout < client->char_loadouts.size() &&
+                client->char_loadouts[client->loadout].slot_index == clean.slot_index) {
+                client->stats = stats_for(loadout_of(*client), client->species, config_.base_stats);
+                client->health = std::min(client->health, client->stats.max_health);
+                reset_loadout(client->state, loadout_of(*client), client->stats);
+            }
+        }
+    } else if (const auto* sw = std::get_if<net::SwitchLoadoutRequest>(&message)) {
+        if (!conquest_ && client->life == Life::alive && sw->slot < client->custom_loadouts.size() &&
+            sw->slot != client->loadout) {
+            client->switching_to = int(sw->slot);
+            client->switch_remaining = loadout_switch_time;
+        }
+    } else if (const auto* buy = std::get_if<net::ShopBuyRequest>(&message)) {
+        if (!conquest_ && store_ != nullptr && config_.catalog != nullptr && client->character != 0) {
+            const ItemDef* def = config_.catalog->find(buy->def_id);
+            const bool near_qm = def != nullptr && std::any_of(quartermasters_.begin(), quartermasters_.end(),
+                                                               [&](const net::Quartermaster& q) {
+                const Vec3 d = client->state.position - q.position;
+                const bool faction_ok = def->faction == "neutral" || q.faction == "neutral" || def->faction == q.faction;
+                return faction_ok && std::hypot(d.x, d.z) <= q.radius + 1.5;
+            });
+            if (near_qm) {
+                if (buy->use_faction_points && client->faction_points >= def->cost_faction_points) {
+                    client->faction_points -= def->cost_faction_points;
+                    store_->update_economy(client->character, client->credits, client->faction_points,
+                                           client->experience, int(client->loadout));
+                    store_->grant_item({0, client->character, def->id, 0.5, "", "{}"});
+                    client->items = store_->list_items(client->character);
+                    ++client->inventory_rev;
+                    client->last_sync_tick = 0;
+                    notify(client->entity, "Purchased " + def->display_name);
+                } else if (!buy->use_faction_points && client->credits >= def->cost_credits) {
+                    client->credits -= def->cost_credits;
+                    store_->update_economy(client->character, client->credits, client->faction_points,
+                                           client->experience, int(client->loadout));
+                    store_->grant_item({0, client->character, def->id, 0.5, "", "{}"});
+                    client->items = store_->list_items(client->character);
+                    ++client->inventory_rev;
+                    client->last_sync_tick = 0;
+                    notify(client->entity, "Purchased " + def->display_name);
+                }
+            }
+        }
+    } else if (const auto* del = std::get_if<net::DestroyItemRequest>(&message)) {
+        if (!conquest_ && store_ != nullptr && config_.catalog != nullptr && client->character != 0) {
+            const auto it = std::find_if(client->items.begin(), client->items.end(),
+                                         [&](const ItemInstance& inst) { return inst.id == del->item_id; });
+            if (it != client->items.end() && store_->remove_item(del->item_id)) {
+                for (CharacterLoadout& cl : client->char_loadouts) {
+                    bool changed = false;
+                    if (cl.primary_id == del->item_id) { cl.primary_id = 0; changed = true; }
+                    if (cl.sidearm_id == del->item_id) { cl.sidearm_id = 0; changed = true; }
+                    if (cl.secondary_id == del->item_id) { cl.secondary_id = 0; changed = true; }
+                    for (auto git = cl.gear_ids.begin(); git != cl.gear_ids.end();) {
+                        if (git->second == del->item_id) { git = cl.gear_ids.erase(git); changed = true; } else { ++git; }
+                    }
+                    for (auto ait = cl.appearance_ids.begin(); ait != cl.appearance_ids.end();) {
+                        if (ait->second == del->item_id) { ait = cl.appearance_ids.erase(ait); changed = true; } else { ++ait; }
+                    }
+                    if (changed) {
+                        store_->save_loadout(client->character, cl);
+                    }
+                }
+                client->items = store_->list_items(client->character);
+                client->char_loadouts = store_->list_loadouts(client->character);
+                rebuild_client_loadouts(*client);
+                ++client->inventory_rev;
+                client->last_sync_tick = 0;
+                client->stats = stats_for(loadout_of(*client), client->species, config_.base_stats);
+                client->health = std::min(client->health, client->stats.max_health);
+                reset_loadout(client->state, loadout_of(*client), client->stats);
+            }
         }
     } else if (std::holds_alternative<net::Goodbye>(message)) {
         say(std::format("{} (entity {}) left", client->name, client->entity));
@@ -373,10 +610,28 @@ GameServer::Client* GameServer::join(const net::Endpoint& from, const std::strin
     }
     // Stand on whatever is under the spawn point, near its height: a building
     // floor, or the terrain. A saved position may have been mid-jump.
-    joined.stats = stats_for(config_.loadout, joined.species, config_.base_stats);
+    if (store_ != nullptr && config_.catalog != nullptr && joined.character != 0) {
+        try {
+            ensure_starter_kit(*store_, joined.character);
+            if (auto refreshed = store_->find(joined.character)) {
+                joined.credits = refreshed->credits;
+                joined.faction_points = refreshed->faction_points;
+                joined.experience = refreshed->experience;
+                joined.loadout = size_t(std::max(0, refreshed->active_loadout));
+            }
+            joined.items = store_->list_items(joined.character);
+            joined.char_loadouts = store_->list_loadouts(joined.character);
+            rebuild_client_loadouts(joined);
+            joined.inventory_rev = 1;
+        } catch (const std::exception& error) {
+            say(std::format("inventory load error for {}: {}", name, error.what()));
+        }
+    }
+    const Loadout& initial_lo = loadout_of(joined);
+    joined.stats = stats_for(initial_lo, joined.species, config_.base_stats);
     spawn.y = world_.ground_at(spawn.x, spawn.z, spawn.y, joined.stats.move.step_up).height;
     joined.state.position = spawn;
-    reset_loadout(joined.state, config_.loadout, joined.stats);
+    reset_loadout(joined.state, initial_lo, joined.stats);
     joined.health = joined.stats.max_health;
     clients_.push_back(joined);
     say(std::format("{} joined from {} as entity {} ({} character {}) at ({:.2f}, {:.2f}, {:.2f})", name,
@@ -431,6 +686,55 @@ void GameServer::step() {
             simulate_character(npc.state, npc.input, true, world_, config_.loadout, own, dt);
         }
     }
+    // Shooting-range targets: patrol and respawn.
+    for (RangeTarget& target : targets_) {
+        if (!target.alive) {
+            target.respawn_timer -= dt;
+            if (target.respawn_timer <= 0) {
+                target.alive = true;
+                target.health = target.max_health;
+            }
+            continue;
+        }
+        const double dist = (target.patrol_end - target.home).length();
+        if (target.speed > 0 && dist > 1e-3) {
+            target.phase += target.speed * dt / dist;
+            const double cycle = std::fmod(target.phase, 2.0);
+            const double alpha = cycle <= 1.0 ? cycle : 2.0 - cycle;
+            target.position = target.home + (target.patrol_end - target.home) * alpha;
+            const double gy = world_.ground_at(target.position.x, target.position.z, target.position.y + 1.0, 0.5).height;
+            if (gy > -1e8) target.position.y = gy;
+        }
+    }
+    // World loadout switching channels.
+    if (!conquest_) {
+        for (Client& client : clients_) {
+            if (client.switching_to >= 0) {
+                if (client.life != Life::alive || client.switching_to >= int(client.custom_loadouts.size())) {
+                    client.switching_to = -1;
+                    client.switch_remaining = 0.0;
+                } else {
+                    client.switch_remaining -= dt;
+                    if (client.switch_remaining <= 0.0) {
+                        client.loadout = size_t(client.switching_to);
+                        client.switching_to = -1;
+                        client.switch_remaining = 0.0;
+                        client.stats = stats_for(loadout_of(client), client.species, config_.base_stats);
+                        client.health = std::min(client.health, client.stats.max_health);
+                        reset_loadout(client.state, loadout_of(client), client.stats);
+                        if (store_ != nullptr && client.character != 0) {
+                            try {
+                                store_->update_economy(client.character, client.credits, client.faction_points,
+                                                       client.experience, int(client.loadout));
+                            } catch (const std::exception&) {
+                            }
+                        }
+                        notify(client.entity, "Switched to " + loadout_of(client).name);
+                    }
+                }
+            }
+        }
+    }
     ++tick_;
 
     // Where everyone is this tick, kept for a second for rewinding.
@@ -469,7 +773,7 @@ void GameServer::step() {
         snapshot.entities.push_back(entity);
     }
     for (const Bolt& bolt : bolts_) {
-        snapshot.bolts.push_back({bolt.id, bolt.owner, bolt.weapon, bolt.def->projectile, bolt.position, bolt.velocity});
+        snapshot.bolts.push_back({bolt.id, bolt.owner, bolt.weapon, bolt.def.projectile, bolt.position, bolt.velocity});
     }
     snapshot.events = std::move(events_);
     events_.clear();
@@ -480,13 +784,30 @@ void GameServer::step() {
     for (const Pickup& pickup : pickups_) {
         snapshot.pickups.push_back({pickup.id, pickup.kind, pickup.position, float(pickup.life)});
     }
+    for (const RangeTarget& t : targets_) {
+        snapshot.targets.push_back({t.entity, t.name, t.position, float(t.health), float(t.max_health), t.alive});
+    }
     if (conquest_) {
         snapshot.match = conquest_->state();
     }
-    for (const Client& client : clients_) {
+    for (Client& client : clients_) {
+        client.status.credits = client.credits;
+        client.status.faction_points = client.faction_points;
+        client.status.experience = client.experience;
+        client.status.active_loadout = uint8_t(client.loadout);
+        client.status.switching_loadout = int8_t(client.switching_to);
+        client.status.switch_progress =
+            client.switching_to >= 0
+                ? float(std::clamp(1.0 - client.switch_remaining / loadout_switch_time, 0.0, 1.0))
+                : 0.0f;
+        client.status.inventory_rev = client.inventory_rev;
         snapshot.last_input = client.last_input;
         snapshot.you = client.status;
         send(client.endpoint, snapshot);
+        if (client.inventory_rev != client.acked_inventory_rev &&
+            (client.last_sync_tick == 0 || tick_ - client.last_sync_tick >= 8)) {
+            send_inventory_sync(client);
+        }
         if (client.transfer) {
             send(client.endpoint, *client.transfer);
         }
@@ -623,7 +944,9 @@ void GameServer::run_match() {
         }
         const size_t loadout = client.wants_spawn->loadout;
         const size_t post = client.wants_spawn->post;
-        if (loadout < field.team(client.team).loadouts.size() && conquest_->can_spawn(client.team, post)) {
+        const size_t avail_loadouts =
+            client.custom_loadouts.empty() ? field.team(client.team).loadouts.size() : client.custom_loadouts.size();
+        if (loadout < avail_loadouts && conquest_->can_spawn(client.team, post)) {
             spawn_at_post(client, loadout, post);
         }
     }
@@ -694,7 +1017,7 @@ void GameServer::fire(const Client& shooter, const Shot& shot, double view_tick)
         bolt.team = shooter.team;
         bolt.weapon = uint8_t(shot.weapon);
         bolt.position = shot.origin;
-        bolt.def = def;
+        bolt.def = weapon;
         bolt.velocity = direction * weapon.bolt_speed;
         // A grenade timed from where it lands flies at most this long first.
         constexpr double longest_flight = 10;
@@ -748,7 +1071,7 @@ void GameServer::advance_bolts() {
     // Explosions damage the bolt list's owners, so collect them first.
     std::vector<Blast> blasts;
     std::erase_if(bolts_, [&](Bolt& bolt) {
-        const WeaponDef& def = *bolt.def;
+        const WeaponDef& def = bolt.def;
         bolt.life -= dt;
         if (bolt.resting) {
             if (bolt.life <= 0) {
@@ -773,6 +1096,7 @@ void GameServer::advance_bolts() {
         std::optional<double> nearest = world_hit ? std::optional(world_hit->t) : std::nullopt;
         Vec3 normal = world_hit ? world_hit->normal : Vec3{0, 1, 0};
         Client* victim = nullptr;
+        RangeTarget* hit_target = nullptr;
         double victim_top = 0;  // the top of the victim's body (its head's), when hit
         int hit_powerup = -1;
         const bool bounces = def.projectile == Projectile::grenade && !def.explode_on_impact;
@@ -791,6 +1115,20 @@ void GameServer::advance_bolts() {
                 victim_top = feet.y + height;
                 const double speed = bolt.velocity.length();
                 normal = speed > 1e-6 ? bolt.velocity * (-1.0 / speed) : Vec3{0, 1, 0};
+            }
+        }
+        if (!bounces && !harmless) {
+            for (RangeTarget& target : targets_) {
+                if (!target.alive) continue;
+                const auto t = segment_hits_cylinder(from, to, target.position, hit_radius, hit_height);
+                if (t && (!nearest || *t < *nearest)) {
+                    nearest = t;
+                    victim = nullptr;
+                    hit_target = &target;
+                    victim_top = target.position.y + hit_height;
+                    const double speed = bolt.velocity.length();
+                    normal = speed > 1e-6 ? bolt.velocity * (-1.0 / speed) : Vec3{0, 1, 0};
+                }
             }
         }
         if (conquest_ && !harmless && !bounces) {
@@ -834,6 +1172,19 @@ void GameServer::advance_bolts() {
             const double flown = def.bolt_life - bolt.life;
             damage(*victim, bolt_damage(def, flown) * (headshot ? headshot_multiplier : 1.0), def.damage_type,
                    bolt.owner);
+            if (def.explosion_damage > 0 && def.explosion_outer > 0) {
+                blasts.push_back({bolt, at, normal, false});
+            } else {
+                impacts_.push_back({bolt.owner, bolt.weapon, at, normal, true});
+            }
+            return true;
+        }
+        if (hit_target != nullptr) {
+            const Vec3 at = from + (to - from) * *nearest;
+            const bool headshot = at.y >= victim_top - head_size;
+            const double flown = def.bolt_life - bolt.life;
+            damage_target(*hit_target, bolt_damage(def, flown) * (headshot ? headshot_multiplier : 1.0),
+                          def.damage_type, bolt.owner);
             if (def.explosion_damage > 0 && def.explosion_outer > 0) {
                 blasts.push_back({bolt, at, normal, false});
             } else {
@@ -953,7 +1304,7 @@ void GameServer::explode(const Blast& blast, std::vector<Blast>& blasts) {
         droid_def.explosion_inner = d.explosion_inner;
         droid_def.explosion_outer = d.explosion_outer;
     }
-    const WeaponDef& def = blast.droid || blast.destructible >= 0 ? droid_def : *bolt.def;
+    const WeaponDef& def = blast.droid || blast.destructible >= 0 ? droid_def : bolt.def;
     if (def.explosion_damage <= 0 || def.explosion_outer <= 0) {
         return;
     }
@@ -991,6 +1342,13 @@ void GameServer::explode(const Blast& blast, std::vector<Blast>& blasts) {
             damage(target, amount, DamageType::explosive, bolt.owner);
         }
     }
+    for (RangeTarget& target : targets_) {
+        if (!target.alive || sheltered(target.position)) continue;
+        const double amount = explosion_damage(def, blast.at, target.position);
+        if (amount > 0) {
+            damage_target(target, amount, DamageType::explosive, bolt.owner);
+        }
+    }
     if (conquest_) {
         const auto& stations = conquest_->battlefield().powerups;
         for (size_t i = 0; i < stations.size(); ++i) {
@@ -1024,11 +1382,30 @@ void GameServer::explode(const Blast& blast, std::vector<Blast>& blasts) {
     }
 }
 
+void GameServer::damage_target(RangeTarget& target, double raw, DamageType, uint32_t attacker) {
+    if (!target.alive || raw <= 0) {
+        return;
+    }
+    const double amount = raw * (1.0 - target.mitigation);
+    target.health = std::max(0.0, target.health - amount);
+    events_.push_back({net::CombatEvent::hit, attacker, target.entity, float(amount)});
+    if (target.health <= 0) {
+        target.alive = false;
+        target.respawn_timer = target.respawn_time;
+        events_.push_back({net::CombatEvent::kill, attacker, target.entity, 0});
+    }
+}
+
 // Damage after the victim's mitigation (its armor, mostly).
 void GameServer::damage(Client& victim, double raw, DamageType type, uint32_t attacker) {
     const double amount = mitigated_damage(victim.stats, raw, type);
     if (victim.life != Life::alive || amount <= 0) {
         return;
+    }
+    if (victim.switching_to >= 0) {
+        victim.switching_to = -1;
+        victim.switch_remaining = 0.0;
+        notify(victim.entity, "Loadout switch interrupted!");
     }
     victim.health = std::max(0.0, victim.health - amount);
     events_.push_back({net::CombatEvent::hit, attacker, victim.entity, float(amount)});
@@ -1151,7 +1528,7 @@ void GameServer::respawn(Client& client) {
     client.state = MoveState{};
     client.state.position = spawn_point(client.entity - 1);
     client.state.yaw = yaw;
-    reset_loadout(client.state, config_.loadout, client.stats);
+    reset_loadout(client.state, loadout_of(client), client.stats);
     client.history.clear();
     ++client.spawn_count;
     say(std::format("{} respawned", client.name));

@@ -5,6 +5,17 @@ extends SceneTree
 
 const BattleUI = preload("res://scenes/battle_ui.gd")
 const Bf2Audio = preload("res://audio/bf2_audio.gd")
+const Bf2Art = preload("res://ui/bf2_art.gd")
+const InventoryScreen = preload("res://ui/inventory_screen.gd")
+const QuartermasterScreen = preload("res://ui/quartermaster_screen.gd")
+const WarTerminalScreen = preload("res://ui/war_terminal_screen.gd")
+const HubHud = preload("res://ui/hub_hud.gd")
+const GameSession = preload("res://scenes/game_session.gd")
+
+var _session: GameSession
+var _e2e_db := ""
+var _frames := 0
+var _step := 0
 
 
 func _initialize() -> void:
@@ -32,6 +43,9 @@ func _initialize() -> void:
 	bui.add_posts()
 	assert(bui._team_tags != null and bui._team_tags.available(), "Hoth TeamTags failed to initialize")
 	bui.clear_posts()
+	bui.free()
+	layer.free()
+	world_root.free()
 	print("Hoth TeamTags: OK")
 
 	# 2. Catalog, starter kit, economy, and SQLite v3 persistence
@@ -70,10 +84,122 @@ func _initialize() -> void:
 	var chars2: Array = store2.list_characters()
 	assert(chars2.size() == 1 and int(chars2[0]["faction_points"]) == 150)
 	assert(store2.list_items(cid).size() == items.size() + 1)
+	var computed: Dictionary = store.compute_loadout_stats("wookiee", loadouts[0], items, true)
+	assert(float(computed.get("max_health", 0.0)) > 450.0, "expected Wookiee trait health bonus")
 	store2.close()
 	for suffix in ["", "-wal", "-shm"]:
 		if FileAccess.file_exists(db_path + suffix):
 			DirAccess.remove_absolute(db_path + suffix)
 	print("Catalog & SQLite v3: OK")
-	print("stage4_test: all passed")
-	quit(0)
+
+	# 3. UI screen instantiation & paint smoke check
+	var art := Bf2Art.load_from("res://imported_assets/hud")
+	assert(art != null, "missing hud art")
+	var inv_scr := InventoryScreen.new(art)
+	inv_scr.catalog = catalog
+	inv_scr.store = store
+	inv_scr.inventory = items
+	inv_scr.loadouts = loadouts
+	inv_scr.open_screen()
+	inv_scr.close_screen()
+	inv_scr.free()
+	var qm_scr := QuartermasterScreen.new(art)
+	qm_scr.catalog = catalog
+	qm_scr.store = store
+	qm_scr.free()
+	var wt_scr := WarTerminalScreen.new(art)
+	wt_scr.free()
+	var hhud := HubHud.new(art)
+	hhud.free()
+	print("Stage 4 UI screens: OK")
+
+	# 4. Live GameSession Mos Eisley Stage 4 e2e
+	_e2e_db = ProjectSettings.globalize_path("res://stage4_e2e_temp.sqlite")
+	for suffix in ["", "-wal", "-shm"]:
+		if FileAccess.file_exists(_e2e_db + suffix):
+			DirAccess.remove_absolute(_e2e_db + suffix)
+	var gs_packed := load("res://scenes/game_session.tscn") as PackedScene
+	assert(gs_packed != null)
+	GameSession.pending_config = {
+		"bake": "imported_assets/terrain/tatooine_mos_eisley",
+		"host": 0,
+		"db": _e2e_db,
+		"hub": "hubs/mos_eisley.ini",
+		"name": "Stage4Hero",
+		"species": "human",
+		"gender": "male",
+		"appearance": "{}",
+		"solo": true,
+	}
+	_session = gs_packed.instantiate() as GameSession
+	root.add_child(_session)
+
+
+func _process(_delta: float) -> bool:
+	if _session == null:
+		return false
+	_frames += 1
+	var client: Object = _session.get_client()
+	if client == null or not client.is_spawned():
+		if _frames > 240:
+			printerr("FAIL: Stage4Hero did not spawn (status=%s refusal=%s)" % [
+					client.get_status() if client != null else "null",
+					client.get_refusal() if client != null else ""])
+			_cleanup_fail()
+			return true
+		return false
+
+	if _step == 0:
+		if client.get_inventory().size() < 7:
+			if _frames > 240:
+				printerr("FAIL: inventory did not sync")
+				_cleanup_fail()
+				return true
+			return false
+		assert(client.get_quartermasters().size() == 2, "expected 2 quartermasters in Mos Eisley")
+		assert(client.get_targets().size() == 4, "expected 4 range targets in Mos Eisley")
+		assert(client.get_character_loadouts().size() == 1, "expected starter loadout")
+		# Save Loadout 1
+		var inv: Array = client.get_inventory()
+		var lo1 := {
+			"slot_index": 1,
+			"name": "Recon",
+			"primary_id": int(inv[0]["id"]),
+			"sidearm_id": int(inv[1]["id"]),
+			"secondary_id": int(inv[2]["id"]),
+			"gear_ids": {},
+			"appearance_ids": {},
+		}
+		client.save_loadout(1, lo1)
+		_step = 1
+		return false
+
+	if _step == 1:
+		if client.get_character_loadouts().size() < 2:
+			if _frames > 360:
+				printerr("FAIL: loadout 1 save did not sync")
+				_cleanup_fail()
+				return true
+			return false
+		print("Stage 4 GameSession e2e: OK")
+		_session.leave_session()
+		_session.queue_free()
+		_session = null
+		for suffix in ["", "-wal", "-shm"]:
+			if FileAccess.file_exists(_e2e_db + suffix):
+				DirAccess.remove_absolute(_e2e_db + suffix)
+		print("stage4_test: all passed")
+		quit(0)
+		return true
+	return false
+
+
+func _cleanup_fail() -> void:
+	if _session != null:
+		_session.leave_session()
+		_session.queue_free()
+		_session = null
+	for suffix in ["", "-wal", "-shm"]:
+		if FileAccess.file_exists(_e2e_db + suffix):
+			DirAccess.remove_absolute(_e2e_db + suffix)
+	quit(1)

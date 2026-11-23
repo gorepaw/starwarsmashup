@@ -75,6 +75,7 @@ void describe(godot::Dictionary& out, const core::net::EntityState& entity) {
     out["gender"] = godot::String::utf8(entity.gender == 1 ? "female" : "male");
     out["name"] = godot::String::utf8(entity.name.c_str());
     out["appearance"] = godot::String::utf8(entity.appearance.c_str());
+    out["worn"] = godot::String::utf8(entity.worn.c_str());
 }
 
 godot::Color to_color(const std::array<double, 4>& c) {
@@ -229,9 +230,10 @@ godot::PackedStringArray SwmClient::get_factions() const {
     return out;
 }
 
-void SwmClient::queue(int64_t team) {
+void SwmClient::queue(int64_t team, const godot::String& mode) {
     if (client()) {
-        client()->queue(int(team));
+        const core::QueueMode qmode = mode == "gear" ? core::QueueMode::gear : core::QueueMode::standard;
+        client()->queue(int(team), qmode);
     }
 }
 
@@ -241,13 +243,161 @@ godot::Dictionary SwmClient::get_player_status() const {
         const core::net::PlayerStatus& status = client()->player_status();
         out["queue"] = status.queue == core::net::PlayerStatus::queued ? "queued" : "none";
         out["team"] = int64_t(status.team);
+        out["queue_mode"] = status.queue_mode == core::QueueMode::gear ? "gear" : "standard";
         out["in_queue"] = int64_t(status.in_queue);
         out["starts_in"] = double(status.starts_in);
         out["battlefield"] = godot::String::utf8(status.battlefield.c_str());
         out["notice_id"] = int64_t(status.notice_id);
         out["notice"] = godot::String::utf8(status.notice.c_str());
+        out["credits"] = int64_t(status.credits);
+        out["faction_points"] = int64_t(status.faction_points);
+        out["experience"] = int64_t(status.experience);
+        out["active_loadout"] = int64_t(status.active_loadout);
+        out["switching_loadout"] = int64_t(status.switching_loadout);
+        out["switch_progress"] = double(status.switch_progress);
+        out["inventory_rev"] = int64_t(status.inventory_rev);
     }
     return out;
+}
+
+godot::Array SwmClient::get_quartermasters() const {
+    godot::Array out;
+    if (client()) {
+        for (const core::net::Quartermaster& q : client()->quartermasters()) {
+            godot::Dictionary entry;
+            entry["name"] = godot::String::utf8(q.name.c_str());
+            entry["faction"] = godot::String::utf8(q.faction.c_str());
+            entry["position"] = to_godot(q.position);
+            entry["radius"] = q.radius;
+            out.push_back(entry);
+        }
+    }
+    return out;
+}
+
+godot::Array SwmClient::get_targets() const {
+    godot::Array out;
+    if (client()) {
+        for (const core::net::TargetState& t : client()->targets()) {
+            godot::Dictionary entry;
+            entry["id"] = int64_t(t.id);
+            entry["name"] = godot::String::utf8(t.name.c_str());
+            entry["position"] = to_godot(t.position);
+            entry["health"] = double(t.health);
+            entry["max_health"] = double(t.max_health);
+            entry["alive"] = t.alive;
+            out.push_back(entry);
+        }
+    }
+    return out;
+}
+
+godot::Array SwmClient::get_inventory() const {
+    godot::Array out;
+    if (client()) {
+        for (const core::ItemInstance& inst : client()->items()) {
+            godot::Dictionary entry;
+            entry["id"] = int64_t(inst.id);
+            entry["owner_id"] = int64_t(inst.owner_id);
+            entry["def_id"] = godot::String::utf8(inst.def_id.c_str());
+            entry["quality"] = inst.quality;
+            entry["custom_name"] = godot::String::utf8(inst.custom_name.c_str());
+            entry["color_json"] = godot::String::utf8(inst.color_json.c_str());
+            out.push_back(entry);
+        }
+    }
+    return out;
+}
+
+godot::Array SwmClient::get_character_loadouts() const {
+    godot::Array out;
+    if (client()) {
+        for (const core::CharacterLoadout& lo : client()->char_loadouts()) {
+            godot::Dictionary entry;
+            entry["slot_index"] = int64_t(lo.slot_index);
+            entry["name"] = godot::String::utf8(lo.name.c_str());
+            entry["primary_id"] = int64_t(lo.primary_id);
+            entry["sidearm_id"] = int64_t(lo.sidearm_id);
+            entry["secondary_id"] = int64_t(lo.secondary_id);
+            godot::Dictionary gear, app;
+            for (const auto& [k, v] : lo.gear_ids) {
+                gear[godot::String::utf8(k.c_str())] = int64_t(v);
+            }
+            for (const auto& [k, v] : lo.appearance_ids) {
+                app[godot::String::utf8(k.c_str())] = int64_t(v);
+            }
+            entry["gear_ids"] = gear;
+            entry["appearance_ids"] = app;
+            out.push_back(entry);
+        }
+    }
+    return out;
+}
+
+godot::Array SwmClient::get_custom_loadouts() const {
+    godot::Array out;
+    if (client()) {
+        for (const core::Loadout& lo : client()->custom_loadouts()) {
+            godot::Array weapons;
+            for (int slot = 0; slot < core::hand_slots; ++slot) {
+                if (const core::WeaponDef* w = core::weapon_in_slot(lo, slot)) {
+                    weapons.push_back(godot::String::utf8(w->name.c_str()));
+                }
+            }
+            const core::WeaponDef* sec = core::weapon_in_slot(lo, core::secondary_slot);
+            const auto sp = core::Species(std::min<size_t>(client()->self().species, core::species_count - 1));
+            godot::Dictionary entry;
+            entry["name"] = godot::String::utf8(lo.name.c_str());
+            entry["max_health"] = core::stats_for(lo, sp).max_health;
+            entry["weapons"] = weapons;
+            entry["secondary"] = sec ? godot::String::utf8(sec->name.c_str()) : godot::String();
+            out.push_back(entry);
+        }
+    }
+    return out;
+}
+
+void SwmClient::save_loadout(int64_t slot_index, const godot::Dictionary& loadout) {
+    if (!client()) return;
+    core::CharacterLoadout lo;
+    lo.slot_index = int(slot_index);
+    lo.name = loadout.has("name") ? to_std(loadout["name"]) : ("Loadout " + std::to_string(slot_index + 1));
+    lo.primary_id = loadout.has("primary_id") ? uint64_t(int64_t(loadout["primary_id"])) : 0;
+    lo.sidearm_id = loadout.has("sidearm_id") ? uint64_t(int64_t(loadout["sidearm_id"])) : 0;
+    lo.secondary_id = loadout.has("secondary_id") ? uint64_t(int64_t(loadout["secondary_id"])) : 0;
+    if (loadout.has("gear_ids")) {
+        godot::Dictionary gear = loadout["gear_ids"];
+        godot::Array keys = gear.keys();
+        for (int i = 0; i < keys.size(); ++i) {
+            lo.gear_ids[to_std(keys[i])] = uint64_t(int64_t(gear[keys[i]]));
+        }
+    }
+    if (loadout.has("appearance_ids")) {
+        godot::Dictionary app = loadout["appearance_ids"];
+        godot::Array keys = app.keys();
+        for (int i = 0; i < keys.size(); ++i) {
+            lo.appearance_ids[to_std(keys[i])] = uint64_t(int64_t(app[keys[i]]));
+        }
+    }
+    client()->save_loadout(lo);
+}
+
+void SwmClient::switch_loadout(int64_t slot_index) {
+    if (client()) {
+        client()->switch_loadout(int(slot_index));
+    }
+}
+
+void SwmClient::buy_item(const godot::String& def_id, bool use_faction_points) {
+    if (client()) {
+        client()->buy_item(to_std(def_id), use_faction_points);
+    }
+}
+
+void SwmClient::destroy_item(int64_t item_id) {
+    if (client()) {
+        client()->destroy_item(uint64_t(item_id));
+    }
 }
 
 godot::Dictionary SwmClient::get_battlefield() const {
@@ -746,6 +896,7 @@ godot::Dictionary SwmClient::get_secondary() const {
     godot::Dictionary out;
     if (const core::WeaponDef* secondary = core::weapon_in_slot(loadout(), core::secondary_slot)) {
         out["name"] = godot::String::utf8(secondary->name.c_str());
+        out["held_model"] = godot::String::utf8(secondary->model.c_str());
         out["fire_sound"] = godot::String::utf8(secondary->fire_sound.c_str());
     }
     return out;
@@ -813,8 +964,12 @@ godot::Array SwmClient::get_remotes() const {
             // What it's holding: its weapon's model and how it's held.
             const core::WeaponDef* held =
                 core::weapon_in_slot(loadout_of(remote.team, remote.loadout), remote.state.combat.weapon);
-            entry["weapon_model"] = godot::String::utf8(held ? held->model.c_str() : "");
-            entry["anim_set"] = godot::String::utf8(held ? held->anim_set.c_str() : "rifle");
+            entry["weapon_model"] = !remote.weapon_model.empty()
+                                        ? godot::String::utf8(remote.weapon_model.c_str())
+                                        : godot::String::utf8(held ? held->model.c_str() : "");
+            entry["anim_set"] = !remote.anim_set.empty()
+                                    ? godot::String::utf8(remote.anim_set.c_str())
+                                    : godot::String::utf8(held ? held->anim_set.c_str() : "rifle");
             out.push_back(entry);
         }
     }
@@ -882,9 +1037,18 @@ void SwmClient::_bind_methods() {
     ClassDB::bind_method(D_METHOD("get_bake"), &SwmClient::get_bake);
     ClassDB::bind_method(D_METHOD("get_session_error"), &SwmClient::get_session_error);
     ClassDB::bind_method(D_METHOD("get_recruiters"), &SwmClient::get_recruiters);
+    ClassDB::bind_method(D_METHOD("get_quartermasters"), &SwmClient::get_quartermasters);
+    ClassDB::bind_method(D_METHOD("get_targets"), &SwmClient::get_targets);
     ClassDB::bind_method(D_METHOD("get_factions"), &SwmClient::get_factions);
-    ClassDB::bind_method(D_METHOD("queue", "team"), &SwmClient::queue);
+    ClassDB::bind_method(D_METHOD("queue", "team", "mode"), &SwmClient::queue, DEFVAL("standard"));
     ClassDB::bind_method(D_METHOD("get_player_status"), &SwmClient::get_player_status);
+    ClassDB::bind_method(D_METHOD("get_inventory"), &SwmClient::get_inventory);
+    ClassDB::bind_method(D_METHOD("get_character_loadouts"), &SwmClient::get_character_loadouts);
+    ClassDB::bind_method(D_METHOD("get_custom_loadouts"), &SwmClient::get_custom_loadouts);
+    ClassDB::bind_method(D_METHOD("save_loadout", "slot_index", "loadout"), &SwmClient::save_loadout);
+    ClassDB::bind_method(D_METHOD("switch_loadout", "slot_index"), &SwmClient::switch_loadout);
+    ClassDB::bind_method(D_METHOD("buy_item", "def_id", "use_faction_points"), &SwmClient::buy_item, DEFVAL(true));
+    ClassDB::bind_method(D_METHOD("destroy_item", "item_id"), &SwmClient::destroy_item);
     ClassDB::bind_method(D_METHOD("get_battlefield"), &SwmClient::get_battlefield);
     ClassDB::bind_method(D_METHOD("is_allied", "a", "b"), &SwmClient::is_allied);
     ClassDB::bind_method(D_METHOD("get_match"), &SwmClient::get_match);
@@ -963,6 +1127,17 @@ godot::Error SwmServer::set_hub(const godot::String& path) {
     return godot::OK;
 }
 
+godot::Error SwmServer::set_catalog(const godot::String& catalog_ini, const godot::String& bf2_items_dir) {
+    try {
+        catalog_.load(to_std(catalog_ini), to_std(bf2_items_dir));
+        has_catalog_ = true;
+    } catch (const std::exception& error) {
+        godot::UtilityFunctions::push_error("set_catalog: ", error.what());
+        return godot::ERR_CANT_OPEN;
+    }
+    return godot::OK;
+}
+
 godot::Error SwmServer::start(int64_t port, const godot::String& bake_prefix, const godot::Vector2& spawn) {
     stop();  // the server refers to the ground, store and link replaced below
     try {
@@ -979,6 +1154,7 @@ godot::Error SwmServer::start(int64_t port, const godot::String& bake_prefix, co
     core::ServerConfig config;
     config.loadout = loadout_;
     config.battlefield = battlefield_;
+    config.catalog = has_catalog_ ? &catalog_ : nullptr;
     config.spawn = {-spawn.x, 0, spawn.y};  // Galaxies to game coordinates
     server_ = std::make_unique<core::GameServer>(*udp_, *world_, config, store_.get());
     server_->log = [](const std::string& line) { godot::UtilityFunctions::print("server: ", line.c_str()); };
@@ -1044,6 +1220,7 @@ void SwmServer::_bind_methods() {
     ClassDB::bind_method(D_METHOD("set_bots", "count"), &SwmServer::set_bots);
     ClassDB::bind_method(D_METHOD("set_bot_difficulty", "difficulty"), &SwmServer::set_bot_difficulty);
     ClassDB::bind_method(D_METHOD("set_hub", "path"), &SwmServer::set_hub);
+    ClassDB::bind_method(D_METHOD("set_catalog", "catalog_ini", "bf2_items_dir"), &SwmServer::set_catalog);
     ClassDB::bind_method(D_METHOD("add_building", "collision_path", "position", "yaw_degrees"),
                          &SwmServer::add_building);
     ClassDB::bind_method(D_METHOD("start", "port", "bake_prefix", "spawn"), &SwmServer::start);

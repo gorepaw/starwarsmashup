@@ -4,7 +4,7 @@
 # a side, the leave-queue key leaves, Esc or the use key closes it.
 extends "res://ui/bf2_screen.gd"
 
-signal side_chosen(side: int)
+signal side_chosen(side: int, mode: String)
 signal leave_requested
 signal closed
 
@@ -12,6 +12,7 @@ signal closed
 var title := ""          # the terminal's name
 var sides: Array = []    # [{name, icon}]
 var queued := -1         # the side queued for, or -1
+var queue_mode := "standard"  # "standard" or "gear"
 var battlefield := ""    # where the next battle is fought, once chosen
 var starts_in := 0.0     # seconds
 var in_queue := 0
@@ -20,16 +21,24 @@ var keys := {}           # {leave, close}: key names for the hints
 
 func _paint() -> void:
 	draw_rect(Rect2(Vector2.ZERO, size), Color(0, 0, 0, 0.5))
-	var box := centered(560, 360, Vector2(0, 14))
+	var box := centered(560, 410, Vector2(0, 14))
 	text("gamefont_large", title, Vector2(size.x * 0.5, box.position.y - 44 * u), "Center", ACCENT)
 	frame(box)
-	var heading := "Choose a side" if queued < 0 else "Queued for the %s" % _side_name(queued)
+	var heading := "Choose a side" if queued < 0 else "Queued (%s) for the %s" % [queue_mode.capitalize(), _side_name(queued)]
 	text("gamefont_medium", heading, Vector2(box.get_center().x, box.position.y + 16 * u), "Center", TEXT)
+	var mode_y := box.position.y + 44 * u
+	button(Rect2(Vector2(box.get_center().x - 166 * u, mode_y), Vector2(160, 28) * u),
+			"Standard Queue", "mode:standard", queue_mode == "standard", false, queued < 0)
+	button(Rect2(Vector2(box.get_center().x + 6 * u, mode_y), Vector2(160, 28) * u),
+			"Gear Queue", "mode:gear", queue_mode == "gear", false, queued < 0)
+	var mode_desc := "Quality flattened: sidegrade choice only" if queue_mode == "standard" \
+			else "Quality counts (+8% crafted band, +15% rewards)"
+	text("gamefont_tiny", mode_desc, Vector2(box.get_center().x, mode_y + 32 * u), "Center", DIM)
 	var card_w := 240.0
 	for i in sides.size():
-		var card := Rect2(box.position + Vector2(24 + i * (card_w + 32), 54) * u, Vector2(card_w, 196) * u)
+		var card := Rect2(box.position + Vector2(24 + i * (card_w + 32), 96) * u, Vector2(card_w, 196) * u)
 		_paint_side(card, i)
-	var bottom := Rect2(box.position + Vector2(24, 268) * u, Vector2(512, 76) * u)
+	var bottom := Rect2(box.position + Vector2(24, 308) * u, Vector2(512, 82) * u)
 	if queued >= 0:
 		var where := "The battle on %s" % battlefield if battlefield != "" else "The battle"
 		var when := "starts in %d" % ceili(starts_in) if starts_in > 0.5 else "is starting"
@@ -72,8 +81,12 @@ func _side_name(i: int) -> String:
 
 
 func _on_click(id: String, _at: Vector2) -> void:
-	if id.begins_with("side:"):
-		side_chosen.emit(int(id.substr(5)))
+	if id == "mode:standard":
+		queue_mode = "standard"
+	elif id == "mode:gear":
+		queue_mode = "gear"
+	elif id.begins_with("side:"):
+		side_chosen.emit(int(id.substr(5)), queue_mode)
 	elif id == "leave":
 		leave_requested.emit()
 	elif id == "close":

@@ -117,12 +117,23 @@ public:
 
     // A hub's war terminals and the sides its battles are between.
     const std::vector<net::Recruiter>& recruiters() const { return recruiters_; }
+    const std::vector<net::Quartermaster>& quartermasters() const { return quartermasters_; }
+    const std::vector<net::TargetState>& targets() const { return targets_; }
     const std::array<std::string, 2>& factions() const { return factions_; }
     // How the server's people look (an entity's look - 1 indexes these).
     const std::vector<std::string>& looks() const { return looks_; }
     // Queue for a battle on a side (0 or 1) while at a war terminal, or
     // leave the queue (-1). Repeated until the server's status shows it.
-    void queue(int team);
+    void queue(int team, QueueMode mode = QueueMode::standard);
+    // Authoritative inventory & loadouts synced from the server.
+    uint32_t inventory_rev() const { return inventory_rev_; }
+    const std::vector<ItemInstance>& items() const { return items_; }
+    const std::vector<CharacterLoadout>& char_loadouts() const { return char_loadouts_; }
+    const std::vector<Loadout>& custom_loadouts() const { return custom_loadouts_; }
+    void save_loadout(const CharacterLoadout& loadout);
+    void switch_loadout(int slot);
+    void buy_item(const std::string& def_id, bool use_faction_points = true);
+    void destroy_item(uint64_t item_id);
     // What the server says about us: queue, notices.
     const net::PlayerStatus& player_status() const { return player_status_; }
     // Where the server sent us (status transferring).
@@ -192,11 +203,18 @@ private:
     double last_spawn_request_ = -1e9;
     // Hubs
     std::vector<net::Recruiter> recruiters_;
+    std::vector<net::Quartermaster> quartermasters_;
+    std::vector<net::TargetState> targets_;
     std::array<std::string, 2> factions_;
     std::vector<std::string> looks_;
     net::PlayerStatus player_status_;
     int wanted_queue_ = -2;  // -2: no request
+    QueueMode wanted_queue_mode_ = QueueMode::standard;
     double last_queue_request_ = -1e9;
+    uint32_t inventory_rev_ = 0;
+    std::vector<ItemInstance> items_;
+    std::vector<CharacterLoadout> char_loadouts_;
+    std::vector<Loadout> custom_loadouts_;
     std::optional<net::Transfer> transfer_;
     std::vector<net::BoltState> bolts_;  // others', from the newest snapshot
     double bolts_time_ = 0;

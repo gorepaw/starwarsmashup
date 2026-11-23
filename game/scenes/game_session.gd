@@ -110,6 +110,8 @@ var _settings: Settings
 var _pause_menu: PauseMenu
 var _hub_ui: HubUI
 var _battle_ui: BattleUI
+var _catalog_store: Object
+var _catalog: Array = []
 var _view_setting := false
 var _show_stats := false
 var _map_meta := {}
@@ -195,6 +197,9 @@ func start_session(config: Dictionary) -> bool:
 		if hub_path != "" and _server.set_hub(_os_path(hub_path)) != OK:
 			_emit_or_menu(1)
 			return false
+		var catalog_path := _os_path("items/swg_catalog.ini")
+		if FileAccess.file_exists(catalog_path):
+			_server.set_catalog(catalog_path, _os_path("imported_assets/items"))
 		var spawn := _resolve_spawn(meta as Dictionary)
 		if _server.start(int(host_val), bake_path, spawn) != OK:
 			_emit_or_menu(1)
@@ -295,6 +300,7 @@ func step_frame(delta: float) -> void:
 	if _client.is_spawned():
 		var own: Dictionary = _client.get_presented()
 		_ensure_character_appearance(_own, own, true)
+		PlayerAppearance.set_worn_models(_own, str(own.get("worn", "")))
 		var alive_now: bool = bool(own["alive"]) and str(own.get("life", "alive")) == "alive"
 		if alive_now and not _was_alive:
 			_lock_spawn_fire()
@@ -457,7 +463,16 @@ func _input(event: InputEvent) -> void:
 		elif key in [KEY_SPACE, KEY_ENTER]:
 			_request_spawn()
 	elif event.is_action_pressed("leave_queue") and not _client.get_recruiters().is_empty():
-		_client.queue(-1)
+		_client.queue(-1, "standard")
+	elif event.is_action_pressed("inventory") and not event.is_echo() and _hub_ui != null \
+			and _client.get_match().is_empty() and not _client.get_recruiters().is_empty():
+		_capture_mouse(not _hub_ui.toggle_inventory(_client))
+	elif event.is_action_pressed("loadout_1") and not event.is_echo() and _client.get_match().is_empty():
+		_client.switch_loadout(0)
+	elif event.is_action_pressed("loadout_2") and not event.is_echo() and _client.get_match().is_empty():
+		_client.switch_loadout(1)
+	elif event.is_action_pressed("loadout_3") and not event.is_echo() and _client.get_match().is_empty():
+		_client.switch_loadout(2)
 	elif event.is_action_pressed("interact") and not event.is_echo() and _hub_ui != null \
 			and _hub_ui.try_open_terminal(_client):
 		_capture_mouse(false)
@@ -717,6 +732,8 @@ func _update_remotes(own_team: int) -> void:
 			_remotes[id] = character
 		elif int(remote["team"]) != NATIVES_TEAM:
 			_ensure_character_appearance(_remotes[id], remote, false)
+		if int(remote["team"]) != NATIVES_TEAM:
+			PlayerAppearance.set_worn_models(_remotes[id], str(remote.get("worn", "")))
 		_pose(_remotes[id], remote)
 		var tag: Label3D = _remotes[id]["tag"]
 		var friend: bool = own_team >= 0 and _client.is_allied(own_team, int(remote["team"]))
@@ -966,6 +983,8 @@ func _update_events() -> void:
 	for event: Dictionary in _client.take_events():
 		var mine := int(event["attacker"]) == me
 		if event["kind"] == "hit":
+			if _hub_ui != null:
+				_hub_ui.record_target_event(event)
 			var vid := int(event["victim"])
 			var victim := _soldier_of(vid)
 			if victim != null:
@@ -1261,10 +1280,23 @@ func _setup_scene() -> void:
 	_hub_ui = HubUI.new()
 	add_child(_hub_ui)
 	_hub_ui.setup(layer, self, _battle_ui.art(), _settings)
-	_hub_ui.queue_requested.connect(func(side: int) -> void: _client.queue(side))
+	_hub_ui.queue_requested.connect(func(side: int, mode: String) -> void: _client.queue(side, mode))
+	_hub_ui.item_bought.connect(func(def_id: String, use_fp: bool) -> void: _client.buy_item(def_id, use_fp))
+	_hub_ui.loadout_saved.connect(func(slot: int, lo: Dictionary) -> void: _client.save_loadout(slot, lo))
+	_hub_ui.loadout_activated.connect(func(slot: int) -> void: _client.switch_loadout(slot))
+	_hub_ui.item_destroyed.connect(func(iid: int) -> void: _client.destroy_item(iid))
 	_hub_ui.terminal_closed.connect(func() -> void:
 		if _bot == "" and (_pause_menu == null or not _pause_menu.visible):
 			_capture_mouse(true))
+	if ClassDB.class_exists("SwmCharacterStore") and FileAccess.file_exists(_os_path("items/swg_catalog.ini")):
+		_catalog_store = ClassDB.instantiate("SwmCharacterStore")
+		if _catalog_store.load_catalog(_os_path("items/swg_catalog.ini"), _os_path("imported_assets/items")) == OK:
+			_catalog = _catalog_store.get_catalog()
+			_battle_ui.set_catalog_names(_catalog)
+			_hub_ui.set_catalog(_catalog, _catalog_store,
+					str(_config.get("species", "human")),
+					str(_config.get("gender", "male")),
+					str(_config.get("appearance", "{}")))
 
 
 func _arrive() -> void:

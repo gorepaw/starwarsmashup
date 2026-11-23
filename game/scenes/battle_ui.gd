@@ -58,10 +58,17 @@ var _was_choosing := false
 var _map_meta: Dictionary = {}
 var _world_bake := ""
 var _battlefield: Dictionary = {}
+var _display_names: Dictionary = {}
 
 var spawn_loadout := 0
 var spawn_post := -1
 var spawn_requested_flag := false
+
+
+func set_catalog_names(catalog: Array) -> void:
+	_display_names.clear()
+	for def: Dictionary in catalog:
+		_display_names[str(def.get("id", ""))] = str(def.get("name", ""))
 
 
 func setup(layer: CanvasLayer, world_root: Node3D, audio: Bf2Audio, hud_dir: String) -> void:
@@ -535,13 +542,15 @@ func _update_screens(client: Object, pause_visible: bool, terminal_open: bool, b
 		capture_mouse_cb.call(true)
 	_was_choosing = choosing
 	if _spawn_screen.visible:
+		var custom_lo: Array = client.get_custom_loadouts()
+		var raw_loadouts: Array = custom_lo if not custom_lo.is_empty() else _battlefield["teams"][team]["loadouts"]
 		var loadouts: Array = []
-		for entry: Dictionary in _battlefield["teams"][team]["loadouts"]:
+		for entry: Dictionary in raw_loadouts:
 			var weapons: Array = []
 			for weapon: String in entry["weapons"] + ([entry["secondary"]] if entry["secondary"] != "" else []):
 				weapons.append(_display_name(weapon))
-			loadouts.append({"name": _unit_name(str(entry["name"])), "weapons": weapons,
-					"max_health": entry["max_health"]})
+			loadouts.append({"name": str(entry["name"]) if not custom_lo.is_empty() else _unit_name(str(entry["name"])),
+					"weapons": weapons, "max_health": entry["max_health"]})
 		var posts: Array = []
 		var owned := owned_posts(game, team)
 		for i in (game["posts"] as Array).size():
@@ -971,7 +980,9 @@ static func _unit_name(loadout: String) -> String:
 	return (loadout.substr(at + 5) if at >= 0 else loadout).replace("_", " ").capitalize()
 
 
-static func _display_name(weapon_class: String) -> String:
+func _display_name(weapon_class: String) -> String:
+	if _display_names.has(weapon_class):
+		return str(_display_names[weapon_class])
 	var wname := weapon_class
 	for prefix in ["_weap_inf_", "_weap_"]:
 		var at := wname.find(prefix)

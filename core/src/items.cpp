@@ -365,4 +365,83 @@ Loadout ItemCatalog::build_loadout(const CharacterLoadout& cl, std::span<const I
     return out;
 }
 
+BattleReward compute_battle_reward(bool won, bool draw, uint16_t kills, uint16_t captures, QueueMode mode) {
+    BattleReward r;
+    if (won) {
+        r = {250, 100, 200};
+    } else if (draw) {
+        r = {150, 60, 120};
+    } else {
+        r = {100, 40, 80};
+    }
+    r.xp += int64_t(kills) * 25 + int64_t(captures) * 60;
+    r.faction_points += int64_t(kills) * 10 + int64_t(captures) * 25;
+    r.credits += int64_t(kills) * 15 + int64_t(captures) * 40;
+    if (mode == QueueMode::gear) {
+        r.faction_points = int64_t(std::llround(double(r.faction_points) * 1.15));
+        r.credits = int64_t(std::llround(double(r.credits) * 1.15));
+    }
+    return r;
+}
+
+namespace {
+
+std::string substitute_gender(std::string path, Gender gender) {
+    const std::string rep = gender == Gender::female ? "f" : "m";
+    size_t pos = 0;
+    while ((pos = path.find("{g}", pos)) != std::string::npos) {
+        path.replace(pos, 3, rep);
+        pos += rep.size();
+    }
+    return path;
+}
+
+std::string covered_armor_slot(std::string_view app_slot) {
+    if (app_slot == "jacket" || app_slot == "shirt") return "chest";
+    if (app_slot == "pants") return "leggings";
+    if (app_slot == "boots_cosmetic" || app_slot == "boots") return "boots";
+    return std::string(app_slot);
+}
+
+} // namespace
+
+std::string resolve_worn_models(const ItemCatalog& catalog, const CharacterLoadout& cl,
+                                std::span<const ItemInstance> inventory, Species species, Gender gender) {
+    const auto find_inst = [&](uint64_t id) -> const ItemInstance* {
+        if (id == 0) return nullptr;
+        for (const ItemInstance& inst : inventory) {
+            if (inst.id == id) return &inst;
+        }
+        return nullptr;
+    };
+
+    // Appearance slots visually override their matching armor slots.
+    std::map<std::string, std::string> visual_by_slot;
+    for (const auto& [slot, item_id] : cl.gear_ids) {
+        if (!species_can_wear_slot(species, slot)) {
+            continue;
+        }
+        if (const ItemInstance* inst = find_inst(item_id)) {
+            if (const ItemDef* def = catalog.find(inst->def_id); def && !def->model_path.empty()) {
+                visual_by_slot[slot] = substitute_gender(def->model_path, gender);
+            }
+        }
+    }
+    for (const auto& [app_slot, item_id] : cl.appearance_ids) {
+        if (const ItemInstance* inst = find_inst(item_id)) {
+            if (const ItemDef* def = catalog.find(inst->def_id); def && !def->model_path.empty()) {
+                visual_by_slot[covered_armor_slot(app_slot)] = substitute_gender(def->model_path, gender);
+            }
+        }
+    }
+
+    std::string out;
+    for (const auto& [slot, path] : visual_by_slot) {
+        if (path.empty()) continue;
+        if (!out.empty()) out += ',';
+        out += path;
+    }
+    return out;
+}
+
 } // namespace swm::core

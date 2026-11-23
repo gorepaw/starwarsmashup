@@ -81,6 +81,8 @@ int main(int argc, char** argv) {
     std::string bake;
     std::string db;
     std::string loadout;
+    std::string catalog_path;
+    std::string bf2_items_dir;
     std::string battlefield;
     std::string hub_file;
     int bot_count = 0;
@@ -99,6 +101,10 @@ int main(int argc, char** argv) {
             bake = argv[++i];
         } else if (arg == "--loadout" && i + 1 < argc) {
             loadout = argv[++i];
+        } else if (arg == "--catalog" && i + 1 < argc) {
+            catalog_path = argv[++i];
+        } else if (arg == "--bf2-items" && i + 1 < argc) {
+            bf2_items_dir = argv[++i];
         } else if (arg == "--battlefield" && i + 1 < argc) {
             battlefield = argv[++i];
         } else if (arg == "--hub" && i + 1 < argc) {
@@ -168,6 +174,11 @@ int main(int argc, char** argv) {
         std::unique_ptr<swm::core::SqliteCharacterStore> store;
         if (!db.empty()) {
             store = std::make_unique<swm::core::SqliteCharacterStore>(db);
+        }
+        swm::core::ItemCatalog catalog;
+        if (!catalog_path.empty()) {
+            catalog.load(catalog_path, bf2_items_dir);
+            config.catalog = &catalog;
         }
         swm::core::net::UdpLink link{uint16_t(port)};
         swm::core::World world(ground);

@@ -42,6 +42,11 @@ public:
     godot::Dictionary add_rewards(int64_t char_id, int64_t xp, int64_t faction_points, int64_t credits);
     godot::Error set_active_loadout(int64_t char_id, int64_t slot_index);
 
+    godot::Dictionary resolve_item_stats(const godot::String& def_id, double quality = 0.5,
+                                           bool apply_quality = true) const;
+    godot::Dictionary compute_loadout_stats(const godot::String& species, const godot::Dictionary& loadout,
+                                              const godot::Array& items, bool apply_quality = true) const;
+
     static godot::Array get_species_list();
 
 protected:

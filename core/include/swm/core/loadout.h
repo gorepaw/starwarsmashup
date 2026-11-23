@@ -40,7 +40,9 @@ enum class Stat : uint8_t {
 };
 
 std::optional<Stat> stat_from_name(std::string_view name);
+std::string_view stat_name(Stat stat);
 std::optional<DamageType> damage_type_from_name(std::string_view name);
+std::string_view damage_type_name(DamageType type);
 
 // A change gear makes to a statistic: added, then multiplied. Written in
 // data files as "Modifier = run_speed * 0.9" or "Modifier = mitigation_laser + 0.15".

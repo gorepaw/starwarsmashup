@@ -10,9 +10,11 @@ const DEFEAT := Color(1.0, 0.35, 0.3)
 
 # Set by the game before each redraw:
 var tooltip := ""     # e.g. "Press E to use the War Terminal"; empty: none
-var queue := {}       # {side, icon, battlefield, starts_in, in_queue, leave_key}; empty: not queued
+var queue := {}       # {side, mode, icon, battlefield, starts_in, in_queue, leave_key}; empty: not queued
 var notice := ""      # e.g. "Victory at Endor: 3 kills, 1 deaths, 2 captures"
 var notice_alpha := 0.0
+var info := {}        # {credits, fp, xp, loadout_name, inv_key}
+var switching := {}   # {name, progress}: non-empty while channeling a loadout switch
 
 
 func _init(shared_art: RefCounted = null) -> void:
@@ -21,12 +23,36 @@ func _init(shared_art: RefCounted = null) -> void:
 
 
 func _paint() -> void:
+	if not info.is_empty():
+		_paint_info()
 	if tooltip != "":
 		_paint_tooltip()
 	if not queue.is_empty():
 		_paint_queue()
+	if not switching.is_empty():
+		_paint_switching()
 	if notice != "" and notice_alpha > 0:
 		_paint_notice()
+
+
+func _paint_info() -> void:
+	var box := Rect2(Vector2(14, 14) * u, Vector2(280, 56) * u)
+	frame(box, "border_3_pieces")
+	text("gamefont_tiny", "Loadout: %s   [%s] Gear" % [str(info.get("loadout_name", "Standard Issue")), str(info.get("inv_key", "I"))],
+			box.position + Vector2(12, 10) * u, "Left", ACCENT)
+	text("gamefont_tiny", "%d FP   |   %d Cr   |   %d XP" % [int(info.get("fp", 0)), int(info.get("credits", 0)), int(info.get("xp", 0))],
+			box.position + Vector2(12, 30) * u, "Left", TEXT)
+
+
+func _paint_switching() -> void:
+	var box := Rect2(Vector2(size.x * 0.5 - 150 * u, size.y * 0.72), Vector2(300, 46) * u)
+	frame(box)
+	text("gamefont_tiny", "Switching to %s..." % str(switching.get("name", "Loadout")),
+			Vector2(box.get_center().x, box.position.y + 8 * u), "Center", ACCENT)
+	var bar_bg := Rect2(box.position + Vector2(16, 26) * u, Vector2(268, 10) * u)
+	draw_rect(bar_bg, Color(0.1, 0.12, 0.16, 0.9))
+	var frac := clampf(float(switching.get("progress", 0.0)), 0.0, 1.0)
+	draw_rect(Rect2(bar_bg.position, Vector2(bar_bg.size.x * frac, bar_bg.size.y)), ACCENT)
 
 
 # Battlefront's tooltip: its text on a dark bar fading out at the ends.
@@ -50,7 +76,8 @@ func _paint_queue() -> void:
 	frame(box)
 	art.draw_icon(self, str(queue.get("icon", "")), Rect2(box.position + Vector2(14, 16) * u, Vector2(56, 56) * u), ACCENT)
 	var x := box.position.x + 82 * u
-	text("gamefont_tiny", "Queued for the %s" % queue.get("side", ""), Vector2(x, box.position.y + 12 * u), "Left", DIM)
+	var qmode := str(queue.get("mode", "standard")).capitalize()
+	text("gamefont_tiny", "Queued (%s) for the %s" % [qmode, queue.get("side", "")], Vector2(x, box.position.y + 12 * u), "Left", DIM)
 	var where := str(queue.get("battlefield", ""))
 	text("gamefont_medium", where if where != "" else "Choosing a battlefield", Vector2(x, box.position.y + 30 * u),
 			"Left", TEXT)

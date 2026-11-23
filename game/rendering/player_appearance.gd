@@ -198,6 +198,92 @@ static func _attach_hair(model: Node3D, hair_gltf: String, color_overrides: Dict
 static func set_first_person(character: Dictionary, enabled: bool) -> void:
 	if character.has("soldier") and character["soldier"] != null:
 		(character["soldier"] as Soldier).first_person = enabled
+	var helmets: Array = character.get("helmet_nodes", [])
+	for h: Variant in helmets:
+		if h is Node3D and is_instance_valid(h):
+			(h as Node3D).visible = not enabled
 	var hair: Variant = character.get("hair", null)
 	if hair is Node3D and is_instance_valid(hair):
-		(hair as Node3D).visible = not enabled
+		(hair as Node3D).visible = not enabled and helmets.is_empty()
+
+
+static func set_worn_models(character: Dictionary, worn_csv: String) -> void:
+	if character.is_empty() or str(character.get("worn_csv", "")) == worn_csv:
+		return
+	character["worn_csv"] = worn_csv
+	var model: Variant = character.get("model")
+	if not (model is Node3D) or not is_instance_valid(model):
+		return
+	var skeleton := (model as Node3D).find_child("Skeleton3D", true, false) as Skeleton3D
+	if skeleton == null:
+		return
+	var old_holder: Variant = character.get("worn_holder")
+	if old_holder is Node and is_instance_valid(old_holder):
+		(old_holder as Node).queue_free()
+	character["worn_holder"] = null
+	character["helmet_nodes"] = []
+
+	var paths := worn_csv.split(",", false)
+	if paths.is_empty():
+		var hair: Variant = character.get("hair", null)
+		var fp := character.has("soldier") and character["soldier"] != null and (character["soldier"] as Soldier).first_person
+		if hair is Node3D and is_instance_valid(hair):
+			(hair as Node3D).visible = not fp
+		return
+
+	# Read body blend weights (muscle, fat, skinny) so armor/clothing fits the body.
+	var body_blends := {}
+	for n: Node in (model as Node3D).find_children("*", "MeshInstance3D", true, false):
+		var mi := n as MeshInstance3D
+		if mi.mesh == null:
+			continue
+		for i in mi.mesh.get_blend_shape_count():
+			var bname := String(mi.mesh.get_blend_shape_name(i))
+			if bname in ["blend_muscle", "blend_fat", "blend_skinny"]:
+				body_blends[bname] = mi.get_blend_shape_value(i)
+
+	var holder := Node3D.new()
+	holder.name = "WornEquipment"
+	skeleton.add_child(holder)
+	character["worn_holder"] = holder
+	var helmets: Array = []
+	var fp := character.has("soldier") and character["soldier"] != null and (character["soldier"] as Soldier).first_person
+
+	for raw_rel: String in paths:
+		var rel := raw_rel.strip_edges()
+		if rel == "":
+			continue
+		var gltf_path := "res://imported_assets/" + rel
+		if not FileAccess.file_exists(gltf_path):
+			continue
+		var doc := GLTFDocument.new()
+		var state := GLTFState.new()
+		if doc.append_from_file(ProjectSettings.globalize_path(gltf_path), state) != OK:
+			continue
+		var scene := doc.generate_scene(state) as Node3D
+		if scene == null:
+			continue
+		var colors := _load_gltf_colors(gltf_path)
+		if not colors.is_empty():
+			SwgColors.apply(scene, colors, 0)
+		var is_helmet := rel.contains("helmet")
+		for m: Node in scene.find_children("*", "MeshInstance3D", true, false):
+			var mi := m as MeshInstance3D
+			mi.get_parent().remove_child(mi)
+			mi.owner = null
+			holder.add_child(mi)
+			mi.skeleton = NodePath("../..")
+			if mi.mesh != null and not body_blends.is_empty():
+				for i in mi.mesh.get_blend_shape_count():
+					var bname := String(mi.mesh.get_blend_shape_name(i))
+					if body_blends.has(bname):
+						mi.set_blend_shape_value(i, float(body_blends[bname]))
+			if is_helmet:
+				mi.visible = not fp
+				helmets.append(mi)
+		scene.queue_free()
+
+	character["helmet_nodes"] = helmets
+	var hair: Variant = character.get("hair", null)
+	if hair is Node3D and is_instance_valid(hair):
+		(hair as Node3D).visible = not fp and helmets.is_empty()

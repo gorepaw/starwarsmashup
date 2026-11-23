@@ -249,19 +249,19 @@ Galaxies' weapons and armor become items you own, wear, and put into three loado
 **Inventory and equipment**
 
 MMO-style screens in Battlefront II's frames, fonts and colors:
-- [ ] Inventory: what you carry, with tooltips showing every stat and a comparison with what's equipped. Drag to equip; sort; drop or destroy.
-- [ ] Equipment: a paperdoll of your character, its weapon, armor, deflector shield and appearance slots, and the model updating as you change them. Slots your species can't use are greyed out.
+- [x] Inventory: what you carry, with tooltips showing every stat and a comparison with what's equipped (`game/ui/inventory_screen.gd`, `game/ui/item_tooltip.gd`). Drag to equip (or double-click); sort by Name/Kind/Slot/Quality and filter by category; drop or destroy with two-step confirmation.
+- [x] Equipment: a paperdoll of your character, its weapon, armor, deflector shield and appearance slots, and the live 3D `SubViewport` model updating as you change them (`PlayerAppearance.set_worn_models`, `CharacterStage.set_worn_models`, `core::resolve_worn_models`). Slots your species can't use are greyed out.
 
 **Loadouts**
-- [ ] Up to three loadouts per character. Each is a full kit: primary, sidearm, secondary, armor, deflector shield and other gear. An item can be in more than one, since only one is worn at a time.
-- [ ] In the world, switching loadouts takes several seconds. The HUD shows a bar, and taking damage interrupts it.
-- [ ] In a match, the spawn screen lists your three loadouts in place of Battlefront's classes, and you pick one each time you spawn. The match server gets them from the hub, never from the client. Bots carry stock loadouts for their side.
-- [ ] Standard queue (quality flattened) and gear queue (quality counts).
+- [x] Up to three loadouts per character (`core::CharacterLoadout`, `core::max_character_loadouts = 3`). Each is a full kit: primary, sidearm, secondary, armor, deflector shield and appearance slots. An item can be in more than one, since only one is worn at a time.
+- [x] In the world, switching loadouts takes several seconds (`core::loadout_switch_time = 3.0` s, F5/F6/F7 or from the Inventory screen). The HUD (`game/ui/hub_hud.gd`) shows a bar, and taking damage interrupts it.
+- [x] In a match, the spawn screen (`game/scenes/battle_ui.gd`, `game/ui/spawn_screen.gd`) lists your custom loadouts in place of Battlefront's classes, and you pick one each time you spawn. The match server gets them from the hub (`core::Hub::send`, `GameServer::set_player_loadouts`), never from the client. Bots carry stock loadouts for their side.
+- [x] Standard queue (quality flattened) and gear queue (quality counts, +8% crafted band, +15% battle rewards), selectable at the War Terminal (`game/ui/war_terminal_screen.gd`, `core::QueueMode`).
 
 **Getting gear**
-- [ ] Faction quartermaster in each hub: standard-issue gear for faction points.
-- [ ] Shooting range in Mos Eisley.
-- [ ] Battle rewards: experience, faction points and credits.
+- [x] Faction quartermaster in each hub: standard-issue gear for faction points (`[quartermaster]` in `game/hubs/mos_eisley.ini`, `game/ui/quartermaster_screen.gd`, `net::ShopBuyRequest`).
+- [x] Shooting range in Mos Eisley: stationary, armored, and patrolling targets south of spawn (`[target]` in `game/hubs/mos_eisley.ini`, `net::TargetState`, live HP and rolling DPS readouts).
+- [x] Battle rewards: experience, faction points and credits (`core::compute_battle_reward`, persisted via `GameServer::award_battle_rewards` and shown in the post-battle hub notice).
 
 ### Exit criteria
 

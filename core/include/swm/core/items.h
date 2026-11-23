@@ -16,6 +16,21 @@ namespace swm::core {
 
 enum class ItemKind : uint8_t { weapon, armor, deflector_shield, clothing };
 
+enum class QueueMode : uint8_t { standard = 0, gear = 1 };
+
+inline constexpr double loadout_switch_time = 3.0;
+inline constexpr int max_character_loadouts = 3;
+
+struct BattleReward {
+    int64_t xp = 0;
+    int64_t faction_points = 0;
+    int64_t credits = 0;
+
+    friend bool operator==(const BattleReward&, const BattleReward&) = default;
+};
+
+BattleReward compute_battle_reward(bool won, bool draw, uint16_t kills, uint16_t captures, QueueMode mode);
+
 enum class WeaponArchetype : uint8_t {
     rifle_auto,
     carbine_burst,
@@ -111,5 +126,10 @@ private:
     std::map<std::string, size_t, std::less<>> index_;
     std::map<std::string, WeaponDef, std::less<>> bf2_bases_;
 };
+
+// Resolves worn armor & cosmetic clothing model paths (comma-separated,
+// game/imported_assets/-relative) with appearance slots overriding armor visuals.
+std::string resolve_worn_models(const ItemCatalog& catalog, const CharacterLoadout& cl,
+                                std::span<const ItemInstance> inventory, Species species, Gender gender);
 
 } // namespace swm::core

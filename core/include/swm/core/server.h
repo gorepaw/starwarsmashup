@@ -11,6 +11,7 @@
 
 #include "swm/core/combat.h"
 #include "swm/core/conquest.h"
+#include "swm/core/items.h"
 #include "swm/core/movement.h"
 #include "swm/core/net/link.h"
 #include "swm/core/net/protocol.h"
@@ -43,6 +44,7 @@ struct ServerConfig {
     // match's rules decide who wins. Clients must load the same battlefield.
     // Characters aren't saved in a match.
     std::optional<Battlefield> battlefield;
+    const ItemCatalog* catalog = nullptr;
     bool friendly_fire = false;  // in a match
     bool single_match = false;   // one match, no next one (a hub's match: see match_over())
 };
@@ -117,6 +119,19 @@ public:
     // The war terminals players can queue at and the sides they queue for,
     // told to clients as they join.
     void set_recruiters(std::vector<net::Recruiter> recruiters, std::array<std::string, 2> factions);
+    // Faction quartermasters in a hub, told to clients as they join.
+    void set_quartermasters(std::vector<net::Quartermaster> quartermasters);
+    // Adds a shooting-range target in a hub (stationary if speed <= 0).
+    uint32_t add_range_target(std::string name, Vec3 home, Vec3 patrol_end, double speed, double max_health = 400,
+                              double mitigation = 0, double respawn_time = 2.5);
+    // Custom loadouts for a player (in a hub, or handed from a hub to a match).
+    void set_player_loadouts(uint32_t entity, std::vector<Loadout> loadouts,
+                             std::vector<std::string> worn_per_loadout = {});
+    // Resolves a connected hub player's saved loadouts (with or without quality).
+    std::vector<Loadout> build_player_loadouts(uint32_t entity, bool apply_quality,
+                                               std::vector<std::string>* out_worn = nullptr) const;
+    // Persists battle rewards for a player by name and updates live balance if connected.
+    void award_battle_rewards(const std::string& name, const BattleReward& reward);
     // What this client's snapshots say about it; nullptr if not connected.
     net::PlayerStatus* status(uint32_t entity);
     // Shows a client a message.
@@ -150,7 +165,7 @@ public:
     std::function<std::optional<int>(const std::string& name, uint64_t ticket, int team)> admit;
     std::function<void(uint32_t entity, const std::string& name)> on_join;
     // A player standing at a war terminal asked to queue for a side (-1: leave).
-    std::function<void(uint32_t entity, int team)> on_queue;
+    std::function<void(uint32_t entity, int team, QueueMode mode)> on_queue;
     // A match just ended.
     std::function<void(const MatchResult&)> on_match_ended;
 
@@ -182,6 +197,33 @@ private:
         net::PlayerStatus status;
         std::optional<net::Transfer> transfer;  // sent every tick until it leaves
         uint32_t transfer_tick = 0;            // dropped then if it hasn't left
+        int64_t credits = 0;
+        int64_t faction_points = 0;
+        int64_t experience = 0;
+        std::vector<ItemInstance> items;
+        std::vector<CharacterLoadout> char_loadouts;
+        std::vector<Loadout> custom_loadouts;
+        std::vector<std::string> worn_per_loadout;
+        uint32_t inventory_rev = 0;
+        uint32_t acked_inventory_rev = 0;
+        uint32_t last_sync_tick = 0;
+        int switching_to = -1;
+        double switch_remaining = 0.0;
+    };
+    struct RangeTarget {
+        uint32_t entity = 0;
+        std::string name;
+        Vec3 home;
+        Vec3 patrol_end;
+        Vec3 position;
+        double speed = 0;
+        double phase = 0;
+        double health = 400;
+        double max_health = 400;
+        double mitigation = 0;
+        double respawn_time = 2.5;
+        double respawn_timer = 0;
+        bool alive = true;
     };
     struct Npc {
         uint32_t entity = 0;
@@ -197,7 +239,7 @@ private:
         uint32_t owner = 0;
         int team = -1;
         uint8_t weapon = 0;
-        const WeaponDef* def = nullptr;  // the weapon's projectile and explosion (in config_)
+        WeaponDef def;  // snapshot of the weapon's projectile and explosion
         Vec3 position;
         Vec3 velocity;
         double life = 0;     // seconds left (a grenade's fuse)
@@ -242,11 +284,14 @@ private:
     void respawn(Client& client);
     void spawn_at_post(Client& client, size_t loadout, size_t post);
     void return_to_waiting(Client& client);
+    void rebuild_client_loadouts(Client& client);
+    void send_inventory_sync(Client& client);
     const Loadout& loadout_of(const Client& client) const;
     net::EntityState describe(const Client& client) const;
     Vec3 spawn_point(uint32_t index) const;
     Vec3 position_at(const Client& client, double tick) const;
     void damage_destructible(size_t index, double amount, uint32_t attacker, std::vector<Blast>& blasts);
+    void damage_target(RangeTarget& target, double raw, DamageType type, uint32_t attacker);
     // What a shot from a to b first meets: the world, or a shut door.
     std::optional<World::RayHit> shot_hit(Vec3 a, Vec3 b) const;
     void drop_silent(double now);
@@ -270,6 +315,8 @@ private:
     std::vector<net::Explosion> explosions_;  // this tick's
     std::vector<net::Impact> impacts_;        // this tick's
     std::vector<net::Recruiter> recruiters_;
+    std::vector<net::Quartermaster> quartermasters_;
+    std::vector<RangeTarget> targets_;
     std::array<std::string, 2> factions_;
     uint32_t tick_ = 0;
     uint32_t next_entity_ = 1;

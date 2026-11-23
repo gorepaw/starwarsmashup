@@ -28,6 +28,10 @@ const ACTIONS := [
 	["scores", "Show Scores", KEY_TAB],
 	["interact", "Use", KEY_E],
 	["leave_queue", "Leave the Queue", KEY_X],
+	["inventory", "Inventory & Loadouts", KEY_I],
+	["loadout_1", "Loadout 1", KEY_F5],
+	["loadout_2", "Loadout 2", KEY_F6],
+	["loadout_3", "Loadout 3", KEY_F7],
 ]
 
 var bindings := {}           # action -> physical keycode (int) or "mouse:<button>"

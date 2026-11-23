@@ -91,4 +91,7 @@ private:
     std::map<PersistentId, std::map<int, CharacterLoadout>> loadouts_;
 };
 
+// Grants the standard-issue starter kit and Loadout 0 if the character has no items yet.
+void ensure_starter_kit(CharacterStore& store, PersistentId char_id);
+
 } // namespace swm::core

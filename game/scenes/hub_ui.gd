@@ -1,24 +1,37 @@
-# Hub UI & world recruiter markers: War Terminal screen, queue HUD,
-# recruiter pillars/rings, and battle outcome notices.
+# Hub UI & world markers: War Terminal screen, Quartermaster shop,
+# Inventory & Loadouts screen, queue HUD, shooting range target visuals/DPS,
+# and battle outcome notices.
 class_name HubUI
 extends Node
 
 const Settings = preload("res://ui/settings.gd")
 const WarTerminalScreen = preload("res://ui/war_terminal_screen.gd")
+const QuartermasterScreen = preload("res://ui/quartermaster_screen.gd")
+const InventoryScreen = preload("res://ui/inventory_screen.gd")
 const HubHud = preload("res://ui/hub_hud.gd")
 
-signal queue_requested(side: int)
+signal queue_requested(side: int, mode: String)
+signal item_bought(def_id: String, use_fp: bool)
+signal loadout_saved(slot_index: int, loadout: Dictionary)
+signal loadout_activated(slot_index: int)
+signal item_destroyed(item_id: int)
 signal terminal_closed
 
 var _hub_hud: HubHud
 var _terminal_screen: WarTerminalScreen
+var _qm_screen: QuartermasterScreen
+var _inv_screen: InventoryScreen
 var _settings: Settings
 var _world_root: Node3D
 var _recruiter_nodes: Array = []
+var _qm_nodes: Array = []
+var _target_nodes: Dictionary = {}  # target_id -> {root, body, label, hits: Array[{t, dmg}], last_dmg, flash}
 var _notice_id := 0
 var _notice := ""
 var _notice_time := 0.0
 var _notice_lines: PackedStringArray = []
+var _catalog: Array = []
+var _store: Object = null
 
 
 func setup(layer: CanvasLayer, world_root: Node3D, art: RefCounted, settings: Settings) -> void:
@@ -30,10 +43,40 @@ func setup(layer: CanvasLayer, world_root: Node3D, art: RefCounted, settings: Se
 	layer.add_child(_hub_hud)
 	_terminal_screen = WarTerminalScreen.new(art)
 	_terminal_screen.visible = false
-	_terminal_screen.side_chosen.connect(func(side: int) -> void: queue_requested.emit(side))
-	_terminal_screen.leave_requested.connect(func() -> void: queue_requested.emit(-1))
+	_terminal_screen.side_chosen.connect(func(side: int, mode: String) -> void: queue_requested.emit(side, mode))
+	_terminal_screen.leave_requested.connect(func() -> void: queue_requested.emit(-1, "standard"))
 	_terminal_screen.closed.connect(close_terminal)
 	layer.add_child(_terminal_screen)
+
+	_qm_screen = QuartermasterScreen.new(art)
+	_qm_screen.visible = false
+	_qm_screen.item_bought.connect(func(def_id: String, use_fp: bool) -> void: item_bought.emit(def_id, use_fp))
+	_qm_screen.closed.connect(close_all_screens)
+	layer.add_child(_qm_screen)
+
+	_inv_screen = InventoryScreen.new(art)
+	_inv_screen.visible = false
+	_inv_screen.loadout_saved.connect(func(slot: int, lo: Dictionary) -> void: loadout_saved.emit(slot, lo))
+	_inv_screen.loadout_activated.connect(func(slot: int) -> void:
+		loadout_activated.emit(slot)
+		close_all_screens())
+	_inv_screen.item_destroyed.connect(func(iid: int) -> void: item_destroyed.emit(iid))
+	_inv_screen.closed.connect(close_all_screens)
+	layer.add_child(_inv_screen)
+
+
+func set_catalog(catalog: Array, store: Object, species: String, gender: String, appearance: String) -> void:
+	_catalog = catalog
+	_store = store
+	if _qm_screen != null:
+		_qm_screen.catalog = catalog
+		_qm_screen.store = store
+	if _inv_screen != null:
+		_inv_screen.catalog = catalog
+		_inv_screen.store = store
+		_inv_screen.species = species
+		_inv_screen.gender = gender
+		_inv_screen.appearance_json = appearance
 
 
 func has_ui() -> bool:
@@ -41,20 +84,56 @@ func has_ui() -> bool:
 
 
 func is_terminal_open() -> bool:
-	return _terminal_screen != null and _terminal_screen.visible
+	return is_any_screen_open()
+
+
+func is_any_screen_open() -> bool:
+	return (_terminal_screen != null and _terminal_screen.visible) \
+			or (_qm_screen != null and _qm_screen.visible) \
+			or (_inv_screen != null and _inv_screen.visible)
 
 
 func try_open_terminal(client: Object) -> bool:
-	if _terminal_screen == null or at_recruiter(client).is_empty():
+	if _terminal_screen != null and not at_recruiter(client).is_empty():
+		_terminal_screen.visible = true
+		return true
+	var qm := at_quartermaster(client)
+	if _qm_screen != null and not qm.is_empty():
+		_qm_screen.title = str(qm.get("name", "Quartermaster"))
+		_qm_screen.faction = str(qm.get("faction", "neutral"))
+		_qm_screen.feedback = ""
+		_qm_screen.visible = true
+		_qm_screen.queue_redraw()
+		return true
+	return false
+
+
+func toggle_inventory(client: Object) -> bool:
+	if _inv_screen == null or client == null or not client.is_spawned():
 		return false
-	_terminal_screen.visible = true
+	if _inv_screen.visible:
+		close_all_screens()
+		return false
+	close_all_screens()
+	_sync_screen_data(client)
+	_inv_screen.open_screen()
 	return true
 
 
 func close_terminal() -> void:
+	close_all_screens()
+
+
+func close_all_screens() -> void:
+	var was_open := is_any_screen_open()
 	if _terminal_screen != null:
 		_terminal_screen.visible = false
-	terminal_closed.emit()
+	if _qm_screen != null:
+		_qm_screen.visible = false
+	if _inv_screen != null and _inv_screen.visible:
+		_inv_screen.close_screen()
+	if was_open:
+		terminal_closed.emit()
 
 
 func clear_recruiters() -> void:
@@ -62,12 +141,20 @@ func clear_recruiters() -> void:
 		if is_instance_valid(node):
 			node.queue_free()
 	_recruiter_nodes.clear()
+	for node: Node in _qm_nodes:
+		if is_instance_valid(node):
+			node.queue_free()
+	_qm_nodes.clear()
+	for entry: Dictionary in _target_nodes.values():
+		var r: Variant = entry.get("root")
+		if r is Node and is_instance_valid(r):
+			(r as Node).queue_free()
+	_target_nodes.clear()
 
 
 func on_world_arrived() -> void:
 	clear_recruiters()
-	if _terminal_screen != null and _terminal_screen.visible:
-		close_terminal()
+	close_all_screens()
 	_notice_id = 0
 
 
@@ -75,47 +162,74 @@ func add_recruiters(client: Object, world: Node3D) -> void:
 	if not _recruiter_nodes.is_empty() or client == null or world == null:
 		return
 	var recruiters: Array = client.get_recruiters()
-	if recruiters.is_empty():
-		return
-	var material := StandardMaterial3D.new()
-	material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
-	material.albedo_color = Color(1.0, 0.8, 0.25)
-	var terminals: Array[Vector3] = []
-	for node: Node in world.get_children():
-		if node.has_meta("recruiter"):
-			terminals.append((node as Node3D).position)
-	for recruiter: Dictionary in recruiters:
-		var position: Vector3 = recruiter["position"]
-		var drawn := terminals.any(func(at: Vector3) -> bool:
-			return Vector2(at.x - position.x, at.z - position.z).length() < 1.5)
-		var pillar := MeshInstance3D.new()
-		var box := BoxMesh.new()
-		box.size = Vector3(0.6, 2.2, 0.6)
-		pillar.mesh = box
-		pillar.material_override = material
-		pillar.position = position + Vector3.UP * 1.1
-		var ring := MeshInstance3D.new()
-		var torus := TorusMesh.new()
-		torus.outer_radius = float(recruiter["radius"])
-		torus.inner_radius = float(recruiter["radius"]) - 0.15
-		ring.mesh = torus
-		ring.material_override = material
-		ring.position = position + Vector3.UP * 0.1
-		var label := Label3D.new()
-		label.text = str(recruiter["name"])
-		label.billboard = BaseMaterial3D.BILLBOARD_ENABLED
-		label.fixed_size = true
-		label.pixel_size = 0.0015
-		label.font_size = 28
-		label.outline_size = 8
-		label.modulate = material.albedo_color
-		label.position = position + Vector3.UP * 3.2
-		for node: Node3D in [pillar, ring, label]:
-			if drawn:
-				node.free()
-				continue
-			_world_root.add_child(node)
-			_recruiter_nodes.append(node)
+	if not recruiters.is_empty():
+		var material := StandardMaterial3D.new()
+		material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+		material.albedo_color = Color(1.0, 0.8, 0.25)
+		var terminals: Array[Vector3] = []
+		for node: Node in world.get_children():
+			if node.has_meta("recruiter"):
+				terminals.append((node as Node3D).position)
+		for recruiter: Dictionary in recruiters:
+			var position: Vector3 = recruiter["position"]
+			var drawn := terminals.any(func(at: Vector3) -> bool:
+				return Vector2(at.x - position.x, at.z - position.z).length() < 1.5)
+			var pillar := MeshInstance3D.new()
+			var box := BoxMesh.new()
+			box.size = Vector3(0.6, 2.2, 0.6)
+			pillar.mesh = box
+			pillar.material_override = material
+			pillar.position = position + Vector3.UP * 1.1
+			var ring := MeshInstance3D.new()
+			var torus := TorusMesh.new()
+			torus.outer_radius = float(recruiter["radius"])
+			torus.inner_radius = float(recruiter["radius"]) - 0.15
+			ring.mesh = torus
+			ring.material_override = material
+			ring.position = position + Vector3.UP * 0.1
+			var label := Label3D.new()
+			label.text = str(recruiter["name"])
+			label.billboard = BaseMaterial3D.BILLBOARD_ENABLED
+			label.fixed_size = true
+			label.pixel_size = 0.0015
+			label.font_size = 28
+			label.outline_size = 8
+			label.modulate = material.albedo_color
+			label.position = position + Vector3.UP * 3.2
+			for node: Node3D in [pillar, ring, label]:
+				if drawn:
+					node.free()
+					continue
+				_world_root.add_child(node)
+				_recruiter_nodes.append(node)
+
+	if _qm_nodes.is_empty():
+		for qm: Dictionary in client.get_quartermasters():
+			var pos: Vector3 = qm["position"]
+			var col := Color(0.35, 0.75, 1.0) if str(qm.get("faction", "")) == "rebellion" else Color(1.0, 0.45, 0.3)
+			var ring := MeshInstance3D.new()
+			var torus := TorusMesh.new()
+			torus.outer_radius = float(qm["radius"])
+			torus.inner_radius = float(qm["radius"]) - 0.12
+			var mat := StandardMaterial3D.new()
+			mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+			mat.albedo_color = col
+			ring.mesh = torus
+			ring.material_override = mat
+			ring.position = pos + Vector3.UP * 0.08
+			var label := Label3D.new()
+			label.text = str(qm["name"])
+			label.billboard = BaseMaterial3D.BILLBOARD_ENABLED
+			label.fixed_size = true
+			label.pixel_size = 0.0014
+			label.font_size = 24
+			label.outline_size = 8
+			label.modulate = col
+			label.position = pos + Vector3.UP * 2.5
+			_world_root.add_child(ring)
+			_world_root.add_child(label)
+			_qm_nodes.append(ring)
+			_qm_nodes.append(label)
 
 
 func at_recruiter(client: Object) -> Dictionary:
@@ -127,6 +241,30 @@ func at_recruiter(client: Object) -> Dictionary:
 		if Vector2(position.x - at.x, position.z - at.z).length() <= float(recruiter["radius"]):
 			return recruiter
 	return {}
+
+
+func at_quartermaster(client: Object) -> Dictionary:
+	if client == null or not client.is_spawned():
+		return {}
+	var position: Vector3 = client.get_presented()["position"]
+	for qm: Dictionary in client.get_quartermasters():
+		var at: Vector3 = qm["position"]
+		if Vector2(position.x - at.x, position.z - at.z).length() <= float(qm["radius"]):
+			return qm
+	return {}
+
+
+func record_target_event(event: Dictionary) -> void:
+	var vid := int(event.get("victim", 0))
+	if not _target_nodes.has(vid):
+		return
+	var entry: Dictionary = _target_nodes[vid]
+	if event.get("kind", "") == "hit":
+		var dmg := float(event.get("damage", 0.0))
+		entry["last_dmg"] = dmg
+		entry["flash"] = 0.15
+		var hits: Array = entry["hits"]
+		hits.append({"t": Time.get_ticks_msec() / 1000.0, "dmg": dmg})
 
 
 func take_notice_lines() -> PackedStringArray:
@@ -143,12 +281,113 @@ func notice_time() -> float:
 	return _notice_time
 
 
+func _sync_screen_data(client: Object) -> void:
+	var status: Dictionary = client.get_player_status()
+	var inv: Array = client.get_inventory()
+	var los: Array = client.get_character_loadouts()
+	var active := int(status.get("active_loadout", 0))
+	if _inv_screen != null:
+		_inv_screen.credits = int(status.get("credits", 0))
+		_inv_screen.faction_points = int(status.get("faction_points", 0))
+		_inv_screen.experience = int(status.get("experience", 0))
+		_inv_screen.active_loadout_idx = active
+		_inv_screen.inventory = inv
+		_inv_screen.loadouts = los
+		_inv_screen.refresh_data()
+	if _qm_screen != null:
+		_qm_screen.credits = int(status.get("credits", 0))
+		_qm_screen.faction_points = int(status.get("faction_points", 0))
+		_qm_screen.inventory = inv
+		var cur_lo: Dictionary = {}
+		for lo: Dictionary in los:
+			if int(lo.get("slot_index", -1)) == active:
+				cur_lo = lo
+				break
+		_qm_screen.active_loadout = cur_lo
+		if _qm_screen.visible:
+			_qm_screen.queue_redraw()
+
+
+func _update_targets(client: Object, delta: float) -> void:
+	var targets: Array = client.get_targets()
+	var seen := {}
+	var now_s := Time.get_ticks_msec() / 1000.0
+	for t: Dictionary in targets:
+		var id := int(t["id"])
+		seen[id] = true
+		if not _target_nodes.has(id):
+			var root := Node3D.new()
+			var body := Node3D.new()
+			root.add_child(body)
+			var mat := StandardMaterial3D.new()
+			mat.albedo_color = Color(0.85, 0.28, 0.22)
+			var torso := MeshInstance3D.new()
+			var tmesh := BoxMesh.new()
+			tmesh.size = Vector3(0.55, 1.15, 0.25)
+			torso.mesh = tmesh
+			torso.material_override = mat
+			torso.position = Vector3.UP * 0.85
+			body.add_child(torso)
+			var head := MeshInstance3D.new()
+			var hmesh := SphereMesh.new()
+			hmesh.radius = 0.18
+			hmesh.height = 0.36
+			head.mesh = hmesh
+			head.material_override = mat
+			head.position = Vector3.UP * 1.62
+			body.add_child(head)
+			var label := Label3D.new()
+			label.billboard = BaseMaterial3D.BILLBOARD_ENABLED
+			label.fixed_size = true
+			label.pixel_size = 0.0013
+			label.font_size = 24
+			label.outline_size = 6
+			label.position = Vector3.UP * 2.25
+			root.add_child(label)
+			_world_root.add_child(root)
+			_target_nodes[id] = {"root": root, "body": body, "mat": mat, "label": label,
+					"hits": [], "last_dmg": 0.0, "flash": 0.0}
+
+		var entry: Dictionary = _target_nodes[id]
+		var root: Node3D = entry["root"]
+		root.position = t["position"]
+		var body: Node3D = entry["body"]
+		var alive := bool(t["alive"])
+		body.rotation.x = lerpf(body.rotation.x, 0.0 if alive else -PI * 0.48, minf(1.0, 12.0 * delta))
+		entry["flash"] = maxf(0.0, float(entry["flash"]) - delta)
+		(entry["mat"] as StandardMaterial3D).albedo_color = Color(1.0, 0.85, 0.3) if float(entry["flash"]) > 0.0 else Color(0.85, 0.28, 0.22)
+		var hits: Array = entry["hits"]
+		while not hits.is_empty() and now_s - float(hits[0]["t"]) > 5.0:
+			hits.pop_front()
+		var total := 0.0
+		for h: Dictionary in hits:
+			total += float(h["dmg"])
+		var span := maxf(1.0, now_s - float(hits[0]["t"])) if hits.size() > 1 else 1.0
+		var dps := total / span if not hits.is_empty() else 0.0
+		var lbl: Label3D = entry["label"]
+		if alive:
+			lbl.text = "%s\n%d / %d HP%s" % [str(t["name"]), roundi(float(t["health"])), roundi(float(t["max_health"])),
+					"\nLast: %.0f  DPS: %.0f" % [float(entry["last_dmg"]), dps] if dps > 0.5 else ""]
+		else:
+			lbl.text = "%s\n[KNOCKED DOWN]" % str(t["name"])
+
+	for id: int in _target_nodes.keys():
+		if not seen.has(id):
+			var r: Node = _target_nodes[id]["root"]
+			if is_instance_valid(r):
+				r.queue_free()
+			_target_nodes.erase(id)
+
+
 func update_hub(client: Object, world: Node3D, delta: float, pause_visible: bool,
 		center_label: Label, match_label: RichTextLabel) -> void:
 	_notice_time = maxf(0.0, _notice_time - delta)
 	if client == null or not client.is_spawned():
 		return
 	add_recruiters(client, world)
+	var in_hub: bool = client.is_spawned() and not client.get_recruiters().is_empty() and client.get_match().is_empty()
+	if in_hub:
+		_update_targets(client, delta)
 	var status: Dictionary = client.get_player_status()
 	if int(status.get("notice_id", 0)) != _notice_id:
 		_notice_id = int(status["notice_id"])
@@ -157,16 +396,22 @@ func update_hub(client: Object, world: Node3D, delta: float, pause_visible: bool
 		if _notice != "":
 			print("notice: ", _notice)
 			_notice_lines.append(_notice)
+			if _qm_screen != null and _qm_screen.visible:
+				_qm_screen.feedback = _notice
+
+	_sync_screen_data(client)
 
 	if _hub_hud == null or _terminal_screen == null:
 		if not client.get_recruiters().is_empty() and client.get_match().is_empty():
 			_update_hub_text_hud(client, center_label, match_label)
 		return
 
-	var in_hub: bool = client.is_spawned() and not client.get_recruiters().is_empty() and client.get_match().is_empty()
 	var terminal: Dictionary = at_recruiter(client) if in_hub else {}
+	var qm: Dictionary = at_quartermaster(client) if in_hub else {}
 	if _terminal_screen.visible and terminal.is_empty():
-		close_terminal()
+		close_all_screens()
+	if _qm_screen != null and _qm_screen.visible and qm.is_empty():
+		close_all_screens()
 	var factions: PackedStringArray = client.get_factions()
 	var queued: int = int(status.get("team", -1)) if status.get("queue", "none") == "queued" else -1
 	var sides: Array = []
@@ -176,18 +421,45 @@ func update_hub(client: Object, world: Node3D, delta: float, pause_visible: bool
 		_terminal_screen.title = str(terminal["name"])
 		_terminal_screen.sides = sides
 		_terminal_screen.queued = queued
+		if queued >= 0:
+			_terminal_screen.queue_mode = str(status.get("queue_mode", "standard"))
 		_terminal_screen.battlefield = str(status.get("battlefield", ""))
 		_terminal_screen.starts_in = float(status.get("starts_in", 0))
 		_terminal_screen.in_queue = int(status.get("in_queue", 0))
 		_terminal_screen.keys = {"leave": _key_name("leave_queue"), "close": "Esc"}
 		_terminal_screen.queue_redraw()
-	_hub_hud.visible = in_hub and not (pause_visible or _terminal_screen.visible)
-	_hub_hud.tooltip = "Press %s to use the %s" % [_key_name("interact"), terminal["name"]] \
-			if not terminal.is_empty() and queued < 0 else ""
+	_hub_hud.visible = in_hub and not (pause_visible or is_any_screen_open())
+	var tip := ""
+	if not terminal.is_empty() and queued < 0:
+		tip = "Press %s to use the %s" % [_key_name("interact"), terminal["name"]]
+	elif not qm.is_empty():
+		tip = "Press %s to talk to %s" % [_key_name("interact"), qm["name"]]
+	_hub_hud.tooltip = tip
 	_hub_hud.queue = {} if queued < 0 or queued >= sides.size() else {"side": sides[queued]["name"],
+			"mode": str(status.get("queue_mode", "standard")),
 			"icon": sides[queued]["icon"], "battlefield": str(status.get("battlefield", "")),
 			"starts_in": float(status.get("starts_in", 0)), "in_queue": int(status.get("in_queue", 0)),
 			"leave_key": _key_name("leave_queue")}
+	var los: Array = client.get_character_loadouts()
+	var active_idx := int(status.get("active_loadout", 0))
+	var lo_name := "Standard Issue"
+	if active_idx >= 0 and active_idx < los.size():
+		lo_name = str((los[active_idx] as Dictionary).get("name", lo_name))
+	_hub_hud.info = {
+		"credits": int(status.get("credits", 0)),
+		"fp": int(status.get("faction_points", 0)),
+		"xp": int(status.get("experience", 0)),
+		"loadout_name": lo_name,
+		"inv_key": _key_name("inventory"),
+	}
+	var sw_slot := int(status.get("switching_loadout", -1))
+	if sw_slot >= 0:
+		var sw_name := "Loadout %d" % (sw_slot + 1)
+		if sw_slot < los.size():
+			sw_name = str((los[sw_slot] as Dictionary).get("name", sw_name))
+		_hub_hud.switching = {"name": sw_name, "progress": float(status.get("switch_progress", 0.0))}
+	else:
+		_hub_hud.switching = {}
 	_hub_hud.notice = _notice
 	_hub_hud.notice_alpha = clampf(_notice_time, 0.0, 1.0)
 	_hub_hud.queue_redraw()
@@ -198,7 +470,8 @@ func _update_hub_text_hud(client: Object, center_label: Label, match_label: Rich
 	var status: Dictionary = client.get_player_status()
 	if status.get("queue", "none") == "queued" and factions.size() == 2:
 		var where := str(status.get("battlefield", ""))
-		match_label.text = "[center]Queued for the %s: %d in the queue, the battle%s starts in %d s\n[X] leave the queue[/center]" % [
+		match_label.text = "[center]Queued (%s) for the %s: %d in the queue, the battle%s starts in %d s\n[X] leave the queue[/center]" % [
+				str(status.get("queue_mode", "standard")),
 				factions[int(status["team"])], status["in_queue"], " on " + where if where != "" else "",
 				ceili(status["starts_in"])]
 		return
@@ -223,4 +496,4 @@ func _side_icon(side: String, index: int) -> String:
 
 
 func _key_name(action: String) -> String:
-	return Settings.binding_name(_settings.bindings[action]) if _settings != null else action
+	return Settings.binding_name(_settings.bindings[action]) if _settings != null and _settings.bindings.has(action) else action

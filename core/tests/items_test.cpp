@@ -1,4 +1,5 @@
 #include "swm/core/items.h"
+#include "swm/core/persistence.h"
 
 #include <filesystem>
 #include <fstream>
@@ -85,6 +86,41 @@ int main() {
     CHECK(near(hum_stats.max_health, 450.0));
     CHECK(near(hum_stats.mitigation_by_type[size_t(DamageType::laser)], 0.12));
     CHECK(near(wke_stats.mitigation_by_type[size_t(DamageType::laser)], 0.12));
+
+    // Starter kit + resolve_worn_models (appearance overrides & Wookiee slot blocking)
+    MemoryCharacterStore store;
+    const auto bob = store.create_character({0, "Bob", {0, 0, 0}, 0, "human", "male"});
+    ensure_starter_kit(store, bob.id);
+    const auto bob_items = store.list_items(bob.id);
+    const auto bob_los = store.list_loadouts(bob.id);
+    CHECK(bob_items.size() == 7 && bob_los.size() == 1);
+    const auto bob_after = *store.find(bob.id);
+    CHECK(bob_after.credits == 500 && bob_after.faction_points == 100);
+
+    // Reward calculation: Standard vs Gear
+    const BattleReward std_win = compute_battle_reward(true, false, 4, 2, QueueMode::standard);
+    const BattleReward gear_win = compute_battle_reward(true, false, 4, 2, QueueMode::gear);
+    CHECK(std_win.xp == 470 && std_win.faction_points == 190 && std_win.credits == 340);
+    CHECK(gear_win.faction_points > std_win.faction_points && gear_win.credits > std_win.credits);
+
+    // Worn models: appearance overrides armor visually; Wookiee skips armor chest
+    const std::filesystem::path worn_ini = "swm_worn_test_catalog.ini";
+    {
+        std::ofstream out(worn_ini);
+        out << "[item]\nId = armor_stormtrooper_chest\nKind = armor\nSlot = chest\nModel = armor/stormtrooper/chest_{g}.gltf\n"
+            << "[item]\nId = cloth_jacket_rebel\nKind = clothing\nSlot = jacket\nModel = clothing/jacket_rebel_{g}.gltf\n";
+    }
+    ItemCatalog worn_cat;
+    worn_cat.load(worn_ini);
+    std::filesystem::remove(worn_ini);
+    std::vector<ItemInstance> winv{{1, 1, "armor_stormtrooper_chest", 0.5, "", "{}"},
+                                   {2, 1, "cloth_jacket_rebel", 0.5, "", "{}"}};
+    CharacterLoadout wcl;
+    wcl.gear_ids["chest"] = 1;
+    CHECK(resolve_worn_models(worn_cat, wcl, winv, Species::human, Gender::female) == "armor/stormtrooper/chest_f.gltf");
+    CHECK(resolve_worn_models(worn_cat, wcl, winv, Species::wookiee, Gender::male).empty());
+    wcl.appearance_ids["jacket"] = 2;
+    CHECK(resolve_worn_models(worn_cat, wcl, winv, Species::human, Gender::male) == "clothing/jacket_rebel_m.gltf");
 
     return swm::test::finish("items_test");
 }

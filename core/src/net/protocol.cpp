@@ -11,7 +11,21 @@ namespace swm::core::net {
 namespace {
 
 enum class Type : uint8_t {
-    hello = 1, welcome, input_batch, snapshot, goodbye, refused, spawn_request, queue_request, transfer
+    hello = 1,
+    welcome,
+    input_batch,
+    snapshot,
+    goodbye,
+    refused,
+    spawn_request,
+    queue_request,
+    transfer,
+    inventory_sync,
+    inventory_ack,
+    save_loadout,
+    switch_loadout,
+    shop_buy,
+    destroy_item,
 };
 
 void put_vec3(ByteWriter& out, Vec3 v) {
@@ -198,6 +212,224 @@ MatchState get_match(ByteReader& in) {
     return m;
 }
 
+void put_modifiers(ByteWriter& out, const std::vector<StatModifier>& mods) {
+    out.put(uint8_t(std::min<size_t>(mods.size(), 64)));
+    for (size_t i = 0; i < mods.size() && i < 64; ++i) {
+        out.put(uint8_t(mods[i].stat));
+        out.put(float(mods[i].add));
+        out.put(float(mods[i].multiply));
+    }
+}
+
+std::vector<StatModifier> get_modifiers(ByteReader& in) {
+    const size_t n = in.get<uint8_t>();
+    std::vector<StatModifier> mods;
+    mods.reserve(n);
+    for (size_t i = 0; i < n; ++i) {
+        const uint8_t s = in.get<uint8_t>();
+        if (s > uint8_t(Stat::mitigation_melee)) {
+            throw PacketError("bad stat");
+        }
+        StatModifier m;
+        m.stat = Stat(s);
+        m.add = in.get<float>();
+        m.multiply = in.get<float>();
+        mods.push_back(m);
+    }
+    return mods;
+}
+
+void put_weapon_def(ByteWriter& out, const WeaponDef& w) {
+    out.put_string(w.name);
+    out.put_string(w.model);
+    out.put_string(w.anim_set);
+    out.put(uint8_t(w.damage_type));
+    out.put(uint8_t(w.projectile));
+    out.put(int16_t(w.ammo));
+    out.put(float(w.shot_delay));
+    out.put(int16_t(w.rounds_per_clip));
+    out.put(float(w.reload_time));
+    out.put(float(w.heat_per_shot));
+    out.put(float(w.heat_recover_rate));
+    out.put(float(w.heat_threshold));
+    out.put(float(w.yaw_spread));
+    out.put(float(w.pitch_spread));
+    out.put(float(w.spread_per_shot));
+    out.put(float(w.spread_recover_rate));
+    out.put(float(w.spread_limit));
+    out.put(uint8_t(std::clamp(w.shots_per_salvo, 1, 255)));
+    out.put(float(w.zoom_min));
+    out.put(float(w.zoom_max));
+    out.put(uint8_t(w.zoom_first_person));
+    out.put(float(w.damage));
+    out.put(float(w.bolt_speed));
+    out.put(float(w.bolt_gravity));
+    out.put(float(w.bolt_life));
+    out.put(float(w.damage_transition_delay));
+    out.put(float(w.damage_transition_period));
+    out.put(float(w.damage_final));
+    out.put(float(w.bolt_acceleration));
+    out.put(float(w.rebound));
+    out.put(float(w.friction));
+    out.put(uint8_t(w.explode_on_impact));
+    out.put(float(w.fuse));
+    out.put(uint8_t(w.timer_on_contact));
+    out.put(float(w.shot_elevate));
+    out.put(float(w.explosion_damage));
+    out.put(float(w.explosion_inner));
+    out.put(float(w.explosion_outer));
+    out.put(float(w.explosion_push));
+    out.put(float(w.push_inner));
+    out.put(float(w.push_outer));
+    for (double c : w.bolt_color) out.put(float(c));
+    out.put(float(w.bolt_length));
+    out.put(float(w.bolt_width));
+    out.put_string(w.bolt_texture);
+    out.put(float(w.glow_length));
+    out.put(float(w.blur_length));
+    for (double c : w.light_color) out.put(float(c));
+    out.put(float(w.light_radius));
+    out.put_string(w.ordnance_model);
+    out.put_string(w.trail_effect);
+    out.put_string(w.impact_effect);
+    out.put_string(w.explosion_effect);
+    out.put_string(w.muzzle_flash);
+    for (double c : w.flash_color) out.put(float(c));
+    out.put(float(w.flash_length));
+    for (double c : w.flash_light_color) out.put(float(c));
+    out.put(float(w.flash_light_radius));
+    out.put(float(w.flash_light_duration));
+    out.put_string(w.fire_sound);
+    out.put_string(w.fire_empty_sound);
+    out.put_string(w.reload_sound);
+    out.put_string(w.overheat_sound);
+    out.put_string(w.overheat_stop_sound);
+    out.put_string(w.weapon_change_sound);
+    out.put_string(w.ordnance_sound);
+    out.put_string(w.bounce_sound);
+    out.put_string(w.explosion_sound);
+    put_modifiers(out, w.modifiers);
+}
+
+WeaponDef get_weapon_def(ByteReader& in) {
+    WeaponDef w;
+    w.name = in.get_string();
+    w.model = in.get_string();
+    w.anim_set = in.get_string();
+    const uint8_t dt = in.get<uint8_t>();
+    if (dt >= damage_type_count) throw PacketError("bad damage type");
+    w.damage_type = DamageType(dt);
+    const uint8_t proj = in.get<uint8_t>();
+    if (proj > uint8_t(Projectile::grenade)) throw PacketError("bad projectile");
+    w.projectile = Projectile(proj);
+    w.ammo = in.get<int16_t>();
+    w.shot_delay = in.get<float>();
+    w.rounds_per_clip = in.get<int16_t>();
+    w.reload_time = in.get<float>();
+    w.heat_per_shot = in.get<float>();
+    w.heat_recover_rate = in.get<float>();
+    w.heat_threshold = in.get<float>();
+    w.yaw_spread = in.get<float>();
+    w.pitch_spread = in.get<float>();
+    w.spread_per_shot = in.get<float>();
+    w.spread_recover_rate = in.get<float>();
+    w.spread_limit = in.get<float>();
+    w.shots_per_salvo = in.get<uint8_t>();
+    w.zoom_min = in.get<float>();
+    w.zoom_max = in.get<float>();
+    w.zoom_first_person = in.get<uint8_t>() != 0;
+    w.damage = in.get<float>();
+    w.bolt_speed = in.get<float>();
+    w.bolt_gravity = in.get<float>();
+    w.bolt_life = in.get<float>();
+    w.damage_transition_delay = in.get<float>();
+    w.damage_transition_period = in.get<float>();
+    w.damage_final = in.get<float>();
+    w.bolt_acceleration = in.get<float>();
+    w.rebound = in.get<float>();
+    w.friction = in.get<float>();
+    w.explode_on_impact = in.get<uint8_t>() != 0;
+    w.fuse = in.get<float>();
+    w.timer_on_contact = in.get<uint8_t>() != 0;
+    w.shot_elevate = in.get<float>();
+    w.explosion_damage = in.get<float>();
+    w.explosion_inner = in.get<float>();
+    w.explosion_outer = in.get<float>();
+    w.explosion_push = in.get<float>();
+    w.push_inner = in.get<float>();
+    w.push_outer = in.get<float>();
+    for (double& c : w.bolt_color) c = in.get<float>();
+    w.bolt_length = in.get<float>();
+    w.bolt_width = in.get<float>();
+    w.bolt_texture = in.get_string();
+    w.glow_length = in.get<float>();
+    w.blur_length = in.get<float>();
+    for (double& c : w.light_color) c = in.get<float>();
+    w.light_radius = in.get<float>();
+    w.ordnance_model = in.get_string();
+    w.trail_effect = in.get_string();
+    w.impact_effect = in.get_string();
+    w.explosion_effect = in.get_string();
+    w.muzzle_flash = in.get_string();
+    for (double& c : w.flash_color) c = in.get<float>();
+    w.flash_length = in.get<float>();
+    for (double& c : w.flash_light_color) c = in.get<float>();
+    w.flash_light_radius = in.get<float>();
+    w.flash_light_duration = in.get<float>();
+    w.fire_sound = in.get_string();
+    w.fire_empty_sound = in.get_string();
+    w.reload_sound = in.get_string();
+    w.overheat_sound = in.get_string();
+    w.overheat_stop_sound = in.get_string();
+    w.weapon_change_sound = in.get_string();
+    w.ordnance_sound = in.get_string();
+    w.bounce_sound = in.get_string();
+    w.explosion_sound = in.get_string();
+    w.modifiers = get_modifiers(in);
+    return w;
+}
+
+void put_char_loadout(ByteWriter& out, const CharacterLoadout& lo) {
+    out.put(uint8_t(lo.slot_index));
+    out.put_string(lo.name);
+    out.put(lo.primary_id);
+    out.put(lo.sidearm_id);
+    out.put(lo.secondary_id);
+    out.put(uint8_t(std::min<size_t>(lo.gear_ids.size(), 32)));
+    for (const auto& [k, v] : lo.gear_ids) {
+        out.put_string(k);
+        out.put(v);
+    }
+    out.put(uint8_t(std::min<size_t>(lo.appearance_ids.size(), 32)));
+    for (const auto& [k, v] : lo.appearance_ids) {
+        out.put_string(k);
+        out.put(v);
+    }
+}
+
+CharacterLoadout get_char_loadout(ByteReader& in) {
+    CharacterLoadout lo;
+    lo.slot_index = in.get<uint8_t>();
+    if (lo.slot_index >= max_character_loadouts) {
+        throw PacketError("bad loadout slot");
+    }
+    lo.name = in.get_string();
+    lo.primary_id = in.get<uint64_t>();
+    lo.sidearm_id = in.get<uint64_t>();
+    lo.secondary_id = in.get<uint64_t>();
+    const size_t gn = in.get<uint8_t>();
+    for (size_t i = 0; i < gn; ++i) {
+        const std::string k = in.get_string();
+        lo.gear_ids[k] = in.get<uint64_t>();
+    }
+    const size_t an = in.get<uint8_t>();
+    for (size_t i = 0; i < an; ++i) {
+        const std::string k = in.get_string();
+        lo.appearance_ids[k] = in.get<uint64_t>();
+    }
+    return lo;
+}
+
 struct Encoder {
     ByteWriter& out;
 
@@ -224,6 +456,14 @@ struct Encoder {
         out.put(uint8_t(std::min<size_t>(m.looks.size(), 255)));
         for (size_t i = 0; i < m.looks.size() && i < 255; ++i) {
             out.put_string(m.looks[i]);
+        }
+        out.put(uint8_t(std::min<size_t>(m.quartermasters.size(), 255)));
+        for (size_t i = 0; i < m.quartermasters.size() && i < 255; ++i) {
+            const Quartermaster& q = m.quartermasters[i];
+            out.put_string(q.name);
+            out.put_string(q.faction);
+            put_vec3(out, q.position);
+            out.put(q.radius);
         }
     }
     void operator()(const Refused& m) {
@@ -261,6 +501,9 @@ struct Encoder {
             out.put(entity.gender);
             out.put_string(entity.name);
             out.put_long_string(entity.appearance);
+            out.put_string(entity.weapon_model);
+            out.put_string(entity.anim_set);
+            out.put_long_string(entity.worn);
         }
         out.put(uint16_t(m.bolts.size()));
         for (const BoltState& bolt : m.bolts) {
@@ -301,17 +544,34 @@ struct Encoder {
             put_vec3(out, p.position);
             out.put(p.time_left);
         }
+        out.put(uint16_t(m.targets.size()));
+        for (const TargetState& t : m.targets) {
+            out.put(t.id);
+            out.put_string(t.name);
+            put_vec3(out, t.position);
+            out.put(t.health);
+            out.put(t.max_health);
+            out.put(uint8_t(t.alive));
+        }
         out.put(uint8_t(m.match.has_value()));
         if (m.match) {
             put_match(out, *m.match);
         }
         out.put(uint8_t(m.you.queue));
         out.put(m.you.team);
+        out.put(uint8_t(m.you.queue_mode));
         out.put(m.you.in_queue);
         out.put(m.you.starts_in);
         out.put_string(m.you.battlefield);
         out.put(m.you.notice_id);
         out.put_string(m.you.notice);
+        out.put(m.you.credits);
+        out.put(m.you.faction_points);
+        out.put(m.you.experience);
+        out.put(m.you.active_loadout);
+        out.put(m.you.switching_loadout);
+        out.put(m.you.switch_progress);
+        out.put(m.you.inventory_rev);
     }
     void operator()(const Goodbye&) { out.put(uint8_t(Type::goodbye)); }
     void operator()(const SpawnRequest& m) {
@@ -322,6 +582,7 @@ struct Encoder {
     void operator()(const QueueRequest& m) {
         out.put(uint8_t(Type::queue_request));
         out.put(m.team);
+        out.put(uint8_t(m.mode));
     }
     void operator()(const Transfer& m) {
         out.put(uint8_t(Type::transfer));
@@ -329,6 +590,62 @@ struct Encoder {
         out.put(m.port);
         out.put(m.ticket);
         out.put_string(m.battlefield);
+    }
+    void operator()(const InventorySync& m) {
+        out.put(uint8_t(Type::inventory_sync));
+        out.put(m.revision);
+        out.put(uint16_t(m.items.size()));
+        for (const ItemInstance& inst : m.items) {
+            out.put(inst.id);
+            out.put(inst.owner_id);
+            out.put_string(inst.def_id);
+            out.put(float(inst.quality));
+            out.put_string(inst.custom_name);
+            out.put_string(inst.color_json);
+        }
+        out.put(uint8_t(std::min<size_t>(m.loadouts.size(), max_character_loadouts)));
+        for (size_t i = 0; i < m.loadouts.size() && i < size_t(max_character_loadouts); ++i) {
+            put_char_loadout(out, m.loadouts[i]);
+        }
+        out.put(uint8_t(std::min<size_t>(m.resolved_loadouts.size(), max_character_loadouts)));
+        for (size_t i = 0; i < m.resolved_loadouts.size() && i < size_t(max_character_loadouts); ++i) {
+            const Loadout& lo = m.resolved_loadouts[i];
+            out.put_string(lo.name);
+            for (int s = 0; s < weapon_slots; ++s) {
+                const bool has_w = lo.weapons[size_t(s)].has_value();
+                out.put(uint8_t(has_w));
+                if (has_w) {
+                    put_weapon_def(out, *lo.weapons[size_t(s)]);
+                }
+            }
+            out.put(uint8_t(std::min<size_t>(lo.gear.size(), 32)));
+            for (size_t gi = 0; gi < lo.gear.size() && gi < 32; ++gi) {
+                out.put_string(lo.gear[gi].name);
+                out.put_string(lo.gear[gi].slot);
+                put_modifiers(out, lo.gear[gi].modifiers);
+            }
+        }
+    }
+    void operator()(const InventoryAck& m) {
+        out.put(uint8_t(Type::inventory_ack));
+        out.put(m.revision);
+    }
+    void operator()(const SaveLoadoutRequest& m) {
+        out.put(uint8_t(Type::save_loadout));
+        put_char_loadout(out, m.loadout);
+    }
+    void operator()(const SwitchLoadoutRequest& m) {
+        out.put(uint8_t(Type::switch_loadout));
+        out.put(m.slot);
+    }
+    void operator()(const ShopBuyRequest& m) {
+        out.put(uint8_t(Type::shop_buy));
+        out.put_string(m.def_id);
+        out.put(uint8_t(m.use_faction_points));
+    }
+    void operator()(const DestroyItemRequest& m) {
+        out.put(uint8_t(Type::destroy_item));
+        out.put(m.item_id);
     }
 };
 
@@ -383,6 +700,15 @@ Message decode(std::span<const uint8_t> packet) {
         for (size_t i = 0; i < looks; ++i) {
             m.looks.push_back(in.get_string());
         }
+        const size_t qms = in.get<uint8_t>();
+        for (size_t i = 0; i < qms; ++i) {
+            Quartermaster q;
+            q.name = in.get_string();
+            q.faction = in.get_string();
+            q.position = get_vec3(in);
+            q.radius = in.get<double>();
+            m.quartermasters.push_back(std::move(q));
+        }
         message = m;
         break;
     }
@@ -432,6 +758,9 @@ Message decode(std::span<const uint8_t> packet) {
             }
             entity.name = in.get_string();
             entity.appearance = in.get_long_string();
+            entity.weapon_model = in.get_string();
+            entity.anim_set = in.get_string();
+            entity.worn = in.get_long_string();
             m.entities.push_back(entity);
         }
         const size_t bolts = in.get<uint16_t>();
@@ -495,6 +824,17 @@ Message decode(std::span<const uint8_t> packet) {
             p.time_left = in.get<float>();
             m.pickups.push_back(p);
         }
+        const size_t targets = in.get<uint16_t>();
+        for (size_t i = 0; i < targets; ++i) {
+            TargetState t;
+            t.id = in.get<uint32_t>();
+            t.name = in.get_string();
+            t.position = get_vec3(in);
+            t.health = in.get<float>();
+            t.max_health = in.get<float>();
+            t.alive = in.get<uint8_t>() != 0;
+            m.targets.push_back(std::move(t));
+        }
         if (in.get<uint8_t>() != 0) {
             m.match = get_match(in);
         }
@@ -504,11 +844,23 @@ Message decode(std::span<const uint8_t> packet) {
         }
         m.you.queue = PlayerStatus::Queue(queue);
         m.you.team = get_character_team(in);
+        const uint8_t qmode = in.get<uint8_t>();
+        if (qmode > uint8_t(QueueMode::gear)) {
+            throw PacketError("bad queue mode");
+        }
+        m.you.queue_mode = QueueMode(qmode);
         m.you.in_queue = in.get<uint16_t>();
         m.you.starts_in = in.get<float>();
         m.you.battlefield = in.get_string();
         m.you.notice_id = in.get<uint16_t>();
         m.you.notice = in.get_string();
+        m.you.credits = in.get<int64_t>();
+        m.you.faction_points = in.get<int64_t>();
+        m.you.experience = in.get<int64_t>();
+        m.you.active_loadout = in.get<uint8_t>();
+        m.you.switching_loadout = in.get<int8_t>();
+        m.you.switch_progress = in.get<float>();
+        m.you.inventory_rev = in.get<uint32_t>();
         message = std::move(m);
         break;
     }
@@ -525,9 +877,17 @@ Message decode(std::span<const uint8_t> packet) {
         message = m;
         break;
     }
-    case Type::queue_request:
-        message = QueueRequest{get_team(in)};
+    case Type::queue_request: {
+        QueueRequest m;
+        m.team = get_team(in);
+        const uint8_t mode = in.get<uint8_t>();
+        if (mode > uint8_t(QueueMode::gear)) {
+            throw PacketError("bad queue mode");
+        }
+        m.mode = QueueMode(mode);
+        message = m;
         break;
+    }
     case Type::transfer: {
         Transfer m;
         m.address = in.get<uint32_t>();
@@ -537,6 +897,72 @@ Message decode(std::span<const uint8_t> packet) {
         message = m;
         break;
     }
+    case Type::inventory_sync: {
+        InventorySync m;
+        m.revision = in.get<uint32_t>();
+        const size_t icount = in.get<uint16_t>();
+        m.items.reserve(icount);
+        for (size_t i = 0; i < icount; ++i) {
+            ItemInstance inst;
+            inst.id = in.get<uint64_t>();
+            inst.owner_id = in.get<uint64_t>();
+            inst.def_id = in.get_string();
+            inst.quality = in.get<float>();
+            inst.custom_name = in.get_string();
+            inst.color_json = in.get_string();
+            m.items.push_back(std::move(inst));
+        }
+        const size_t lcount = in.get<uint8_t>();
+        if (lcount > size_t(max_character_loadouts)) throw PacketError("too many loadouts");
+        for (size_t i = 0; i < lcount; ++i) {
+            m.loadouts.push_back(get_char_loadout(in));
+        }
+        const size_t rcount = in.get<uint8_t>();
+        if (rcount > size_t(max_character_loadouts)) throw PacketError("too many resolved loadouts");
+        for (size_t i = 0; i < rcount; ++i) {
+            Loadout lo;
+            lo.name = in.get_string();
+            for (int s = 0; s < weapon_slots; ++s) {
+                if (in.get<uint8_t>() != 0) {
+                    lo.weapons[size_t(s)] = get_weapon_def(in);
+                }
+            }
+            const size_t gcount = in.get<uint8_t>();
+            for (size_t gi = 0; gi < gcount; ++gi) {
+                Gear g;
+                g.name = in.get_string();
+                g.slot = in.get_string();
+                g.modifiers = get_modifiers(in);
+                lo.gear.push_back(std::move(g));
+            }
+            m.resolved_loadouts.push_back(std::move(lo));
+        }
+        message = std::move(m);
+        break;
+    }
+    case Type::inventory_ack:
+        message = InventoryAck{in.get<uint32_t>()};
+        break;
+    case Type::save_loadout:
+        message = SaveLoadoutRequest{get_char_loadout(in)};
+        break;
+    case Type::switch_loadout: {
+        SwitchLoadoutRequest m;
+        m.slot = in.get<uint8_t>();
+        if (m.slot >= max_character_loadouts) throw PacketError("bad loadout slot");
+        message = m;
+        break;
+    }
+    case Type::shop_buy: {
+        ShopBuyRequest m;
+        m.def_id = in.get_string();
+        m.use_faction_points = in.get<uint8_t>() != 0;
+        message = std::move(m);
+        break;
+    }
+    case Type::destroy_item:
+        message = DestroyItemRequest{in.get<uint64_t>()};
+        break;
     default:
         throw PacketError("unknown message type");
     }

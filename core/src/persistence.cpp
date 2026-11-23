@@ -106,4 +106,38 @@ void MemoryCharacterStore::update_economy(PersistentId id, int64_t credits, int6
     it->second.active_loadout = active_loadout;
 }
 
+void ensure_starter_kit(CharacterStore& store, PersistentId char_id) {
+    if (!store.list_items(char_id).empty()) {
+        return;
+    }
+    const auto ch = store.find(char_id);
+    if (!ch) {
+        return;
+    }
+    const auto grant = [&](const char* def_id) {
+        return store.grant_item({0, char_id, def_id, 0.5, "", "{}"});
+    };
+    const auto primary = grant("wp_rifle_e11");
+    const auto sidearm = grant("wp_pistol_dh17");
+    const auto grenade = grant("wp_grenade_c22");
+    const auto psg = grant("psg_mark1");
+    grant("cloth_jacket_rebel");
+    const auto pants = grant("cloth_pants_cargo");
+    const auto boots = grant("cloth_boots_leather");
+
+    CharacterLoadout lo;
+    lo.slot_index = 0;
+    lo.name = "Standard Issue";
+    lo.primary_id = primary.id;
+    lo.sidearm_id = sidearm.id;
+    lo.secondary_id = grenade.id;
+    lo.gear_ids["deflector_shield"] = psg.id;
+    lo.appearance_ids["pants"] = pants.id;
+    lo.appearance_ids["boots_cosmetic"] = boots.id;
+    store.save_loadout(char_id, lo);
+    if (ch->credits == 0 && ch->faction_points == 0 && ch->experience == 0) {
+        store.update_economy(char_id, 500, 100, 0, 0);
+    }
+}
+
 } // namespace swm::core

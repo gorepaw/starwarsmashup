@@ -8,6 +8,8 @@ const SPECIES_DIR := "res://imported_assets/species"
 
 var model: Node3D
 var hair_node: Node3D
+var worn_node: Node3D
+var weapon_node: Node3D
 var colors_data: Dictionary = {}
 var hair_colors_data: Dictionary = {}
 var species_meta: Dictionary = {}
@@ -122,6 +124,84 @@ func eye_y() -> float:
 	return base_eye * (model.scale.y if model != null else 1.0)
 
 
+func set_worn_models(worn_paths: Array, weapon_model: String) -> void:
+	if worn_node != null and is_instance_valid(worn_node):
+		worn_node.queue_free()
+		worn_node = null
+	if weapon_node != null and is_instance_valid(weapon_node):
+		weapon_node.queue_free()
+		weapon_node = null
+	if model == null or _skeleton == null:
+		return
+
+	var has_helmet := false
+	if not worn_paths.is_empty():
+		var body_blends := {}
+		for mi: MeshInstance3D in _meshes:
+			if mi.mesh == null:
+				continue
+			for i in mi.mesh.get_blend_shape_count():
+				var bname := String(mi.mesh.get_blend_shape_name(i))
+				if bname in ["blend_muscle", "blend_fat", "blend_skinny"]:
+					body_blends[bname] = mi.get_blend_shape_value(i)
+		var holder := Node3D.new()
+		holder.name = "StageWorn"
+		_skeleton.add_child(holder)
+		worn_node = holder
+		for raw_rel: Variant in worn_paths:
+			var rel := str(raw_rel).strip_edges()
+			if rel == "":
+				continue
+			var gltf_path := "res://imported_assets/" + rel
+			if not FileAccess.file_exists(gltf_path):
+				continue
+			var doc := GLTFDocument.new()
+			var state := GLTFState.new()
+			if doc.append_from_file(ProjectSettings.globalize_path(gltf_path), state) != OK:
+				continue
+			var scene := doc.generate_scene(state) as Node3D
+			if scene == null:
+				continue
+			var cdata := SwgColors.load_colors(ProjectSettings.globalize_path(gltf_path))
+			if not cdata.is_empty():
+				SwgColors.apply(scene, cdata, 0)
+			if rel.contains("helmet"):
+				has_helmet = true
+			for m: Node in scene.find_children("*", "MeshInstance3D", true, false):
+				var mi := m as MeshInstance3D
+				mi.get_parent().remove_child(mi)
+				mi.owner = null
+				holder.add_child(mi)
+				mi.skeleton = NodePath("../..")
+				if mi.mesh != null and not body_blends.is_empty():
+					for i in mi.mesh.get_blend_shape_count():
+						var bname := String(mi.mesh.get_blend_shape_name(i))
+						if body_blends.has(bname):
+							mi.set_blend_shape_value(i, float(body_blends[bname]))
+			scene.queue_free()
+
+	if hair_node != null and is_instance_valid(hair_node):
+		hair_node.visible = not has_helmet
+
+	if weapon_model != "":
+		var wpath := "res://imported_assets/" + weapon_model
+		if FileAccess.file_exists(wpath):
+			var doc := GLTFDocument.new()
+			var state := GLTFState.new()
+			if doc.append_from_file(ProjectSettings.globalize_path(wpath), state) == OK:
+				var wscene := doc.generate_scene(state) as Node3D
+				if wscene != null:
+					var bone_idx := _skeleton.find_bone("hold_r")
+					if bone_idx >= 0:
+						var attach := BoneAttachment3D.new()
+						attach.bone_idx = bone_idx
+						_skeleton.add_child(attach)
+						attach.add_child(wscene)
+						weapon_node = attach
+					else:
+						wscene.queue_free()
+
+
 func clear() -> void:
 	_meshes.clear()
 	_blend_indices.clear()
@@ -129,6 +209,12 @@ func clear() -> void:
 	colors_data.clear()
 	hair_colors_data.clear()
 	species_meta.clear()
+	if worn_node != null and is_instance_valid(worn_node):
+		worn_node.queue_free()
+	worn_node = null
+	if weapon_node != null and is_instance_valid(weapon_node):
+		weapon_node.queue_free()
+	weapon_node = null
 	if hair_node != null and is_instance_valid(hair_node):
 		hair_node.queue_free()
 	hair_node = null

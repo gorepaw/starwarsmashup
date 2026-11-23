@@ -57,9 +57,41 @@ void test_protocol() {
 
     const Message hello = decode(encode(Hello{"trooper"}));
     CHECK(std::get_if<Hello>(&hello) != nullptr && std::get<Hello>(hello).name == "trooper");
-    const Message welcome = decode(encode(Welcome{3, 30, 77}));
-    CHECK(std::get<Welcome>(welcome).entity_id == 3 && std::get<Welcome>(welcome).server_tick == 77);
+    const Message welcome = decode(encode(Welcome{3, 30, 77, 0, {}, {"Rebellion", "Empire"}, {},
+                                                  {{"Imperial Quartermaster", "empire", {1, 2, 3}, 4.0}}}));
+    CHECK(std::get<Welcome>(welcome).entity_id == 3 && std::get<Welcome>(welcome).server_tick == 77 &&
+          std::get<Welcome>(welcome).quartermasters.size() == 1);
     CHECK(std::holds_alternative<Goodbye>(decode(encode(Goodbye{}))));
+
+    // Stage 4 messages round-trip
+    const Message qreq = decode(encode(QueueRequest{1, QueueMode::gear}));
+    CHECK(std::get<QueueRequest>(qreq).team == 1 && std::get<QueueRequest>(qreq).mode == QueueMode::gear);
+
+    InventorySync isync;
+    isync.revision = 4;
+    isync.items.push_back({10, 1, "wp_rifle_e11", 0.85f, "", "{}"});
+    CharacterLoadout cl;
+    cl.slot_index = 1;
+    cl.name = "Heavy";
+    cl.primary_id = 10;
+    cl.gear_ids["deflector_shield"] = 11;
+    cl.appearance_ids["pants"] = 12;
+    isync.loadouts.push_back(cl);
+    Loadout rl;
+    rl.name = "Heavy";
+    rl.gear.push_back({"psg_mark1", "deflector_shield", {{Stat::mitigation_laser, 0.08, 1.0}}});
+    isync.resolved_loadouts.push_back(rl);
+    const Message decoded_sync = decode(encode(isync));
+    const auto* ds = std::get_if<InventorySync>(&decoded_sync);
+    CHECK(ds != nullptr && ds->revision == 4 && ds->items.size() == 1 && ds->loadouts.size() == 1 &&
+          ds->resolved_loadouts.size() == 1 && ds->resolved_loadouts[0].name == "Heavy");
+
+    CHECK(std::get<InventoryAck>(decode(encode(InventoryAck{4}))).revision == 4);
+    CHECK(std::get<SwitchLoadoutRequest>(decode(encode(SwitchLoadoutRequest{2}))).slot == 2);
+    CHECK(std::get<ShopBuyRequest>(decode(encode(ShopBuyRequest{"wp_rifle_t21", true}))).def_id == "wp_rifle_t21");
+    CHECK(std::get<DestroyItemRequest>(decode(encode(DestroyItemRequest{99}))).item_id == 99);
+    const Message slr = decode(encode(SaveLoadoutRequest{cl}));
+    CHECK(std::get<SaveLoadoutRequest>(slr).loadout == cl);
 
     // Malformed packets are rejected.
     const auto expect_error = [](std::vector<uint8_t> packet) {
