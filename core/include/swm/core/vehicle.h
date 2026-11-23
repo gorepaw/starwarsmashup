@@ -16,7 +16,8 @@ class World;
 
 // How a vehicle moves: hovering over the ground (speeder bikes, hover
 // tanks) or walking on it (AT-STs).
-enum class VehicleKind : uint8_t { hover, walker };
+// A turret stays where it stands and turns to its gunner's look.
+enum class VehicleKind : uint8_t { hover, walker, turret };
 
 // A Battlefront vehicle (written by `bf2tool export-vehicle` from its class):
 // its handling, body, health and the pilot's weapons.

@@ -416,6 +416,50 @@ void test_gunner_seat() {
     CHECK(!a.alive() && !c.alive() && b.self().kills == 2);
 }
 
+// A turret: it stays where it stands, however it's pushed, and turns to its
+// gunner's look at its MaxTurnSpeed.
+void test_turret() {
+    const auto dir = std::filesystem::temp_directory_path() / "swm_turret_test";
+    std::filesystem::create_directories(dir / "test_turret");
+    std::ofstream(dir / "test_turret" / "test_turret.ini") << R"([vehicle]
+Name = test_turret
+Kind = turret
+Label = Minigun Turret
+MaxHealth = 800.0
+MaxTurnSpeed = 2.0
+EyePointOffset = 0.0 1.5 1
+PitchLimits = -45.0 45.0
+YawLimits = -180.0 180.0
+Bounds = -1.2 0 -1.2 1.2 1.9 1.9
+
+[weapon]
+Name = tur_weap_laser
+Projectile = bolt
+RoundsPerClip = 0
+MaxDamage = 50
+PersonScale = 1
+)";
+    const VehicleClass t = load_vehicle_class(dir / "test_turret" / "test_turret.ini");
+    CHECK(t.kind == VehicleKind::turret && near(t.turn_rate, 2) && t.loadout.weapons[0]);
+    Heightfield flat{101, 1.0, -50, -50, std::vector<float>(101 * 101, 0.0f)};
+    World world(flat);
+    MoveState state;
+    state.position = {3, 0, 4};
+    MoveInput input;
+    input.forward = 127;
+    input.right = 127;
+    input.buttons = MoveInput::sprint;
+    input.yaw = 1.0f;
+    simulate_vehicle(state, input, world, t, dt);
+    CHECK(near(state.yaw, 2 * dt, 1e-6));  // turning at 2 rad/s
+    for (int i = 0; i < 60; ++i) {
+        simulate_vehicle(state, input, world, t, dt);
+    }
+    CHECK(near(state.yaw, 1.0, 1e-5));
+    CHECK(near(state.position.x, 3) && near(state.position.z, 4) && state.velocity.length() == 0);
+    std::filesystem::remove_all(dir);
+}
+
 // A bot by an empty bike gets in and drives it toward the post it wants;
 // stuck against nothing, it keeps going.
 void test_bot_drives() {
@@ -461,5 +505,6 @@ int main() {
     test_match_vehicles();
     test_gunner_seat();
     test_bot_drives();
+    test_turret();
     return swm::test::finish("vehicle_test");
 }

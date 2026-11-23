@@ -482,9 +482,11 @@ int cmd_export_vehicle(const std::vector<std::string>& args) {
         throw std::runtime_error(args[2] + " isn't in " + args[1] + ".lvl");
     }
     const OdfClass vehicle = library.classes().resolve(name);
-    const std::string kind = lowercase(vehicle.base);
-    if (kind != "hover" && kind != "walker") {
-        throw std::runtime_error(args[2] + " is a " + vehicle.base + ", not a hover or walker vehicle");
+    // A map's turret (side/tur.lvl's armedbuildings) is a vehicle that
+    // stays put: its operator's section (TURRET1) has its limits and guns.
+    const std::string kind = lowercase(vehicle.base) == "armedbuilding" ? "turret" : lowercase(vehicle.base);
+    if (kind != "hover" && kind != "walker" && kind != "turret") {
+        throw std::runtime_error(args[2] + " is a " + vehicle.base + ", not a hover or walker vehicle or a turret");
     }
     std::filesystem::create_directories(out_dir);
     std::ofstream out(out_dir / (name + ".ini"), std::ios::binary);
@@ -2187,6 +2189,32 @@ int cmd_export_map(const std::vector<std::string>& args) {
         ++vehicle_spawns;
     }
     std::cerr << std::format("vehicle spawns: {}\n", vehicle_spawns);
+    // Turrets: objects of side/tur.lvl's armedbuilding classes (Naboo's
+    // laser turrets), for whoever mans them (bf2tool export-vehicle tur
+    // <class> exports each class).
+    std::set<std::string> turret_classes;
+    if (const auto tur = std::filesystem::path(args[0]) / "side" / "tur.lvl"; std::filesystem::exists(tur)) {
+        OdfLibrary turrets;
+        const std::vector<uint8_t> tur_bytes = read_file(tur);
+        turrets.add(parse_ucfb(tur_bytes));
+        for (const OdfClass& odf : turrets.all()) {
+            if (lowercase(turrets.resolve(odf.type).base) == "armedbuilding") {
+                turret_classes.insert(lowercase(odf.type));
+            }
+        }
+    }
+    int turret_count = 0;
+    for (const WorldItem& object : level.objects) {
+        if (!included(object) || !turret_classes.contains(lowercase(object.type))) {
+            continue;
+        }
+        ini << "\n[turret]\nName = " << object.name << "\nClass = " << lowercase(object.type) << "\n"
+            << std::format("Position = {:.2f} {:.2f} {:.2f}\n", object.position[0], object.position[2],
+                           object.position[1])
+            << std::format("Forward = {:.4f} {:.4f}\n", object.rotation[6], object.rotation[8]);
+        ++turret_count;
+    }
+    std::cerr << std::format("turrets: {}\n", turret_count);
     std::cerr << std::format("{} ({}): {} command posts\nwrote {}\n", mode, mode_layers, posts, out_dir.string());
     if (posts == 0) {
         throw std::runtime_error("no command posts in " + mode + " (" + mode_layers + ")");
@@ -2607,7 +2635,8 @@ int cmd_export_audio(const std::vector<std::string>& args) {
             for (const char* key : {"FireSound", "FireEmptySound", "ReloadSound", "OverheatSound", "OverheatStopSound",
                                     "WeaponChangeSound", "ChangeModeSound", "FireLoopSound", "OrdnanceSound",
                                     "CollisionOtherSound", "SoundProperty", "PowerupSound", "HurtSound", "DeathSound",
-                                    "OpenSound", "CloseSound"}) {
+                                    "OpenSound", "CloseSound", "EngineSound", "TurnOnSound", "TurnOffSound",
+                                    "SkidSound", "BoostSound", "FootstepSound"}) {
                 if (const auto v = resolved.get(key)) {
                     const std::string tok = lowercase(first_token(*v));
                     if (!tok.empty()) {

@@ -66,12 +66,15 @@ VehicleClass load_vehicle_class(const std::filesystem::path& path) {
     v.label = s.get("Label").value_or(v.name);
     v.model = path.parent_path() / s.get("Model").value_or(v.name + ".gltf");
     const std::string kind = s.get("Kind").value_or("hover");
-    if (kind != "hover" && kind != "walker") {
-        throw std::runtime_error(where + ": Kind is hover or walker, not " + kind);
+    if (kind != "hover" && kind != "walker" && kind != "turret") {
+        throw std::runtime_error(where + ": Kind is hover, walker or turret, not " + kind);
     }
-    v.kind = kind == "walker" ? VehicleKind::walker : VehicleKind::hover;
+    v.kind = kind == "walker" ? VehicleKind::walker : kind == "turret" ? VehicleKind::turret : VehicleKind::hover;
     v.max_health = std::max(1.0, s.number("MaxHealth", v.max_health));
-    if (v.kind == VehicleKind::walker) {
+    if (v.kind == VehicleKind::turret) {
+        v.forward_speed = v.reverse_speed = v.strafe_speed = 0;
+        v.turn_rate = s.number("MaxTurnSpeed", 2);
+    } else if (v.kind == VehicleKind::walker) {
         v.forward_speed = s.number("MaxSpeed", 5);
         v.reverse_speed = v.strafe_speed = s.number("MaxStrafeSpeed", 3);
         v.turn_rate = s.number("MaxTurnSpeed", 1.5);
@@ -165,6 +168,12 @@ void simulate_vehicle(MoveState& state, const MoveInput& input, const World& wor
     state.pitch = input.pitch;
     state.crouched = false;
     state.roll = 0;
+    if (vehicle.kind == VehicleKind::turret) {
+        state.velocity = {};
+        state.grounded = true;
+        state.sprinting = false;
+        return;  // it stays where it stands
+    }
     const double s = std::sin(double(state.yaw)), c = std::cos(double(state.yaw));
     const Vec3 forward{-s, 0, -c};
     const Vec3 right{c, 0, -s};

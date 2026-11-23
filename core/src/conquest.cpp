@@ -512,6 +512,39 @@ void read_vehicle_spawns(Battlefield& field, const Ini& ini, const std::filesyst
             field.vehicle_spawns.push_back(std::move(spawn));
         }
     }
+    // Turrets ([turret]: Class, Position, Forward): for whoever mans them,
+    // back a while after they're destroyed (ASSUMPTION: 30 s).
+    for (const Ini::Section& s : ini.sections()) {
+        if (s.name != "turret") continue;
+        const std::string name = s.get("Class").value_or("");
+        auto it = std::find_if(field.vehicles.begin(), field.vehicles.end(),
+                               [&](const VehicleClass& v) { return iequals(v.name, name); });
+        if (it == field.vehicles.end()) {
+            const std::filesystem::path file = vehicles / name / (name + ".ini");
+            if (name.empty() || !std::filesystem::exists(file)) continue;
+            field.vehicles.push_back(load_vehicle_class(file));
+            it = field.vehicles.end() - 1;
+        }
+        VehicleSpawn spawn;
+        spawn.name = s.get("Name").value_or("turret");
+        std::istringstream at(s.get("Position").value_or(""));
+        double x = 0, z = 0, y = 0;
+        if (!(at >> x >> z)) {
+            throw std::runtime_error(where + ": a [turret] needs Position = x z [y]");
+        }
+        at >> y;
+        spawn.position = {-x, y, z};
+        std::istringstream forward(s.get("Forward").value_or("0 1"));
+        double fx = 0, fz = 1;
+        forward >> fx >> fz;
+        spawn.yaw = std::atan2(fx, -fz);
+        spawn.post = -1;
+        spawn.respawn_time = 30;
+        spawn.expire_time = 1e9;  // it doesn't wander off
+        const int cls = int(it - field.vehicles.begin());
+        spawn.vehicle = {cls, cls};
+        field.vehicle_spawns.push_back(std::move(spawn));
+    }
 }
 
 Battlefield load_battlefield(const std::filesystem::path& path) {

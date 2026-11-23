@@ -1127,6 +1127,18 @@ void Bot::ride(GameClient& client, const World& world, double now) {
         const bool driven = riding != nullptr && riding->driver != 0;
         undriven_since_ = driven ? -1 : (undriven_since_ < 0 ? now : undriven_since_);
         leave = undriven_since_ >= 0 && now - undriven_since_ > 8;
+    } else if (cls.kind == VehicleKind::turret) {
+        // Manning a turret: it turns on the nearest enemy and fires once its
+        // guns bear; nothing to shoot for a while, it goes back to the fight.
+        controls.yaw = target != nullptr ? aim_yaw : me.yaw;
+        controls.pitch = aim_pitch;
+        if (target != nullptr) {
+            const double off = wrap_angle(double(aim_yaw) - double(me.yaw));
+            controls.fire = in_arc && now - target_since_ >= skill_.reaction && off >= cls.yaw_min - 0.05 &&
+                            off <= cls.yaw_max + 0.05;
+        }
+        undriven_since_ = target != nullptr ? -1 : (undriven_since_ < 0 ? now : undriven_since_);
+        leave = undriven_since_ >= 0 && now - undriven_since_ > 20;
     } else {
         // Driving: toward its objective along its route; turned on an enemy
         // in range (its guns turn only so far from its heading), firing once
