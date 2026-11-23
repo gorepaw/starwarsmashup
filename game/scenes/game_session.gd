@@ -9,6 +9,7 @@ const Terrain3DBake = preload("res://tools/terrain3d_bake.gd")
 const SwgBuilding = preload("res://rendering/swg_building.gd")
 const Bf2Map = preload("res://rendering/bf2_map.gd")
 const SwgCity = preload("res://rendering/swg_city.gd")
+const NATIVES_TEAM := 2  # a battlefield's natives (core::natives_team)
 const Soldier = preload("res://rendering/soldier.gd")
 const PlayerAppearance = preload("res://rendering/player_appearance.gd")
 const Pickups = preload("res://rendering/pickups.gd")
@@ -621,13 +622,37 @@ func _nearest_enemy() -> Dictionary:
 	var own: Dictionary = _client.get_presented()
 	var best: Dictionary = {}
 	for remote: Dictionary in _client.get_remotes():
-		var enemy := int(own["team"]) < 0 or int(remote["team"]) != int(own["team"])
+		var enemy: bool = int(own["team"]) < 0 or not _client.is_allied(int(own["team"]), int(remote["team"]))
 		if not enemy or not remote["alive"] or int(remote.get("look", 0)) > 0:
 			continue
 		var position: Vector3 = remote["position"]
 		if best.is_empty() or position.distance_to(own["position"]) < (best["position"] as Vector3).distance_to(own["position"]):
 			best = remote
 	return best
+
+
+# A battlefield's native (team 2), by the battlefield's natives' look: a
+# character exported to imported_assets/characters/<look>/, or
+# "species:<id>", one of the playable species' bodies.
+func _spawn_native_model() -> Dictionary:
+	var natives: Dictionary = _client.get_battlefield().get("natives", {})
+	var look := str(natives.get("look", ""))
+	if look.begins_with("species:"):
+		return _spawn_character_model(look.trim_prefix("species:"), "male", "")
+	var path := "res://imported_assets/characters/%s/%s.gltf" % [look, look]
+	var character := PlayerAppearance.load_character("native_" + look, "male", "", path)
+	if not character.is_empty():
+		# Its eyes (and the name over it) by its own height: an Ewok's or a
+		# Jawa's is half a human's.
+		var height := 0.0
+		for mesh: Node in (character["model"] as Node).find_children("*", "MeshInstance3D", true, false):
+			var box := (mesh as MeshInstance3D).get_aabb()
+			height = maxf(height, box.position.y + box.size.y)
+		if height > 0.3:
+			character["eye_height"] = height * 0.9
+			character["crouched_eye_height"] = height * 0.65
+		add_child(character["model"])
+	return character
 
 
 func _spawn_character_model(species_id: String, gender: String, appearance_json: String) -> Dictionary:
@@ -668,7 +693,8 @@ func _update_remotes(own_team: int) -> void:
 			continue
 		_saw_remote = true
 		if not _remotes.has(id):
-			var character := _spawn_character_model(
+			var character := _spawn_native_model() if int(remote["team"]) == NATIVES_TEAM else \
+					_spawn_character_model(
 					str(remote.get("species", "human")),
 					str(remote.get("gender", "male")),
 					str(remote.get("appearance", "")))
@@ -686,12 +712,15 @@ func _update_remotes(own_team: int) -> void:
 			(character["model"] as Node3D).add_child(tag)
 			character["tag"] = tag
 			_remotes[id] = character
-		else:
+		elif int(remote["team"]) != NATIVES_TEAM:
 			_ensure_character_appearance(_remotes[id], remote, false)
 		_pose(_remotes[id], remote)
 		var tag: Label3D = _remotes[id]["tag"]
-		var friend := own_team >= 0 and int(remote["team"]) == own_team
-		var shown_holo := _battle_ui.show_team_tag(id, _remotes[id]["model"], int(remote["team"]), own_team, bool(remote["alive"]))
+		var friend: bool = own_team >= 0 and _client.is_allied(own_team, int(remote["team"]))
+		# Natives' holograms over their own heads (soldiers': the usual height).
+		var holo_height := float(_remotes[id]["eye_height"]) + 0.65 if int(remote["team"]) == NATIVES_TEAM else 2.25
+		var shown_holo := _battle_ui.show_team_tag(id, _remotes[id]["model"], int(remote["team"]), own_team,
+				bool(remote["alive"]), friend, holo_height)
 		tag.visible = not shown_holo
 		if tag.visible:
 			var rname := str(remote.get("name", ""))

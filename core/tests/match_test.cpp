@@ -60,9 +60,17 @@ void test_battlefield_file() {
                                                       "[post]\nName = CP2\nPosition = 74 -9\n";
     std::ofstream(dir / "mapped.ini") << "[battlefield]\nName = Swamp\nMap = maps/m_conquest.ini\n"
                                          "[team]\nName = Rebellion\nLoadout = loadouts/trooper.ini\n"
-                                         "[team]\nName = Empire\nLoadout = loadouts/trooper.ini\n";
+                                         "[team]\nName = Empire\nLoadout = loadouts/trooper.ini\n"
+                                         "[natives]\nName = Ewoks\nLook = ewok\nCount = 6\nFriends = 1\n"
+                                         "Loadout = loadouts/trooper.ini\n";
     const Battlefield mapped = load_battlefield(dir / "mapped.ini");
     CHECK(mapped.name == "Swamp" && mapped.posts.size() == 3 && mapped.terrain == dir / "maps" / "m");
+    // Its natives: Ewoks, friends of the first team, enemies of the second.
+    CHECK(mapped.natives && mapped.natives->team.name == "Ewoks" && mapped.natives->look == "ewok" &&
+          mapped.natives->count == 6 && mapped.natives->friends == std::vector<int>{0} &&
+          mapped.natives->team.loadouts.size() == 1 && &mapped.team(natives_team) == &mapped.natives->team);
+    CHECK(mapped.allied(natives_team, 0) && mapped.allied(0, natives_team) && !mapped.allied(natives_team, 1) &&
+          mapped.allied(1, 1) && !mapped.allied(0, 1) && !mapped.allied(-1, -1));
     CHECK(mapped.min_x == -512 && mapped.max_z == 512);
     CHECK(mapped.posts[0].owner == 1 && mapped.posts[1].owner == 0 && mapped.posts[2].owner == -1);
     CHECK(mapped.posts[0].spawn_points.size() == 2 && mapped.posts[0].spawn_points[1] == Vec3(-12, 0, 146));
@@ -668,6 +676,58 @@ void test_destructible_droids() {
     CHECK(near(h.health(), hp_after, 0.5));  // broken droid gives no health
 }
 
+// Natives, friends of the West: two bots on their own team, spawning at the
+// West's post's ally spawn points; they hunt the East's soldier and leave the
+// West's alone.
+void test_natives() {
+    Battlefield battlefield = three_posts();
+    battlefield.warmup = 120;
+    battlefield.natives = Natives{.team = {"Ewoks", {Loadout{}}}, .look = "ewok", .count = 2, .friends = {0}};
+    battlefield.posts[0].ally_spawn_points = {{-60, 0, 6}, {-60, 0, -6}};
+    Field field(battlefield);
+    GameClient& west = field.join("west");
+    GameClient& east = field.join("east");
+    uint32_t next_port = 70;
+    ClientConfig base{.server = {1, 1}};
+    base.battlefield = battlefield;
+    BotPlayers bots(0, field.world, base, [&] {
+        return std::make_unique<net::LoopbackLink>(field.hub, net::Endpoint{next_port++, 1});
+    });
+    field.run(0.5, [&] { bots.update(field.now); });
+    west.request_spawn(0, 0);
+    east.request_spawn(0, 2);
+    field.run(0.5, [&] { bots.update(field.now); });
+    CHECK(west.alive() && east.alive() && west.self().team == 0 && east.self().team == 1);
+    // East, near the West's post: in the natives' sights; West beside them.
+    MoveState near = *field.server->state_of(east.entity_id());
+    near.position = {-45, 0, 0};
+    field.server->set_state(east.entity_id(), near);
+    MoveState beside = *field.server->state_of(west.entity_id());
+    beside.position = {-58, 0, 0};
+    field.server->set_state(west.entity_id(), beside);
+    int natives = 0;
+    field.run(20, [&] {
+        bots.update(field.now);
+        if (east.alive() && east.predicted().position.x > -40) {
+            // Back where they can see it.
+            MoveState again = *field.server->state_of(east.entity_id());
+            again.position = {-45, 0, 0};
+            field.server->set_state(east.entity_id(), again);
+        }
+        natives = 0;
+        for (const GameClient::Remote& remote : west.remotes()) {
+            natives += remote.team == natives_team ? 1 : 0;
+        }
+        if (!east.alive() && east.self().life == Life::waiting) {
+            east.request_spawn(0, 2);
+        }
+    });
+    std::printf("natives: %d on their team; the East's soldier died %d times, the West's %d\n", natives,
+                east.self().deaths, west.self().deaths);
+    CHECK(natives == 2 && east.self().deaths >= 1 && west.self().deaths == 0);
+    bots.disconnect();
+}
+
 // A door between a soldier and a health droid: shut, it stops the soldier's
 // shots; it opens while someone stands by it (its trigger, off to the side
 // here), and then they go through; it shuts again once they've gone. Clients
@@ -853,6 +913,7 @@ void test_drop_pace() {
 }
 
 int main() {
+    test_natives();
     test_doors();
     test_destructibles();
     test_drop_pace();

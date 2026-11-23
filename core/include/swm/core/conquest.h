@@ -37,6 +37,9 @@ struct CommandPost {
     // nowhere to stand (Mustafar's CP5, out over the lava past a wall), and
     // its middle height nearer a roof no one reaches than that floor.
     std::optional<Vec3> console;
+    // Where natives friendly to its owner spawn (Battlefront's AllyPath):
+    // game space, heights given.
+    std::vector<Vec3> ally_spawn_points;
 
     bool contains(Vec3 point) const;
 };
@@ -190,6 +193,23 @@ struct Team {
     std::vector<Loadout> loadouts;
 };
 
+// The team natives play on: the third, after a battlefield's two.
+inline constexpr int natives_team = 2;
+
+// A battlefield's natives (Battlefront's "locals": Mos Eisley's Jawas,
+// Endor's Ewoks, Geonosis's Geonosians, Kashyyyk's Wookiees, Jabba's
+// palace's Gamorrean guards): `count` bots on the natives' team, friends
+// of the sides in `friends` (team indices: Jawas both, Gamorreans none)
+// and enemies of the rest. They spawn at the ally spawn points of posts a
+// friend holds; on a map with none (Jabba's palace), at neutral posts.
+// They don't capture posts and cost no reinforcements.
+struct Natives {
+    Team team;              // their name and loadouts
+    std::string look;       // their model: a character (characters/<look>), or "species:<id>"
+    int count = 0;
+    std::vector<int> friends;
+};
+
 // Where a conquest match is fought: a bounded part of a planet, two teams
 // and their test loadouts, and the command posts they fight over.
 struct Battlefield {
@@ -205,6 +225,7 @@ struct Battlefield {
     std::vector<Door> doors;
     std::vector<Destructible> destructibles;
     std::array<Team, 2> teams;
+    std::optional<Natives> natives;
     std::vector<CommandPost> posts;
     std::vector<Barrier> barriers;
     double tickets = 150;          // reinforcements per team: each death costs one
@@ -219,6 +240,12 @@ struct Battlefield {
     // client fits the image to the bounds.
     std::array<double, 4> minimap{};
 
+    // Team `index`: one of the two sides, or the natives.
+    const Team& team(int index) const;
+    // Whether teams a and b don't fight: the same team, or the natives and a
+    // side they're friends with. (-1, no team: allied with no one.)
+    bool allied(int a, int b) const;
+
     // Whether a point is on the battlefield: within the bounds and a
     // boundary.
     bool contains(Vec3 point) const;
@@ -232,7 +259,9 @@ struct Battlefield {
     Vec3 center() const;
 };
 
-// Reads a battlefield file (see game/battlefields/). A post's `Altitude = low
+// Reads a battlefield file (see game/battlefields/). Its `[natives]`, if
+// any: Name, Look, Count, Friends (team numbers, 1 the first [team]; none:
+// enemies of all) and Loadout lines, as a [team]'s. A post's `Altitude = low
 // high` bounds its capture region in height, and its spawn points may give
 // their heights (`SpawnPoint = x z y`), as does its console's place
 // (`Console = x z y`). Positions in it are
@@ -241,7 +270,8 @@ struct Battlefield {
 // are relative to it. `Map = <file>` takes the bounds, terrain and command
 // posts from a map file written by `bf2tool export-map` (its posts name
 // their starting team by number: 1 is the first [team]), and its barriers
-// (`Barrier = x1 z1 x2 z2 x3 z3 x4 z4`, corners in order), boundaries
+// (`Barrier = x1 z1 x2 z2 x3 z3 x4 z4`, corners in order); its posts' ally
+// spawn points (`AllySpawnPoint = x z y`, natives'); boundaries
 // (`Boundary = x1 z1 x2 z2 ...`, a polygon; the bounds shrink to fit them)
 // and death regions (`DeathRegion = box|sphere|cylinder x y z sx sy sz` and
 // the rotation's rows, 9 numbers, as Battlefront stores them), and damage

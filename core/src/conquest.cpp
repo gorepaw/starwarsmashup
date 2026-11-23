@@ -114,6 +114,18 @@ void read_posts(Battlefield& field, const Ini& ini, const std::string& where) {
             }
         }
         post.spawn_heights = heights > 0 && heights == post.spawn_points.size();
+        for (const auto& [key, value] : s.values) {
+            if (iequals(key, "AllySpawnPoint")) {
+                Vec3 point = source_point(value, where + ": post " + post.name + " AllySpawnPoint");
+                std::istringstream fields(value);
+                double x = 0, z = 0, y = 0;
+                if (!(fields >> x >> z >> y)) {
+                    throw std::runtime_error(where + ": post " + post.name + ": AllySpawnPoint is \"x z y\"");
+                }
+                point.y = y;
+                post.ally_spawn_points.push_back(point);
+            }
+        }
         field.posts.push_back(post);
     }
 }
@@ -324,6 +336,27 @@ std::optional<double> Door::hit(Vec3 a, Vec3 b) const {
     return enter;
 }
 
+const Team& Battlefield::team(int index) const {
+    if (index == natives_team && natives) {
+        return natives->team;
+    }
+    return teams[size_t(std::clamp(index, 0, 1))];
+}
+
+bool Battlefield::allied(int a, int b) const {
+    if (a < 0 || b < 0) {
+        return false;
+    }
+    if (a == b) {
+        return true;
+    }
+    if (!natives || (a != natives_team && b != natives_team)) {
+        return false;
+    }
+    const int side = a == natives_team ? b : a;
+    return std::find(natives->friends.begin(), natives->friends.end(), side) != natives->friends.end();
+}
+
 bool DeathRegion::on_at(double clock) const {
     if (on <= 0) {
         return true;
@@ -462,6 +495,30 @@ Battlefield load_battlefield(const std::filesystem::path& path) {
     if (team_count != field.teams.size()) {
         throw std::runtime_error(where + ": needs two [team] sections");
     }
+    if (const Ini::Section* s = ini.section("natives")) {
+        Natives natives;
+        natives.team.name = s->get("Name").value_or("Natives");
+        natives.look = s->get("Look").value_or("");
+        natives.count = int(s->number("Count", 0));
+        if (const auto friends = s->get("Friends")) {
+            std::istringstream fields(*friends);
+            for (int number = 0; fields >> number;) {
+                if (number < 1 || number > 2) {
+                    throw std::runtime_error(where + ": natives' Friends are team numbers, 1 or 2");
+                }
+                natives.friends.push_back(number - 1);
+            }
+        }
+        for (const auto& [key, value] : s->values) {
+            if (iequals(key, "Loadout")) {
+                natives.team.loadouts.push_back(load_loadout(path.parent_path() / value));
+            }
+        }
+        if (natives.count < 0 || natives.team.loadouts.empty()) {
+            throw std::runtime_error(where + ": [natives] needs a Count and a Loadout");
+        }
+        field.natives = std::move(natives);
+    }
     // A Battlefront map's posts, bounds and terrain, then any of our own.
     if (const auto map = main->get("Map")) {
         const std::filesystem::path map_path = path.parent_path() / *map;
@@ -542,6 +599,21 @@ void Conquest::reset() {
 }
 
 bool Conquest::can_spawn(int team, size_t post) const {
+    if (team == natives_team) {
+        // At a friend's post's ally spawn points; on a map with none, at a
+        // neutral post.
+        if (state_.phase == Phase::ended || !battlefield_.natives || post >= state_.posts.size()) {
+            return false;
+        }
+        const bool any_ally_points = std::any_of(battlefield_.posts.begin(), battlefield_.posts.end(),
+                                                 [](const CommandPost& p) { return !p.ally_spawn_points.empty(); });
+        const int owner = state_.posts[post].owner;
+        if (!any_ally_points) {
+            return owner < 0;
+        }
+        return !battlefield_.posts[post].ally_spawn_points.empty() && owner >= 0 &&
+               battlefield_.allied(natives_team, owner);
+    }
     return state_.phase != Phase::ended && team >= 0 && team < 2 && post < state_.posts.size() &&
            state_.posts[post].owner == team && (state_.phase != Phase::live || state_.tickets[size_t(team)] > 0);
 }

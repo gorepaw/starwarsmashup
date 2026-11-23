@@ -123,9 +123,30 @@ void Bot::choose_spawn(GameClient& client) {
     const Battlefield& field = *client.config().battlefield;
     const MatchState& match = *client.match();
     const int team = client.self().team;
-    const auto& loadouts = field.teams[size_t(team)].loadouts;
+    const auto& loadouts = field.team(team).loadouts;
     // Mostly the first loadout, sometimes another.
     const size_t loadout = random() < 0.5 ? 0 : size_t(random() * double(loadouts.size())) % loadouts.size();
+    if (team == natives_team) {
+        // A native: any post it may spawn at (Conquest::can_spawn's rule),
+        // at random.
+        const bool any_ally_points = std::any_of(field.posts.begin(), field.posts.end(),
+                                                 [](const CommandPost& p) { return !p.ally_spawn_points.empty(); });
+        std::vector<int> posts;
+        for (size_t i = 0; i < match.posts.size() && i < field.posts.size(); ++i) {
+            const int owner = match.posts[i].owner;
+            if (any_ally_points ? !field.posts[i].ally_spawn_points.empty() && owner >= 0 && field.allied(team, owner)
+                                : owner < 0) {
+                posts.push_back(int(i));
+            }
+        }
+        if (!posts.empty()) {
+            const int post = posts[size_t(random() * double(posts.size())) % posts.size()];
+            client.request_spawn(int(loadout), post);
+            requested_ = true;
+            spawn_post_ = post;
+        }
+        return;
+    }
     // The owned post closest to one we don't hold; now and then any owned post.
     int best = -1;
     double best_distance = std::numeric_limits<double>::max();
@@ -163,7 +184,8 @@ void Bot::choose_objective(const GameClient& client, double now) {
     double best_distance = std::numeric_limits<double>::max();
     for (size_t i = 0; i < match.posts.size(); ++i) {
         const PostState& post = match.posts[i];
-        const bool ours = post.owner == team && post.charge >= 1 && !post.contested;
+        // (A native's: a friend's.)
+        const bool ours = post.owner >= 0 && field.allied(team, post.owner) && post.charge >= 1 && !post.contested;
         if (ours || !field.posts[i].capturable) {
             continue;
         }
@@ -485,7 +507,7 @@ void Bot::update(GameClient& client, const World& world, double now) {
         // holds a request until its post can be spawned at; one of Mos
         // Eisley's Imperials waited four and a half minutes for CP2.)
         if (requested_ && in_match && spawn_post_ >= 0 && size_t(spawn_post_) < match->posts.size() &&
-            match->posts[size_t(spawn_post_)].owner != self.team) {
+            self.team != natives_team && match->posts[size_t(spawn_post_)].owner != self.team) {
             requested_ = false;
         }
         if (in_match && self.life == Life::waiting && !requested_ && match->phase != Phase::ended) {
@@ -542,7 +564,7 @@ void Bot::update(GameClient& client, const World& world, double now) {
     double nearest_any = std::numeric_limits<double>::max();
     const auto remotes = client.remotes();
     for (const GameClient::Remote& other : remotes) {
-        const bool enemy = !in_match || other.team != self.team;
+        const bool enemy = !in_match || !client.config().battlefield->allied(self.team, other.team);
         if (!enemy || !other.alive()) {
             continue;
         }
@@ -823,6 +845,18 @@ BotPlayers::BotPlayers(int count, const World& world, const ClientConfig& base, 
         config.name = std::format("Bot {}", i + 1);
         auto link = open_link ? open_link() : std::make_unique<net::UdpLink>();
         players_.push_back(std::make_unique<Player>(std::move(link), world, std::move(config), uint64_t(i + 1)));
+        players_.back()->bot.set_navigation(navigation_);
+        players_.back()->bot.set_skill(skill);
+    }
+    // The battlefield's natives, on their own team.
+    const int natives = base.battlefield && base.battlefield->natives ? base.battlefield->natives->count : 0;
+    for (int i = 0; i < natives; ++i) {
+        ClientConfig config = base;
+        config.name = std::format("{} {}", base.battlefield->natives->team.name, i + 1);
+        config.team = natives_team;
+        auto link = open_link ? open_link() : std::make_unique<net::UdpLink>();
+        players_.push_back(
+            std::make_unique<Player>(std::move(link), world, std::move(config), uint64_t(count + i + 1)));
         players_.back()->bot.set_navigation(navigation_);
         players_.back()->bot.set_skill(skill);
     }

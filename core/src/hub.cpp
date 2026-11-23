@@ -479,7 +479,10 @@ void Hub::start_battle() {
         }
     };
     // Players with their ticket, on their side; bots wherever there's room.
-    b->server->admit = [b](const std::string& name, uint64_t ticket) -> std::optional<int> {
+    b->server->admit = [b](const std::string& name, uint64_t ticket, int asked) -> std::optional<int> {
+        if (ticket == b->bot_ticket && asked == natives_team) {
+            return natives_team;  // a native: not a side's soldier
+        }
         if (ticket == b->bot_ticket) {
             const int team = b->soldiers[0] <= b->soldiers[1] ? 0 : 1;
             ++b->soldiers[size_t(team)];

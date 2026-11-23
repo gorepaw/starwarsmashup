@@ -544,7 +544,7 @@ int cmd_export_character(const std::vector<std::string>& args) {
                 return 1;
             }
             request.clips.push_back(
-                retarget::retarget_animation(skeleton, *bf2_skeleton, *it, retarget::humanoid_mapping(), anim_name));
+                retarget::retarget_animation(skeleton, *bf2_skeleton, *it, retarget::mapping_for(skeleton), anim_name));
         }
     }
 

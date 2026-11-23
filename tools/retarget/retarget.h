@@ -23,6 +23,12 @@ struct BoneMapping {
 // Galaxies humanoid skeleton (all_b.skt) <- Battlefront human skeleton.
 std::vector<BoneMapping> humanoid_mapping();
 
+// The mapping for a Galaxies skeleton: the humanoid one, or the Jawa's,
+// Ewok's or Geonosian's (their own joint names; the Geonosian's legs bend
+// twice, the upper knee taking the calf), whichever's joints it has.
+// Throws std::runtime_error if none fits.
+std::vector<BoneMapping> mapping_for(const swg::Skeleton& skeleton);
+
 // Retargets a Battlefront animation onto a Galaxies skeleton.
 //
 // For each mapped joint, the Battlefront bone's world-space rotation away from

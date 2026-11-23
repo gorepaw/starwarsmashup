@@ -113,6 +113,9 @@ public:
     // [{name, loadouts: [{name, max_health, weapons: [names], secondary}]}], posts: [{name,
     // position, radius, capturable}]}; empty outside a match.
     godot::Dictionary get_battlefield() const;
+    // Whether teams a and b don't fight: the same team, or a battlefield's
+    // natives (team 2) and a side they're friends with.
+    bool is_allied(int a, int b) const;
     // The match: {phase ("warmup", "live" or "ended"), time_left, tickets: [a, b],
     // dominant, victory_left, winner, posts: [{owner, holder, charge, contested}]};
     // empty outside a match.

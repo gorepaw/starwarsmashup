@@ -45,12 +45,13 @@ func available() -> bool:
 
 
 # A soldier's hologram, created the first time (side: "alliance", "empire",
-# "republic" or "cis"; none for anything else).
-func show(id: int, model: Node3D, side: String, friend: bool, alive: bool) -> void:
+# "republic" or "cis"; none for anything else), `height` over its feet (a
+# native's own: an Ewok's is lower).
+func show(id: int, model: Node3D, side: String, friend: bool, alive: bool, height := HEIGHT) -> void:
 	var tag: Dictionary = _tags.get(id, {})
 	if tag.is_empty() or tag["side"] != side or not is_instance_valid(tag["pivot"]):
 		forget(id)
-		tag = _make(model, side)
+		tag = _make(model, side, height)
 		if tag.is_empty():
 			return
 		tag["seen"] = 1.0
@@ -114,7 +115,7 @@ func _width(tag: Dictionary) -> float:
 	return maxf(0.01, float(tag.get("width", 1.0)))
 
 
-func _make(model: Node3D, side: String) -> Dictionary:
+func _make(model: Node3D, side: String, height := HEIGHT) -> Dictionary:
 	var template := _template(side)
 	if template == null:
 		return {}
@@ -125,7 +126,7 @@ func _make(model: Node3D, side: String) -> Dictionary:
 	image.visible = true
 	pivot.add_child(image)
 	var follow := RemoteTransform3D.new()
-	follow.position = Vector3.UP * HEIGHT
+	follow.position = Vector3.UP * height
 	follow.update_rotation = false
 	follow.update_scale = false
 	model.add_child(follow)

@@ -143,9 +143,11 @@ public:
     std::vector<uint32_t> npcs() const;
 
     std::function<void(const std::string&)> log;
-    // Decides who may join: their team (-1: the smaller one), or nullopt to
-    // refuse. Unset: anyone, on the smaller team.
-    std::function<std::optional<int>(const std::string& name, uint64_t ticket)> admit;
+    // Decides who may join, given the team they ask for (-1: any;
+    // natives_team: a native, a bot): their team (-1: the smaller one), or
+    // nullopt to refuse. Unset: anyone, on the smaller team (natives on
+    // theirs, while there's room).
+    std::function<std::optional<int>(const std::string& name, uint64_t ticket, int team)> admit;
     std::function<void(uint32_t entity, const std::string& name)> on_join;
     // A player standing at a war terminal asked to queue for a side (-1: leave).
     std::function<void(uint32_t entity, int team)> on_queue;
@@ -221,7 +223,10 @@ private:
 
     void receive(double now);
     void handle(const net::Endpoint& from, const net::Datagram& datagram, double now);
-    Client* join(const net::Endpoint& from, const std::string& name, uint64_t ticket);
+    Client* join(const net::Endpoint& from, const std::string& name, uint64_t ticket, int team = -1);
+    // Whether teams a and b don't fight (Battlefield::allied; without a
+    // battlefield, the same team).
+    bool allied(int a, int b) const;
     void save(std::span<const Client> clients);
     void step();
     void run_match();

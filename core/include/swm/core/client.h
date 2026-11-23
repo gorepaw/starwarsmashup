@@ -32,6 +32,7 @@ struct ClientConfig {
     std::optional<Battlefield> battlefield;  // in a match: the server's, for its loadouts
     double spawn_request_interval = 0.25;
     uint64_t ticket = 0;               // from a hub, for the match it sent us to
+    int team = -1;                     // asked for: -1 any; natives_team, a battlefield's natives (bots)
 };
 
 // Game client. Predicts its own character by running each input locally as

@@ -1,5 +1,6 @@
 #include "retarget/retarget.h"
 
+#include <algorithm>
 #include <optional>
 #include <stdexcept>
 
@@ -115,6 +116,97 @@ std::vector<BoneMapping> humanoid_mapping() {
     };
 }
 
+namespace {
+
+std::vector<BoneMapping> jawa_mapping() {
+    return {
+        {"root", "bone_root", "spine02", "bone_ribcage"},
+        {"spine01", "bone_a_spine", "spine02", "bone_ribcage"},
+        {"spine02", "bone_ribcage", "neck", "bone_neck"},
+        {"neck", "bone_neck", "head", "bone_head"},
+        {"head", "bone_head", "", ""},
+        {"l_clavicle", "bone_l_clavicle", "l_arm", "bone_l_upperarm"},
+        {"l_arm", "bone_l_upperarm", "l_forearm", "bone_l_forearm"},
+        {"l_forearm", "bone_l_forearm", "l_wrist", "bone_l_hand"},
+        {"l_wrist", "bone_l_hand", "", ""},
+        {"r_clavicle", "bone_r_clavicle", "r_arm", "bone_r_upperarm"},
+        {"r_arm", "bone_r_upperarm", "r_forearm", "bone_r_forearm"},
+        {"r_forearm", "bone_r_forearm", "r_wrist", "bone_r_hand"},
+        {"r_wrist", "bone_r_hand", "", ""},
+        {"l_thigh", "bone_l_thigh", "l_shin", "bone_l_calf"},
+        {"l_shin", "bone_l_calf", "l_foot", "bone_l_foot"},
+        {"l_foot", "bone_l_foot", "l_toe", "bone_l_toe"},
+        {"l_toe", "bone_l_toe", "", ""},
+        {"r_thigh", "bone_r_thigh", "r_shin", "bone_r_calf"},
+        {"r_shin", "bone_r_calf", "r_foot", "bone_r_foot"},
+        {"r_foot", "bone_r_foot", "r_toe", "bone_r_toe"},
+        {"r_toe", "bone_r_toe", "", ""},
+    };
+}
+
+std::vector<BoneMapping> ewok_mapping() {
+    return {
+        {"root", "bone_root", "spine2_joint", "bone_ribcage"},
+        {"spine1_joint", "bone_a_spine", "spine2_joint", "bone_ribcage"},
+        {"spine2_joint", "bone_ribcage", "neck", "bone_neck"},
+        {"neck", "bone_neck", "head", "bone_head"},
+        {"head", "bone_head", "", ""},
+        {"l_clav", "bone_l_clavicle", "l_shoulder", "bone_l_upperarm"},
+        {"l_shoulder", "bone_l_upperarm", "l_elbow", "bone_l_forearm"},
+        {"l_elbow", "bone_l_forearm", "l_wrist", "bone_l_hand"},
+        {"l_wrist", "bone_l_hand", "", ""},
+        {"r_clav", "bone_r_clavicle", "r_shoulder", "bone_r_upperarm"},
+        {"r_shoulder", "bone_r_upperarm", "r_elbow", "bone_r_forearm"},
+        {"r_elbow", "bone_r_forearm", "r_wrist", "bone_r_hand"},
+        {"r_wrist", "bone_r_hand", "", ""},
+        {"l_thigh", "bone_l_thigh", "l_knee", "bone_l_calf"},
+        {"l_knee", "bone_l_calf", "l_ankle", "bone_l_foot"},
+        {"l_ankle", "bone_l_foot", "l_toes", "bone_l_toe"},
+        {"l_toes", "bone_l_toe", "", ""},
+        {"r_thigh", "bone_r_thigh", "r_knee", "bone_r_calf"},
+        {"r_knee", "bone_r_calf", "r_ankle", "bone_r_foot"},
+        {"r_ankle", "bone_r_foot", "r_toes", "bone_r_toe"},
+        {"r_toes", "bone_r_toe", "", ""},
+    };
+}
+
+std::vector<BoneMapping> geonosian_mapping() {
+    return {
+        {"root", "bone_root", "spine2", "bone_ribcage"},
+        {"spine1", "bone_a_spine", "spine2", "bone_ribcage"},
+        {"spine2", "bone_ribcage", "neck", "bone_neck"},
+        {"neck", "bone_neck", "head", "bone_head"},
+        {"head", "bone_head", "", ""},
+        {"L_Shoulder", "bone_l_upperarm", "L_Elbow", "bone_l_forearm"},
+        {"L_Elbow", "bone_l_forearm", "L_Wrist", "bone_l_hand"},
+        {"L_Wrist", "bone_l_hand", "", ""},
+        {"R_Shoulder", "bone_r_upperarm", "R_Elbow", "bone_r_forearm"},
+        {"R_Elbow", "bone_r_forearm", "R_Wrist", "bone_r_hand"},
+        {"R_Wrist", "bone_r_hand", "", ""},
+        {"l_hip", "bone_l_thigh", "L_Knee_1", "bone_l_calf"},
+        {"L_Knee_1", "bone_l_calf", "L_ankle", "bone_l_foot"},
+        {"L_ankle", "bone_l_foot", "LF_Toe", "bone_l_toe"},
+        {"r_hip", "bone_r_thigh", "R_Knee_1", "bone_r_calf"},
+        {"R_Knee_1", "bone_r_calf", "R_ankle", "bone_r_foot"},
+        {"R_ankle", "bone_r_foot", "RF_Toe", "bone_r_toe"},
+    };
+}
+
+} // namespace
+
+std::vector<BoneMapping> mapping_for(const swg::Skeleton& skeleton) {
+    for (auto make : {humanoid_mapping, jawa_mapping, ewok_mapping, geonosian_mapping}) {
+        std::vector<BoneMapping> mapping = make();
+        const bool fits = std::all_of(mapping.begin(), mapping.end(), [&](const BoneMapping& m) {
+            return skeleton.find(m.swg_joint) >= 0 && (m.swg_aim.empty() || skeleton.find(m.swg_aim) >= 0);
+        });
+        if (fits) {
+            return mapping;
+        }
+    }
+    throw std::runtime_error("retarget: no bone mapping fits this Galaxies skeleton");
+}
+
 swg::AnimationClip retarget_animation(const swg::Skeleton& target, const bf2::AnimationSkeleton& source_skeleton,
                                       const bf2::Animation& animation, const std::vector<BoneMapping>& mapping,
                                       std::string name) {
@@ -153,7 +245,14 @@ swg::AnimationClip retarget_animation(const swg::Skeleton& target, const bf2::An
     const int bf2_weapon = source_skeleton.find(bf2::name_hash("hp_weapons"));
 
     // Hip height ratio for the vertical root motion.
-    const int swg_hip = require_swg(target, "lThigh");
+    // The joint the mapping drives with Battlefront's left thigh.
+    std::string swg_thigh = "lThigh";
+    for (const BoneMapping& m : mapping) {
+        if (m.bf2_bone == "bone_l_thigh") {
+            swg_thigh = m.swg_joint;
+        }
+    }
+    const int swg_hip = require_swg(target, swg_thigh);
     const int bf2_hip = require_bf2(source_skeleton, "bone_l_thigh");
     const int bf2_root = require_bf2(source_skeleton, "bone_root");
     const float hip_scale = bf2_rest.position[size_t(bf2_hip)].y != 0

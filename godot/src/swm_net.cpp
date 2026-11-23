@@ -324,7 +324,25 @@ godot::Dictionary SwmClient::get_battlefield() const {
         powerups.push_back(entry);
     }
     out["powerups"] = powerups;
+    if (field.natives) {
+        // Its natives (team 2): name, model ("<character>" or
+        // "species:<id>"), how many, and whose friends they are.
+        godot::Dictionary natives;
+        natives["name"] = godot::String::utf8(field.natives->team.name.c_str());
+        natives["look"] = godot::String::utf8(field.natives->look.c_str());
+        natives["count"] = field.natives->count;
+        godot::Array friends;
+        for (const int team : field.natives->friends) {
+            friends.push_back(team);
+        }
+        natives["friends"] = friends;
+        out["natives"] = natives;
+    }
     return out;
+}
+
+bool SwmClient::is_allied(int a, int b) const {
+    return battlefield() ? battlefield()->allied(a, b) : a >= 0 && a == b;
 }
 
 godot::Dictionary SwmClient::get_match() const {
@@ -858,6 +876,7 @@ void SwmClient::_bind_methods() {
     ClassDB::bind_method(D_METHOD("queue", "team"), &SwmClient::queue);
     ClassDB::bind_method(D_METHOD("get_player_status"), &SwmClient::get_player_status);
     ClassDB::bind_method(D_METHOD("get_battlefield"), &SwmClient::get_battlefield);
+    ClassDB::bind_method(D_METHOD("is_allied", "a", "b"), &SwmClient::is_allied);
     ClassDB::bind_method(D_METHOD("get_match"), &SwmClient::get_match);
     ClassDB::bind_method(D_METHOD("request_spawn", "loadout", "post"), &SwmClient::request_spawn);
     ClassDB::bind_method(D_METHOD("set_input", "controls"), &SwmClient::set_input);
@@ -957,7 +976,7 @@ godot::Error SwmServer::start(int64_t port, const godot::String& bake_prefix, co
         hub_ = std::make_unique<core::Hub>(*server_, udp_->port(), *world_, *hub_config_, hub_network_);
         hub_->log = server_->log;
     }
-    if (bot_count_ > 0) {
+    if (bot_count_ > 0 || (battlefield_ && battlefield_->natives)) {  // (and the battlefield's natives)
         core::ClientConfig bot_config;
         bot_config.server = *core::net::parse_endpoint("127.0.0.1:" + std::to_string(udp_->port()));
         bot_config.loadout = loadout_;

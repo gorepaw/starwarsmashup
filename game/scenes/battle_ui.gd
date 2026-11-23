@@ -241,13 +241,18 @@ func add_posts() -> void:
 		_posts.append({"material": material, "label": label, "nodes": [beam, ring, label]})
 
 
-func show_team_tag(id: int, model: Node3D, team: int, own_team: int, alive: bool) -> bool:
+func show_team_tag(id: int, model: Node3D, team: int, own_team: int, alive: bool, friend := false,
+		height := TeamTags.HEIGHT) -> bool:
 	if _team_tags == null or own_team < 0 or team < 0:
 		return false
-	var side := _holo_side(team)
+	# A native (team 2) shows a side's insignia too, as Battlefront gives its
+	# locals one (Kashyyyk's Wookiees the Rebels'): yours when it's your
+	# friend (Jawas, your side's Ewoks or Geonosians), the other side's when
+	# it isn't (Gamorrean guards; the other side's natives).
+	var side := _holo_side((own_team if friend else 1 - own_team) if team > 1 else team)
 	if side == "":
 		return false
-	_team_tags.show(id, model, side, team == own_team, alive)
+	_team_tags.show(id, model, side, friend or team == own_team, alive, height)
 	return true
 
 
@@ -470,7 +475,7 @@ func _update_bf2_hud(client: Object, weapons: Array, max_health: float, delta: f
 		var target := _aimed_at(client, camera)
 		var tint := Color8(220, 220, 220)
 		if not target.is_empty():
-			tint = FRIEND_COLOR if team >= 0 and int(target["team"]) == team else ENEMY_COLOR
+			tint = FRIEND_COLOR if team >= 0 and client.is_allied(team, int(target["team"])) else ENEMY_COLOR
 		b["player1.weapon1.target.teamColor"] = tint
 		b["player1.weapon1.target.teamColorBright"] = tint.lightened(0.3)
 		if _hit_flash > 0:
@@ -628,7 +633,7 @@ func _update_minimap(client: Object, team: int, game: Dictionary) -> void:
 	for remote: Dictionary in client.get_remotes():
 		if not bool(remote["alive"]):
 			continue
-		var friend := team >= 0 and int(remote["team"]) == team
+		var friend: bool = team >= 0 and client.is_allied(team, int(remote["team"]))
 		if not friend and float(_fired.get(int(remote["id"]), 1e9)) > SEEN_FIRING:
 			continue
 		var at: Vector3 = remote["position"]
@@ -888,6 +893,8 @@ func _team_name(team: int) -> String:
 
 
 func _team_icon(team: int) -> String:
+	if team < 0 or team > 1:
+		return ""  # a battlefield's natives (team 2): no side's icon
 	var tname := str(_battlefield["teams"][team]["name"]).to_lower() if not _battlefield.is_empty() else ""
 	if tname.contains("rebel"):
 		return "all_icon"

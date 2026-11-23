@@ -140,6 +140,15 @@ void put_match(ByteWriter& out, const MatchState& m) {
     out.put(m.clock);
 }
 
+// A character's team: a side's, or the natives' (2).
+int8_t get_character_team(ByteReader& in) {
+    const int8_t team = in.get<int8_t>();
+    if (team < -1 || team > 2) {
+        throw PacketError("bad team");
+    }
+    return team;
+}
+
 int8_t get_team(ByteReader& in) {
     const int8_t team = in.get<int8_t>();
     if (team < -1 || team > 1) {
@@ -196,6 +205,7 @@ struct Encoder {
         out.put(uint8_t(Type::hello));
         out.put_string(m.name);
         out.put(m.ticket);
+        out.put(m.team);
     }
     void operator()(const Welcome& m) {
         out.put(uint8_t(Type::welcome));
@@ -346,6 +356,7 @@ Message decode(std::span<const uint8_t> packet) {
         Hello m;
         m.name = in.get_string();
         m.ticket = in.get<uint64_t>();
+        m.team = in.get<int8_t>();
         message = m;
         break;
     }
@@ -403,7 +414,7 @@ Message decode(std::span<const uint8_t> packet) {
             }
             entity.life = Life(life);
             entity.spawn_count = in.get<uint8_t>();
-            entity.team = get_team(in);
+            entity.team = get_character_team(in);
             entity.loadout = in.get<uint8_t>();
             entity.kills = in.get<uint16_t>();
             entity.deaths = in.get<uint16_t>();
@@ -492,7 +503,7 @@ Message decode(std::span<const uint8_t> packet) {
             throw PacketError("bad queue state");
         }
         m.you.queue = PlayerStatus::Queue(queue);
-        m.you.team = get_team(in);
+        m.you.team = get_character_team(in);
         m.you.in_queue = in.get<uint16_t>();
         m.you.starts_in = in.get<float>();
         m.you.battlefield = in.get_string();

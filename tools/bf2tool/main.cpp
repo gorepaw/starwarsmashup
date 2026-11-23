@@ -1759,6 +1759,14 @@ int cmd_export_map(const std::vector<std::string>& args) {
         if (team == "1" || team == "2") {
             ini << "Owner = " << team << "\n";
         }
+        // Where natives friendly to its holder spawn (its AllyPath): heights
+        // given.
+        if (const LevelPath* allies = level.path_in(object.get("AllyPath"), mode_sublevel)) {
+            for (const PathNode& node : allies->nodes) {
+                ini << std::format("AllySpawnPoint = {:.2f} {:.2f} {:.2f}\n", node.position[0], node.position[2],
+                                   node.position[1]);
+            }
+        }
         if (const LevelPath* spawns = level.path_in(object.get("SpawnPath"), mode_sublevel)) {
             for (const PathNode& node : spawns->nodes) {
                 ini << std::format("SpawnPoint = {:.2f} {:.2f} {:.2f}\n", node.position[0], node.position[2],

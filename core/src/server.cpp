@@ -195,7 +195,7 @@ net::EntityState GameServer::describe(const Client& c) const {
 
 const Loadout& GameServer::loadout_of(const Client& client) const {
     if (config_.battlefield && client.team >= 0) {
-        const auto& loadouts = config_.battlefield->teams[size_t(client.team)].loadouts;
+        const auto& loadouts = config_.battlefield->team(client.team).loadouts;
         return loadouts[std::min(client.loadout, loadouts.size() - 1)];
     }
     return config_.loadout;
@@ -238,7 +238,7 @@ void GameServer::handle(const net::Endpoint& from, const net::Datagram& datagram
     Client* client = find(from);
     if (const auto* hello = std::get_if<net::Hello>(&message)) {
         if (client == nullptr) {
-            client = join(from, hello->name, hello->ticket);
+            client = join(from, hello->name, hello->ticket, hello->team);
             if (client == nullptr) {
                 return;
             }
@@ -287,7 +287,8 @@ void GameServer::handle(const net::Endpoint& from, const net::Datagram& datagram
     }
 }
 
-GameServer::Client* GameServer::join(const net::Endpoint& from, const std::string& name, uint64_t ticket) {
+GameServer::Client* GameServer::join(const net::Endpoint& from, const std::string& name, uint64_t ticket,
+                                     int team) {
     const auto refuse = [&](const std::string& reason) {
         say(std::format("refused {} from {}: {}", name, from.to_string(), reason));
         send(from, net::Refused{reason});
@@ -301,7 +302,7 @@ GameServer::Client* GameServer::join(const net::Endpoint& from, const std::strin
     }
     std::optional<int> admitted_team = -1;
     if (admit) {
-        admitted_team = admit(name, ticket);
+        admitted_team = admit(name, ticket, team);
         if (!admitted_team) {
             return refuse("this match only admits players sent by its hub");
         }
@@ -313,11 +314,18 @@ GameServer::Client* GameServer::join(const net::Endpoint& from, const std::strin
 
     if (conquest_) {
         // The smaller team; then wait for the client to choose a spawn.
-        std::array<int, 2> sizes{};
+        std::array<int, 3> sizes{};
         for (const Client& c : clients_) {
-            ++sizes[size_t(c.team)];
+            if (c.team >= 0 && c.team <= natives_team) {
+                ++sizes[size_t(c.team)];
+            }
         }
         joined.team = *admitted_team >= 0 ? std::min(*admitted_team, 1) : sizes[1] < sizes[0] ? 1 : 0;
+        // A native (a bot asking), while the battlefield has room for one.
+        const auto& natives = conquest_->battlefield().natives;
+        if (team == natives_team && natives && sizes[natives_team] < natives->count) {
+            joined.team = natives_team;
+        }
         joined.life = Life::waiting;
         const Battlefield& field = conquest_->battlefield();
         Vec3 view = field.center();
@@ -334,7 +342,7 @@ GameServer::Client* GameServer::join(const net::Endpoint& from, const std::strin
         reset_loadout(joined.state, loadout_of(joined), joined.stats);
         clients_.push_back(joined);
         say(std::format("{} joined from {} as entity {} on team {}", name, from.to_string(), joined.entity,
-                        field.teams[size_t(joined.team)].name));
+                        field.team(joined.team).name));
         return &clients_.back();
     }
 
@@ -583,7 +591,7 @@ void GameServer::run_match() {
             MatchResult result{field.name, event.team, {}};
             for (const Client& client : clients_) {
                 say(std::format("  {:<16} {:<12} {} kills, {} deaths, {} captures", client.name,
-                                field.teams[size_t(client.team)].name, client.kills, client.deaths, client.captures));
+                                field.team(client.team).name, client.kills, client.deaths, client.captures));
                 result.players.push_back({client.name, client.team, client.kills, client.deaths, client.captures});
             }
             if (on_match_ended) {
@@ -615,7 +623,7 @@ void GameServer::run_match() {
         }
         const size_t loadout = client.wants_spawn->loadout;
         const size_t post = client.wants_spawn->post;
-        if (loadout < field.teams[size_t(client.team)].loadouts.size() && conquest_->can_spawn(client.team, post)) {
+        if (loadout < field.team(client.team).loadouts.size() && conquest_->can_spawn(client.team, post)) {
             spawn_at_post(client, loadout, post);
         }
     }
@@ -636,15 +644,17 @@ void GameServer::spawn_at_post(Client& client, size_t loadout_index, size_t post
     // steps); facing away from it.
     const uint32_t slot = next_spawn_slot_++;
     const double angle = double(slot) * 2.399963;
-    Vec3 position = post.spawn_points.empty()
-                        ? post.position + Vec3{std::cos(angle), 0, std::sin(angle)} * post.spawn_radius
-                        : post.spawn_points[slot % post.spawn_points.size()];
+    // Natives at its ally spawn points, if it has them.
+    const bool ally = client.team == natives_team && !post.ally_spawn_points.empty();
+    const auto& points = ally ? post.ally_spawn_points : post.spawn_points;
+    Vec3 position = points.empty() ? post.position + Vec3{std::cos(angle), 0, std::sin(angle)} * post.spawn_radius
+                                   : points[slot % points.size()];
     position.x = std::clamp(position.x, field.min_x, field.max_x);
     position.z = std::clamp(position.z, field.min_z, field.max_z);
     position = world_.clamp(position);
     // On the surface at the spawn point's height, if it has one; else on
     // the terrain (or what stands on it).
-    const double from = post.spawn_heights && !post.spawn_points.empty()
+    const double from = ally || (post.spawn_heights && !post.spawn_points.empty())
                             ? position.y
                             : world_.terrain().height_at(position.x, position.z);
     client.loadout = loadout_index;
@@ -694,6 +704,10 @@ void GameServer::fire(const Client& shooter, const Shot& shot, double view_tick)
         bolt.rewind = rewind;
         bolts_.push_back(bolt);
     }
+}
+
+bool GameServer::allied(int a, int b) const {
+    return conquest_ ? conquest_->battlefield().allied(a, b) : a >= 0 && a == b;
 }
 
 std::optional<World::RayHit> GameServer::shot_hit(Vec3 a, Vec3 b) const {
@@ -763,7 +777,7 @@ void GameServer::advance_bolts() {
         int hit_powerup = -1;
         const bool bounces = def.projectile == Projectile::grenade && !def.explode_on_impact;
         for (Client& target : clients_) {
-            const bool teammate = bolt.team >= 0 && target.team == bolt.team && !config_.friendly_fire;
+            const bool teammate = allied(bolt.team, target.team) && !config_.friendly_fire;
             if (bounces || harmless || target.entity == bolt.owner || target.life != Life::alive || teammate) {
                 continue;
             }
@@ -951,7 +965,7 @@ void GameServer::explode(const Blast& blast, std::vector<Blast>& blasts) {
         return shot_hit(center, feet + Vec3{0, 1.0, 0}) && shot_hit(center, feet + Vec3{0, 1.6, 0});
     };
     for (Client& target : clients_) {
-        const bool teammate = !blast.droid && bolt.team >= 0 && target.team == bolt.team &&
+        const bool teammate = !blast.droid && allied(bolt.team, target.team) &&
                               target.entity != bolt.owner && !config_.friendly_fire;
         if (target.life != Life::alive) {
             continue;

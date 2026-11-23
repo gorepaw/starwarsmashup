@@ -42,7 +42,7 @@ GameClient::GameClient(net::Link& link, const World& world, ClientConfig config)
 
 const Loadout& GameClient::loadout() const {
     if (config_.battlefield && self_.team >= 0) {
-        const auto& loadouts = config_.battlefield->teams[size_t(self_.team)].loadouts;
+        const auto& loadouts = config_.battlefield->team(self_.team).loadouts;
         return loadouts[std::min<size_t>(self_.loadout, loadouts.size() - 1)];
     }
     return config_.loadout;
@@ -110,7 +110,7 @@ void GameClient::update(double now) {
         return;
     }
     if (status_ == Status::connecting && now - last_hello_ >= config_.hello_interval) {
-        link_.send(config_.server, net::encode(net::Hello{config_.name, config_.ticket}));
+        link_.send(config_.server, net::encode(net::Hello{config_.name, config_.ticket, int8_t(config_.team)}));
         last_hello_ = now;
     }
     if (status_ == Status::connected && spawn_request_ && self_.life == Life::waiting &&
