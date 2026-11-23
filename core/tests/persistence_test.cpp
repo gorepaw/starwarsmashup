@@ -73,9 +73,36 @@ void test_store(CharacterStore& store) {
     CHECK(store.find(created_wke.id) == created_wke);
     const auto all = store.list_all();
     CHECK(all.size() == 3);
+
+    // Items, loadouts, and economy.
+    const ItemInstance i1 = store.grant_item({0, created_wke.id, "wp_rifle_e11", 0.75, "", "{}"});
+    const ItemInstance i2 = store.grant_item({0, created_wke.id, "psg_mark1", 0.5, "", "{}"});
+    CHECK(i1.id != 0 && i2.id > i1.id);
+    CHECK(store.list_items(created_wke.id).size() == 2);
+
+    CharacterLoadout lo;
+    lo.slot_index = 0;
+    lo.name = "Heavy";
+    lo.primary_id = i1.id;
+    lo.gear_ids["deflector_shield"] = i2.id;
+    lo.appearance_ids["jacket"] = 99;
+    store.save_loadout(created_wke.id, lo);
+    const auto loadouts = store.list_loadouts(created_wke.id);
+    CHECK(loadouts.size() == 1 && loadouts[0] == lo);
+
+    store.update_economy(created_wke.id, 1500, 320, 450, 1);
+    const auto updated_wke = store.find(created_wke.id);
+    CHECK(updated_wke && updated_wke->credits == 1500 && updated_wke->faction_points == 320 &&
+          updated_wke->experience == 450 && updated_wke->active_loadout == 1);
+
+    CHECK(store.remove_item(i2.id));
+    CHECK(store.list_items(created_wke.id).size() == 1);
+
     CHECK(store.remove(created_wke.id));
     CHECK(!store.remove(created_wke.id));
     CHECK(!store.find(created_wke.id));
+    CHECK(store.list_items(created_wke.id).empty());
+    CHECK(store.list_loadouts(created_wke.id).empty());
 
     // A batch with an unknown character saves nothing.
     CharacterRecord ghost = b;
@@ -129,6 +156,32 @@ void test_sqlite_file() {
         SqliteCharacterStore migrated(v1.path);
         const auto legacy = migrated.find_by_name("legacy");
         CHECK(legacy && legacy->species == "human" && legacy->gender == "male" && legacy->location == "Mos Eisley");
+    }
+    // A v2 database migrates cleanly to v3, adding economy columns and item/loadout tables.
+    {
+        TempDatabase v2;
+        sqlite3* db = nullptr;
+        CHECK(sqlite3_open(v2.path.string().c_str(), &db) == SQLITE_OK);
+        CHECK(sqlite3_exec(db,
+                           "CREATE TABLE characters ("
+                           " id INTEGER PRIMARY KEY AUTOINCREMENT,"
+                           " name TEXT NOT NULL UNIQUE,"
+                           " x REAL NOT NULL, y REAL NOT NULL, z REAL NOT NULL,"
+                           " yaw REAL NOT NULL,"
+                           " species TEXT NOT NULL DEFAULT 'human',"
+                           " gender TEXT NOT NULL DEFAULT 'male',"
+                           " location TEXT NOT NULL DEFAULT 'Mos Eisley',"
+                           " appearance TEXT NOT NULL DEFAULT '{}') STRICT;"
+                           "INSERT INTO characters (name, x, y, z, yaw, species) VALUES ('v2char', 0, 0, 0, 0, 'wookiee');"
+                           "PRAGMA user_version = 2;",
+                           nullptr, nullptr, nullptr) == SQLITE_OK);
+        sqlite3_close(db);
+
+        SqliteCharacterStore migrated(v2.path);
+        const auto ch = migrated.find_by_name("v2char");
+        CHECK(ch && ch->species == "wookiee" && ch->credits == 0 && ch->faction_points == 0);
+        const auto granted = migrated.grant_item({0, ch->id, "psg_mark1", 0.5, "", "{}"});
+        CHECK(granted.id > 0 && migrated.list_items(ch->id).size() == 1);
     }
 }
 

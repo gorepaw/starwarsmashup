@@ -26,6 +26,7 @@ swgtool extract <dir> <path> <out_file>
 swgtool export-character <dir> <out_dir> --name <name> --sat <path.sat>... [--weapon <path.lod>]
                          [--bf2-lvl <ingame.lvl> --bf2-bank <bank> --anim <name>...]
 swgtool export-species <dir> <out_dir> [--bf2-lvl <ingame.lvl>] [--species <id>] [--max-hairs <n>]
+swgtool export-items <dir> <out_dir>
 swgtool bake-terrain <dir> <out_prefix> --trn <path.trn> --center <x> <z> --samples <n> --spacing <m>
                      [--snapshot <path.ws>]
 swgtool terrain-trace <dir> --trn <path.trn> --at <x> <z>

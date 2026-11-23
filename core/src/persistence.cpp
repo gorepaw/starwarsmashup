@@ -53,7 +53,57 @@ void MemoryCharacterStore::save(std::span<const CharacterRecord> characters) {
 }
 
 bool MemoryCharacterStore::remove(PersistentId id) {
+    loadouts_.erase(id);
+    std::erase_if(items_, [id](const auto& kv) { return kv.second.owner_id == id; });
     return characters_.erase(id) > 0;
+}
+
+std::vector<ItemInstance> MemoryCharacterStore::list_items(PersistentId owner_id) {
+    std::vector<ItemInstance> out;
+    for (const auto& [id, inst] : items_) {
+        if (inst.owner_id == owner_id) {
+            out.push_back(inst);
+        }
+    }
+    return out;
+}
+
+ItemInstance MemoryCharacterStore::grant_item(const ItemInstance& item) {
+    ItemInstance copy = item;
+    copy.id = next_item_id_++;
+    if (copy.color_json.empty()) copy.color_json = "{}";
+    items_[copy.id] = copy;
+    return copy;
+}
+
+bool MemoryCharacterStore::remove_item(PersistentId item_id) {
+    return items_.erase(item_id) > 0;
+}
+
+std::vector<CharacterLoadout> MemoryCharacterStore::list_loadouts(PersistentId owner_id) {
+    std::vector<CharacterLoadout> out;
+    if (const auto it = loadouts_.find(owner_id); it != loadouts_.end()) {
+        for (const auto& [slot, lo] : it->second) {
+            out.push_back(lo);
+        }
+    }
+    return out;
+}
+
+void MemoryCharacterStore::save_loadout(PersistentId owner_id, const CharacterLoadout& loadout) {
+    loadouts_[owner_id][loadout.slot_index] = loadout;
+}
+
+void MemoryCharacterStore::update_economy(PersistentId id, int64_t credits, int64_t faction_points, int64_t experience,
+                                          int active_loadout) {
+    auto it = characters_.find(id);
+    if (it == characters_.end()) {
+        throw std::runtime_error("no character " + std::to_string(id));
+    }
+    it->second.credits = credits;
+    it->second.faction_points = faction_points;
+    it->second.experience = experience;
+    it->second.active_loadout = active_loadout;
 }
 
 } // namespace swm::core

@@ -24,6 +24,81 @@ godot::Dictionary to_dict(const core::CharacterRecord& r) {
     out["appearance"] = godot::String::utf8(r.appearance.c_str());
     out["position"] = godot::Vector3(real_t(r.position.x), real_t(r.position.y), real_t(r.position.z));
     out["yaw"] = double(r.yaw);
+    out["credits"] = int64_t(r.credits);
+    out["faction_points"] = int64_t(r.faction_points);
+    out["experience"] = int64_t(r.experience);
+    out["active_loadout"] = int64_t(r.active_loadout);
+    return out;
+}
+
+godot::Dictionary to_dict(const core::ItemInstance& inst) {
+    godot::Dictionary out;
+    out["id"] = int64_t(inst.id);
+    out["owner_id"] = int64_t(inst.owner_id);
+    out["def_id"] = godot::String::utf8(inst.def_id.c_str());
+    out["quality"] = inst.quality;
+    out["custom_name"] = godot::String::utf8(inst.custom_name.c_str());
+    out["color_json"] = godot::String::utf8(inst.color_json.c_str());
+    return out;
+}
+
+godot::Dictionary to_dict(const core::CharacterLoadout& lo) {
+    godot::Dictionary out;
+    out["slot_index"] = int64_t(lo.slot_index);
+    out["name"] = godot::String::utf8(lo.name.c_str());
+    out["primary_id"] = int64_t(lo.primary_id);
+    out["sidearm_id"] = int64_t(lo.sidearm_id);
+    out["secondary_id"] = int64_t(lo.secondary_id);
+    godot::Dictionary gear, app;
+    for (const auto& [k, v] : lo.gear_ids) {
+        gear[godot::String::utf8(k.c_str())] = int64_t(v);
+    }
+    for (const auto& [k, v] : lo.appearance_ids) {
+        app[godot::String::utf8(k.c_str())] = int64_t(v);
+    }
+    out["gear_ids"] = gear;
+    out["appearance_ids"] = app;
+    return out;
+}
+
+godot::Dictionary to_dict(const core::ItemDef& d, const core::ItemCatalog& catalog) {
+    godot::Dictionary out;
+    out["id"] = godot::String::utf8(d.id.c_str());
+    out["name"] = godot::String::utf8(d.display_name.c_str());
+    out["description"] = godot::String::utf8(d.description.c_str());
+    out["kind"] = godot::String::utf8(std::string(core::item_kind_name(d.kind)).c_str());
+    out["slot"] = godot::String::utf8(d.slot.c_str());
+    out["archetype"] = godot::String::utf8(core::weapon_archetype_info(d.archetype).id.c_str());
+    out["anim_set"] = godot::String::utf8(d.anim_set.c_str());
+    out["faction"] = godot::String::utf8(d.faction.c_str());
+    out["cost_fp"] = int64_t(d.cost_faction_points);
+    out["cost_credits"] = int64_t(d.cost_credits);
+    out["model"] = godot::String::utf8(d.model_path.c_str());
+
+    godot::Array mods;
+    for (const core::StatModifier& m : d.modifiers) {
+        godot::Dictionary md;
+        md["stat"] = int64_t(m.stat);
+        md["add"] = m.add;
+        md["multiply"] = m.multiply;
+        mods.push_back(md);
+    }
+    out["modifiers"] = mods;
+
+    if (d.kind == core::ItemKind::weapon) {
+        const core::WeaponDef w = catalog.resolve_weapon(d, 0.5, false);
+        godot::Dictionary ws;
+        ws["damage"] = w.damage;
+        ws["shot_delay"] = w.shot_delay;
+        ws["rounds_per_clip"] = int64_t(w.rounds_per_clip);
+        ws["heat_per_shot"] = w.heat_per_shot;
+        ws["reload_time"] = w.reload_time;
+        ws["bolt_speed"] = w.bolt_speed;
+        ws["bolt_life"] = w.bolt_life;
+        ws["yaw_spread"] = w.yaw_spread;
+        ws["shots_per_salvo"] = int64_t(w.shots_per_salvo);
+        out["weapon_stats"] = ws;
+    }
     return out;
 }
 
@@ -103,6 +178,247 @@ godot::String SwmCharacterStore::get_last_error() const {
     return godot::String::utf8(last_error_.c_str());
 }
 
+godot::Error SwmCharacterStore::load_catalog(const godot::String& catalog_ini, const godot::String& bf2_items_dir) {
+    last_error_.clear();
+    try {
+        catalog_.load(to_std(catalog_ini), to_std(bf2_items_dir));
+        return godot::OK;
+    } catch (const std::exception& e) {
+        last_error_ = e.what();
+        return godot::ERR_CANT_OPEN;
+    }
+}
+
+godot::Array SwmCharacterStore::get_catalog() const {
+    godot::Array out;
+    for (const core::ItemDef& d : catalog_.all()) {
+        out.push_back(to_dict(d, catalog_));
+    }
+    return out;
+}
+
+godot::Array SwmCharacterStore::list_items(int64_t char_id) {
+    godot::Array out;
+    if (!store_) return out;
+    try {
+        for (const core::ItemInstance& inst : store_->list_items(core::PersistentId(char_id))) {
+            out.push_back(to_dict(inst));
+        }
+    } catch (const std::exception& e) {
+        last_error_ = e.what();
+    }
+    return out;
+}
+
+godot::Dictionary SwmCharacterStore::grant_item(int64_t char_id, const godot::String& def_id, double quality) {
+    last_error_.clear();
+    if (!store_) {
+        last_error_ = "database not open";
+        return {};
+    }
+    try {
+        core::ItemInstance inst;
+        inst.owner_id = core::PersistentId(char_id);
+        inst.def_id = to_std(def_id);
+        inst.quality = quality;
+        return to_dict(store_->grant_item(inst));
+    } catch (const std::exception& e) {
+        last_error_ = e.what();
+        return {};
+    }
+}
+
+bool SwmCharacterStore::remove_item(int64_t item_id) {
+    last_error_.clear();
+    if (!store_) return false;
+    try {
+        return store_->remove_item(core::PersistentId(item_id));
+    } catch (const std::exception& e) {
+        last_error_ = e.what();
+        return false;
+    }
+}
+
+godot::Array SwmCharacterStore::list_loadouts(int64_t char_id) {
+    godot::Array out;
+    if (!store_) return out;
+    try {
+        for (const core::CharacterLoadout& lo : store_->list_loadouts(core::PersistentId(char_id))) {
+            out.push_back(to_dict(lo));
+        }
+    } catch (const std::exception& e) {
+        last_error_ = e.what();
+    }
+    return out;
+}
+
+godot::Error SwmCharacterStore::save_loadout(int64_t char_id, int64_t slot_index, const godot::Dictionary& loadout) {
+    last_error_.clear();
+    if (!store_) {
+        last_error_ = "database not open";
+        return godot::ERR_UNCONFIGURED;
+    }
+    try {
+        core::CharacterLoadout lo;
+        lo.slot_index = int(slot_index);
+        lo.name = loadout.has("name") ? to_std(loadout["name"]) : ("Loadout " + std::to_string(slot_index + 1));
+        lo.primary_id = loadout.has("primary_id") ? uint64_t(int64_t(loadout["primary_id"])) : 0;
+        lo.sidearm_id = loadout.has("sidearm_id") ? uint64_t(int64_t(loadout["sidearm_id"])) : 0;
+        lo.secondary_id = loadout.has("secondary_id") ? uint64_t(int64_t(loadout["secondary_id"])) : 0;
+        if (loadout.has("gear_ids")) {
+            godot::Dictionary gear = loadout["gear_ids"];
+            godot::Array keys = gear.keys();
+            for (int i = 0; i < keys.size(); ++i) {
+                lo.gear_ids[to_std(keys[i])] = uint64_t(int64_t(gear[keys[i]]));
+            }
+        }
+        if (loadout.has("appearance_ids")) {
+            godot::Dictionary app = loadout["appearance_ids"];
+            godot::Array keys = app.keys();
+            for (int i = 0; i < keys.size(); ++i) {
+                lo.appearance_ids[to_std(keys[i])] = uint64_t(int64_t(app[keys[i]]));
+            }
+        }
+        store_->save_loadout(core::PersistentId(char_id), lo);
+        return godot::OK;
+    } catch (const std::exception& e) {
+        last_error_ = e.what();
+        return godot::FAILED;
+    }
+}
+
+godot::Error SwmCharacterStore::ensure_starter_kit(int64_t char_id) {
+    last_error_.clear();
+    if (!store_) {
+        last_error_ = "database not open";
+        return godot::ERR_UNCONFIGURED;
+    }
+    try {
+        const auto existing = store_->list_items(core::PersistentId(char_id));
+        if (!existing.empty()) {
+            return godot::OK;
+        }
+        const auto ch = store_->find(core::PersistentId(char_id));
+        if (!ch) {
+            last_error_ = "character not found";
+            return godot::ERR_DOES_NOT_EXIST;
+        }
+        const auto grant = [&](const char* def_id) {
+            return store_->grant_item({0, ch->id, def_id, 0.5, "", "{}"});
+        };
+        const auto primary = grant("wp_rifle_e11");
+        const auto sidearm = grant("wp_pistol_dh17");
+        const auto grenade = grant("wp_grenade_c22");
+        const auto psg = grant("psg_mark1");
+        const auto shirt = grant("cloth_shirt_tunic");
+        const auto pants = grant("cloth_pants_cargo");
+        const auto boots = grant("cloth_boots_leather");
+
+        core::CharacterLoadout lo;
+        lo.slot_index = 0;
+        lo.name = "Standard Issue";
+        lo.primary_id = primary.id;
+        lo.sidearm_id = sidearm.id;
+        lo.secondary_id = grenade.id;
+        lo.gear_ids["deflector_shield"] = psg.id;
+        lo.appearance_ids["shirt"] = shirt.id;
+        lo.appearance_ids["pants"] = pants.id;
+        lo.appearance_ids["boots_cosmetic"] = boots.id;
+        store_->save_loadout(ch->id, lo);
+        if (ch->credits == 0 && ch->faction_points == 0) {
+            store_->update_economy(ch->id, 500, 100, ch->experience, 0);
+        }
+        return godot::OK;
+    } catch (const std::exception& e) {
+        last_error_ = e.what();
+        return godot::FAILED;
+    }
+}
+
+godot::Dictionary SwmCharacterStore::buy_item(int64_t char_id, const godot::String& def_id,
+                                              bool use_faction_points) {
+    last_error_.clear();
+    if (!store_) {
+        last_error_ = "database not open";
+        return {};
+    }
+    try {
+        const std::string id_str = to_std(def_id);
+        const core::ItemDef* def = catalog_.find(id_str);
+        if (def == nullptr) {
+            last_error_ = "unknown item: " + id_str;
+            return {};
+        }
+        const auto ch = store_->find(core::PersistentId(char_id));
+        if (!ch) {
+            last_error_ = "character not found";
+            return {};
+        }
+        int64_t credits = ch->credits;
+        int64_t fp = ch->faction_points;
+        if (use_faction_points) {
+            if (fp < def->cost_faction_points) {
+                last_error_ = "insufficient faction points";
+                return {};
+            }
+            fp -= def->cost_faction_points;
+        } else {
+            if (credits < def->cost_credits) {
+                last_error_ = "insufficient credits";
+                return {};
+            }
+            credits -= def->cost_credits;
+        }
+        store_->update_economy(ch->id, credits, fp, ch->experience, ch->active_loadout);
+        return to_dict(store_->grant_item({0, ch->id, id_str, 0.5, "", "{}"}));
+    } catch (const std::exception& e) {
+        last_error_ = e.what();
+        return {};
+    }
+}
+
+godot::Dictionary SwmCharacterStore::add_rewards(int64_t char_id, int64_t xp, int64_t faction_points,
+                                                 int64_t credits) {
+    last_error_.clear();
+    if (!store_) {
+        last_error_ = "database not open";
+        return {};
+    }
+    try {
+        const auto ch = store_->find(core::PersistentId(char_id));
+        if (!ch) {
+            last_error_ = "character not found";
+            return {};
+        }
+        store_->update_economy(ch->id, ch->credits + credits, ch->faction_points + faction_points,
+                               ch->experience + xp, ch->active_loadout);
+        return to_dict(*store_->find(ch->id));
+    } catch (const std::exception& e) {
+        last_error_ = e.what();
+        return {};
+    }
+}
+
+godot::Error SwmCharacterStore::set_active_loadout(int64_t char_id, int64_t slot_index) {
+    last_error_.clear();
+    if (!store_) {
+        last_error_ = "database not open";
+        return godot::ERR_UNCONFIGURED;
+    }
+    try {
+        const auto ch = store_->find(core::PersistentId(char_id));
+        if (!ch) {
+            last_error_ = "character not found";
+            return godot::ERR_DOES_NOT_EXIST;
+        }
+        store_->update_economy(ch->id, ch->credits, ch->faction_points, ch->experience, int(slot_index));
+        return godot::OK;
+    } catch (const std::exception& e) {
+        last_error_ = e.what();
+        return godot::FAILED;
+    }
+}
+
 godot::Array SwmCharacterStore::get_species_list() {
     godot::Array out;
     for (const core::SpeciesDef& sp : core::all_species()) {
@@ -138,6 +454,20 @@ void SwmCharacterStore::_bind_methods() {
         &SwmCharacterStore::create_character);
     ClassDB::bind_method(D_METHOD("delete_character", "id"), &SwmCharacterStore::delete_character);
     ClassDB::bind_method(D_METHOD("get_last_error"), &SwmCharacterStore::get_last_error);
+    ClassDB::bind_method(D_METHOD("load_catalog", "catalog_ini", "bf2_items_dir"), &SwmCharacterStore::load_catalog);
+    ClassDB::bind_method(D_METHOD("get_catalog"), &SwmCharacterStore::get_catalog);
+    ClassDB::bind_method(D_METHOD("list_items", "char_id"), &SwmCharacterStore::list_items);
+    ClassDB::bind_method(D_METHOD("grant_item", "char_id", "def_id", "quality"), &SwmCharacterStore::grant_item);
+    ClassDB::bind_method(D_METHOD("remove_item", "item_id"), &SwmCharacterStore::remove_item);
+    ClassDB::bind_method(D_METHOD("list_loadouts", "char_id"), &SwmCharacterStore::list_loadouts);
+    ClassDB::bind_method(D_METHOD("save_loadout", "char_id", "slot_index", "loadout"),
+                         &SwmCharacterStore::save_loadout);
+    ClassDB::bind_method(D_METHOD("ensure_starter_kit", "char_id"), &SwmCharacterStore::ensure_starter_kit);
+    ClassDB::bind_method(D_METHOD("buy_item", "char_id", "def_id", "use_faction_points"), &SwmCharacterStore::buy_item);
+    ClassDB::bind_method(D_METHOD("add_rewards", "char_id", "xp", "faction_points", "credits"),
+                         &SwmCharacterStore::add_rewards);
+    ClassDB::bind_method(D_METHOD("set_active_loadout", "char_id", "slot_index"),
+                         &SwmCharacterStore::set_active_loadout);
     ClassDB::bind_static_method("SwmCharacterStore", D_METHOD("get_species_list"),
                                 &SwmCharacterStore::get_species_list);
 }

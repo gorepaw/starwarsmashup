@@ -232,11 +232,11 @@ Galaxies' weapons and armor become items you own, wear, and put into three loado
 ### Tasks
 
 **Data**
-- [ ] Item definitions (data files) separate from item instances (a persistent id and its stat values). Inventory and loadouts saved in SQLite through the persistence interface.
-- [ ] Weapon archetypes (handling, fire mode, projectile, heat, animation set), from Battlefront's weapon classes.
-- [ ] Galaxies weapons imported: models with their hardpoints (muzzle, scope), each mapped to an archetype with a sidegrade stat profile. Pistols, carbines, rifles, heavy weapons and grenades.
-- [ ] Galaxies armor imported: every set's pieces in their slots (helmet, chest, biceps, bracers, gloves, belt, leggings, boots), with the species variants where Galaxies has them, plus the universal Deflector Shield (Personal Shield Generator) slot, and stats on the gear model.
-- [ ] Clothing as appearance items. Appearance is separate from stats: wear what you like.
+- [x] Item definitions (data files) separate from item instances (a persistent id and its stat values). Inventory and loadouts saved in SQLite through the persistence interface.
+- [x] Weapon archetypes (handling, fire mode, projectile, heat, animation set), from Battlefront's weapon classes.
+- [x] Galaxies weapons imported: models with their hardpoints (muzzle, scope), each mapped to an archetype with a sidegrade stat profile. Pistols, carbines, rifles, heavy weapons and grenades.
+- [x] Galaxies armor imported: every set's pieces in their slots (helmet, chest, biceps, bracers, gloves, belt, leggings, boots), with the species variants where Galaxies has them, plus the universal Deflector Shield (Personal Shield Generator) slot, and stats on the gear model.
+- [x] Clothing as appearance items. Appearance is separate from stats: wear what you like.
 
 **Holding weapons**
 - [ ] Each weapon held properly: its grip points, hand poses by archetype, and Battlefront's animation set for its kind (rifle, pistol, bazooka). This fixes the third-person hands, and first person uses the same points.

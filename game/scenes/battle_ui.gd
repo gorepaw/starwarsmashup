@@ -193,12 +193,16 @@ func add_posts() -> void:
 	if _battlefield.is_empty():
 		return
 	var holograms := _post_models()
-	if not holograms.is_empty():
-		var tags := TeamTags.new("res://" + str(_map_meta["dir"]), holograms.values()[0]["hologram"])
-		_team_tags = tags if tags.available() else null
+	for entry: Dictionary in holograms.values():
+		var spec: Dictionary = entry["hologram"]
+		if not (spec.get("images", {}) as Dictionary).is_empty():
+			var tags := TeamTags.new("res://" + str(_map_meta["dir"]), spec)
+			if tags.available():
+				_team_tags = tags
+				break
 	for post: Dictionary in _battlefield["posts"]:
 		var model: Dictionary = holograms.get(str(post["name"]).to_lower(), {})
-		if not model.is_empty():
+		if not model.is_empty() and not ((model["hologram"] as Dictionary).get("images", {}) as Dictionary).is_empty():
 			_posts.append({"hologram": _add_hologram(model)})
 			continue
 		var material := StandardMaterial3D.new()

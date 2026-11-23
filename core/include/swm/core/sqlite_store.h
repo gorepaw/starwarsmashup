@@ -26,8 +26,16 @@ public:
     void save(std::span<const CharacterRecord> characters) override;
     bool remove(PersistentId id) override;
 
+    std::vector<ItemInstance> list_items(PersistentId owner_id) override;
+    ItemInstance grant_item(const ItemInstance& item) override;
+    bool remove_item(PersistentId item_id) override;
+    std::vector<CharacterLoadout> list_loadouts(PersistentId owner_id) override;
+    void save_loadout(PersistentId owner_id, const CharacterLoadout& loadout) override;
+    void update_economy(PersistentId id, int64_t credits, int64_t faction_points, int64_t experience,
+                        int active_loadout) override;
+
     // The schema version this build writes (PRAGMA user_version).
-    static constexpr int schema_version = 2;
+    static constexpr int schema_version = 3;
 
 private:
     void close();
@@ -42,6 +50,14 @@ private:
     sqlite3_stmt* insert_ = nullptr;
     sqlite3_stmt* update_ = nullptr;
     sqlite3_stmt* delete_ = nullptr;
+    sqlite3_stmt* list_items_ = nullptr;
+    sqlite3_stmt* grant_item_ = nullptr;
+    sqlite3_stmt* remove_item_ = nullptr;
+    sqlite3_stmt* remove_items_by_owner_ = nullptr;
+    sqlite3_stmt* list_loadouts_ = nullptr;
+    sqlite3_stmt* save_loadout_ = nullptr;
+    sqlite3_stmt* remove_loadouts_by_owner_ = nullptr;
+    sqlite3_stmt* update_economy_ = nullptr;
 };
 
 } // namespace swm::core

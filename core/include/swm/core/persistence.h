@@ -7,6 +7,7 @@
 #include <string>
 #include <vector>
 
+#include "swm/core/items.h"
 #include "swm/core/vec3.h"
 
 namespace swm::core {
@@ -25,6 +26,10 @@ struct CharacterRecord {
     std::string gender = "male";
     std::string location = "Mos Eisley";
     std::string appearance = "{}";
+    int64_t credits = 0;
+    int64_t faction_points = 0;
+    int64_t experience = 0;
+    int active_loadout = 0;
 
     friend bool operator==(const CharacterRecord&, const CharacterRecord&) = default;
 };
@@ -49,6 +54,15 @@ public:
     // Updates existing characters, all or none.
     virtual void save(std::span<const CharacterRecord> characters) = 0;
     virtual bool remove(PersistentId id) = 0;
+
+    // Inventory, loadouts, and character economy.
+    virtual std::vector<ItemInstance> list_items(PersistentId owner_id) = 0;
+    virtual ItemInstance grant_item(const ItemInstance& item) = 0;
+    virtual bool remove_item(PersistentId item_id) = 0;
+    virtual std::vector<CharacterLoadout> list_loadouts(PersistentId owner_id) = 0;
+    virtual void save_loadout(PersistentId owner_id, const CharacterLoadout& loadout) = 0;
+    virtual void update_economy(PersistentId id, int64_t credits, int64_t faction_points, int64_t experience,
+                                int active_loadout) = 0;
 };
 
 // Keeps everything in memory, for tests.
@@ -61,9 +75,20 @@ public:
     void save(std::span<const CharacterRecord> characters) override;
     bool remove(PersistentId id) override;
 
+    std::vector<ItemInstance> list_items(PersistentId owner_id) override;
+    ItemInstance grant_item(const ItemInstance& item) override;
+    bool remove_item(PersistentId item_id) override;
+    std::vector<CharacterLoadout> list_loadouts(PersistentId owner_id) override;
+    void save_loadout(PersistentId owner_id, const CharacterLoadout& loadout) override;
+    void update_economy(PersistentId id, int64_t credits, int64_t faction_points, int64_t experience,
+                        int active_loadout) override;
+
 private:
     std::map<PersistentId, CharacterRecord> characters_;
     PersistentId next_id_ = 1;
+    std::map<PersistentId, ItemInstance> items_;
+    PersistentId next_item_id_ = 1;
+    std::map<PersistentId, std::map<int, CharacterLoadout>> loadouts_;
 };
 
 } // namespace swm::core

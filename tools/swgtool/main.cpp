@@ -33,6 +33,7 @@
 #include "swg/manifest.h"
 #include "swg/portal_layout.h"
 #include "swg/skinned_mesh.h"
+#include "swg/static_mesh.h"
 #include "swg/tre_archive.h"
 #include "swg/tre_scan.h"
 #include "swm/core/species.h"
@@ -55,6 +56,7 @@ constexpr const char* usage = R"(usage:
                            [--weapon <path.lod>]
                            [--bf2-lvl <ingame.lvl> --bf2-bank <bank>... --anim <name>...] [--swg-anim <path.ans>...]
   swgtool export-species <dir> <out_dir> [--bf2-lvl <ingame.lvl>] [--species <id>] [--max-hairs <n>]
+  swgtool export-items <dir> <out_dir>
   swgtool bake-terrain <dir> <out_prefix> --trn <path.trn> --center <x> <z> --samples <n> --spacing <m>
                        [--snapshot <path.ws>]
   swgtool terrain-trace <dir> --trn <path.trn> --at <x> <z>
@@ -1118,6 +1120,140 @@ int cmd_export_species(const std::vector<std::string>& args) {
     return 0;
 }
 
+int cmd_export_items(const std::vector<std::string>& args) {
+    if (args.size() < 2) {
+        std::cerr << "usage: swgtool export-items <dir> <out_dir>\n";
+        return 2;
+    }
+    const TreLibrary library(args[0]);
+    const std::filesystem::path out_root(args[1]);
+    TreLibrary lib(args[0]);
+
+    struct WeaponEntry {
+        const char* id;
+        const char* lod;
+    };
+    const WeaponEntry weapons[] = {
+        {"wp_carbine_e11", "appearance/lod/wp_carbine_e11.lod"},
+        {"wp_carbine_dh17", "appearance/lod/wp_carbine_dh17.lod"},
+        {"wp_carbine_ee3", "appearance/lod/wp_carbine_ee3.lod"},
+        {"wp_carbine_laser", "appearance/lod/wp_carbine_laser.lod"},
+        {"wp_rifle_dlt20a", "appearance/lod/wp_rifle_dlt20a.lod"},
+        {"wp_rifle_t21", "appearance/lod/wp_rifle_t21.lod"},
+        {"wp_rifle_laser", "appearance/lod/wp_rifle_laser.lod"},
+        {"wp_rifle_bowcaster", "appearance/lod/wp_sp_bowcaster.lod"},
+        {"wp_rifle_sg82", "appearance/lod/wp_rifle_sg82.lod"},
+        {"wp_pistol_dh17", "appearance/lod/wp_pistol_dh17.lod"},
+        {"wp_pistol_dl44", "appearance/lod/wp_pistol_dl44.lod"},
+        {"wp_pistol_d18", "appearance/lod/wp_pistol_d18.lod"},
+        {"wp_pistol_scout_blaster", "appearance/lod/wp_pistol_scout_blaster.lod"},
+        {"wp_heavy_rocket_launcher", "appearance/lod/wp_hvy_rocket_launcher.lod"},
+        {"wp_grenade_c22", "appearance/lod/wp_grenade_c22.lod"},
+        {"wp_grenade_fragmentation", "appearance/lod/wp_grenade_fragmentation.lod"},
+        {"wp_grenade_glop", "appearance/lod/wp_grenade_glop.lod"},
+    };
+
+    size_t weapon_count = 0;
+    for (const auto& w : weapons) {
+        if (!lib.contains(w.lod)) {
+            continue;
+        }
+        try {
+            const std::string mesh_path = "appearance/" + lod_highest_detail(lib.read(w.lod));
+            const StaticMesh sm = parse_static_mesh(lib.read(mesh_path));
+            const std::filesystem::path dir = out_root / "weapons" / w.id;
+            std::filesystem::create_directories(dir);
+            Gltf gltf;
+            std::ostringstream log;
+            GltfAssets assets(lib, gltf, dir, log);
+            const int mesh_idx = assets.add_static_mesh(sm, w.id);
+            Gltf::Node root_node{.name = w.id, .mesh = mesh_idx};
+            for (const Hardpoint& hp : sm.hardpoints) {
+                const Mat4 m = to_gltf(hp.transform);
+                const int hp_node = int(gltf.nodes.size());
+                gltf.nodes.push_back({.name = "hp_" + hp.name,
+                                      .translation = Vec3{m.at(0, 3), m.at(1, 3), m.at(2, 3)}});
+                root_node.children.push_back(hp_node);
+            }
+            const int root_idx = int(gltf.nodes.size());
+            gltf.nodes.push_back(std::move(root_node));
+            gltf.scene_nodes = {root_idx};
+            gltf.write(dir / (std::string(w.id) + ".gltf"));
+            ++weapon_count;
+        } catch (const std::exception& e) {
+            std::cerr << "skipping weapon " << w.id << ": " << e.what() << "\n";
+        }
+    }
+
+    struct WearableEntry {
+        const char* rel_dir;
+        const char* out_stem;
+        const char* sat_m;
+        const char* sat_f;
+    };
+    const WearableEntry wearables[] = {
+        // Ubese
+        {"armor/ubese", "helmet", "appearance/armor_ubese_helmet_hum_m.sat", "appearance/armor_ubese_helmet_hum_f.sat"},
+        {"armor/ubese", "chest", "appearance/armor_ubese_shirt_m.sat", "appearance/armor_ubese_shirt_f.sat"},
+        {"armor/ubese", "leggings", "appearance/armor_ubese_pants_m.sat", "appearance/armor_ubese_pants_f.sat"},
+        {"armor/ubese", "boots", "appearance/armor_ubese_boots_m.sat", "appearance/armor_ubese_boots_f.sat"},
+        {"armor/ubese", "gloves", "appearance/armor_ubese_gloves_m.sat", "appearance/armor_ubese_gloves_f.sat"},
+        {"armor/ubese", "bracer_l", "appearance/armor_ubese_bracer_l_m.sat", "appearance/armor_ubese_bracer_l_f.sat"},
+        // Padded
+        {"armor/padded", "chest", "appearance/armor_padded_s01_chest_plate_m.sat", "appearance/armor_padded_s01_chest_plate_f.sat"},
+        {"armor/padded", "leggings", "appearance/armor_padded_s01_leggings_m.sat", "appearance/armor_padded_s01_leggings_f.sat"},
+        {"armor/padded", "boots", "appearance/armor_padded_s01_boots_m.sat", "appearance/armor_padded_s01_boots_f.sat"},
+        // Stormtrooper
+        {"armor/stormtrooper", "helmet", "appearance/armor_stormtrooper_helmet_m.sat", "appearance/armor_stormtrooper_helmet_f.sat"},
+        {"armor/stormtrooper", "chest", "appearance/armor_stormtrooper_chest_plate_m.sat", "appearance/armor_stormtrooper_chest_plate_f.sat"},
+        {"armor/stormtrooper", "bicep_l", "appearance/armor_stormtrooper_bicep_l_m.sat", "appearance/armor_stormtrooper_bicep_l_f.sat"},
+        {"armor/stormtrooper", "bracer_l", "appearance/armor_stormtrooper_bracer_l_m.sat", "appearance/armor_stormtrooper_bracer_l_f.sat"},
+        {"armor/stormtrooper", "gloves", "appearance/armor_stormtrooper_gloves_m.sat", "appearance/armor_stormtrooper_gloves_f.sat"},
+        {"armor/stormtrooper", "belt", "appearance/armor_stormtrooper_utility_belt_m.sat", "appearance/armor_stormtrooper_utility_belt_f.sat"},
+        {"armor/stormtrooper", "leggings", "appearance/armor_stormtrooper_leggings_m.sat", "appearance/armor_stormtrooper_leggings_f.sat"},
+        {"armor/stormtrooper", "boots", "appearance/armor_stormtrooper_boots_m.sat", "appearance/armor_stormtrooper_boots_f.sat"},
+        // Composite
+        {"armor/composite", "helmet", "appearance/armor_composite_s01_helmet_m.sat", "appearance/armor_composite_s01_helmet_f.sat"},
+        {"armor/composite", "chest", "appearance/armor_composite_s01_chest_plate_m.sat", "appearance/armor_composite_s01_chest_plate_f.sat"},
+        {"armor/composite", "leggings", "appearance/armor_composite_s01_leggings_m.sat", "appearance/armor_composite_s01_leggings_f.sat"},
+        {"armor/composite", "boots", "appearance/armor_composite_s01_boots_m.sat", "appearance/armor_composite_s01_boots_f.sat"},
+        {"armor/composite", "gloves", "appearance/armor_composite_s01_gloves_m.sat", "appearance/armor_composite_s01_gloves_f.sat"},
+        // Clothing
+        {"clothing", "shirt_tunic", "appearance/shirt_s01_m.sat", "appearance/shirt_s01_f.sat"},
+        {"clothing", "jacket_rebel", "appearance/jacket_s10_m.sat", "appearance/jacket_s10_f.sat"},
+        {"clothing", "pants_cargo", "appearance/pants_s05_m.sat", "appearance/pants_s05_f.sat"},
+        {"clothing", "boots_leather", "appearance/boots_s14_m.sat", "appearance/boots_s14_f.sat"},
+    };
+
+    size_t wearable_count = 0;
+    std::ostringstream dummy_log;
+    for (const auto& item : wearables) {
+        for (int g = 0; g < 2; ++g) {
+            const char* sat = g == 0 ? item.sat_m : item.sat_f;
+            const char* base_sat = g == 0 ? "appearance/hum_m.sat" : "appearance/hum_f.sat";
+            if (!lib.contains(sat) || !lib.contains(base_sat)) {
+                continue;
+            }
+            try {
+                const SkeletalAppearance app = parse_skeletal_appearance(lib.read(sat));
+                if (app.mesh_generators.empty()) continue;
+                CharacterExport req;
+                req.name = std::string(item.out_stem) + (g == 0 ? "_m" : "_f");
+                req.appearances = {base_sat};
+                req.meshes = app.mesh_generators;
+                req.export_appearance_meshes = false;
+                export_character(lib, req, out_root / item.rel_dir, dummy_log);
+                ++wearable_count;
+            } catch (const std::exception& e) {
+                std::cerr << "skipping wearable " << sat << ": " << e.what() << "\n";
+            }
+        }
+    }
+
+    std::cout << std::format("exported {} weapons, {} armor/clothing pieces\n", weapon_count, wearable_count);
+    return 0;
+}
+
 } // namespace
 
 int main(int argc, char** argv) {
@@ -1151,6 +1287,9 @@ int main(int argc, char** argv) {
         }
         if (command == "export-species") {
             return cmd_export_species(args);
+        }
+        if (command == "export-items") {
+            return cmd_export_items(args);
         }
         if (command == "bake-terrain") {
             return cmd_bake_terrain(args);
