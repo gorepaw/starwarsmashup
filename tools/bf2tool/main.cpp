@@ -508,10 +508,16 @@ int cmd_export_vehicle(const std::vector<std::string>& args) {
         out << "Label = " << label << "\n";
     }
     const std::string geometry = vehicle.get("GeometryName").value_or(name);
-    // The driver's body's values: those before a second Flyer- or
+    // The driver's seat's values: those before a second Flyer- or
     // WalkerSection (a gunner's seat: the jungle AT-ST's TURRET1 has its own
-    // limits and eye).
+    // limits and eye). The rest are the whole vehicle's wherever they stand
+    // (the jungle AT-ST's MaxHealth comes after its TURRET1).
     const auto body_value = [&](std::string_view key) -> std::optional<std::string> {
+        static constexpr std::array<std::string_view, 5> seat_keys{"TrackCenter", "TrackOffset", "EyePointOffset",
+                                                                   "PitchLimits", "YawLimits"};
+        if (std::find(seat_keys.begin(), seat_keys.end(), key) == seat_keys.end()) {
+            return vehicle.get(key);
+        }
         std::optional<std::string> found;
         int sections = 0;
         for (const auto& [hash, value] : vehicle.properties) {

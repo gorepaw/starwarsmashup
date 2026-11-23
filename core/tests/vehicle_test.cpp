@@ -9,6 +9,7 @@
 #include <memory>
 #include <numbers>
 
+#include "swm/core/bot.h"
 #include "swm/core/client.h"
 #include "swm/core/combat.h"
 #include "swm/core/heightfield.h"
@@ -415,6 +416,42 @@ void test_gunner_seat() {
     CHECK(!a.alive() && !c.alive() && b.self().kills == 2);
 }
 
+// A bot by an empty bike gets in and drives it toward the post it wants;
+// stuck against nothing, it keeps going.
+void test_bot_drives() {
+    Battlefield field;
+    field.teams[0] = {"Empire", {Loadout{}}, "imp"};
+    field.teams[1] = {"Rebellion", {Loadout{}}, "all"};
+    field.min_x = field.min_z = -150;
+    field.max_x = field.max_z = 150;
+    field.posts = {{.name = "West", .position = {-60, 0, 0}, .owner = 0},
+                   {.name = "East", .position = {60, 0, 0}, .owner = 1}};
+    field.warmup = 100;
+    field.vehicles = {bike()};
+    VehicleSpawn spawn;
+    spawn.name = "bikes";
+    spawn.position = {-55, 0, 10};
+    spawn.post = 0;
+    spawn.vehicle = {0, -1};
+    spawn.respawn_time = 30;
+    field.vehicle_spawns = {spawn};
+    Field f(field);
+    GameClient& driver = f.join("bot");
+    f.run(0.3);
+    Bot bot(7);
+    bool drove = false;
+    double furthest_east = -1e9;
+    f.run(20, [&] {
+        bot.update(driver, f.world, f.now);
+        if (driver.predicted().vehicle == 0) {
+            drove = true;
+            furthest_east = std::max(furthest_east, driver.predicted().position.x);
+        }
+    });
+    CHECK(drove);
+    CHECK(furthest_east > 20);  // well on the way to East (at x 60) from West (x -60)
+}
+
 } // namespace
 
 int main() {
@@ -423,5 +460,6 @@ int main() {
     test_vehicle_file();
     test_match_vehicles();
     test_gunner_seat();
+    test_bot_drives();
     return swm::test::finish("vehicle_test");
 }

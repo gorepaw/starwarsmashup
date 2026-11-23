@@ -7,6 +7,7 @@
 #include <numbers>
 
 #include "swm/core/nav.h"
+#include "swm/core/vehicle.h"
 #include "swm/core/world.h"
 
 namespace swm::core {
@@ -28,6 +29,13 @@ double horizontal_distance(Vec3 a, Vec3 b) {
 // The yaw that faces along a direction (see aim_direction).
 double yaw_toward(Vec3 d) {
     return std::atan2(-d.x, -d.z);
+}
+
+// An angle in -pi..pi.
+double wrap_angle(double a) {
+    a = std::fmod(a + std::numbers::pi, 2 * std::numbers::pi);
+    if (a < 0) a += 2 * std::numbers::pi;
+    return a - std::numbers::pi;
 }
 
 // Whether going along `move` from `feet` takes it over a deadly edge, up to
@@ -689,6 +697,8 @@ void Bot::update(GameClient& client, const World& world, double now) {
         unstick_until_ = 0;
         target_ = 0;
         path_.clear();
+        vehicle_ = 0;
+        stuck_since_ = undriven_since_ = -1;
         client.set_input(controls);
         return;
     }
@@ -698,6 +708,10 @@ void Bot::update(GameClient& client, const World& world, double now) {
         return;
     }
 
+    if (in_match && client.predicted().vehicle >= 0) {
+        ride(client, world, now);
+        return;
+    }
     const MoveState& me = client.predicted();
     const Vec3 eye = me.position + Vec3{0, eye_height_of(me), 0};
     const Loadout& loadout = client.loadout();
@@ -780,6 +794,23 @@ void Bot::update(GameClient& client, const World& world, double now) {
     }
     if (breach_ >= 0 && (size_t(breach_) >= match->destructibles.size() || match->destructibles[size_t(breach_)] <= 0)) {
         breach_ = -1;
+    }
+    bool use = false;
+    if (in_match && target == nullptr && powerup_ < 0 && pickup_ == 0) {
+        choose_vehicle(client, now);
+        for (const net::VehicleState& v : client.vehicles()) {
+            if (v.id != vehicle_) continue;
+            destination = v.position;
+            const auto classes = client.vehicle_classes();
+            if (v.vehicle < classes.size() &&
+                distance_to_vehicle(me.position + Vec3{0, 1.0, 0}, v.position, v.yaw, classes[v.vehicle]) < 2.0 &&
+                now >= next_use_) {
+                use_until_ = now + 0.1;  // a press: held a moment, then let go
+                next_use_ = now + 0.5;
+            }
+        }
+    } else {
+        vehicle_ = 0;
     }
 
     // In a fight: cover to reload or when hurt; falling back badly hurt (no
@@ -982,6 +1013,192 @@ void Bot::update(GameClient& client, const World& world, double now) {
         }
     }
     controls.weapon = 0;
+    controls.use = use || now < use_until_;
+    client.set_input(controls);
+}
+
+void Bot::choose_vehicle(const GameClient& client, double now) {
+    constexpr double look_reach = 40;  // m: a vehicle further off isn't worth the walk (ASSUMPTION)
+    const auto classes = client.vehicle_classes();
+    const auto& field = *client.config().battlefield;
+    const int team = client.self().team;
+    if (team == natives_team) {
+        return;  // Ewoks don't ride speeder bikes
+    }
+    // Still there, and still free for it.
+    const auto free_seat = [&](const net::VehicleState& v) {
+        if (!v.alive || v.vehicle >= classes.size()) return false;
+        const bool aboard = v.driver != 0 || std::any_of(v.gunners.begin(), v.gunners.end(),
+                                                         [](uint32_t g) { return g != 0; });
+        if (aboard && !field.allied(v.team, team)) return false;
+        return v.driver == 0 || std::find(v.gunners.begin(), v.gunners.end(), 0u) != v.gunners.end();
+    };
+    if (vehicle_ != 0) {
+        const auto it = std::find_if(client.vehicles().begin(), client.vehicles().end(),
+                                     [&](const net::VehicleState& v) { return v.id == vehicle_; });
+        if (it == client.vehicles().end() || !free_seat(*it) || now >= vehicle_until_) {
+            vehicle_ = 0;
+            next_vehicle_ = now + 5 + random() * 5;
+        }
+        return;
+    }
+    if (now < next_vehicle_) {
+        return;
+    }
+    next_vehicle_ = now + 2 + random() * 2;
+    double best = look_reach;
+    for (const net::VehicleState& v : client.vehicles()) {
+        const double d = horizontal_distance(v.position, client.predicted().position);
+        if (free_seat(v) && d < best) {
+            best = d;
+            vehicle_ = v.id;
+        }
+    }
+    if (vehicle_ != 0) {
+        vehicle_until_ = now + 4 + best / 3;  // walking there, and a little more
+    }
+}
+
+void Bot::ride(GameClient& client, const World& world, double now) {
+    GameClient::Controls controls;
+    const MoveState& me = client.predicted();
+    controls.yaw = me.yaw;
+    vehicle_ = 0;  // in
+    const auto classes = client.vehicle_classes();
+    const auto& field = *client.config().battlefield;
+    const auto& match = *client.match();
+    const net::EntityState& self = client.self();
+    const VehicleClass& cls = classes[size_t(me.vehicle)];
+    const VehicleSeat* seat = vehicle_seat(cls, me.seat);
+    const net::VehicleState* riding = nullptr;
+    for (const net::VehicleState& v : client.vehicles()) {
+        if (v.driver == self.id || std::find(v.gunners.begin(), v.gunners.end(), self.id) != v.gunners.end()) {
+            riding = &v;
+        }
+    }
+    const Vec3 at = riding != nullptr && seat != nullptr ? riding->position : me.position;
+    const double heading = riding != nullptr && seat != nullptr ? riding->yaw : me.yaw;
+    MoveState frame = me;
+    frame.position = at;
+    frame.yaw = float(heading);
+    const Vec3 eye = seat != nullptr ? seat_muzzle(frame, *seat) : vehicle_muzzle(frame, cls);
+    const Loadout& loadout = seat != nullptr ? seat->loadout : cls.loadout;
+    static const WeaponDef unarmed;
+    const WeaponDef* held = weapon_in_slot(loadout, me.combat.weapon);
+    const WeaponDef& weapon = held != nullptr ? *held : unarmed;
+    const double gravity = client.character_stats().move.gravity;
+    bool leave = false;
+
+    // Whom to shoot: the nearest enemy in range and in sight (drivers too:
+    // their vehicles take the hits).
+    const GameClient::Remote* target = nullptr;
+    double target_distance = std::max(skill_.fire_range, weapon.bolt_speed * weapon.bolt_life);
+    for (const GameClient::Remote& other : client.remotes()) {
+        if (field.allied(self.team, other.team) || !other.alive()) continue;
+        const double distance = (other.state.position - at).length();
+        if (distance < target_distance && !world.raycast(eye, other.state.position + Vec3{0, 1.2, 0})) {
+            target_distance = distance;
+            target = &other;
+        }
+    }
+    if (target == nullptr) {
+        target_ = 0;
+    } else if (target->id != target_) {
+        target_ = target->id;
+        target_since_ = now;
+    }
+    float aim_yaw = float(heading), aim_pitch = 0;
+    bool in_arc = false;
+    if (target != nullptr) {
+        in_arc = aim_at_target(eye, target->state.position, target->state.velocity, weapon, gravity,
+                               skill_.aim_error, now, aim_phase_, aim_yaw, aim_pitch);
+    }
+
+    if (seat != nullptr) {
+        // A gunner: its look is the guns'; it fires once they bear.
+        controls.yaw = target != nullptr ? aim_yaw : float(heading);
+        controls.pitch = aim_pitch;
+        if (target != nullptr) {
+            const double off = wrap_angle(double(aim_yaw) - heading);
+            controls.fire = in_arc && now - target_since_ >= skill_.reaction && off >= seat->yaw_min &&
+                            off <= seat->yaw_max;
+        }
+        // No one driving for a while: out, to find something better.
+        const bool driven = riding != nullptr && riding->driver != 0;
+        undriven_since_ = driven ? -1 : (undriven_since_ < 0 ? now : undriven_since_);
+        leave = undriven_since_ >= 0 && now - undriven_since_ > 8;
+    } else {
+        // Driving: toward its objective along its route; turned on an enemy
+        // in range (its guns turn only so far from its heading), firing once
+        // they bear.
+        if (objective_ < 0 || now >= next_objective_) {
+            choose_objective(client, now);
+        }
+        const CommandPost& post = field.posts[size_t(objective_)];
+        const Vec3 destination = post.position + offset_;
+        const double to_go = horizontal_distance(destination, me.position);
+        Vec3 move;
+        if (to_go > 4) {
+            const Vec3 toward = steer(me.position, destination, now);
+            const Vec3 d{toward.x - me.position.x, 0, toward.z - me.position.z};
+            if (d.length() > 1e-3) move = d * (1 / d.length());
+        }
+        controls.yaw = move.length() > 0 ? yaw_toward(move) : me.yaw;
+        // Easing off nearing it (a speeder bike can't stop short at full tilt):
+        // there, it holds.
+        controls.forward = move.length() > 0 ? std::clamp((to_go - 4) / 20, 0.25, 1.0) : 0.0;
+        if (std::hypot(me.velocity.x, me.velocity.z) > 2 * to_go) {
+            controls.forward = 0;  // coasting the rest
+        }
+        if (target != nullptr) {
+            controls.yaw = aim_yaw;
+            controls.pitch = aim_pitch;
+            const double off = wrap_angle(double(aim_yaw) - double(me.yaw));
+            const bool bears = off >= cls.yaw_min - 0.05 && off <= cls.yaw_max + 0.05;
+            controls.fire = in_arc && bears && now - target_since_ >= skill_.reaction;
+            // Closing on a far one; holding off a near one.
+            controls.forward = target_distance > skill_.fire_range * 0.6 ? 0.6 : 0.0;
+            // Its second gun (a tank's missiles) at whatever's in a vehicle.
+            controls.weapon = target->state.vehicle >= 0 && weapon_in_slot(loadout, 1) != nullptr ? 1 : 0;
+        }
+        controls.sprint = target == nullptr && to_go > 40 && me.energy > 30;
+        // Getting nowhere: back off, turned aside; again and again, out.
+        const double speed = std::hypot(me.velocity.x, me.velocity.z);
+        if (controls.forward > 0.5 && speed < 1.0 && now >= reverse_until_) {
+            if (stuck_since_ < 0) {
+                stuck_since_ = now;
+            } else if (now - stuck_since_ > 1.5) {
+                reverse_until_ = now + 1.2;
+                stuck_since_ = -1;
+                replan_at_ = now;
+                ++stuck_count_;
+            }
+        } else if (speed > 3) {
+            stuck_since_ = -1;
+            stuck_count_ = 0;
+        }
+        if (now < reverse_until_) {
+            controls.forward = -1;
+            controls.yaw = float(me.yaw + (strafe_ > 0 ? 0.8 : -0.8));
+            controls.fire = false;
+        }
+        leave = stuck_count_ >= 4;
+        if (riding != nullptr && riding->max_health > 0 && riding->health < 0.12 * riding->max_health) {
+            leave = true;  // bailing out before it goes up
+        }
+        (void)match;
+    }
+    if (leave) {
+        controls.forward = 0;
+        controls.fire = false;
+        stuck_count_ = 0;
+        next_vehicle_ = now + 10;
+    }
+    if (leave && now >= next_use_) {
+        use_until_ = now + 0.1;
+        next_use_ = now + 0.5;
+    }
+    controls.use = now < use_until_;
     client.set_input(controls);
 }
 

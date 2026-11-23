@@ -77,7 +77,11 @@ struct CombatBrain {
 // patched up or rearmed. In a fight it takes cover (somewhere near the
 // enemy can't see, crouched behind something low) to reload or when hurt,
 // falls back toward a post its team holds when badly hurt with no droid
-// near, and now and then rolls aside, as often as its skill says. In a hub it
+// near, and now and then rolls aside, as often as its skill says. Out of a
+// fight it gets into an empty vehicle near it (or a free gun on one of its
+// side's), drives it toward its objective, turns it on enemies in range to
+// shoot (a gunner aims its seat's guns), and gets out stuck for good or with
+// it nearly destroyed. In a hub it
 // walks to the nearest war terminal and queues for a battle. Elsewhere it
 // hunts the nearest other character. With a NavGrid it walks around
 // obstacles on the grid's routes; without one it runs straight. Either way
@@ -92,6 +96,8 @@ public:
 
     // The command post it's heading for, or -1.
     int objective() const { return objective_; }
+    // The vehicle (id) it's going to get into, or 0.
+    uint32_t vehicle() const { return vehicle_; }
     // The health or ammo droid (index into the battlefield's powerups) it's
     // going to, or -1.
     int powerup() const { return powerup_; }
@@ -128,6 +134,10 @@ private:
     // be destroyed (Kashyyyk's barricades), in sight from `eye` and range:
     // that (its index), or -1.
     int find_breach(const GameClient& client, const World& world, Vec3 destination, Vec3 eye) const;
+    // In a vehicle: drives it (or guns) and sets the client's controls.
+    void ride(GameClient& client, const World& world, double now);
+    // On foot, out of a fight: the vehicle near it to get into (vehicle_).
+    void choose_vehicle(const GameClient& client, double now);
     // Where to head now on the way to `destination`: the next corner of its
     // route (planned again when the destination moves, when it's stuck, and
     // now and then), or the destination itself without a grid. Sets pace_.
@@ -177,6 +187,15 @@ private:
     double earliest_plan_ = 0;  // but not before then
     double next_look_ = 0;     // checks then whether the corner after next is in a straight line
     double pace_ = 1;          // of full speed: slower coming to a drop (drop_pace)
+    uint32_t vehicle_ = 0;        // the vehicle it's going to get into, or 0
+    double next_vehicle_ = 0;     // looks for one then
+    double vehicle_until_ = 0;    // gives up getting to it then
+    double use_until_ = 0;        // holding use until then (a press: held a moment, then let go)
+    double next_use_ = 0;         // may press it again then
+    double stuck_since_ = -1;     // driving: getting nowhere since
+    double reverse_until_ = 0;    // driving: backing off what it ran into until then
+    int stuck_count_ = 0;         // driving: times stuck since it last got going
+    double undriven_since_ = -1;  // gunning a vehicle no one drives since
 };
 
 // Bots connected to a server like players, each with its own UDP socket,

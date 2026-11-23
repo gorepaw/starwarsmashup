@@ -339,7 +339,7 @@ Battlefront's vehicles in matches, and Galaxies' vehicles for getting around Tat
   - [ ] Effects and sounds: engines, footfalls, wakes.
 - [x] Vehicle spawns from the maps' own spawn objects (`bf2tool export-map` writes each map's `[vehicle_spawn]`s: Endor has 12), tied to command posts: whoever holds a spawn's post gets its class for their side and role (Battlefront's Class<Side><ATK|DEF>; the first team attacks), and an unused one at home goes over to a new holder. A destroyed one comes back after SpawnTime, as does one left empty away from home for ExpireTimeField. A battlefield names where its vehicle classes were exported (`Vehicles =`); a spawn whose classes weren't is left out.
 - [ ] The maps' turrets manned (Mos Eisley's turret layer, props for now).
-- [ ] Bots drive and gun.
+- [x] Bots drive and gun: out of a fight, a bot gets into an empty vehicle within 40 m (ASSUMPTION) or a free gun on one of its side's, drives it along its route to its objective (easing off as it nears, so a speeder bike doesn't overshoot), turns it on enemies in range and fires once its guns bear (a tank's missiles at vehicles), backs off what it runs into, and gets out stuck for good or with it nearly destroyed. A bot gunner aims and fires the seat's guns, and gets out of one no one drives. Natives (Ewoks) don't ride. On Endor 90 s of eight bots drove six vehicles; on Yavin both sides' tanks and combat speeders, gunned. Yavin's teams were the wrong way round (the Empire, Battlefront's team 1 there, attacks the Rebellion's temple from the landing zone, as the map's vehicle spawns say), now fixed.
 - [ ] Flyers over ground maps after the ground vehicles. They lead into Stage 8.
 
 **In the world**
