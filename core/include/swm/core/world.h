@@ -41,7 +41,10 @@ enum Blocks : uint8_t { blocks_characters = 1, blocks_shots = 2 };
 // terrain bake (map_collision_path).
 // A triangle may belong to a destructible object (Battlefield::destructibles):
 // `part` n > 0 while destructible n - 1 stands, -n once it's destroyed (its
-// wreck's), 0 always.
+// wreck's), 0 always. Plus moved_part: something that destroying it moves
+// (Kashyyyk's gate, its panel's doing), there or not as its own part would
+// be but not the destructible itself to shots.
+inline constexpr int16_t moved_part = 16384;
 struct MapCollision {
     struct Triangle {
         Vec3 a, b, c;
@@ -180,7 +183,8 @@ private:
     };
     // Whether a solid is there now (its destructible's state).
     bool present(const Solid& s) const {
-        return s.part == 0 || (s.part > 0 ? !destroyed(size_t(s.part - 1)) : destroyed(size_t(-s.part - 1)));
+        const int part = s.part > 0 ? s.part % moved_part : -(-s.part % moved_part);
+        return part == 0 || (part > 0 ? !destroyed(size_t(part - 1)) : destroyed(size_t(-part - 1)));
     }
     // resolve_walls; with let_out false, props the body started inside push too.
     Vec3 push_out(Vec3 from, Vec3 position, double radius, double height, double step_up, Vec3& velocity,

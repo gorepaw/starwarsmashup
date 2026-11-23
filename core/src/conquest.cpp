@@ -566,6 +566,25 @@ Battlefield load_battlefield(const std::filesystem::path& path) {
             throw std::runtime_error(where + ": team " + field.teams[t].name + " starts with no post to spawn at");
         }
     }
+    // Objectives: what a team wants destroyed, by name.
+    for (const auto& [key, value] : main->values) {
+        if (!iequals(key, "Objective")) {
+            continue;
+        }
+        std::istringstream fields(value);
+        std::string name;
+        int team = 0;
+        if (!(fields >> name >> team) || team < 1 || team > 2) {
+            throw std::runtime_error(where + ": Objective is \"<destructible's name> <team number>\", got \"" + value +
+                                     "\"");
+        }
+        const auto it = std::find_if(field.destructibles.begin(), field.destructibles.end(),
+                                     [&](const Destructible& d) { return iequals(d.name, name); });
+        if (it == field.destructibles.end()) {
+            throw std::runtime_error(where + ": Objective " + name + ": no such destructible");
+        }
+        it->attackers.push_back(team - 1);
+    }
     return field;
 }
 

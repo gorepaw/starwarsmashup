@@ -640,7 +640,7 @@ std::optional<World::RayHit> World::cast(Vec3 a, Vec3 b, uint8_t blocks, bool fr
     for_solids_along(a, b, [&](const Solid& s) {
         if ((s.blocks & blocks) && (!front_only || s.normal.dot(d) < 0)) {
             if (const auto t = segment_triangle(a, d, s.a, s.b, s.c)) {
-                consider(*t, s.normal, s.part > 0 ? s.part - 1 : -1);
+                consider(*t, s.normal, s.part > 0 && s.part < moved_part ? s.part - 1 : -1);
             }
         }
     });

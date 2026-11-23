@@ -47,7 +47,7 @@ constexpr const char* usage = R"(usage:
                      [--kill-stops <object>=<animation group>]... [--kill-removes <object>=<death region>]...
                      [--start-plays <animation group>]... [--timed-death <region>=<first>,<on>,<off>]...
   bf2tool export-hud <_lvl_pc dir> -o <out dir>
-  bf2tool export-effects <_lvl_pc dir> -o <out dir>
+  bf2tool export-effects <_lvl_pc dir> -o <out dir> [--map <map>]...
   bf2tool export-audio <_lvl_pc dir> -o <out dir>
 )";
 
@@ -1334,7 +1334,7 @@ int cmd_export_map(const std::vector<std::string>& args) {
                     Pose standing = rest;
                     std::optional<Pose> moved;
                     if (kill_moves != nullptr && !destructible) {
-                        part = int16_t(kill_moves->trigger + 1);
+                        part = int16_t(core::moved_part + kill_moves->trigger + 1);
                         standing = pose_at(*kill_moves->animation, 0);
                         moved = pose_at(*kill_moves->animation, last_time(*kill_moves->animation));
                     }
@@ -1389,12 +1389,79 @@ int cmd_export_map(const std::vector<std::string>& args) {
                             explosion_sound = lowercase(first_token(explosion.get("SoundProperty").value_or("")));
                         }
                         const core::Vec3 center = (low + high) * 0.5, half = (high - low) * 0.5;
+                        // Its damage effects (smoke, sparks, flames at its
+                        // hardpoints while its health is between a start and
+                        // a stop percent: DamageStartPercent,
+                        // DamageStopPercent, DamageEffect, DamageEffectScale,
+                        // DamageAttachPoint, in that order per effect), the
+                        // hardpoints in its own axes (game space); and the
+                        // chunks it throws when destroyed (ChunkGeometryName,
+                        // ChunkSpeed, ChunkUpFactor per chunk).
+                        Skeleton skeleton;
+                        if (const UcfbNode* skel = library.skeleton(*geometry)) {
+                            skeleton = read_skeleton(*skel);
+                        }
+                        std::string damage_effects, chunks;
+                        struct Damage {
+                            double start = 100, stop = 0, scale = 1;
+                            std::string effect, at;
+                        };
+                        std::vector<Damage> damages;
+                        struct Chunk {
+                            std::string model;
+                            double speed = 5, up = 0;
+                        };
+                        std::vector<Chunk> chunk_list;
+                        for (const auto& [hash, value] : resolved.properties) {
+                            if (hash == odf_hash("DamageStartPercent")) {
+                                damages.push_back({});
+                                damages.back().start = std::atof(value.c_str());
+                            } else if (!damages.empty() && hash == odf_hash("DamageStopPercent")) {
+                                damages.back().stop = std::atof(value.c_str());
+                            } else if (!damages.empty() && hash == odf_hash("DamageEffect")) {
+                                damages.back().effect = lowercase(value);
+                            } else if (!damages.empty() && hash == odf_hash("DamageEffectScale")) {
+                                damages.back().scale = std::atof(value.c_str());
+                            } else if (!damages.empty() && hash == odf_hash("DamageAttachPoint")) {
+                                damages.back().at = value;
+                            } else if (hash == odf_hash("ChunkGeometryName")) {
+                                chunk_list.push_back({model_file(value), 5, 0});
+                            } else if (!chunk_list.empty() && hash == odf_hash("ChunkSpeed")) {
+                                chunk_list.back().speed = std::atof(value.c_str());
+                            } else if (!chunk_list.empty() && hash == odf_hash("ChunkUpFactor")) {
+                                chunk_list.back().up = std::atof(value.c_str());
+                            }
+                        }
+                        for (const Damage& d : damages) {
+                            if (d.effect.empty()) {
+                                continue;
+                            }
+                            std::string bone = d.at;  // its hardpoint, by name whatever the case
+                            for (const ModelBone& b : skeleton.bones) {
+                                if (lowercase(b.name) == lowercase(d.at)) {
+                                    bone = b.name;
+                                }
+                            }
+                            const auto p = skeleton.model_transform(bone).position;  // (origin if no such bone)
+                            damage_effects += std::format(
+                                "{}{{\"effect\": {}, \"start\": {:g}, \"stop\": {:g}, \"scale\": {:g}, "
+                                "\"at\": [{:g}, {:g}, {:g}]}}",
+                                damage_effects.empty() ? "" : ", ", json_string(d.effect), d.start, d.stop, d.scale,
+                                -p[0], p[1], p[2]);
+                        }
+                        for (const Chunk& c : chunk_list) {
+                            if (!c.model.empty()) {
+                                chunks += std::format("{}{{\"model\": {}, \"speed\": {:g}, \"up\": {:g}}}",
+                                                      chunks.empty() ? "" : ", ", json_string(c.model), c.speed, c.up);
+                            }
+                        }
                         destructible_json = std::format(
                             ", \"destructible\": {{\"index\": {}, \"health\": {:g}, \"destroyed_model\": {}, "
                             "\"explosion_effect\": {}, \"explosion_sound\": {}, \"explosion_radius\": {:g}, "
-                            "\"center\": [{:.2f}, {:.2f}, {:.2f}]}}",
+                            "\"center\": [{:.2f}, {:.2f}, {:.2f}], \"damage_effects\": [{}], \"chunks\": [{}]}}",
                             destructibles.size(), max_health, json_string(wreck), json_string(effect),
-                            json_string(explosion_sound), outer, center.x, center.y, center.z);
+                            json_string(explosion_sound), outer, center.x, center.y, center.z, damage_effects,
+                            chunks);
                         const auto regen = regens.find(lowercase(object.name));
                         destructibles.push_back(std::format(
                             "Destructible = {:g} {:.2f} {:.2f} {:.2f} {:.2f} {:.2f} {:.2f} {:g} {:g} {:g} {:g} {}",
@@ -2007,6 +2074,18 @@ int cmd_export_effects(const std::vector<std::string>& args) {
             lvl_files.push_back(p);
         }
     }
+    // --map <map>: a map's level too, for what its destructibles name
+    // (their damage smoke and sparks, their chunks' trails, their explosions).
+    for (size_t i = 1; i + 1 < args.size(); ++i) {
+        if (args[i] == "--map") {
+            const std::string map = args[i + 1];
+            if (const auto p = lvl_dir / map.substr(0, 3) / (map + ".lvl"); std::filesystem::exists(p)) {
+                lvl_files.push_back(p);
+            } else {
+                std::cerr << "no level " << p.string() << "\n";
+            }
+        }
+    }
     AssetLibrary library;
     std::vector<std::vector<uint8_t>> bytes;
     std::vector<UcfbNode> roots;
@@ -2045,6 +2124,18 @@ int cmd_export_effects(const std::vector<std::string>& args) {
                                       "com_item_healthrecharge_dst", "com_item_weaponrecharge_dst"};
 
     for (const OdfClass& odf : library.classes().all()) {
+        if (odf.kind == "entc") {
+            // What can be destroyed: its damage effects and chunks' trails.
+            const OdfClass resolved = library.classes().resolve(odf.type);
+            if (lowercase(resolved.base) == "destructablebuilding") {
+                for (const auto& [hash, value] : resolved.properties) {
+                    if ((hash == odf_hash("DamageEffect") || hash == odf_hash("ChunkTrailEffect")) && !value.empty()) {
+                        effect_names.insert(lowercase(value));
+                    }
+                }
+            }
+            continue;
+        }
         if (odf.kind != "wpnc" && odf.kind != "ordc" && odf.kind != "expc") {
             continue;
         }

@@ -797,6 +797,18 @@ void test_destructibles() {
     field.world.set_destroyed(0, true);
     CHECK(!field.world.raycast_hit({-50, 1, 0}, {-30, 1, 0}) && !field.world.walk_blocked({-45, 0, 0}, {-35, 0, 0}));
     field.world.set_destroyed(0, false);
+    // Something its destruction moves (a gate, its panel's): there while it
+    // stands, but shots meeting it don't hit the destructible.
+    {
+        World gated{field.ground};
+        MapCollision gate;
+        add_wall(gate, {-41, 0, -5}, {-39, 3, 5}, int16_t(moved_part + 1));
+        gated.add_map_collision(gate);
+        const auto at_gate = gated.raycast_hit({-50, 1, 0}, {-30, 1, 0});
+        CHECK(at_gate && at_gate->destructible == -1 && gated.walk_blocked({-45, 0, 0}, {-35, 0, 0}));
+        gated.set_destroyed(0, true);
+        CHECK(!gated.raycast_hit({-50, 1, 0}, {-30, 1, 0}));
+    }
 
     // One bot (the West's), and someone on the other side watching.
     uint32_t next_port = 50;

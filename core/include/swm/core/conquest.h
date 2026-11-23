@@ -120,6 +120,10 @@ struct Destructible {
     // Its explosion (ExplosionName's): this much damage within `inner`,
     // falling to nothing at `outer`.
     double explosion_damage = 0, explosion_inner = 0, explosion_outer = 0;
+    // Teams that want it destroyed (a battlefield's `Objective = <name>
+    // <team number>`): their bots, with no one to shoot, shoot it when they
+    // see it (Kashyyyk's gate panel and barricades, the Empire's).
+    std::vector<int> attackers;
     // Health a second it mends (a mission script's doing: Tantive IV's
     // turbine console); destroyed, it grows back from nothing and stands
     // again once whole. 0: it stays destroyed until the next match.

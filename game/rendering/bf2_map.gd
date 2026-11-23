@@ -181,6 +181,7 @@ static func add_objects(parent: Node, prefix: String) -> int:
 					wreck.visible = false
 					parent.add_child(wreck)
 			node.set_meta("bf2_destructible", spec)
+			node.set_meta("dir", dir)  # where its chunks' models are
 			node.set_meta("wreck", wreck)
 			node.set_meta("keep", wreck_file == model)
 			node.set_meta("standing", -1)  # not known yet
@@ -218,8 +219,106 @@ static func update_destructibles(tree: SceneTree, health: PackedFloat32Array) ->
 			var c: Array = spec.get("center", [0, 0, 0])
 			explosions.append({"position": Vector3(c[0], c[1], c[2]), "effect": str(spec.get("explosion_effect", "")),
 					"sound": str(spec.get("explosion_sound", "")),
-					"radius": maxf(2.0, float(spec.get("explosion_radius", 0)))})
+					"radius": maxf(2.0, float(spec.get("explosion_radius", 0))),
+					"chunks": spec.get("chunks", []), "dir": str(node.get_meta("dir", ""))})
 	return explosions
+
+
+# What can be destroyed smoking, sparking and burning as it's hurt: each of
+# its damage effects (Battlefront's DamageEffect) at its hardpoint while its
+# health is between the effect's start and stop percent, as `health` says
+# (update_destructibles'); `effects` is the game's Bf2Effects.
+static func update_damage_effects(tree: SceneTree, health: PackedFloat32Array, effects: RefCounted) -> void:
+	if effects == null:
+		return
+	for node: Node3D in tree.get_nodes_in_group(DESTRUCTIBLES):
+		var spec: Dictionary = node.get_meta("bf2_destructible")
+		var list: Array = spec.get("damage_effects", [])
+		var index := int(spec["index"])
+		if list.is_empty() or index >= health.size():
+			continue
+		var percent := 100.0 * health[index] / maxf(1.0, float(spec.get("health", 100)))
+		var running: Dictionary = node.get_meta("damage_running", {})
+		for i in list.size():
+			var e: Dictionary = list[i]
+			var on := health[index] > 0.0 and percent <= float(e["start"]) and percent > float(e["stop"])
+			if on and not running.has(i):
+				var at: Array = e.get("at", [0, 0, 0])
+				var holder := Node3D.new()
+				holder.position = Vector3(at[0], at[1], at[2])
+				node.add_child(holder)
+				var trail: Node3D = effects.attach_trail(holder, str(e["effect"]))
+				running[i] = trail if trail != null else holder
+			elif not on and running.has(i):
+				var trail: Node3D = running[i]
+				running.erase(i)
+				if is_instance_valid(trail) and trail.get_parent() != null and trail.name == "Trail":
+					var holder := trail.get_parent()
+					effects.detach_trail(trail)  # its smoke fades out where it was
+					holder.queue_free()
+				elif is_instance_valid(trail):
+					trail.queue_free()
+		node.set_meta("damage_running", running)
+
+
+static var _chunks: Array[Dictionary] = []  # flying: {node, velocity, age, resting}
+static var _chunk_models := {}             # file -> template (null if it failed)
+const CHUNK_GRAVITY := 9.8
+const CHUNK_LIFE := 15.0  # s before they're cleared away
+
+
+# A destroyed object's chunks (Battlefront's ChunkGeometryName), flung out
+# from where it stood (`blast`, update_destructibles'): each at its
+# ChunkSpeed, its ChunkUpFactor the angle up from level it leaves at
+# (ASSUMPTION: degrees), in a random direction round.
+static func spawn_chunks(parent: Node, blast: Dictionary) -> void:
+	var chunks: Array = blast.get("chunks", [])
+	var dir := str(blast.get("dir", ""))
+	for c: Dictionary in chunks:
+		var file := dir.path_join(str(c["model"]))
+		if not _chunk_models.has(file):
+			_chunk_models[file] = _load_model(file)
+		if _chunk_models[file] == null:
+			continue
+		var node := (_chunk_models[file] as Node3D).duplicate() as Node3D
+		parent.add_child(node)
+		node.global_position = blast["position"]
+		var heading := randf() * TAU
+		var up := deg_to_rad(clampf(float(c.get("up", 20)), -10.0, 80.0))
+		var speed := float(c.get("speed", 5))
+		var velocity := Vector3(cos(heading) * cos(up), sin(up), sin(heading) * cos(up)) * speed
+		_chunks.append({"node": node, "velocity": velocity, "age": 0.0, "resting": false,
+				"spin": Vector3(randf() - 0.5, randf() - 0.5, randf() - 0.5).normalized() * randf_range(2.0, 6.0)})
+
+
+# Flying chunks, `delta` seconds on: falling, turning, coming to rest where
+# they meet the map (`raycast(from, to)`: the fraction there, < 0 for
+# nothing), cleared after a while.
+static func update_chunks(delta: float, raycast: Callable) -> void:
+	for i in range(_chunks.size() - 1, -1, -1):
+		var c: Dictionary = _chunks[i]
+		var node: Node3D = c["node"]
+		c["age"] = float(c["age"]) + delta
+		if not is_instance_valid(node) or float(c["age"]) > CHUNK_LIFE:
+			if is_instance_valid(node):
+				node.queue_free()
+			_chunks.remove_at(i)
+			continue
+		if bool(c["resting"]):
+			continue
+		var velocity: Vector3 = c["velocity"]
+		velocity.y -= CHUNK_GRAVITY * delta
+		var from := node.global_position
+		var to := from + velocity * delta
+		var hit := float(raycast.call(from, to)) if raycast.is_valid() else -1.0
+		if hit >= 0.0:
+			node.global_position = from.lerp(to, hit)
+			c["resting"] = true
+		else:
+			node.global_position = to
+			var spin: Vector3 = c["spin"]
+			node.rotate(spin.normalized(), spin.length() * delta)
+		c["velocity"] = velocity
 
 
 # Objects moved by the map's world animations, `delta` seconds on (or at the

@@ -592,6 +592,24 @@ void Bot::update(GameClient& client, const World& world, double now) {
     } else if (now >= next_breach_) {
         next_breach_ = now + 1;
         breach_ = find_breach(client, world, *destination, eye);
+        if (breach_ < 0) {
+            // Something its team wants destroyed, in sight and range.
+            const auto& objects = client.config().battlefield->destructibles;
+            double nearest = skill_.fire_range;
+            for (size_t i = 0; i < objects.size() && i < match->destructibles.size(); ++i) {
+                const auto& wanted = objects[i].attackers;
+                if (match->destructibles[i] <= 0 ||
+                    std::find(wanted.begin(), wanted.end(), self.team) == wanted.end()) {
+                    continue;
+                }
+                const double distance = (objects[i].center - eye).length();
+                const auto hit = world.raycast_hit(eye, objects[i].center);
+                if (distance < nearest && (!hit || hit->destructible == int(i))) {
+                    nearest = distance;
+                    breach_ = int(i);
+                }
+            }
+        }
     }
     if (breach_ >= 0 && (size_t(breach_) >= match->destructibles.size() || match->destructibles[size_t(breach_)] <= 0)) {
         breach_ = -1;

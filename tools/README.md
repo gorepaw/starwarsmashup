@@ -127,7 +127,7 @@ bf2tool export-map <_lvl_pc dir> <map> -o <out dir> [--mode conquest] [--skip <l
                    [--death <region>]... [--open <object>]... [--team <post>=<n>]... [--disable <barrier>]...
                    [--drop-boundary <path>]... [--set <object>.<property>=<value>]...
 bf2tool export-hud <_lvl_pc dir> -o <out dir>
-bf2tool export-effects <_lvl_pc dir> -o <out dir>
+bf2tool export-effects <_lvl_pc dir> -o <out dir> [--map <map>]...
 bf2tool export-audio <_lvl_pc dir> -o <out dir>
 ```
 
@@ -205,7 +205,7 @@ Battlefront II munged files (`.lvl`) are `ucfb` chunk trees: `lvl_` sub-levels h
 
   `export-map` also writes the map's minimap image (`minimap` in its json: `<map>_map`, or named for the map's world layers: Yavin's `yavin1_map`). Where it lies isn't stored with it; a battlefield file says (`Minimap`). Dagobah's was fitted to its playable outline (the `hell_bush` path), which the image's light area matches.
 
-- **export-effects**: export Battlefront II's weapon, ordnance and explosion effects (`fx__` chunks in `ingame.lvl` and `side/*.lvl`) as `<name>.json` for `game/rendering/bf2_effects.gd`, along with their particle and laser textures (`textures/` as PNG) and shared ordnance and muzzle-flash models (`models/`: `com_weap_missile`, `com_weap_inf_grenadethermal_ord`, `com_sfx_muzzleflash` as glTF). Effect chunks identify themselves by a 4-byte `NAME` hash using FNV-1a over `c | 0x20` (`bf2/effect.h`). Game data from your install: write it to `game/imported_assets/effects/`:
+- **export-effects**: export Battlefront II's weapon, ordnance and explosion effects (`fx__` chunks in `ingame.lvl` and `side/*.lvl`) as `<name>.json` for `game/rendering/bf2_effects.gd`, along with their particle and laser textures (`textures/` as PNG) and shared ordnance and muzzle-flash models (`models/`: `com_weap_missile`, `com_weap_inf_grenadethermal_ord`, `com_sfx_muzzleflash` as glTF). With `--map <map>` (repeatable), that map's level too, for what its destructibles name: their damage effects (`DamageEffect`), their chunks' trails (`ChunkTrailEffect`) and their explosions' effects. For every map with destructibles: `--map kas2 --map mus1 --map tan1 --map kam1 --map cor1 --map dea1 --map nab2 --map dag1`. Effect chunks identify themselves by a 4-byte `NAME` hash using FNV-1a over `c | 0x20` (`bf2/effect.h`). Game data from your install: write it to `game/imported_assets/effects/`:
 
   ```powershell
   bf2tool export-effects "<Battlefront>\GameData\Data\_lvl_pc" -o game\imported_assets\effects
