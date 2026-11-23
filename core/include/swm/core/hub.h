@@ -12,11 +12,13 @@
 #include <vector>
 
 #include "swm/core/bot.h"
+#include "swm/core/loot.h"
 #include "swm/core/nav.h"
 #include "swm/core/conquest.h"
 #include "swm/core/net/link.h"
 #include "swm/core/net/protocol.h"
 #include "swm/core/server.h"
+#include "swm/core/wildlife.h"
 
 namespace swm::core {
 
@@ -66,6 +68,7 @@ struct HubConfig {
     std::optional<Vec3> cloning_facility;
     std::vector<net::Recruiter> recruiters;
     std::vector<net::Quartermaster> quartermasters;
+    std::vector<net::Vendor> vendors;
     std::vector<HubRangeTarget> range_targets;
     // The sides players queue for. Each battlefield has teams by these
     // names, in either order (Battlefront's team 1 attacks on some maps).
@@ -80,6 +83,8 @@ struct HubConfig {
     std::vector<std::string> looks;
     std::vector<HubPerson> people;
     HubCrowd crowd;
+    std::optional<WorldSpawns> spawns;
+    LootTableSet loot_tables;
 };
 
 // Reads a hub file (see game/hubs/): its war terminals (Galaxies x z), the
@@ -216,12 +221,14 @@ private:
     std::string last_battlefield_;
     std::map<std::string, std::weak_ptr<const World>> worlds_;  // battlefield id -> loaded world
     std::unique_ptr<NavGrid> streets_;  // where the hub's people walk
+    std::unique_ptr<WorldPopulation> population_;
     std::vector<Walker> walkers_;
     size_t standing_ = 0;
     bool people_added_ = false;
     std::map<std::string, std::string> notices_;  // player -> how their battle went, for when they're back
     std::optional<MatchResult> last_result_;
     std::mt19937_64 random_{std::random_device{}()};
+    uint64_t loot_rng_ = 0x4C4F4F5448554231ull;
     int next_battle_ = 1;
     double now_ = 0;
 };

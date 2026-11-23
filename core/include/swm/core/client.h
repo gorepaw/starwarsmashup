@@ -118,7 +118,9 @@ public:
     // A hub's war terminals and the sides its battles are between.
     const std::vector<net::Recruiter>& recruiters() const { return recruiters_; }
     const std::vector<net::Quartermaster>& quartermasters() const { return quartermasters_; }
+    const std::vector<net::Vendor>& vendors() const { return vendors_; }
     const std::vector<net::TargetState>& targets() const { return targets_; }
+    const std::vector<net::CorpseLootState>& corpses() const { return corpses_; }
     const std::array<std::string, 2>& factions() const { return factions_; }
     // How the server's people look (an entity's look - 1 indexes these).
     const std::vector<std::string>& looks() const { return looks_; }
@@ -134,6 +136,10 @@ public:
     void switch_loadout(int slot);
     void buy_item(const std::string& def_id, bool use_faction_points = true);
     void destroy_item(uint64_t item_id);
+    void take_loot(uint32_t corpse_entity, int slot = -1);
+    void sell_item(uint64_t item_id);
+    void sell_all_junk();
+    void use_item(uint64_t item_id);
     // What the server says about us: queue, notices.
     const net::PlayerStatus& player_status() const { return player_status_; }
     // Where the server sent us (status transferring).
@@ -204,7 +210,9 @@ private:
     // Hubs
     std::vector<net::Recruiter> recruiters_;
     std::vector<net::Quartermaster> quartermasters_;
+    std::vector<net::Vendor> vendors_;
     std::vector<net::TargetState> targets_;
+    std::vector<net::CorpseLootState> corpses_;
     std::array<std::string, 2> factions_;
     std::vector<std::string> looks_;
     net::PlayerStatus player_status_;

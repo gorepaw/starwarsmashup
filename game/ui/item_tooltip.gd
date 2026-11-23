@@ -57,8 +57,15 @@ static func build_lines(def: Dictionary, inst: Dictionary, store: Object, equipp
 	var faction := str(def.get("faction", "neutral")).capitalize()
 	lines.append({"text": "%s | %s | %s" % [kind.replace("_", " ").capitalize(), slot.replace("_", " ").capitalize(), faction],
 			"color": Bf2Screen.DIM})
-	if not inst.is_empty():
+	if not inst.is_empty() and kind != "junk" and kind != "supply":
 		lines.append({"text": "Quality: %d%%" % roundi(quality * 100.0), "color": Bf2Screen.ACCENT})
+	if kind == "supply":
+		var heal := float(def.get("heal_amount", 0.0))
+		if heal > 0.0:
+			lines.append({"text": "Restores %d Health" % roundi(heal), "color": GOOD})
+	var sell_v := int(def.get("sell_value", 0))
+	if sell_v > 0:
+		lines.append({"text": "Sell Value: %d Credits" % sell_v, "color": Bf2Screen.ACCENT})
 	var desc := str(def.get("description", ""))
 	if desc != "":
 		lines.append({"text": desc, "color": Bf2Screen.TEXT})

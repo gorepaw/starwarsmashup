@@ -14,7 +14,7 @@
 
 namespace swm::core {
 
-enum class ItemKind : uint8_t { weapon, armor, deflector_shield, clothing };
+enum class ItemKind : uint8_t { weapon, armor, deflector_shield, clothing, junk, supply };
 
 enum class QueueMode : uint8_t { standard = 0, gear = 1 };
 
@@ -66,6 +66,8 @@ struct ItemDef {
     std::string faction = "neutral";  // neutral | empire | rebellion
     int64_t cost_faction_points = 0;
     int64_t cost_credits = 0;
+    int64_t sell_value = 0;
+    double heal_amount = 0.0;
     std::string model_path;  // relative to game/imported_assets/, may contain {g} for m/f
     std::string bf2_base;    // overrides archetype's default BF2 weapon .ini if non-empty
 

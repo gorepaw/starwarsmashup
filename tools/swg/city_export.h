@@ -8,6 +8,7 @@
 #include <vector>
 
 #include "common/math.h"
+#include "swg/character_export.h"
 #include "swg/tre_library.h"
 #include "swm/core/heightfield.h"
 
@@ -58,6 +59,10 @@ struct CityExport {
 // into <bake>_city/particles/), listed with "particles": true; sound
 // markers aren't. Throws std::runtime_error if the snapshot can't be read.
 void export_city(TreLibrary& library, const CityExport& city, std::ostream& log);
+
+using HubClipProvider = std::function<std::vector<AnimationClip>(const Skeleton&)>;
+void export_hub_people(TreLibrary& library, const CityExport& city, std::ostream& log,
+                       const HubClipProvider& bandit_clips = {});
 
 // The terrain in rooms (their floors, game space), as Galaxies draws none
 // there. Taken away where a cell's center is over a walked floor (so the

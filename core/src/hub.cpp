@@ -172,6 +172,13 @@ HubConfig load_hub(const std::filesystem::path& path) {
             qm.position = point(s.get("Position").value_or(""), "a [quartermaster]'s Position");
             qm.radius = s.number("Radius", qm.radius);
             hub.quartermasters.push_back(std::move(qm));
+        } else if (s.name == "vendor") {
+            net::Vendor v;
+            v.name = s.get("Name").value_or("Vendor");
+            v.kind = s.get("Type").value_or("gear_vendor");
+            v.position = point(s.get("Position").value_or(""), "a [vendor]'s Position");
+            v.radius = s.number("Radius", v.radius);
+            hub.vendors.push_back(std::move(v));
         } else if (s.name == "target") {
             HubRangeTarget rt;
             rt.name = s.get("Name").value_or("Target");
@@ -198,6 +205,18 @@ HubConfig load_hub(const std::filesystem::path& path) {
             hub.crowd.radius = radius;
         }
     }
+    if (const auto spawns = main->get("Spawns")) {
+        hub.spawns = load_world_spawns(path.parent_path() / *spawns);
+        for (const CreatureArchetype& c : hub.spawns->creatures) {
+            look_of(c.template_path);
+        }
+        for (const BanditArchetype& b : hub.spawns->bandits) {
+            look_of(b.template_path);
+        }
+    }
+    if (const auto loot = main->get("LootTables")) {
+        hub.loot_tables.load(path.parent_path() / *loot);
+    }
     return hub;
 }
 
@@ -217,6 +236,10 @@ net::Endpoint UdpHubNetwork::local(uint16_t port) const {
 
 Hub::Hub(GameServer& server, uint16_t port, const World& world, HubConfig config, HubNetwork& network)
     : server_(server), port_(port), world_(world), config_(std::move(config)), network_(network) {
+    server_.set_pvp_enabled(false);
+    if (config_.cloning_facility) {
+        server_.set_cloning_facility(*config_.cloning_facility);
+    }
     for (net::Recruiter& recruiter : config_.recruiters) {
         recruiter.position = world_.clamp(recruiter.position);
         recruiter.position.y = world_.terrain().height_at(recruiter.position.x, recruiter.position.z);
@@ -227,6 +250,11 @@ Hub::Hub(GameServer& server, uint16_t port, const World& world, HubConfig config
         qm.position.y = world_.terrain().height_at(qm.position.x, qm.position.z);
     }
     server_.set_quartermasters(config_.quartermasters);
+    for (net::Vendor& v : config_.vendors) {
+        v.position = world_.clamp(v.position);
+        v.position.y = world_.terrain().height_at(v.position.x, v.position.z);
+    }
+    server_.set_vendors(config_.vendors);
     for (const HubRangeTarget& rt : config_.range_targets) {
         server_.add_range_target(rt.name, rt.position, rt.patrol_end, rt.speed, rt.health, rt.mitigation, rt.respawn);
     }
@@ -238,6 +266,41 @@ Hub::Hub(GameServer& server, uint16_t port, const World& world, HubConfig config
         if (auto it = notices_.find(name); it != notices_.end()) {
             server_.notify(entity, it->second);
             notices_.erase(it);
+        }
+    };
+    server_.on_npc_killed = [this](uint32_t npc_entity, uint32_t killer_entity) {
+        if (!population_ || killer_entity == 0) return;
+        const int64_t xp = population_->xp_for(npc_entity);
+        if (xp > 0) {
+            server_.award_xp(killer_entity, xp);
+        }
+        const std::string table_id = population_->loot_table_for(npc_entity);
+        const RolledLoot rolled = table_id.empty() ? RolledLoot{} : config_.loot_tables.roll(table_id, loot_rng_);
+        if (rolled.credits > 0) {
+            server_.award_credits(killer_entity, rolled.credits);
+        }
+        const auto info = server_.npc_info(npc_entity);
+        if (info && !rolled.items.empty()) {
+            std::vector<net::LootItemEntry> entries;
+            entries.reserve(rolled.items.size());
+            for (size_t i = 0; i < rolled.items.size() && i < 250; ++i) {
+                entries.push_back({uint8_t(i), rolled.items[i].def_id, float(rolled.items[i].quality)});
+            }
+            server_.set_corpse_loot(npc_entity, killer_entity, info->name, info->state.position, std::move(entries));
+        }
+        if (info) {
+            std::string msg = std::format("Defeated {}", info->name);
+            if (xp > 0 && rolled.credits > 0) {
+                msg += std::format(" (+{} XP, +{} Cr)", xp, rolled.credits);
+            } else if (xp > 0) {
+                msg += std::format(" (+{} XP)", xp);
+            } else if (rolled.credits > 0) {
+                msg += std::format(" (+{} Cr)", rolled.credits);
+            }
+            if (!rolled.items.empty()) {
+                msg += " — Press E on corpse to loot";
+            }
+            server_.notify(killer_entity, msg);
         }
     };
 }
@@ -255,11 +318,11 @@ double yaw_to(Vec3 d) {
 } // namespace
 
 void Hub::add_people() {
-    if (config_.people.empty() && config_.crowd.count == 0) {
+    if (config_.people.empty() && config_.crowd.count == 0 && !config_.spawns) {
         return;
     }
     server_.set_looks(config_.looks);
-    // Where they walk: the streets around the crowd's area and every route.
+    // Where they walk: the streets around the crowd's area, every route, and camps/lairs.
     Battlefield streets;
     streets.name = config_.name + " streets";
     double lo_x = 1e30, lo_z = 1e30, hi_x = -1e30, hi_z = -1e30;
@@ -275,6 +338,14 @@ void Hub::add_people() {
         for (const Vec3& p : person.route) {
             grow(p, 20);
         }
+    }
+    if (config_.spawns) {
+        for (const LairSpawn& l : config_.spawns->lairs) grow(l.position, l.radius + 100);
+        for (const CampSpawn& c : config_.spawns->camps) grow(c.position, c.radius + 100);
+    }
+    if (lo_x > hi_x) {
+        lo_x = lo_z = -500;
+        hi_x = hi_z = 500;
     }
     streets.min_x = lo_x, streets.max_x = hi_x, streets.min_z = lo_z, streets.max_z = hi_z;
     streets_ = std::make_unique<NavGrid>(world_, streets);
@@ -306,6 +377,17 @@ void Hub::add_people() {
         walkers_.push_back(walker);
     }
     say(std::format("{} people in {}: {} walking", walkers_.size() + standing_, config_.name, walkers_.size()));
+    if (config_.spawns) {
+        std::map<std::string, uint8_t> look_map;
+        for (size_t i = 0; i < config_.looks.size(); ++i) {
+            look_map[config_.looks[i]] = uint8_t(i + 1);
+        }
+        population_ = std::make_unique<WorldPopulation>(server_, world_, streets_.get(), *config_.spawns,
+                                                        server_.catalog(), look_map);
+        population_->spawn_all();
+        say(std::format("populated world with {} creature(s) and {} bandit(s)", population_->creature_count(),
+                        population_->bandit_count()));
+    }
 }
 
 // Somewhere in the crowd's area to walk to: on the ground (not a roof),
@@ -615,6 +697,9 @@ void Hub::update(double now) {
         add_people();
     }
     walk_people();
+    if (population_) {
+        population_->update(now);
+    }
     // Players who left the hub leave the queue.
     for (size_t m = 0; m < 2; ++m) {
         const QueueMode mode = QueueMode(m);

@@ -763,6 +763,7 @@ func _update_remotes(own_team: int) -> void:
 
 
 func _update_person(id: int, state: Dictionary) -> void:
+	var actor_kind := int(state.get("actor_kind", 1))
 	if not _remotes.has(id):
 		var look := int(state["look"])
 		if not _people.has(look):
@@ -772,9 +773,47 @@ func _update_person(id: int, state: Dictionary) -> void:
 		var model := (_people[look] as Node3D).duplicate() as Node3D
 		SwgColors.apply(model, _people_colors.get(look, {}), int(state.get("colors", 0)))
 		add_child(model)
-		_remotes[id] = {"model": model, "person": true,
-				"player": model.find_child("AnimationPlayer", true, false)}
+		var player := model.find_child("AnimationPlayer", true, false) as AnimationPlayer
+		var tag: Label3D = null
+		if actor_kind >= 2:
+			var top_y := 1.8
+			for mesh: Node in model.find_children("*", "MeshInstance3D", true, false):
+				var box := (mesh as MeshInstance3D).get_aabb()
+				top_y = maxf(top_y, box.position.y + box.size.y)
+			tag = Label3D.new()
+			tag.billboard = BaseMaterial3D.BILLBOARD_ENABLED
+			tag.fixed_size = true
+			tag.pixel_size = 0.0011
+			tag.font_size = 22
+			tag.outline_size = 6
+			tag.no_depth_test = true
+			tag.position = Vector3.UP * (top_y + 0.45)
+			model.add_child(tag)
+		if actor_kind == 3 and player != null and player.has_animation("human_rifle_stand_idle_emote_full"):
+			var soldier := Soldier.new(model)
+			_remotes[id] = {"model": model, "person": true, "actor_kind": actor_kind,
+					"soldier": soldier, "tag": tag}
+		else:
+			_remotes[id] = {"model": model, "person": true, "actor_kind": actor_kind,
+					"player": player, "tag": tag}
 	var person: Dictionary = _remotes[id]
+	var tag: Label3D = person.get("tag")
+	if tag != null:
+		var alive := bool(state.get("alive", true)) and str(state.get("life", "alive")) == "alive"
+		var mob_name := str(state.get("name", ""))
+		if alive:
+			tag.text = "%s  %d/%d" % [mob_name, int(ceilf(float(state.get("health", 0.0)))),
+					int(ceilf(float(state.get("max_health", 100.0))))]
+			tag.modulate = Color(1.0, 0.35, 0.3) if actor_kind == 3 else Color(1.0, 0.72, 0.3)
+		else:
+			tag.text = "%s [Dead]" % mob_name
+			tag.modulate = Color(0.55, 0.55, 0.55)
+	if person.has("soldier"):
+		var soldier := person["soldier"] as Soldier
+		soldier.set_weapon(str(state.get("weapon_model", "")))
+		soldier.set_anim_set(str(state.get("anim_set", "rifle")))
+		soldier.pose(state, _delta)
+		return
 	var model: Node3D = person["model"]
 	model.position = state["position"]
 	model.rotation.y = float(state["yaw"]) + PI
@@ -783,6 +822,30 @@ func _update_person(id: int, state: Dictionary) -> void:
 		return
 	var velocity: Vector3 = state["velocity"]
 	var speed := Vector2(velocity.x, velocity.z).length()
+	if actor_kind == 2:
+		var alive := bool(state.get("alive", true)) and str(state.get("life", "alive")) == "alive"
+		var clip := "idle"
+		var loop := Animation.LOOP_LINEAR
+		var spd := 1.0
+		if not alive and player.has_animation("die"):
+			clip = "die"
+			loop = Animation.LOOP_NONE
+		elif int(state.get("pose", 0)) == 2 and player.has_animation("attack"):
+			clip = "attack"
+			loop = Animation.LOOP_NONE
+		elif speed > 3.2 and player.has_animation("run"):
+			clip = "run"
+			spd = clampf(speed / 4.0, 0.8, 1.8)
+		elif speed > 0.3 and player.has_animation("walk"):
+			clip = "walk"
+			spd = clampf(speed / 1.8, 0.6, 1.6)
+		elif int(state.get("pose", 0)) == 1 and player.has_animation("sit"):
+			clip = "sit"
+		if player.current_animation != clip and player.has_animation(clip):
+			player.get_animation(clip).loop_mode = loop
+			player.play(clip, 0.2)
+		player.speed_scale = spd
+		return
 	var clip := "sit" if int(state.get("pose", 0)) == 1 else ("walk" if speed > 0.3 else "idle")
 	if player.current_animation != clip and player.has_animation(clip):
 		player.get_animation(clip).loop_mode = Animation.LOOP_LINEAR
@@ -1325,6 +1388,10 @@ func _setup_scene() -> void:
 	_hub_ui.loadout_saved.connect(func(slot: int, lo: Dictionary) -> void: _client.save_loadout(slot, lo))
 	_hub_ui.loadout_activated.connect(func(slot: int) -> void: _client.switch_loadout(slot))
 	_hub_ui.item_destroyed.connect(func(iid: int) -> void: _client.destroy_item(iid))
+	_hub_ui.item_used.connect(func(iid: int) -> void: _client.use_item(iid))
+	_hub_ui.loot_taken.connect(func(cid: int, slot: int) -> void: _client.take_loot(cid, slot))
+	_hub_ui.item_sold.connect(func(iid: int) -> void: _client.sell_item(iid))
+	_hub_ui.all_junk_sold.connect(func() -> void: _client.sell_all_junk())
 	_hub_ui.terminal_closed.connect(func() -> void:
 		if _bot == "" and (_pause_menu == null or not _pause_menu.visible):
 			_capture_mouse(true))

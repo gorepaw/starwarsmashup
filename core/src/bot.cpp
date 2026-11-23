@@ -13,6 +13,14 @@ namespace swm::core {
 
 namespace {
 
+double random_unit(uint64_t& rng) {
+    uint64_t z = (rng += 0x9E3779B97F4A7C15ull);
+    z = (z ^ (z >> 30)) * 0xBF58476D1CE4E5B9ull;
+    z = (z ^ (z >> 27)) * 0x94D049BB133111EBull;
+    z ^= z >> 31;
+    return double(z >> 11) / double(1ull << 53);
+}
+
 double horizontal_distance(Vec3 a, Vec3 b) {
     return std::hypot(a.x - b.x, a.z - b.z);
 }
@@ -353,44 +361,203 @@ BotSkill BotSkill::preset(std::string_view difficulty) {
     return {};
 }
 
-std::optional<Vec3> Bot::find_cover(const GameClient& client, const World& world, Vec3 enemy, bool& crouch) {
-    const MoveState& me = client.predicted();
-    const double step_up = client.character_stats().move.step_up;
-    const Battlefield* field = client.config().battlefield ? &*client.config().battlefield : nullptr;
+std::optional<Vec3> find_cover_spot(const World& world, const NavGrid* nav, const Battlefield* field,
+                                    Vec3 position, Vec3 enemy_eye, double step_up, uint64_t& rng,
+                                    bool& out_crouch) {
     std::optional<Vec3> best;
     double best_score = std::numeric_limits<double>::max();
-    const double start = random() * 2 * std::numbers::pi;
+    const double start = random_unit(rng) * 2 * std::numbers::pi;
     for (const double reach : {2.5, 5.0, 8.0, 11.0}) {
         for (int i = 0; i < 12; ++i) {
             const double angle = start + i * std::numbers::pi / 6;
-            Vec3 spot{me.position.x + std::cos(angle) * reach, 0, me.position.z + std::sin(angle) * reach};
-            spot.y = world.support_at(spot.x, spot.z, me.position.y + step_up, step_up).height;
-            // Somewhere it can stand (its route there, around whatever hides
-            // it, is planned as any is).
-            if (std::abs(spot.y - me.position.y) > 2.5 || (field && field->harmful(spot)) ||
-                (navigation_ && !navigation_->walkable(spot))) {
+            Vec3 spot{position.x + std::cos(angle) * reach, 0, position.z + std::sin(angle) * reach};
+            spot.y = world.support_at(spot.x, spot.z, position.y + step_up, step_up).height;
+            if (std::abs(spot.y - position.y) > 2.5 || (field && field->harmful(spot)) ||
+                (nav && !nav->walkable(spot))) {
                 continue;
             }
-            // Hidden standing (head and chest), or crouched (behind something low).
-            const bool high = world.raycast(enemy, spot + Vec3{0, 1.6, 0}) && world.raycast(enemy, spot + Vec3{0, 1.0, 0});
-            const bool low = world.raycast(enemy, spot + Vec3{0, 0.9, 0}) && world.raycast(enemy, spot + Vec3{0, 0.4, 0});
+            const bool high = world.raycast(enemy_eye, spot + Vec3{0, 1.6, 0}) &&
+                              world.raycast(enemy_eye, spot + Vec3{0, 1.0, 0});
+            const bool low = world.raycast(enemy_eye, spot + Vec3{0, 0.9, 0}) &&
+                             world.raycast(enemy_eye, spot + Vec3{0, 0.4, 0});
             if (!high && !low) {
                 continue;
             }
-            // Nearer is better; toward the enemy a little worse.
-            const double toward = horizontal_distance(spot, enemy) < horizontal_distance(me.position, enemy) ? 2 : 0;
+            const double toward = horizontal_distance(spot, enemy_eye) < horizontal_distance(position, enemy_eye) ? 2 : 0;
             const double score = reach + toward + (high ? 0 : 1);
             if (score < best_score) {
                 best_score = score;
                 best = spot;
-                crouch = !high;
+                out_crouch = !high;
             }
         }
         if (best) {
-            break;  // the nearest ring with any
+            break;
         }
     }
     return best;
+}
+
+bool aim_at_target(Vec3 eye, Vec3 target_pos, Vec3 target_vel, const WeaponDef& weapon, double gravity,
+                   double aim_error_deg, double now, double aim_phase, float& out_yaw, float& out_pitch) {
+    const bool lobbed = weapon.projectile == Projectile::grenade;
+    const Vec3 point = target_pos + Vec3{0, lobbed ? 0.2 : 1.2, 0};
+    const double distance = (target_pos - eye).length();
+    const double flight = distance / std::max(1.0, weapon.bolt_speed);
+    const Vec3 d = point + target_vel * flight - eye;
+    const double wobble = aim_error_deg * std::numbers::pi / 180;
+    const auto arc = ballistic_pitch(weapon.bolt_speed, weapon.bolt_gravity * gravity, std::hypot(d.x, d.z), d.y);
+    out_yaw = float(yaw_toward(d) + wobble * std::sin(now * 2.3 + aim_phase));
+    out_pitch = float(arc.value_or(0) - weapon.shot_elevate + wobble * std::sin(now * 3.1 + aim_phase * 2));
+    return arc.has_value();
+}
+
+void CombatBrain::reset() {
+    cover.reset();
+    slow_since = -1;
+    unstick_until = 0;
+    target_id = 0;
+    path.clear();
+    corner = 0;
+}
+
+MoveInput CombatBrain::step_combat(const MoveState& me, double health_frac, const Loadout& loadout,
+                                   const CharacterStats& stats, uint32_t target_id_in, Vec3 target_pos,
+                                   Vec3 target_vel, const World& world, const NavGrid* nav,
+                                   const BotSkill& skill, double now, uint64_t& rng) {
+    MoveInput input;
+    if (target_id_in != target_id) {
+        target_id = target_id_in;
+        target_since = now;
+    }
+    const Vec3 eye = me.position + Vec3{0, eye_height_of(me), 0};
+    static const WeaponDef unarmed;
+    const WeaponDef* held = weapon_in_slot(loadout, me.combat.weapon);
+    const WeaponDef& weapon = held != nullptr ? *held : unarmed;
+    const WeaponState& clip = me.combat.weapons[me.combat.weapon];
+    const bool reloading = me.combat.reload > 0 || clip.overheated ||
+                           (weapon.rounds_per_clip > 0 && clip.rounds == 0);
+
+    bool want_crouch = false;
+    bool roll = false;
+    if (cover && !cover_reached && horizontal_distance(*cover, me.position) < 0.6) {
+        cover_reached = true;
+        cover_until = now + cover_hold;
+    }
+    if (cover && now >= cover_until) {
+        cover.reset();
+        next_cover = now + 4 + random_unit(rng) * 4;
+    }
+    if (!cover && now >= next_cover && (reloading || health_frac < 0.5)) {
+        next_cover = now + 2;
+        if (random_unit(rng) < skill.cover) {
+            const Vec3 enemy_eye = target_pos + Vec3{0, 1.6, 0};
+            if (auto spot = find_cover_spot(world, nav, nullptr, me.position, enemy_eye, stats.move.step_up, rng,
+                                            cover_crouch)) {
+                cover = spot;
+                cover_reached = false;
+                cover_until = now + 6;
+                cover_hold = std::max(2.0, me.combat.reload) + 1.0 + random_unit(rng) * 2;
+            }
+        }
+    }
+
+    Vec3 destination = target_pos;
+    double stop_dist = 10.0;
+    if (cover) {
+        destination = *cover;
+        stop_dist = 0.4;
+        want_crouch = cover_crouch && horizontal_distance(*cover, me.position) < 1.0;
+    }
+    if (now >= next_roll && !cover) {
+        next_roll = now + 2.5 + random_unit(rng) * 3;
+        roll = random_unit(rng) < skill.dodge && me.energy > 50 && me.grounded;
+    }
+    if (now >= next_strafe) {
+        strafe = random_unit(rng) < 0.5 ? -1 : 1;
+        next_strafe = now + 0.8 + random_unit(rng) * 1.5;
+    }
+
+    Vec3 move;
+    const double to_go = horizontal_distance(destination, me.position);
+    if (to_go > stop_dist) {
+        Vec3 toward = destination;
+        if (nav) {
+            const bool moved = path.empty() || horizontal_distance(destination, path_goal) > 2.0;
+            if ((moved || now >= replan_at) && now >= earliest_plan) {
+                path = nav->find_path(me.position, destination);
+                corner = 0;
+                path_goal = destination;
+                replan_at = now + 3.0;
+                earliest_plan = now + 0.5;
+            }
+            while (corner + 1 < path.size() && horizontal_distance(me.position, path[corner]) < 0.6) {
+                ++corner;
+            }
+            if (corner < path.size()) {
+                toward = path[corner];
+            }
+        }
+        const Vec3 d{toward.x - me.position.x, 0, toward.z - me.position.z};
+        if (d.length() > 1e-3) {
+            move = d * (1.0 / d.length());
+        }
+    }
+
+    const Vec3 enemy_chest = target_pos + Vec3{0, 1.2, 0};
+    const double dist = (target_pos - me.position).length();
+    const bool has_los = dist <= skill.fire_range && !world.raycast(eye, enemy_chest);
+    float aim_yaw = me.yaw;
+    float aim_pitch = 0.0f;
+    const bool has_arc = aim_at_target(eye, target_pos, target_vel, weapon, stats.move.gravity,
+                                       skill.aim_error, now, aim_phase, aim_yaw, aim_pitch);
+    input.yaw = aim_yaw;
+    input.pitch = aim_pitch;
+    if (has_los && has_arc && now - target_since >= skill.reaction) {
+        input.buttons |= MoveInput::fire;
+    }
+
+    const double s = std::sin(input.yaw), c = std::cos(input.yaw);
+    move = move * 0.6 + Vec3{c, 0, -s} * (strafe * 0.7);
+
+    const double speed = std::hypot(me.velocity.x, me.velocity.z);
+    if (move.length() > 0.1 && speed < 1.0 && me.grounded) {
+        if (slow_since < 0) {
+            slow_since = now;
+        } else if (now - slow_since > 1.0) {
+            unstick_until = now + 0.8;
+            slow_since = -1;
+            replan_at = now;
+        }
+    } else {
+        slow_since = -1;
+    }
+    if (now < unstick_until) {
+        input.buttons |= MoveInput::jump;
+    }
+
+    const Vec3 forward_v{-s, 0, -c};
+    const Vec3 right_v{c, 0, -s};
+    input.forward = int8_t(std::lround(std::clamp(move.dot(forward_v), -1.0, 1.0) * 127.0));
+    input.right = int8_t(std::lround(std::clamp(move.dot(right_v), -1.0, 1.0) * 127.0));
+    if (!me.crouch_held && !me.rolling()) {
+        if (roll && std::abs(input.right) > 40) {
+            input.buttons |= MoveInput::crouch;
+        } else if (want_crouch != me.crouched && std::abs(input.forward) < 15 && std::abs(input.right) < 15) {
+            input.buttons |= MoveInput::crouch;
+        }
+    }
+    if (weapon.rounds_per_clip > 0 && clip.rounds < weapon.rounds_per_clip / 3) {
+        input.buttons |= MoveInput::reload;
+    }
+    return input;
+}
+
+std::optional<Vec3> Bot::find_cover(const GameClient& client, const World& world, Vec3 enemy, bool& crouch) {
+    const MoveState& me = client.predicted();
+    const double step_up = client.character_stats().move.step_up;
+    const Battlefield* field = client.config().battlefield ? &*client.config().battlefield : nullptr;
+    return find_cover_spot(world, navigation_.get(), field, me.position, enemy, step_up, rng_, crouch);
 }
 
 void Bot::choose_powerup(const GameClient& client, double now) {
@@ -703,18 +870,13 @@ void Bot::update(GameClient& client, const World& world, double now) {
     }
 
     if (target != nullptr) {
-        // Lead the target by the flight time, on the projectile's arc; aim
-        // wanders a little. Grenades and shells go at the feet.
-        const bool lobbed = weapon.projectile == Projectile::grenade;
-        const Vec3 point = target->state.position + Vec3{0, lobbed ? 0.2 : 1.2, 0};
-        const double flight = target_distance / std::max(1.0, weapon.bolt_speed);
-        const Vec3 d = point + target->state.velocity * flight - eye;
-        const double wobble = skill_.aim_error * std::numbers::pi / 180;
-        const auto arc = ballistic_pitch(weapon.bolt_speed, weapon.bolt_gravity * gravity,
-                                         std::hypot(d.x, d.z), d.y);
-        controls.yaw = yaw_toward(d) + wobble * std::sin(now * 2.3 + aim_phase_);
-        controls.pitch = arc.value_or(0) - weapon.shot_elevate + wobble * std::sin(now * 3.1 + aim_phase_ * 2);
-        controls.fire = arc.has_value() && now - target_since_ >= skill_.reaction;
+        float aim_yaw = float(controls.yaw);
+        float aim_pitch = float(controls.pitch);
+        const bool has_arc = aim_at_target(eye, target->state.position, target->state.velocity, weapon, gravity,
+                                           skill_.aim_error, now, aim_phase_, aim_yaw, aim_pitch);
+        controls.yaw = aim_yaw;
+        controls.pitch = aim_pitch;
+        controls.fire = has_arc && now - target_since_ >= skill_.reaction;
         // Now and then a grenade at someone close.
         const WeaponDef* thrown = weapon_in_slot(loadout, secondary_slot);
         if (thrown != nullptr && me.combat.weapons[secondary_slot].rounds > 0 && target_distance > 8 &&

@@ -9,6 +9,7 @@ const ItemTooltip = preload("res://ui/item_tooltip.gd")
 signal loadout_saved(slot_index: int, loadout: Dictionary)
 signal loadout_activated(slot_index: int)
 signal item_destroyed(item_id: int)
+signal item_used(item_id: int)
 signal closed
 
 const GEAR_SLOTS := [
@@ -40,6 +41,7 @@ const CATEGORIES := [
 	["armor", "Armor"],
 	["deflector_shield", "Shields"],
 	["clothing", "Clothing"],
+	["misc", "Junk/Med"],
 ]
 
 var species := "human"
@@ -412,9 +414,9 @@ func _paint_inventory(box: Rect2) -> void:
 	var y := box.position.y + 10 * u
 	var cx := x
 	for cat: Array in CATEGORIES:
-		var bw := 72.0 * u
+		var bw := 61.0 * u
 		button(Rect2(cx, y, bw, 24 * u), cat[1], "icat:" + cat[0], _category == cat[0])
-		cx += bw + 4 * u
+		cx += bw + 3 * u
 	y += 30 * u
 	cx = x
 	for s_entry: Array in [["name", "Name"], ["kind", "Kind"], ["slot", "Slot"], ["quality", "Quality"]]:
@@ -426,7 +428,11 @@ func _paint_inventory(box: Rect2) -> void:
 	_filtered.clear()
 	for inst: Dictionary in inventory:
 		var def: Dictionary = _def_by_id.get(str(inst.get("def_id", "")), {})
-		if _category != "all" and str(def.get("kind", "")) != _category:
+		var k := str(def.get("kind", ""))
+		if _category == "misc":
+			if k != "junk" and k != "supply":
+				continue
+		elif _category != "all" and k != _category:
 			continue
 		_filtered.append(inst)
 
@@ -459,17 +465,28 @@ func _paint_inventory(box: Rect2) -> void:
 		var selected := iid == _selected_item_id
 		frame(r, "border_3_pieces", Color(0.75, 0.88, 1.0) if (hovered or selected) else Color(0.85, 0.85, 0.9))
 		var used_in := _loadout_badges(iid)
+		var kind := str(def.get("kind", ""))
 		text("gamefont_small", str(def.get("name", inst.get("def_id", ""))), Vector2(x + 8 * u, ry + 5 * u),
 				"Left", ACCENT if selected else TEXT)
-		text("gamefont_tiny", "%s | Q %d%% %s" % [str(def.get("slot", "")).capitalize(),
-				roundi(float(inst.get("quality", 0.5)) * 100), used_in],
-				Vector2(x + 8 * u, ry + 20 * u), "Left", DIM)
+		var sub_txt := ""
+		if kind == "junk":
+			sub_txt = "Junk | Sell: %d Cr" % int(def.get("sell_value", 0))
+		elif kind == "supply":
+			sub_txt = "Supply | +%d HP" % roundi(float(def.get("heal_amount", 0.0)))
+		else:
+			sub_txt = "%s | Q %d%% %s" % [str(def.get("slot", "")).capitalize(),
+					roundi(float(inst.get("quality", 0.5)) * 100), used_in]
+		text("gamefont_tiny", sub_txt, Vector2(x + 8 * u, ry + 20 * u), "Left", DIM)
 
 	var foot_y := box.end.y - 36 * u
 	if _selected_item_id > 0:
 		var confirming := _confirm_destroy_id == _selected_item_id
-		button(Rect2(x, foot_y, 140 * u, 26 * u),
+		button(Rect2(x, foot_y, 134 * u, 26 * u),
 				"Confirm Destroy" if confirming else "Destroy Item", "destroy", confirming, confirming)
+		var sel_inst := _inst_by_id(_selected_item_id)
+		var sel_def: Dictionary = _def_by_id.get(str(sel_inst.get("def_id", "")), {})
+		if str(sel_def.get("kind", "")) == "supply":
+			button(Rect2(x + 142 * u, foot_y, 112 * u, 26 * u), "Use Supply", "use_supply")
 	if _filtered.size() > _rows_visible:
 		text("gamefont_tiny", "%d-%d of %d" % [_scroll + 1, mini(_scroll + _rows_visible, _filtered.size()), _filtered.size()],
 				Vector2(box.end.x - 16 * u, foot_y + 6 * u), "Right", DIM)
@@ -555,6 +572,11 @@ func _quick_equip(inst: Dictionary) -> void:
 		return
 	var kind := str(def.get("kind", ""))
 	var slot := str(def.get("slot", ""))
+	if kind == "supply":
+		item_used.emit(int(inst.get("id", 0)))
+		return
+	if kind == "junk":
+		return
 	if kind == "clothing":
 		_paperdoll_mode = "appearance"
 		_try_equip_into(inst, slot, true)
@@ -613,6 +635,8 @@ func _on_click(id: String, _at: Vector2) -> void:
 			_unequip_slot(parts[2], parts[1] == "app")
 	elif id == "activate":
 		loadout_activated.emit(_edit_slot)
+	elif id == "use_supply" and _selected_item_id > 0:
+		item_used.emit(_selected_item_id)
 	elif id == "destroy" and _selected_item_id > 0:
 		if _confirm_destroy_id == _selected_item_id:
 			item_destroyed.emit(_selected_item_id)

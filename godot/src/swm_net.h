@@ -144,8 +144,12 @@ public:
     godot::Dictionary get_player_status() const;
     // Quartermasters in the hub: [{name, faction, position, radius}].
     godot::Array get_quartermasters() const;
+    // Open-world vendors in the hub: [{name, kind, position, radius}].
+    godot::Array get_vendors() const;
     // Shooting-range targets in the hub: [{id, name, position, health, max_health, alive}].
     godot::Array get_targets() const;
+    // Nearby lootable corpses: [{entity_id, name, position, items: [{slot, def_id, quality}]}].
+    godot::Array get_corpses() const;
     // Authoritative inventory & loadouts synced from the server.
     godot::Array get_inventory() const;
     godot::Array get_character_loadouts() const;
@@ -154,6 +158,10 @@ public:
     void switch_loadout(int64_t slot_index);
     void buy_item(const godot::String& def_id, bool use_faction_points = true);
     void destroy_item(int64_t item_id);
+    void take_loot(int64_t corpse_entity, int64_t slot = -1);
+    void sell_item(int64_t item_id);
+    void sell_all_junk();
+    void use_item(int64_t item_id);
     // The terrain bake (prefix) of the world the client is in now: a
     // battle's own (its battlefield's map), or the one start() was given.
     godot::String get_bake() const;

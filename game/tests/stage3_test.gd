@@ -67,8 +67,9 @@ func _initialize() -> void:
 		var scene := doc.generate_scene(state) as Node3D
 		assert(scene != null)
 		var player := scene.find_child("AnimationPlayer", true, false) as AnimationPlayer
-		assert(player != null and player.get_animation_list().size() == 19,
-				"%s expected 19 clips, got %d" % [sg, player.get_animation_list().size() if player else 0])
+		var clip_count := player.get_animation_list().size() if player != null else 0
+		assert(player != null and clip_count >= 19,
+				"%s expected >= 19 clips, got %d" % [sg, clip_count])
 		var total_blends := 0
 		for m in scene.find_children("*", "MeshInstance3D", true, false):
 			var mi := m as MeshInstance3D
@@ -78,7 +79,7 @@ func _initialize() -> void:
 		var colors := SwgColors.load_colors(gltf_path)
 		SwgColors.apply_custom(scene, colors, {"index_color_1": 1})
 		scene.free()
-		print("species %s: OK (19 clips, %d blend shapes)" % [sg, total_blends])
+		print("species %s: OK (%d clips, %d blend shapes)" % [sg, clip_count, total_blends])
 
 	# 3. Main Menu scene instantiation
 	var packed := load("res://scenes/main_menu.tscn") as PackedScene

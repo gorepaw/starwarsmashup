@@ -61,6 +61,7 @@ const char* life_name(core::Life life) {
 // What snapshots say about an entity, besides its state.
 void describe(godot::Dictionary& out, const core::net::EntityState& entity) {
     out["health"] = double(entity.health);
+    out["max_health"] = double(entity.max_health);
     out["alive"] = entity.alive();
     out["life"] = life_name(entity.life);
     out["team"] = int64_t(entity.team);
@@ -69,7 +70,8 @@ void describe(godot::Dictionary& out, const core::net::EntityState& entity) {
     out["deaths"] = int64_t(entity.deaths);
     out["captures"] = int64_t(entity.captures);
     out["look"] = int64_t(entity.look);  // 0: a player; else get_looks()[look - 1]
-    out["pose"] = int64_t(entity.pose);  // 0 on their feet, 1 sitting
+    out["pose"] = int64_t(entity.pose);  // 0 on their feet, 1 sitting, 2 attacking
+    out["actor_kind"] = int64_t(entity.actor_kind);  // 0 player/bot, 1 citizen, 2 creature, 3 bandit
     out["colors"] = int64_t(entity.colors);  // 0: the look's own colors; else a seed to vary them by
     out["species"] = godot::String::utf8(core::species_def(core::Species(entity.species)).id.c_str());
     out["gender"] = godot::String::utf8(entity.gender == 1 ? "female" : "male");
@@ -275,6 +277,21 @@ godot::Array SwmClient::get_quartermasters() const {
     return out;
 }
 
+godot::Array SwmClient::get_vendors() const {
+    godot::Array out;
+    if (client()) {
+        for (const core::net::Vendor& v : client()->vendors()) {
+            godot::Dictionary entry;
+            entry["name"] = godot::String::utf8(v.name.c_str());
+            entry["kind"] = godot::String::utf8(v.kind.c_str());
+            entry["position"] = to_godot(v.position);
+            entry["radius"] = v.radius;
+            out.push_back(entry);
+        }
+    }
+    return out;
+}
+
 godot::Array SwmClient::get_targets() const {
     godot::Array out;
     if (client()) {
@@ -286,6 +303,29 @@ godot::Array SwmClient::get_targets() const {
             entry["health"] = double(t.health);
             entry["max_health"] = double(t.max_health);
             entry["alive"] = t.alive;
+            out.push_back(entry);
+        }
+    }
+    return out;
+}
+
+godot::Array SwmClient::get_corpses() const {
+    godot::Array out;
+    if (client()) {
+        for (const core::net::CorpseLootState& c : client()->corpses()) {
+            godot::Dictionary entry;
+            entry["entity_id"] = int64_t(c.entity_id);
+            entry["name"] = godot::String::utf8(c.name.c_str());
+            entry["position"] = to_godot(c.position);
+            godot::Array items;
+            for (const core::net::LootItemEntry& it : c.items) {
+                godot::Dictionary idict;
+                idict["slot"] = int64_t(it.slot);
+                idict["def_id"] = godot::String::utf8(it.def_id.c_str());
+                idict["quality"] = double(it.quality);
+                items.push_back(idict);
+            }
+            entry["items"] = items;
             out.push_back(entry);
         }
     }
@@ -397,6 +437,30 @@ void SwmClient::buy_item(const godot::String& def_id, bool use_faction_points) {
 void SwmClient::destroy_item(int64_t item_id) {
     if (client()) {
         client()->destroy_item(uint64_t(item_id));
+    }
+}
+
+void SwmClient::take_loot(int64_t corpse_entity, int64_t slot) {
+    if (client()) {
+        client()->take_loot(uint32_t(corpse_entity), int(slot));
+    }
+}
+
+void SwmClient::sell_item(int64_t item_id) {
+    if (client()) {
+        client()->sell_item(uint64_t(item_id));
+    }
+}
+
+void SwmClient::sell_all_junk() {
+    if (client()) {
+        client()->sell_all_junk();
+    }
+}
+
+void SwmClient::use_item(int64_t item_id) {
+    if (client()) {
+        client()->use_item(uint64_t(item_id));
     }
 }
 
@@ -1038,7 +1102,9 @@ void SwmClient::_bind_methods() {
     ClassDB::bind_method(D_METHOD("get_session_error"), &SwmClient::get_session_error);
     ClassDB::bind_method(D_METHOD("get_recruiters"), &SwmClient::get_recruiters);
     ClassDB::bind_method(D_METHOD("get_quartermasters"), &SwmClient::get_quartermasters);
+    ClassDB::bind_method(D_METHOD("get_vendors"), &SwmClient::get_vendors);
     ClassDB::bind_method(D_METHOD("get_targets"), &SwmClient::get_targets);
+    ClassDB::bind_method(D_METHOD("get_corpses"), &SwmClient::get_corpses);
     ClassDB::bind_method(D_METHOD("get_factions"), &SwmClient::get_factions);
     ClassDB::bind_method(D_METHOD("queue", "team", "mode"), &SwmClient::queue, DEFVAL("standard"));
     ClassDB::bind_method(D_METHOD("get_player_status"), &SwmClient::get_player_status);
@@ -1049,6 +1115,10 @@ void SwmClient::_bind_methods() {
     ClassDB::bind_method(D_METHOD("switch_loadout", "slot_index"), &SwmClient::switch_loadout);
     ClassDB::bind_method(D_METHOD("buy_item", "def_id", "use_faction_points"), &SwmClient::buy_item, DEFVAL(true));
     ClassDB::bind_method(D_METHOD("destroy_item", "item_id"), &SwmClient::destroy_item);
+    ClassDB::bind_method(D_METHOD("take_loot", "corpse_entity", "slot"), &SwmClient::take_loot, DEFVAL(-1));
+    ClassDB::bind_method(D_METHOD("sell_item", "item_id"), &SwmClient::sell_item);
+    ClassDB::bind_method(D_METHOD("sell_all_junk"), &SwmClient::sell_all_junk);
+    ClassDB::bind_method(D_METHOD("use_item", "item_id"), &SwmClient::use_item);
     ClassDB::bind_method(D_METHOD("get_battlefield"), &SwmClient::get_battlefield);
     ClassDB::bind_method(D_METHOD("is_allied", "a", "b"), &SwmClient::is_allied);
     ClassDB::bind_method(D_METHOD("get_match"), &SwmClient::get_match);

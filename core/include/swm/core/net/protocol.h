@@ -18,7 +18,7 @@ namespace swm::core::net {
 // Every packet starts with a magic number, the protocol version and a message
 // type. Peers drop packets with another version. Bump it on any wire change.
 inline constexpr uint16_t protocol_magic = 0x4D53;  // "SM"
-inline constexpr uint16_t protocol_version = 20;
+inline constexpr uint16_t protocol_version = 22;
 inline constexpr uint8_t droid_explosion_weapon = 0xFF;  // Explosion::weapon sentinel for destroyed health/ammo droids
 // ...for a destroyed object (Battlefield::destructibles); clients draw it
 // from the object's own explosion as they see it go.
@@ -54,6 +54,33 @@ struct Quartermaster {
     friend bool operator==(const Quartermaster&, const Quartermaster&) = default;
 };
 
+// A hub's open-world vendor: junk dealer or gear/supplies vendor.
+struct Vendor {
+    std::string name;
+    std::string kind;  // "junk_dealer" or "gear_vendor"
+    Vec3 position;     // game space
+    double radius = 4;
+
+    friend bool operator==(const Vendor&, const Vendor&) = default;
+};
+
+struct LootItemEntry {
+    uint8_t slot = 0;
+    std::string def_id;
+    float quality = 0.5f;
+
+    friend bool operator==(const LootItemEntry&, const LootItemEntry&) = default;
+};
+
+struct CorpseLootState {
+    uint32_t entity_id = 0;
+    std::string name;
+    Vec3 position;
+    std::vector<LootItemEntry> items;
+
+    friend bool operator==(const CorpseLootState&, const CorpseLootState&) = default;
+};
+
 // A shooting-range target in a hub.
 struct TargetState {
     uint32_t id = 0;
@@ -79,6 +106,7 @@ struct Welcome {
     // look is an index into these, plus one.
     std::vector<std::string> looks;
     std::vector<Quartermaster> quartermasters;
+    std::vector<Vendor> vendors;
 };
 
 // Client -> hub, repeated until the hub's PlayerStatus shows it: queue for a
@@ -143,6 +171,7 @@ struct EntityState {
     uint32_t id = 0;
     MoveState state;
     float health = 0;
+    float max_health = 0;
     Life life = Life::alive;
     uint8_t spawn_count = 0;  // changes on every respawn: clients jump there instead of easing
     int8_t team = -1;         // -1: no teams (outside a match)
@@ -151,7 +180,8 @@ struct EntityState {
     uint16_t deaths = 0;
     uint16_t captures = 0;    // command posts taken or neutralized while in them
     uint8_t look = 0;         // 0: a player; else the server's looks[look - 1] (a hub's people)
-    uint8_t pose = 0;         // 0: on their feet; 1: sitting
+    uint8_t pose = 0;         // 0: on their feet; 1: sitting; 2: attacking
+    uint8_t actor_kind = 0;   // 0: player/match bot; 1: hub citizen; 2: wild creature; 3: bandit
     uint16_t colors = 0;      // a look's colors: 0 its own; else a seed the client varies them by
     uint8_t species = 0;      // index into core::all_species() (0 = human .. 9 = ithorian)
     uint8_t gender = 0;       // 0 = male, 1 = female
@@ -230,6 +260,7 @@ struct Snapshot {
     std::vector<Impact> impacts;        // this tick's bolt hits on surfaces and bodies
     std::vector<PickupState> pickups;   // dropped canisters on the ground
     std::vector<TargetState> targets;   // shooting-range targets in a hub
+    std::vector<CorpseLootState> corpses;  // nearby lootable dead creatures/bandits
     std::optional<MatchState> match;  // in a conquest match
     PlayerStatus you;                 // differs per client
 };
@@ -273,9 +304,26 @@ struct DestroyItemRequest {
     uint64_t item_id = 0;
 };
 
+// Client -> server: take one slot (or all when slot < 0) from a nearby corpse.
+struct LootTakeRequest {
+    uint32_t corpse_entity = 0;
+    int8_t slot = -1;
+};
+
+// Client -> server: sell an owned item or all junk at a nearby vendor.
+struct VendorSellRequest {
+    uint64_t item_id = 0;
+    bool sell_all_junk = false;
+};
+
+// Client -> server: consume an owned supply item.
+struct UseItemRequest {
+    uint64_t item_id = 0;
+};
+
 using Message = std::variant<Hello, Welcome, Refused, InputBatch, Snapshot, Goodbye, SpawnRequest, QueueRequest,
                              Transfer, InventorySync, InventoryAck, SaveLoadoutRequest, SwitchLoadoutRequest,
-                             ShopBuyRequest, DestroyItemRequest>;
+                             ShopBuyRequest, DestroyItemRequest, LootTakeRequest, VendorSellRequest, UseItemRequest>;
 
 std::vector<uint8_t> encode(const Message& message);
 // Throws PacketError on malformed packets or another protocol version.

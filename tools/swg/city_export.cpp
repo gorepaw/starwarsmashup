@@ -136,7 +136,8 @@ std::vector<SnapshotNode> recruiters(const CityExport& city) {
 // `bounds`, if given: its meshes' bounds in their bind pose.
 std::string export_person(TreLibrary& library, ObjectTemplates& templates, const std::string& look,
                           const std::filesystem::path& people_dir, std::ostream& log,
-                          CharacterBounds* bounds = nullptr) {
+                          CharacterBounds* bounds = nullptr,
+                          const HubClipProvider& extra_clips = {}) {
     const SharedObjectTemplate& shared = templates.shared(look);
     if (!shared.appearance.ends_with(".sat")) {
         throw std::runtime_error("no skeletal appearance (" + shared.appearance + ")");
@@ -158,21 +159,40 @@ std::string export_person(TreLibrary& library, ObjectTemplates& templates, const
     const std::string kind =
         appearance.skeletons.empty() ? "all_b" : std::filesystem::path(appearance.skeletons[0].path).stem().string();
     const std::string clip_prefix = "appearance/animation/" + kind;
+    const auto first_existing = [&](std::initializer_list<std::string> candidates) -> std::string {
+        for (const std::string& p : candidates) {
+            if (library.contains(p)) return p;
+        }
+        return {};
+    };
     std::vector<std::pair<std::string, std::string>> clips = {
         {"walk", clip_prefix + (female ? "_loc_walk_female.ans" : "_loc_walk_male.ans")},
         {"idle", clip_prefix + "_idl_standing_idle1.ans"},
         {"sit", clip_prefix + "_idl_sitting_chair_idle.ans"},
     };
     if (kind != "all_b") {  // a creature
-        const std::string kneel = clip_prefix + "_idl_kneel_breathe.ans";
-        clips = {{"walk", clip_prefix + "_loc_walk.ans"},
-                 {"idle", clip_prefix + "_idl_stand_breathe.ans"},
-                 {"sit", library.contains(kneel) ? kneel : clip_prefix + "_idl_lie_breathe.ans"}};
+        clips = {
+            {"walk", clip_prefix + "_loc_walk.ans"},
+            {"run", clip_prefix + "_loc_run.ans"},
+            {"idle", clip_prefix + "_idl_stand_breathe.ans"},
+            {"sit", first_existing({clip_prefix + "_idl_kneel_breathe.ans", clip_prefix + "_idl_lie_breathe.ans"})},
+            {"attack", first_existing({clip_prefix + "_cbt_stand_combat_attack_light.ans",
+                                       clip_prefix + "_cbt_stand_combat_attack_heavy.ans",
+                                       clip_prefix + "_cbt_attack_add.ans"})},
+            {"die", first_existing({clip_prefix + "_idl_incapacitated.ans",
+                                    clip_prefix + "_incapacitated_idle.ans",
+                                    clip_prefix + "_idl_lie_breathe.ans"})},
+        };
     }
     for (const auto& [name, path] : clips) {
-        if (library.contains(path)) {
+        if (!path.empty() && library.contains(path)) {
             request.clips.push_back(sample_animation(parse_keyframe_animation(library.read(path)), skeleton, name));
         }
+    }
+    if (kind == "all_b" && extra_clips) {
+        auto extra = extra_clips(skeleton);
+        request.clips.insert(request.clips.end(), std::make_move_iterator(extra.begin()),
+                             std::make_move_iterator(extra.end()));
     }
     std::ostringstream quiet;
     const CharacterBounds extent = export_character(library, request, people_dir, quiet);
@@ -190,23 +210,45 @@ std::string export_person(TreLibrary& library, ObjectTemplates& templates, const
 // The hub's people ([npc] and [crowd] templates), as export_person, in
 // <out_dir>/people/.
 void export_people(TreLibrary& library, const CityExport& city, const std::filesystem::path& out_dir,
-                   std::ostream& log) {
+                   std::ostream& log, const HubClipProvider& bandit_clips = {}) {
     const core::Ini hub = core::Ini::load(city.hub);
-    std::vector<std::string> looks;
+    std::vector<std::pair<std::string, bool>> looks;
+    const auto add_look = [&](const std::string& tpl, bool is_bandit) {
+        for (auto& [existing, flag] : looks) {
+            if (existing == tpl) {
+                flag = flag || is_bandit;
+                return;
+            }
+        }
+        looks.emplace_back(tpl, is_bandit);
+    };
     for (const core::Ini::Section& section : hub.sections()) {
         if (section.name != "npc" && section.name != "crowd") {
             continue;
         }
         for (const auto& [key, value] : section.values) {
-            if (key == "Template" && std::find(looks.begin(), looks.end(), value) == looks.end()) {
-                looks.push_back(value);
+            if (key == "Template") {
+                add_look(value, false);
+            }
+        }
+    }
+    if (const core::Ini::Section* main_sec = hub.section("hub")) {
+        if (const auto spawns = main_sec->get("Spawns")) {
+            const core::Ini sp_ini = core::Ini::load(city.hub.parent_path() / *spawns);
+            for (const core::Ini::Section& section : sp_ini.sections()) {
+                if (section.name == "creature_type" || section.name == "bandit_type") {
+                    if (const auto tpl = section.get("Template")) {
+                        add_look(*tpl, section.name == "bandit_type");
+                    }
+                }
             }
         }
     }
     ObjectTemplates templates(library);
-    for (const std::string& look : looks) {
+    for (const auto& [look, is_bandit] : looks) {
         try {
-            export_person(library, templates, look, out_dir / "people", log);
+            export_person(library, templates, look, out_dir / "people", log, nullptr,
+                          is_bandit ? bandit_clips : HubClipProvider{});
         } catch (const std::exception& error) {
             log << std::format("  person {}: {}\n", look, error.what());
         }
@@ -606,6 +648,13 @@ void export_city(TreLibrary& library, const CityExport& city, std::ostream& log)
     }
     if (!city.hub.empty()) {
         export_people(library, city, out_dir, log);
+    }
+}
+
+void export_hub_people(TreLibrary& library, const CityExport& city, std::ostream& log,
+                       const HubClipProvider& bandit_clips) {
+    if (!city.hub.empty()) {
+        export_people(library, city, std::filesystem::path(city.bake.string() + "_city"), log, bandit_clips);
     }
 }
 

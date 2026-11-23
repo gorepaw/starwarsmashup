@@ -81,6 +81,30 @@ void GameClient::destroy_item(uint64_t item_id) {
     }
 }
 
+void GameClient::take_loot(uint32_t corpse_entity, int slot) {
+    if (status_ == Status::connected) {
+        link_.send(config_.server, net::encode(net::LootTakeRequest{corpse_entity, int8_t(std::clamp(slot, -1, 127))}));
+    }
+}
+
+void GameClient::sell_item(uint64_t item_id) {
+    if (status_ == Status::connected) {
+        link_.send(config_.server, net::encode(net::VendorSellRequest{item_id, false}));
+    }
+}
+
+void GameClient::sell_all_junk() {
+    if (status_ == Status::connected) {
+        link_.send(config_.server, net::encode(net::VendorSellRequest{0, true}));
+    }
+}
+
+void GameClient::use_item(uint64_t item_id) {
+    if (status_ == Status::connected) {
+        link_.send(config_.server, net::encode(net::UseItemRequest{item_id}));
+    }
+}
+
 void GameClient::request_spawn(int loadout, int post) {
     spawn_request_ = net::SpawnRequest{uint8_t(std::clamp(loadout, 0, 255)), uint8_t(std::clamp(post, 0, 255))};
     last_spawn_request_ = -1e9;  // send at once
@@ -205,6 +229,7 @@ void GameClient::handle(const net::Datagram& datagram, double now) {
             tick_rate_ = welcome->tick_rate;
             recruiters_ = welcome->recruiters;
             quartermasters_ = welcome->quartermasters;
+            vendors_ = welcome->vendors;
             factions_ = welcome->factions;
             looks_ = welcome->looks;
         }
@@ -264,6 +289,7 @@ void GameClient::handle(const net::Datagram& datagram, double now) {
     impacts_.insert(impacts_.end(), snapshot->impacts.begin(), snapshot->impacts.end());
     pickups_ = snapshot->pickups;
     targets_ = snapshot->targets;
+    corpses_ = snapshot->corpses;
     match_ = snapshot->match;
     if (match_) {
         // What's been destroyed, gone from our world too (so we move as the

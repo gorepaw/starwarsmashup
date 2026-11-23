@@ -33,6 +33,41 @@ struct BotSkill {
 // near its foot (off the edge at a run, a soldier lands meters past it).
 double drop_pace(Vec3 position, const std::vector<Vec3>& path, size_t corner);
 
+// Shared combat helpers for battle bots and open-world bandits.
+std::optional<Vec3> find_cover_spot(const World& world, const NavGrid* nav, const Battlefield* field,
+                                    Vec3 position, Vec3 enemy_eye, double step_up, uint64_t& rng,
+                                    bool& out_crouch);
+bool aim_at_target(Vec3 eye, Vec3 target_pos, Vec3 target_vel, const WeaponDef& weapon, double gravity,
+                   double aim_error_deg, double now, double aim_phase, float& out_yaw, float& out_pitch);
+
+struct CombatBrain {
+    std::optional<Vec3> cover;
+    bool cover_crouch = false;
+    bool cover_reached = false;
+    double cover_hold = 0;
+    double cover_until = 0;
+    double next_cover = 0;
+    double strafe = 1;
+    double next_strafe = 0;
+    double next_roll = 0;
+    uint32_t target_id = 0;
+    double target_since = 0;
+    double aim_phase = 0;
+    double slow_since = -1;
+    double unstick_until = 0;
+    std::vector<Vec3> path;
+    size_t corner = 0;
+    Vec3 path_goal;
+    double replan_at = 0;
+    double earliest_plan = 0;
+
+    void reset();
+    MoveInput step_combat(const MoveState& me, double health_frac, const Loadout& loadout,
+                          const CharacterStats& stats, uint32_t target_id_in, Vec3 target_pos,
+                          Vec3 target_vel, const World& world, const NavGrid* nav,
+                          const BotSkill& skill, double now, uint64_t& rng);
+};
+
 // A simple soldier that plays through a GameClient, with the same controls
 // and the same view of the world a player has. In a match it spawns at the
 // post nearest the fighting, runs to the nearest post its team doesn't hold

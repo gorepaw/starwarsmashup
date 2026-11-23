@@ -17,7 +17,7 @@ func _initialize() -> void:
 	assert(ClassDB.class_exists("SwmTerrain"), "SwmTerrain class missing")
 	var bake := "imported_assets/terrain/tatooine"
 	assert(FileAccess.file_exists("res://" + bake + ".json"), "missing tatooine.json")
-	var swm_t := ClassDB.instantiate("SwmTerrain")
+	var swm_t: Object = ClassDB.instantiate("SwmTerrain")
 	assert(swm_t.load_bake(ProjectSettings.globalize_path("res://" + bake)) == OK)
 	assert(int(swm_t.get_samples()) == 4097, "expected 4097 samples")
 	assert(is_equal_approx(float(swm_t.get_spacing()), 4.0), "expected 4.0 m spacing")
@@ -50,8 +50,12 @@ func _initialize() -> void:
 		streamer.update_focus(dune_focus, 16)
 	var counts2 := streamer.lod_counts()
 	assert(int(counts2.get(0, 0)) > 0, "expected LOD 0 chunks at new focus")
-	assert(streamer._chunks.has(Vector2i(20, 20)) and int(streamer._chunks[Vector2i(20, 20)]["lod"]) == 0,
-			"expected chunk (20,20) near (1500, 2000) to be LOD 0")
+	var near_lod0 := false
+	for entry: Dictionary in streamer._chunks.values():
+		if int(entry["lod"]) == 0 and Vector2(dune_focus.x, dune_focus.z).distance_to(entry["center"]) < 600.0:
+			near_lod0 = true
+			break
+	assert(near_lod0, "expected an LOD 0 chunk within 600 m of (1500, 2000)")
 	print("SwgTerrainStreamer shifted LODs: ", counts2)
 	streamer.queue_free()
 

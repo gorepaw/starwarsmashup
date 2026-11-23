@@ -26,6 +26,9 @@ enum class Type : uint8_t {
     switch_loadout,
     shop_buy,
     destroy_item,
+    loot_take,
+    vendor_sell,
+    use_item,
 };
 
 void put_vec3(ByteWriter& out, Vec3 v) {
@@ -465,6 +468,14 @@ struct Encoder {
             put_vec3(out, q.position);
             out.put(q.radius);
         }
+        out.put(uint8_t(std::min<size_t>(m.vendors.size(), 255)));
+        for (size_t i = 0; i < m.vendors.size() && i < 255; ++i) {
+            const Vendor& v = m.vendors[i];
+            out.put_string(v.name);
+            out.put_string(v.kind);
+            put_vec3(out, v.position);
+            out.put(v.radius);
+        }
     }
     void operator()(const Refused& m) {
         out.put(uint8_t(Type::refused));
@@ -487,6 +498,7 @@ struct Encoder {
             out.put(entity.id);
             put_state(out, entity.state);
             out.put(entity.health);
+            out.put(entity.max_health);
             out.put(uint8_t(entity.life));
             out.put(entity.spawn_count);
             out.put(entity.team);
@@ -496,6 +508,7 @@ struct Encoder {
             out.put(entity.captures);
             out.put(entity.look);
             out.put(entity.pose);
+            out.put(entity.actor_kind);
             out.put(entity.colors);
             out.put(entity.species);
             out.put(entity.gender);
@@ -552,6 +565,21 @@ struct Encoder {
             out.put(t.health);
             out.put(t.max_health);
             out.put(uint8_t(t.alive));
+        }
+        const uint8_t ccount = uint8_t(std::min<size_t>(m.corpses.size(), 255));
+        out.put(ccount);
+        for (size_t ci = 0; ci < ccount; ++ci) {
+            const CorpseLootState& c = m.corpses[ci];
+            out.put(c.entity_id);
+            out.put_string(c.name);
+            put_vec3(out, c.position);
+            const uint8_t icount = uint8_t(std::min<size_t>(c.items.size(), 255));
+            out.put(icount);
+            for (size_t ii = 0; ii < icount; ++ii) {
+                out.put(c.items[ii].slot);
+                out.put_string(c.items[ii].def_id);
+                out.put(c.items[ii].quality);
+            }
         }
         out.put(uint8_t(m.match.has_value()));
         if (m.match) {
@@ -647,6 +675,20 @@ struct Encoder {
         out.put(uint8_t(Type::destroy_item));
         out.put(m.item_id);
     }
+    void operator()(const LootTakeRequest& m) {
+        out.put(uint8_t(Type::loot_take));
+        out.put(m.corpse_entity);
+        out.put(m.slot);
+    }
+    void operator()(const VendorSellRequest& m) {
+        out.put(uint8_t(Type::vendor_sell));
+        out.put(m.item_id);
+        out.put(uint8_t(m.sell_all_junk));
+    }
+    void operator()(const UseItemRequest& m) {
+        out.put(uint8_t(Type::use_item));
+        out.put(m.item_id);
+    }
 };
 
 } // namespace
@@ -709,6 +751,15 @@ Message decode(std::span<const uint8_t> packet) {
             q.radius = in.get<double>();
             m.quartermasters.push_back(std::move(q));
         }
+        const size_t vs = in.get<uint8_t>();
+        for (size_t i = 0; i < vs; ++i) {
+            Vendor v;
+            v.name = in.get_string();
+            v.kind = in.get_string();
+            v.position = get_vec3(in);
+            v.radius = in.get<double>();
+            m.vendors.push_back(std::move(v));
+        }
         message = m;
         break;
     }
@@ -734,6 +785,7 @@ Message decode(std::span<const uint8_t> packet) {
             entity.id = in.get<uint32_t>();
             entity.state = get_state(in);
             entity.health = in.get<float>();
+            entity.max_health = in.get<float>();
             const uint8_t life = in.get<uint8_t>();
             if (life > uint8_t(Life::dead)) {
                 throw PacketError("bad life state");
@@ -747,6 +799,7 @@ Message decode(std::span<const uint8_t> packet) {
             entity.captures = in.get<uint16_t>();
             entity.look = in.get<uint8_t>();
             entity.pose = in.get<uint8_t>();
+            entity.actor_kind = in.get<uint8_t>();
             entity.colors = in.get<uint16_t>();
             entity.species = in.get<uint8_t>();
             if (entity.species >= species_count) {
@@ -834,6 +887,22 @@ Message decode(std::span<const uint8_t> packet) {
             t.max_health = in.get<float>();
             t.alive = in.get<uint8_t>() != 0;
             m.targets.push_back(std::move(t));
+        }
+        const size_t corpses = in.get<uint8_t>();
+        for (size_t ci = 0; ci < corpses; ++ci) {
+            CorpseLootState c;
+            c.entity_id = in.get<uint32_t>();
+            c.name = in.get_string();
+            c.position = get_vec3(in);
+            const size_t icount = in.get<uint8_t>();
+            for (size_t ii = 0; ii < icount; ++ii) {
+                LootItemEntry entry;
+                entry.slot = in.get<uint8_t>();
+                entry.def_id = in.get_string();
+                entry.quality = in.get<float>();
+                c.items.push_back(std::move(entry));
+            }
+            m.corpses.push_back(std::move(c));
         }
         if (in.get<uint8_t>() != 0) {
             m.match = get_match(in);
@@ -962,6 +1031,23 @@ Message decode(std::span<const uint8_t> packet) {
     }
     case Type::destroy_item:
         message = DestroyItemRequest{in.get<uint64_t>()};
+        break;
+    case Type::loot_take: {
+        LootTakeRequest m;
+        m.corpse_entity = in.get<uint32_t>();
+        m.slot = in.get<int8_t>();
+        message = m;
+        break;
+    }
+    case Type::vendor_sell: {
+        VendorSellRequest m;
+        m.item_id = in.get<uint64_t>();
+        m.sell_all_junk = in.get<uint8_t>() != 0;
+        message = m;
+        break;
+    }
+    case Type::use_item:
+        message = UseItemRequest{in.get<uint64_t>()};
         break;
     default:
         throw PacketError("unknown message type");

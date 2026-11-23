@@ -289,16 +289,16 @@ Room outside the city to try a basic looter-shooter loop: hunt creatures and ban
 **Creatures and bandits**
 
 What lived around Mos Eisley in Galaxies, researched online (wikis and guides). The client data has no spawns anyway.
-- [ ] Wild creatures in areas and lairs, weaker near the walls and tougher further out. Each on its own skeleton with its own clips, like the hub's dewback. Behavior by kind: wander, herd, flee, attack.
-- [ ] Bandits and raiders in camps, the gangs found in that research. They run on the battle bots' code (aim, sidestep, and cover from Stage 2) and wear Galaxies' NPC looks.
-- [ ] Respawning, leashing back home, and who they attack.
-- [ ] Dying in the world: respawn at Mos Eisley's cloning facility, as in Galaxies. Players can't hurt each other outside matches; faction PvP is a later question.
+- [x] Wild creatures in areas and lairs, weaker near the walls and tougher further out. Each on its own skeleton with its own clips, like the hub's dewback. Behavior by kind: wander, herd, flee, attack.
+- [x] Bandits and raiders in camps, the gangs found in that research. They run on the battle bots' code (aim, sidestep, and cover from Stage 2) and wear Galaxies' NPC looks.
+- [x] Respawning, leashing back home, and who they attack.
+- [x] Dying in the world: respawn at Mos Eisley's cloning facility, as in Galaxies. Players can't hurt each other outside matches; faction PvP is a later question.
 
 **Loot, credits and vendors**
-- [ ] Loot tables for each creature and NPC: credits, junk (hides, broken parts: Galaxies had junk loot and junk dealers to sell it to), and now and then gear with stats rolled within its sidegrade band.
-- [ ] Looting the dead, Galaxies-style: open the corpse with E and take what you want; credits are taken automatically.
-- [ ] Vendors in Mos Eisley: a junk dealer who buys junk, and vendors who sell basic gear and supplies. Battlefront-style buy and sell screens, with prices in data files.
-- [ ] Credits saved with the character.
+- [x] Loot tables for each creature and NPC: credits, junk (hides, broken parts: Galaxies had junk loot and junk dealers to sell it to), and now and then gear with stats rolled within its sidegrade band.
+- [x] Looting the dead, Galaxies-style: open the corpse with E and take what you want; credits are taken automatically.
+- [x] Vendors in Mos Eisley: a junk dealer who buys junk, and vendors who sell basic gear and supplies. Battlefront-style buy and sell screens, with prices in data files.
+- [x] Credits saved with the character.
 
 **Quests**
 - [ ] A quest system: quests in data files, made of steps (go to, kill so many, collect, talk to, deliver). A quest log, a tracker on the HUD, waypoints on the minimap, and quest givers among the hub's people.

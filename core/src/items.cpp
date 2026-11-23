@@ -164,6 +164,8 @@ std::optional<ItemKind> item_kind_from_name(std::string_view name) {
     if (name == "armor") return ItemKind::armor;
     if (name == "deflector_shield") return ItemKind::deflector_shield;
     if (name == "clothing") return ItemKind::clothing;
+    if (name == "junk") return ItemKind::junk;
+    if (name == "supply") return ItemKind::supply;
     return std::nullopt;
 }
 
@@ -173,6 +175,8 @@ std::string_view item_kind_name(ItemKind k) {
     case ItemKind::armor: return "armor";
     case ItemKind::deflector_shield: return "deflector_shield";
     case ItemKind::clothing: return "clothing";
+    case ItemKind::junk: return "junk";
+    case ItemKind::supply: return "supply";
     }
     return "weapon";
 }
@@ -215,13 +219,23 @@ void ItemCatalog::load(const std::filesystem::path& catalog_ini, const std::file
             def.anim_set = s.get("AnimSet").value_or(info.anim_set);
             def.bf2_base = s.get("Bf2Base").value_or(info.bf2_weapon_base);
         } else {
-            def.slot = s.get("Slot").value_or(def.kind == ItemKind::deflector_shield ? "deflector_shield" : "chest");
+            const char* default_slot = "chest";
+            if (def.kind == ItemKind::deflector_shield) default_slot = "deflector_shield";
+            else if (def.kind == ItemKind::junk) default_slot = "junk";
+            else if (def.kind == ItemKind::supply) default_slot = "supply";
+            def.slot = s.get("Slot").value_or(default_slot);
             def.anim_set.clear();
         }
 
         def.faction = s.get("Faction").value_or("neutral");
         def.cost_faction_points = int64_t(s.number("CostFactionPoints", 0));
         def.cost_credits = int64_t(s.number("CostCredits", 0));
+        if (s.get("SellValue")) {
+            def.sell_value = int64_t(s.number("SellValue", 0));
+        } else {
+            def.sell_value = def.cost_credits > 0 ? std::max<int64_t>(1, def.cost_credits / 4) : 0;
+        }
+        def.heal_amount = s.number("HealAmount", 0.0);
         def.model_path = s.get("Model").value_or("");
         def.damage_mult = s.number("DamageMult", 1.0);
         def.rate_mult = s.number("RateMult", 1.0);

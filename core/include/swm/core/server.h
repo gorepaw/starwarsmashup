@@ -47,7 +47,10 @@ struct ServerConfig {
     const ItemCatalog* catalog = nullptr;
     bool friendly_fire = false;  // in a match
     bool single_match = false;   // one match, no next one (a hub's match: see match_over())
+    bool pvp_enabled = true;     // false in open-world hubs (no player-vs-player harm outside matches)
 };
+
+inline constexpr int hostile_npc_team = 100;
 
 struct PlayerResult {
     std::string name;
@@ -121,6 +124,8 @@ public:
     void set_recruiters(std::vector<net::Recruiter> recruiters, std::array<std::string, 2> factions);
     // Faction quartermasters in a hub, told to clients as they join.
     void set_quartermasters(std::vector<net::Quartermaster> quartermasters);
+    // Open-world vendors (junk dealers, gear/supplies vendors) in a hub.
+    void set_vendors(std::vector<net::Vendor> vendors);
     // Adds a shooting-range target in a hub (stationary if speed <= 0).
     uint32_t add_range_target(std::string name, Vec3 home, Vec3 patrol_end, double speed, double max_health = 400,
                               double mitigation = 0, double respawn_time = 2.5);
@@ -154,10 +159,52 @@ public:
     // (the loadout's).
     uint32_t add_npc(const std::string& name, Vec3 position, double yaw, uint8_t look, uint8_t pose = 0,
                      uint16_t colors = 0, double radius = 0);
+    struct NpcCombatSpec {
+        uint8_t actor_kind = 1;  // 1=citizen, 2=wild creature, 3=bandit
+        double max_health = 100;
+        double hit_radius = 0.45;
+        double hit_height = 1.8;
+        double mitigation = 0.0;
+        double walk_speed = 4.0;
+        double run_speed = 6.5;
+        Loadout loadout;
+        std::string weapon_model;
+        std::string anim_set;
+    };
+    struct NpcInfo {
+        uint32_t entity = 0;
+        std::string name;
+        MoveState state;
+        double health = 0;
+        double max_health = 0;
+        Life life = Life::alive;
+        uint8_t actor_kind = 1;
+        uint32_t last_attacker = 0;
+        uint32_t last_damaged_tick = 0;
+        bool hidden = false;
+    };
+    uint32_t add_combat_npc(const std::string& name, Vec3 position, double yaw, uint8_t look,
+                            const NpcCombatSpec& spec, uint16_t colors = 0);
+    std::optional<NpcInfo> npc_info(uint32_t entity) const;
+    void set_npc_pose(uint32_t entity, uint8_t pose);
+    void heal_npc(uint32_t entity, double amount);
+    void respawn_npc(uint32_t entity, Vec3 position, double yaw);
+    void set_npc_hidden(uint32_t entity, bool hidden);
+    void npc_melee(uint32_t attacker_entity, uint32_t victim_entity, double raw_damage, DamageType type);
+    void award_xp(uint32_t entity, int64_t xp);
+    void award_credits(uint32_t entity, int64_t credits);
+    void set_corpse_loot(uint32_t npc_entity, uint32_t owner_entity, const std::string& name, Vec3 position,
+                         std::vector<net::LootItemEntry> items);
+    void clear_corpse_loot(uint32_t npc_entity);
+    size_t corpse_loot_count() const { return corpse_loots_.size(); }
+    void set_pvp_enabled(bool enabled) { config_.pvp_enabled = enabled; }
+    void set_cloning_facility(Vec3 position) { cloning_facility_ = position; }
+    const ItemCatalog* catalog() const { return config_.catalog; }
     void steer_npc(uint32_t entity, const MoveInput& input);
     std::vector<uint32_t> npcs() const;
 
     std::function<void(const std::string&)> log;
+    std::function<void(uint32_t npc_entity, uint32_t killer_entity)> on_npc_killed;
     // Decides who may join, given the team they ask for (-1: any;
     // natives_team: a native, a bot): their team (-1: the smaller one), or
     // nullopt to refuse. Unset: anyone, on the smaller team (natives on
@@ -231,8 +278,24 @@ private:
         MoveState state;
         MoveInput input;
         uint8_t look = 0, pose = 0;
+        uint8_t actor_kind = 1;
         uint16_t colors = 0;
         double radius = 0;  // 0: a person's
+        double health = 100;
+        double max_health = 100;
+        double hit_radius = 0.45;
+        double hit_height = 1.8;
+        double mitigation = 0.0;
+        double walk_speed = 4.0;
+        double run_speed = 6.5;
+        Life life = Life::alive;
+        uint8_t spawn_count = 0;
+        Loadout loadout;
+        std::string weapon_model;
+        std::string anim_set;
+        uint32_t last_attacker = 0;
+        uint32_t last_damaged_tick = 0;
+        bool hidden = false;
     };
     struct Bolt {
         uint32_t id = 0;
@@ -262,6 +325,13 @@ private:
         bool droid = false;
         int destructible = -1;  // a destroyed object's own explosion (its index)
     };
+    struct CorpseLoot {
+        uint32_t npc_entity = 0;
+        uint32_t owner_entity = 0;
+        std::string name;
+        Vec3 position;
+        std::vector<net::LootItemEntry> items;
+    };
 
     void receive(double now);
     void handle(const net::Endpoint& from, const net::Datagram& datagram, double now);
@@ -273,11 +343,15 @@ private:
     void step();
     void run_match();
     void fire(const Client& shooter, const Shot& shot, double view_tick);
+    void fire_npc(const Npc& shooter, const Shot& shot);
     void advance_bolts();
     void advance_pickups();
     void drop_pickup(Vec3 at);
     double random_unit();
     void damage(Client& victim, double raw, DamageType type, uint32_t attacker);
+    void damage_npc(Npc& npc, double raw, DamageType type, uint32_t attacker);
+    Npc* find_npc(uint32_t entity);
+    const Npc* find_npc(uint32_t entity) const;
     void damage_powerup(size_t index, double amount, uint32_t attacker, std::vector<Blast>& blasts);
     void explode(const Blast& blast, std::vector<Blast>& blasts);
     void kill(Client& victim, uint32_t attacker);
@@ -285,6 +359,7 @@ private:
     void spawn_at_post(Client& client, size_t loadout, size_t post);
     void return_to_waiting(Client& client);
     void rebuild_client_loadouts(Client& client);
+    void scrub_item_from_loadouts(Client& client, uint64_t item_id);
     void send_inventory_sync(Client& client);
     const Loadout& loadout_of(const Client& client) const;
     net::EntityState describe(const Client& client) const;
@@ -316,6 +391,8 @@ private:
     std::vector<net::Impact> impacts_;        // this tick's
     std::vector<net::Recruiter> recruiters_;
     std::vector<net::Quartermaster> quartermasters_;
+    std::vector<net::Vendor> vendors_;
+    std::vector<CorpseLoot> corpse_loots_;
     std::vector<RangeTarget> targets_;
     std::array<std::string, 2> factions_;
     uint32_t tick_ = 0;
@@ -327,6 +404,7 @@ private:
     double next_tick_time_ = 0;
     double next_save_time_ = 0;
     bool started_ = false;
+    std::optional<Vec3> cloning_facility_;
 };
 
 } // namespace swm::core

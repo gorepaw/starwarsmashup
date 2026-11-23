@@ -90,8 +90,25 @@ void test_protocol() {
     CHECK(std::get<SwitchLoadoutRequest>(decode(encode(SwitchLoadoutRequest{2}))).slot == 2);
     CHECK(std::get<ShopBuyRequest>(decode(encode(ShopBuyRequest{"wp_rifle_t21", true}))).def_id == "wp_rifle_t21");
     CHECK(std::get<DestroyItemRequest>(decode(encode(DestroyItemRequest{99}))).item_id == 99);
+    const auto ltr = std::get<LootTakeRequest>(decode(encode(LootTakeRequest{42, 1})));
+    CHECK(ltr.corpse_entity == 42 && ltr.slot == 1);
+    const auto vsr = std::get<VendorSellRequest>(decode(encode(VendorSellRequest{0, true})));
+    CHECK(vsr.item_id == 0 && vsr.sell_all_junk);
+    CHECK(std::get<UseItemRequest>(decode(encode(UseItemRequest{77}))).item_id == 77);
     const Message slr = decode(encode(SaveLoadoutRequest{cl}));
     CHECK(std::get<SaveLoadoutRequest>(slr).loadout == cl);
+
+    Welcome w2;
+    w2.entity_id = 1;
+    w2.vendors.push_back({"Junk Dealer", "junk_dealer", {10, 0, 20}, 4});
+    const auto dw2 = std::get<Welcome>(decode(encode(w2)));
+    CHECK(dw2.vendors == w2.vendors);
+
+    Snapshot cs;
+    cs.server_tick = 5;
+    cs.corpses.push_back({12, "Lesser Womp Rat", {1, 0, 2}, {{0, "junk_womp_rat_hide", 0.5f}}});
+    const auto dcs = std::get<Snapshot>(decode(encode(cs)));
+    CHECK(dcs.corpses == cs.corpses);
 
     // Malformed packets are rejected.
     const auto expect_error = [](std::vector<uint8_t> packet) {
@@ -217,6 +234,7 @@ void test_session() {
     const auto b_seen_by_a = find_remote(s.a.remotes(), s.b.entity_id());
     CHECK(a_seen_by_b && near(horizontal_distance(a_seen_by_b->state.position, a_server->position), 0));
     CHECK(b_seen_by_a && near(horizontal_distance(b_seen_by_a->state.position, b_server->position), 0));
+    CHECK(a_seen_by_b->max_health > 0 && a_seen_by_b->actor_kind == 0);
     // B went after A, which circled at up to sprint speed.
     CHECK(horizontal_distance(b_server->position, {3, 0, 0}) > 5);
     CHECK(horizontal_distance(a_server->position, b_server->position) < 30);

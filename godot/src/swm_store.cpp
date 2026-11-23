@@ -73,6 +73,8 @@ godot::Dictionary to_dict(const core::ItemDef& d, const core::ItemCatalog& catal
     out["faction"] = godot::String::utf8(d.faction.c_str());
     out["cost_fp"] = int64_t(d.cost_faction_points);
     out["cost_credits"] = int64_t(d.cost_credits);
+    out["sell_value"] = int64_t(d.sell_value);
+    out["heal_amount"] = d.heal_amount;
     out["model"] = godot::String::utf8(d.model_path.c_str());
 
     godot::Array mods;

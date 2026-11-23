@@ -64,6 +64,7 @@ constexpr const char* usage = R"(usage:
   swgtool pob-check <dir>
   swgtool snapshot <dir> <path.ws> [--match <text>] [--near <x> <z> <radius>] [--inside <id>]
   swgtool export-city <dir> <bake_prefix> --snapshot <path.ws> --center <x> <z> --radius <m> [--hub <hub.ini>]
+  swgtool export-people <dir> <bake_prefix> --hub <hub.ini> [--bf2-lvl <ingame.lvl>]
 )";
 
 // Returns the value following `flag` in args, or an empty string.
@@ -847,6 +848,87 @@ int cmd_export_city(const std::vector<std::string>& args) {
     return 0;
 }
 
+int cmd_export_people(const std::vector<std::string>& args) {
+    const std::string hub = option(args, "--hub");
+    if (args.size() < 2 || hub.empty()) {
+        std::cerr << usage;
+        return 2;
+    }
+    const std::string bf2_lvl = option(args, "--bf2-lvl");
+    std::optional<bf2::AnimationSkeleton> bf2_skeleton;
+    std::vector<bf2::Animation> bf2_anims;
+    const std::vector<std::string> soldier_clips = {
+        "human_rifle_stand_idle_emote_full",
+        "human_rifle_stand_runforward",
+        "human_rifle_stand_runbackward",
+        "human_rifle_stand_shoot_full",
+        "human_rifle_stand_reload_full",
+        "human_rifle_stand_shoot_secondary_full",
+        "human_rifle_stand_hitfront",
+        "human_rifle_stand_death_forward",
+        "human_rifle_stand_death_backward",
+        "human_rifle_crouch_idle_emote_full",
+        "human_rifle_crouch_walkforward",
+        "human_rifle_crouch_walkbackward",
+        "human_rifle_crouch_shoot_full",
+        "human_rifle_crouch_reload_full",
+        "human_rifle_crouch_hitfront",
+        "human_rifle_diveforward",
+        "human_rifle_jump",
+        "human_rifle_fall",
+        "human_rifle_landsoft",
+        "human_pistol_stand_runforward",
+        "human_pistol_stand_shoot",
+        "human_pistol_stand_reload",
+        "human_pistol_crouch_walkforward",
+        "human_pistol_crouch_shoot",
+        "human_pistol_crouch_reload",
+    };
+    if (!bf2_lvl.empty()) {
+        std::ifstream lvl_file(bf2_lvl, std::ios::binary);
+        if (!lvl_file) {
+            throw std::runtime_error("cannot open " + bf2_lvl);
+        }
+        const std::vector<uint8_t> lvl(std::istreambuf_iterator<char>(lvl_file), {});
+        const bf2::UcfbNode root = bf2::parse_ucfb(lvl);
+        for (const char* bank : {"human_0", "human_1", "human_3"}) {
+            const bf2::UcfbNode* zaf = bf2::find_named_chunk(root, "zaf_", bank);
+            const bf2::UcfbNode* zaa = bf2::find_named_chunk(root, "zaa_", bank);
+            if (!bf2_skeleton && zaf && zaf->child("BIN_")) {
+                bf2_skeleton = bf2::parse_animation_skeleton(zaf->child("BIN_")->data);
+            }
+            if (zaa && zaa->child("BIN_")) {
+                auto bank_anims = bf2::parse_animation_bank(zaa->child("BIN_")->data);
+                bf2_anims.insert(bf2_anims.end(), std::make_move_iterator(bank_anims.begin()),
+                                 std::make_move_iterator(bank_anims.end()));
+            }
+        }
+    }
+    HubClipProvider bandit_clips;
+    if (bf2_skeleton) {
+        const auto mapping = retarget::humanoid_mapping();
+        bandit_clips = [mapping, &bf2_skeleton, &bf2_anims, &soldier_clips](const Skeleton& skel) {
+            std::vector<AnimationClip> out;
+            for (const std::string& clip_name : soldier_clips) {
+                const uint32_t h = bf2::name_hash(clip_name);
+                for (const bf2::Animation& a : bf2_anims) {
+                    if (a.name_hash == h) {
+                        out.push_back(retarget::retarget_animation(skel, *bf2_skeleton, a, mapping, clip_name));
+                        break;
+                    }
+                }
+            }
+            return out;
+        };
+    }
+    TreLibrary library(args[0]);
+    CityExport city;
+    city.bake = args[1];
+    city.hub = hub;
+    export_hub_people(library, city, std::cout, bandit_clips);
+    return 0;
+}
+
 int cmd_snapshot(const std::vector<std::string>& args) {
     if (args.size() < 2) {
         std::cerr << usage;
@@ -1330,6 +1412,9 @@ int main(int argc, char** argv) {
         }
         if (command == "export-city") {
             return cmd_export_city(args);
+        }
+        if (command == "export-people") {
+            return cmd_export_people(args);
         }
         if (command == "datatable") {
             return cmd_datatable(args);

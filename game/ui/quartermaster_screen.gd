@@ -78,10 +78,13 @@ func _paint() -> void:
 		owned_counts[did] = int(owned_counts.get(did, 0)) + 1
 
 	for def: Dictionary in catalog:
+		var kind := str(def.get("kind", ""))
+		if kind == "junk" or kind == "supply":
+			continue
 		var df := str(def.get("faction", "neutral"))
 		if df != "neutral" and faction != "neutral" and df != faction:
 			continue
-		if _category != "all" and str(def.get("kind", "")) != _category:
+		if _category != "all" and kind != _category:
 			continue
 		_filtered.append(def)
 
