@@ -6,6 +6,7 @@
 #include <future>
 #include <map>
 #include <memory>
+#include <optional>
 #include <random>
 #include <string>
 #include <vector>
@@ -61,6 +62,8 @@ struct HubRangeTarget {
 
 struct HubConfig {
     std::string name = "Hub";
+    std::optional<Vec3> spawn;
+    std::optional<Vec3> cloning_facility;
     std::vector<net::Recruiter> recruiters;
     std::vector<net::Quartermaster> quartermasters;
     std::vector<HubRangeTarget> range_targets;

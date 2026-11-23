@@ -121,7 +121,7 @@ func _initialize() -> void:
 	var gs_packed := load("res://scenes/game_session.tscn") as PackedScene
 	assert(gs_packed != null)
 	GameSession.pending_config = {
-		"bake": "imported_assets/terrain/tatooine_mos_eisley",
+		"bake": "imported_assets/terrain/tatooine" if FileAccess.file_exists("res://imported_assets/terrain/tatooine.json") else "imported_assets/terrain/tatooine_mos_eisley",
 		"host": 0,
 		"db": _e2e_db,
 		"hub": "hubs/mos_eisley.ini",

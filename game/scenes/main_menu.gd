@@ -11,12 +11,14 @@ const LoadCharacterScreen = preload("res://ui/load_character_screen.gd")
 const CharacterCreatorScreen = preload("res://ui/character_creator_screen.gd")
 const CharacterStage = preload("res://rendering/character_stage.gd")
 const TerrainTool = preload("res://tools/render_terrain.gd")
+const TATOOINE_SKY = preload("res://rendering/tatooine_sky.gdshader")
 const Bf2Audio = preload("res://audio/bf2_audio.gd")
 const GameSession = preload("res://scenes/game_session.gd")
 
 const HUD_DIR := "res://imported_assets/hud"
 const AUDIO_DIR := "res://imported_assets/audio"
-const TERRAIN_BAKE := "res://imported_assets/terrain/tatooine_mos_eisley"
+const TERRAIN_BAKE := "res://imported_assets/terrain/tatooine"
+const TERRAIN_BAKE_FALLBACK := "res://imported_assets/terrain/tatooine_mos_eisley"
 const WORLD_DB := "res://world.sqlite"
 
 var _art: RefCounted
@@ -82,12 +84,16 @@ func _exit_tree() -> void:
 
 func _setup_3d() -> void:
 	var env := Environment.new()
-	env.background_mode = Environment.BG_COLOR
-	env.background_color = Color(0.76, 0.68, 0.56)
-	env.ambient_light_source = Environment.AMBIENT_SOURCE_COLOR
-	env.ambient_light_color = Color(0.65, 0.58, 0.50)
+	var sky_mat := ShaderMaterial.new()
+	sky_mat.shader = TATOOINE_SKY
+	var sky := Sky.new()
+	sky.sky_material = sky_mat
+	env.sky = sky
+	env.background_mode = Environment.BG_SKY
+	env.ambient_light_source = Environment.AMBIENT_SOURCE_SKY
+	env.ambient_light_sky_contribution = 0.75
 	env.fog_enabled = true
-	env.fog_light_color = Color(0.76, 0.68, 0.56)
+	env.fog_light_color = Color(0.86, 0.77, 0.63)
 	env.fog_density = 0.0005
 	var we := WorldEnvironment.new()
 	we.environment = env
@@ -105,14 +111,25 @@ func _setup_3d() -> void:
 
 	_backdrop = Node3D.new()
 	add_child(_backdrop)
-	if FileAccess.file_exists(TERRAIN_BAKE + ".json") and FileAccess.file_exists(TERRAIN_BAKE + ".r32"):
-		var meta: Variant = JSON.parse_string(FileAccess.get_file_as_string(TERRAIN_BAKE + ".json"))
+	var bake := TERRAIN_BAKE if FileAccess.file_exists(TERRAIN_BAKE + ".json") else TERRAIN_BAKE_FALLBACK
+	if FileAccess.file_exists(bake + ".json") and FileAccess.file_exists(bake + ".r32"):
+		var meta: Variant = JSON.parse_string(FileAccess.get_file_as_string(bake + ".json"))
 		if meta is Dictionary:
-			var heights := FileAccess.get_file_as_bytes(TERRAIN_BAKE + ".r32").to_float32_array()
 			var mesh := MeshInstance3D.new()
-			mesh.mesh = TerrainTool.build_mesh(heights, int(meta["samples"]), float(meta["spacing"]),
-					Vector2(float(meta["origin_x"]), float(meta["origin_z"])), 4)
-			mesh.material_override = TerrainTool.build_material(TERRAIN_BAKE, meta)
+			if ClassDB.class_exists("SwmTerrain"):
+				var swm_t := ClassDB.instantiate("SwmTerrain")
+				if swm_t.load_bake(ProjectSettings.globalize_path(bake)) == OK:
+					var ox := float(meta["origin_x"])
+					var oz := float(meta["origin_z"])
+					var sp := float(meta["spacing"])
+					var c0 := clampi(int((3500.0 - ox) / sp) - 256, 0, int(meta["samples"]) - 2)
+					var r0 := clampi(int((-4800.0 - oz) / sp) - 256, 0, int(meta["samples"]) - 2)
+					mesh.mesh = swm_t.build_chunk(c0, r0, 512, 2, 0.0)
+			if mesh.mesh == null:
+				var heights := FileAccess.get_file_as_bytes(bake + ".r32").to_float32_array()
+				mesh.mesh = TerrainTool.build_mesh(heights, int(meta["samples"]), float(meta["spacing"]),
+						Vector2(float(meta["origin_x"]), float(meta["origin_z"])), 4)
+			mesh.material_override = TerrainTool.build_material(bake, meta)
 			mesh.position = Vector3(3550.0, -5.0, 4780.0)
 			_backdrop.add_child(mesh)
 
@@ -196,8 +213,9 @@ func _launch_character(record: Dictionary) -> void:
 	if _store != null:
 		_store.close()
 		_store = null
+	var bake_rel := "imported_assets/terrain/tatooine" if FileAccess.file_exists(TERRAIN_BAKE + ".json") else "imported_assets/terrain/tatooine_mos_eisley"
 	GameSession.pending_config = {
-		"bake": "imported_assets/terrain/tatooine_mos_eisley",
+		"bake": bake_rel,
 		"character_path": gltf_rel,
 		"host": 0,
 		"db": "world.sqlite",

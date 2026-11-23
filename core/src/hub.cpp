@@ -54,6 +54,22 @@ HubConfig load_hub(const std::filesystem::path& path) {
     }
     HubConfig hub;
     hub.name = main->get("Name").value_or(path.stem().string());
+    if (const auto spawn = main->get("Spawn")) {
+        std::istringstream fields(*spawn);
+        double x = 0, z = 0;
+        if (!(fields >> x >> z)) {
+            throw std::runtime_error(where + ": Spawn needs x z");
+        }
+        hub.spawn = Vec3{-x, 0, z};
+    }
+    if (const auto cloning = main->get("CloningFacility")) {
+        std::istringstream fields(*cloning);
+        double x = 0, z = 0;
+        if (!(fields >> x >> z)) {
+            throw std::runtime_error(where + ": CloningFacility needs x z");
+        }
+        hub.cloning_facility = Vec3{-x, 0, z};
+    }
     for (const auto& [key, value] : main->values) {
         if (!same_name(key, "Battlefield")) {
             continue;

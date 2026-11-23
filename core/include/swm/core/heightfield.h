@@ -63,6 +63,9 @@ public:
     bool empty() const { return heights_.empty(); }
     int samples() const { return samples_; }
     double spacing() const { return spacing_; }
+    double origin_x() const { return origin_x_; }
+    double origin_z() const { return origin_z_; }
+    const std::vector<float>& heights() const { return heights_; }
 
     // Height at a game-space position. Positions outside the grid use the
     // nearest edge.

@@ -278,13 +278,13 @@ Room outside the city to try a basic looter-shooter loop: hunt creatures and ban
 ### Tasks
 
 **The whole planet's terrain**
-- [ ] All of Tatooine (16 × 16 km) in place of the 4 km chunk around Mos Eisley. It's generated from the planet's terrain file at 4 m, as the chunk is (4,097 × 4,097 heights), with Mos Eisley where it stands.
+- [x] All of Tatooine (16 × 16 km) in place of the 4 km chunk around Mos Eisley. It's generated from the planet's terrain file at 4 m, as the chunk is (4,097 × 4,097 heights), with Mos Eisley where it stands.
   - The client streams the terrain in regions around the player.
   - The server keeps the height field (64 MB as floats), or tiles where people are.
   - The terrain holes for Mos Eisley's rooms work as before.
   - No other towns or points of interest yet.
-- [ ] The far view: terrain detail by distance, the sky and haze to the horizon.
-- [ ] Bot navigation on open terrain. `core::NavGrid` already works lazily from collision; this checks it on dunes, rocks and canyons.
+- [x] The far view: terrain detail by distance, the sky and haze to the horizon.
+- [x] Bot navigation on open terrain. `core::NavGrid` already works lazily from collision; this checks it on dunes, rocks and canyons.
 
 **Creatures and bandits**
 

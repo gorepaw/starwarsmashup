@@ -3,6 +3,7 @@
 
 #include <cmath>
 #include <cstdio>
+#include <filesystem>
 #include <numbers>
 
 #include "swm/core/conquest.h"
@@ -513,6 +514,133 @@ void test_pit() {
     CHECK(grid.leads_back(inside, {-60, 0, 48}));
 }
 
+void test_planet_scale_open_terrain() {
+    // Full 16 x 16 km planet dimensions (4097 x 4097 at 4 m spacing, origin -8192)
+    // with rolling dunes, a steep canyon wall with a 12 m walkable pass, and scattered rocks.
+    constexpr int samples = 4097;
+    constexpr double spacing = 4.0;
+    constexpr double origin = -8192.0;
+    std::vector<float> heights(size_t(samples) * size_t(samples), 0.0f);
+
+    const auto set_patch = [&](double gx0, double gx1, double gz0, double gz1, auto&& fn) {
+        const int c0 = std::max(0, int(std::floor((-gx1 - origin) / spacing)));
+        const int c1 = std::min(samples - 1, int(std::ceil((-gx0 - origin) / spacing)));
+        const int r0 = std::max(0, int(std::floor((gz0 - origin) / spacing)));
+        const int r1 = std::min(samples - 1, int(std::ceil((gz1 - origin) / spacing)));
+        for (int r = r0; r <= r1; ++r) {
+            const double z = origin + r * spacing;
+            for (int c = c0; c <= c1; ++c) {
+                const double x = -(origin + c * spacing);
+                heights[size_t(r) * samples + size_t(c)] = float(fn(x, z));
+            }
+        }
+    };
+
+    // Region A: near Mos Eisley outskirts (-3900..-3700, -4900..-4700): dunes + canyon wall at x=-3800 with pass at z in [-4806, -4794]
+    set_patch(-3950, -3650, -4950, -4650, [](double x, double z) {
+        double h = 6.0 * std::sin(x * 0.025) * std::cos(z * 0.022);
+        const double ridge_dx = std::abs(x + 3800.0);
+        const double pass_dz = std::abs(z + 4800.0);
+        if (ridge_dx < 14.0 && pass_dz > 6.0) {
+            const double wall = std::max(0.0, 1.0 - ridge_dx / 14.0) * std::min(1.0, (pass_dz - 6.0) / 4.0);
+            h += 35.0 * wall;
+        }
+        return h;
+    });
+
+    // Region B: far quadrant (5900..6100, 5900..6100) where 32-bit Node would overflow (tile_index > 2^19)
+    set_patch(5900, 6100, 5900, 6100, [](double x, double z) {
+        return 4.0 * std::sin(x * 0.03) + 3.0 * std::cos(z * 0.03);
+    });
+
+    Heightfield terrain(samples, spacing, origin, origin, std::move(heights));
+    MapCollision rocks;
+    const auto add_rock = [&](double x, double z, double half_w, double h) {
+        const double y = terrain.height_at(x, z);
+        add_box(rocks, {x - half_w, y - 2.0, z - half_w}, {x + half_w, y + h, z + half_w});
+    };
+    add_rock(-3765.0, -4800.0, 3.0, 4.0);
+    add_rock(-3835.0, -4802.0, 3.0, 4.0);
+    add_rock(6000.0, 6000.0, 3.5, 4.0);
+
+    World world(terrain);
+    world.add_map_collision(rocks);
+    Battlefield planet;
+    planet.min_x = -8192.0;
+    planet.max_x = 8192.0;
+    planet.min_z = -8192.0;
+    planet.max_z = 8192.0;
+    const NavGrid grid(world, planet);
+
+    // 1. Navigate dunes, boulders, and through the canyon pass
+    const Vec3 from{-3740.0, terrain.height_at(-3740.0, -4820.0), -4820.0};
+    const Vec3 to{-3860.0, terrain.height_at(-3860.0, -4780.0), -4780.0};
+    const auto path = grid.find_path(from, to);
+    CHECK(sound(grid, path, from));
+    CHECK(!path.empty() && std::hypot(path.back().x - to.x, path.back().z - to.z) < 1.5);
+    const Vec3 arrived = walk(world, path, from, 40.0);
+    CHECK(std::hypot(arrived.x - to.x, arrived.z - to.z) < 2.0);
+
+    // 2. Navigate far quadrant (tests 64-bit Node indexing at high tile indices)
+    const Vec3 far_from{5970.0, terrain.height_at(5970.0, 5970.0), 5970.0};
+    const Vec3 far_to{6030.0, terrain.height_at(6030.0, 6030.0), 6030.0};
+    const auto far_path = grid.find_path(far_from, far_to);
+    CHECK(sound(grid, far_path, far_from));
+    CHECK(!far_path.empty() && std::hypot(far_path.back().x - far_to.x, far_path.back().z - far_to.z) < 1.5);
+    const Vec3 far_arrived = walk(world, far_path, far_from, 30.0);
+    CHECK(std::hypot(far_arrived.x - far_to.x, far_arrived.z - far_to.z) < 2.0);
+    CHECK(grid.tiles_built() < 400);
+}
+
+void test_tatooine_real_bake_if_present() {
+    std::filesystem::path bake;
+    for (const auto& candidate : {
+             std::filesystem::path("game/imported_assets/terrain/tatooine"),
+             std::filesystem::path("../game/imported_assets/terrain/tatooine"),
+             std::filesystem::path("../../game/imported_assets/terrain/tatooine"),
+             std::filesystem::path("../../../game/imported_assets/terrain/tatooine"),
+         }) {
+        if (std::filesystem::exists(candidate.string() + ".json")) {
+            bake = candidate;
+            break;
+        }
+    }
+    if (bake.empty()) {
+        std::printf("tatooine real bake not present, skipping\n");
+        return;
+    }
+    const auto world = load_world(bake);
+    CHECK(world->terrain().samples() == 4097);
+    CHECK(world->terrain().spacing() == 4.0);
+    // Cantina / city building interiors in Mos Eisley have terrain holes cut out
+    const auto& holes = world->terrain().holes();
+    CHECK(!holes.empty());
+    bool found_hole = false;
+    for (int r = 0; r < holes.height && !found_hole; ++r) {
+        for (int c = 0; c < holes.width && !found_hole; ++c) {
+            if (holes.cells[size_t(r) * size_t(holes.width) + size_t(c)] == 1) {
+                CHECK(world->terrain().cut_at(holes.x0 + (c + 0.5) * holes.cell, holes.z0 + (r + 0.5) * holes.cell));
+                found_hole = true;
+            }
+        }
+    }
+    CHECK(found_hole);
+
+    Battlefield planet;
+    planet.min_x = -8192.0;
+    planet.max_x = 8192.0;
+    planet.min_z = -8192.0;
+    planet.max_z = 8192.0;
+    const NavGrid grid(*world, planet);
+    const Vec3 from{-3950.0, world->terrain().height_at(-3950.0, -4800.0), -4800.0};
+    const Vec3 to{-4050.0, world->terrain().height_at(-4050.0, -4760.0), -4760.0};
+    const auto path = grid.find_path(from, to);
+    CHECK(sound(grid, path, from));
+    CHECK(!path.empty() && std::hypot(path.back().x - to.x, path.back().z - to.z) < 2.0);
+    const Vec3 arrived = walk(*world, path, from, 40.0);
+    CHECK(std::hypot(arrived.x - to.x, arrived.z - to.z) < 2.5);
+}
+
 } // namespace
 
 int main() {
@@ -530,5 +658,7 @@ int main() {
     test_high_and_deadly();
     test_crack();
     test_pit();
+    test_planet_scale_open_terrain();
+    test_tatooine_real_bake_if_present();
     return swm::test::finish("nav_test");
 }

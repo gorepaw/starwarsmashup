@@ -24,7 +24,7 @@ struct NavGrid::Tile {
     std::vector<uint8_t> flags;
     std::vector<uint16_t> cell;  // each surface's cell (its index in the tile)
     std::vector<float> g;
-    std::vector<int32_t> parent;
+    std::vector<int64_t> parent;
     std::vector<uint32_t> visit;
     std::vector<uint8_t> closed;
 };
@@ -99,11 +99,10 @@ void NavGrid::forget(double min_x, double max_x, double min_z, double max_z) con
             tiles_[size_t(tz) * size_t(tiles_x_) + size_t(tx)].reset();
         }
     }
-    for (auto& tile : tiles_) {
-        if (tile) {
-            for (uint8_t& f : tile->flags) {
-                f &= uint8_t(~pocket_bit);
-            }
+    std::erase_if(built_indices_, [&](size_t idx) { return !tiles_[idx]; });
+    for (const size_t idx : built_indices_) {
+        for (uint8_t& f : tiles_[idx]->flags) {
+            f &= uint8_t(~pocket_bit);
         }
     }
     climbs_.clear();
@@ -120,10 +119,12 @@ Vec3 NavGrid::center(int x, int z) const {
 
 NavGrid::Tile& NavGrid::tile(int x, int z) const {
     const int tx = x >> tile_bits, tz = z >> tile_bits;
-    auto& slot = tiles_[size_t(tz) * size_t(tiles_x_) + size_t(tx)];
+    const size_t idx = size_t(tz) * size_t(tiles_x_) + size_t(tx);
+    auto& slot = tiles_[idx];
     if (!slot) {
         slot = std::make_unique<Tile>();
         build(*slot, tx, tz);
+        built_indices_.push_back(idx);
         ++built_;
     }
     return *slot;
@@ -142,9 +143,10 @@ uint8_t NavGrid::flags(Node node) const {
 }
 
 NavGrid::Cell NavGrid::cell_of(Node node) const {
-    const int index = node >> node_bits;
+    const int64_t index = node >> node_bits;
     const int i = tile_of(node).cell[size_t(node & ((1 << node_bits) - 1))];
-    return {((index % tiles_x_) << tile_bits) + (i & (tile_size - 1)), ((index / tiles_x_) << tile_bits) + (i >> tile_bits)};
+    return {int((index % tiles_x_) << tile_bits) + (i & (tile_size - 1)),
+            int((index / tiles_x_) << tile_bits) + (i >> tile_bits)};
 }
 
 void NavGrid::build(Tile& tile, int tile_x, int tile_z) const {
@@ -322,7 +324,7 @@ NavGrid::Node NavGrid::land(int x, int z, float from, Cell source) const {
             }
         }
         if (rise <= step + 1e-3) {
-            return Node(((tz * tiles_x_ + tx) << node_bits) | n);  // the highest it can reach
+            return make_node(tx, tz, n);  // the highest it can reach
         }
         if (rise > step + distance * max_rise_ || distance <= 0) {
             if (rise < move_.headroom) {
@@ -342,7 +344,7 @@ NavGrid::Node NavGrid::land(int x, int z, float from, Cell source) const {
         // And a soldier really walks up it: between the cells' middles a
         // coarse mesh (a Wookiee tree's trunk) can be steeper than either.
         if (rise <= step + distance * slope + 1e-3 && walks_up(source, double(from), x, z, h)) {
-            return Node(((tz * tiles_x_ + tx) << node_bits) | n);
+            return make_node(tx, tz, n);
         }
         return -1;  // a lip too high to step onto: in the way
     }
@@ -386,10 +388,10 @@ NavGrid::Node NavGrid::under(Vec3 p) const {
     }
     const Tile& t = tile(c.x, c.z);
     const int i = local(c.x, c.z, tile_bits);
-    const int index = (c.z >> tile_bits) * tiles_x_ + (c.x >> tile_bits);
+    const int64_t index = int64_t(c.z >> tile_bits) * tiles_x_ + (c.x >> tile_bits);
     for (int n = t.first[size_t(i)]; n < t.first[size_t(i) + 1]; ++n) {
         if (double(t.height[size_t(n)]) <= p.y + move_.step_up) {
-            return Node((index << node_bits) | n);
+            return (index << node_bits) | n;
         }
     }
     return -1;
@@ -426,7 +428,7 @@ NavGrid::Node NavGrid::nearest_walkable(Vec3 p, double reach) const {
             }
             const Tile& t = tile(x, z);
             const int i = local(x, z, tile_bits);
-            const int index = (z >> tile_bits) * tiles_x_ + (x >> tile_bits);
+            const int64_t index = int64_t(z >> tile_bits) * tiles_x_ + (x >> tile_bits);
             for (int n = t.first[size_t(i)]; n < t.first[size_t(i) + 1]; ++n) {
                 if (!(t.flags[size_t(n)] & walkable_bit)) {
                     continue;
@@ -435,7 +437,7 @@ NavGrid::Node NavGrid::nearest_walkable(Vec3 p, double reach) const {
                 const double score = d2 + 4 * off * off;
                 if (score < best) {
                     best = score;
-                    found = Node((index << node_bits) | n);
+                    found = (index << node_bits) | n;
                 }
             }
         }
@@ -497,13 +499,13 @@ std::vector<NavGrid::Node> NavGrid::ways_from(Vec3 p, double reach, uint32_t exc
             }
             const Tile& t = tile(x, z);
             const int i = local(x, z, tile_bits);
-            const int index = (z >> tile_bits) * tiles_x_ + (x >> tile_bits);
+            const int64_t index = int64_t(z >> tile_bits) * tiles_x_ + (x >> tile_bits);
             for (int n = t.first[size_t(i)]; n < t.first[size_t(i) + 1]; ++n) {
                 const double h = double(t.height[size_t(n)]);
                 // Not one overhead (the top of the root it's under).
                 if ((t.flags[size_t(n)] & walkable_bit) && (except == 0 || t.visit[size_t(n)] != except) &&
                     h <= p.y + move_.step_up) {
-                    found.push_back({d2 + 4 * (h - p.y) * (h - p.y), Node((index << node_bits) | n)});
+                    found.push_back({d2 + 4 * (h - p.y) * (h - p.y), (index << node_bits) | n});
                 }
             }
         }
@@ -622,7 +624,8 @@ std::vector<Vec3> NavGrid::route(Vec3 from, Vec3 to, bool* shut_in) const {
     };
     const auto search = [&](Node origin, const Target& target, bool backward, size_t limit) {
         if (++search_ == 0) {  // the stamps wrapped: forget every old search
-            for (auto& t : tiles_) {
+            for (const size_t idx : built_indices_) {
+                Tile* t = tiles_[idx].get();
                 if (t) {
                     std::fill(t->visit.begin(), t->visit.end(), 0);
                 }
@@ -697,12 +700,12 @@ std::vector<Vec3> NavGrid::route(Vec3 from, Vec3 to, bool* shut_in) const {
                     const double step = diagonal ? cell * std::numbers::sqrt2 : cell;
                     const Tile& pt = tile(px, pz);
                     const int i = local(px, pz, tile_bits);
-                    const int index = (pz >> tile_bits) * tiles_x_ + (px >> tile_bits);
+                    const int64_t index = int64_t(pz >> tile_bits) * tiles_x_ + (px >> tile_bits);
                     for (int n = pt.first[size_t(i)]; n < pt.first[size_t(i) + 1]; ++n) {
                         if (!(pt.flags[size_t(n)] & walkable_bit)) {
                             continue;
                         }
-                        const Node previous = Node((index << node_bits) | n);
+                        const Node previous = (index << node_bits) | n;
                         const float there = pt.height[size_t(n)];
                         const Cell source{px, pz};
                         if (land(here.x, here.z, there, source) != current) {
@@ -747,7 +750,7 @@ std::vector<Vec3> NavGrid::route(Vec3 from, Vec3 to, bool* shut_in) const {
         // All it saw, closed under walking on, without the goal: a pocket
         // (any way out of it leads into it).
         *shut_in = !found.reached && found.exhausted;
-        for (size_t index = 0; index < tiles_.size() && *shut_in; ++index) {
+        for (const size_t index : built_indices_) {
             Tile* t = tiles_[index].get();
             for (size_t n = 0; t != nullptr && n < t->visit.size(); ++n) {
                 if (t->visit[n] == found.stamp && t->closed[n]) {
@@ -811,11 +814,11 @@ std::vector<Vec3> NavGrid::route(Vec3 from, Vec3 to, bool* shut_in) const {
         if (!back.reached && back.exhausted) {
             Node best = -1;
             double nearest = std::numeric_limits<double>::infinity();
-            for (size_t index = 0; index < tiles_.size(); ++index) {
+            for (const size_t index : built_indices_) {
                 const Tile* t = tiles_[index].get();
                 for (size_t n = 0; t != nullptr && n < t->visit.size(); ++n) {
                     if (t->visit[n] == found.stamp && t->closed[n]) {
-                        const Node node = Node((int(index) << node_bits) | int(n));
+                        const Node node = (int64_t(index) << node_bits) | int64_t(n);
                         const double e = estimate(to_goal, cell_of(node), double(t->height[n]));
                         if (e < nearest) {
                             nearest = e;

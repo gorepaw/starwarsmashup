@@ -102,7 +102,9 @@ private:
     static constexpr uint8_t walkable_bit = 1, barrier_bit = 2, edge_bit = 4;
     static constexpr uint8_t pocket_bit = 8;  // found shut in, no way out to where soldiers came from
     // A surface: its tile's index, then its own within the tile.
-    using Node = int32_t;
+    using Node = int64_t;
+
+    Node make_node(int tx, int tz, int n) const { return ((int64_t(tz) * tiles_x_ + tx) << node_bits) | n; }
 
     bool inside(int x, int z) const { return x >= 0 && z >= 0 && x < width_ && z < depth_; }
     // The steepest slope a route takes.
@@ -146,6 +148,7 @@ private:
     int width_ = 0, depth_ = 0;
     int tiles_x_ = 0, tiles_z_ = 0;
     mutable std::vector<std::unique_ptr<Tile>> tiles_;
+    mutable std::vector<size_t> built_indices_;
     mutable std::unordered_map<uint64_t, bool> climbs_;  // walks_up's answers
     mutable std::unordered_map<uint64_t, bool> leads_back_;  // landings found to lead back, by 2 m square and height
     mutable size_t built_ = 0;

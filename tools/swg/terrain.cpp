@@ -6,6 +6,7 @@
 #include <numeric>
 #include <random>
 #include <stdexcept>
+#include <thread>
 
 #include "swg/iff.h"
 
@@ -353,6 +354,33 @@ std::pair<double, double> nearest_on_polyline(const std::vector<std::array<doubl
     return {best, height};
 }
 
+template <typename Fn>
+void parallel_rows(int n, bool parallel, Fn&& fn) {
+    if (!parallel || n < 512) {
+        fn(0, n);
+        return;
+    }
+    const unsigned workers = std::min(unsigned(n), std::max(1u, std::thread::hardware_concurrency()));
+    if (workers <= 1) {
+        fn(0, n);
+        return;
+    }
+    std::vector<std::thread> threads;
+    threads.reserve(workers - 1);
+    const int chunk = (n + int(workers) - 1) / int(workers);
+    for (unsigned w = 1; w < workers; ++w) {
+        const int r0 = int(w) * chunk;
+        const int r1 = std::min(n, r0 + chunk);
+        if (r0 < r1) {
+            threads.emplace_back([&, r0, r1]() { fn(r0, r1); });
+        }
+    }
+    fn(0, std::min(n, chunk));
+    for (std::thread& t : threads) {
+        t.join();
+    }
+}
+
 class Evaluator {
 public:
     Evaluator(const ProceduralTerrain& terrain, TerrainGrid& grid) : terrain_(terrain), grid_(grid) {
@@ -448,29 +476,32 @@ private:
 
         const int n = grid_.samples;
         std::vector<float> amount(parent);
-        for (int row = 0; row < n; ++row) {
-            for (int column = 0; column < n; ++column) {
-                const size_t i = size_t(row) * size_t(n) + size_t(column);
-                if (amount[i] <= 0) {
-                    continue;
-                }
-                const double x = world_x(column), z = world_z(row);
-                if (!layer.boundaries.empty()) {
-                    double b = 0;
-                    for (const TerrainBoundary& boundary : layer.boundaries) {
-                        b = std::max(b, boundary.amount(x, z));
+        auto eval_rows = [&](int r0, int r1) {
+            for (int row = r0; row < r1; ++row) {
+                for (int column = 0; column < n; ++column) {
+                    const size_t i = size_t(row) * size_t(n) + size_t(column);
+                    if (amount[i] <= 0) {
+                        continue;
                     }
-                    amount[i] *= float(layer.invert_boundaries ? 1 - b : b);
-                }
-                if (!layer.filters.empty() && amount[i] > 0) {
-                    double f = 1;
-                    for (const TerrainFilter& filter : layer.filters) {
-                        f = std::min(f, filter_amount(filter, column, row, x, z));
+                    const double x = world_x(column), z = world_z(row);
+                    if (!layer.boundaries.empty()) {
+                        double b = 0;
+                        for (const TerrainBoundary& boundary : layer.boundaries) {
+                            b = std::max(b, boundary.amount(x, z));
+                        }
+                        amount[i] *= float(layer.invert_boundaries ? 1 - b : b);
                     }
-                    amount[i] *= float(layer.invert_filters ? 1 - f : f);
+                    if (!layer.filters.empty() && amount[i] > 0) {
+                        double f = 1;
+                        for (const TerrainFilter& filter : layer.filters) {
+                            f = std::min(f, filter_amount(filter, column, row, x, z));
+                        }
+                        amount[i] *= float(layer.invert_filters ? 1 - f : f);
+                    }
                 }
             }
-        }
+        };
+        parallel_rows(n, trace_ == nullptr, eval_rows);
 
         path_.push_back(layer.name);
         if (trace_ && amount[trace_index_] > 0) {
@@ -536,47 +567,50 @@ private:
         const int n = grid_.samples;
         const Fractal* f = affector.kind == TerrainAffector::Kind::height_fractal ? fractal(affector.fractal_id) : nullptr;
         const double clamp = feather_clamp(affector);
-        for (int row = 0; row < n; ++row) {
-            for (int column = 0; column < n; ++column) {
-                const size_t i = size_t(row) * size_t(n) + size_t(column);
-                if (amount[i] <= 0) {
-                    continue;
-                }
-                if (affector.kind == TerrainAffector::Kind::shader_constant) {
-                    set_shader(i, affector.shader_family, amount[i], clamp);
-                    continue;
-                }
-                if (affector.kind == TerrainAffector::Kind::shader_replace) {
-                    if (grid_.shaders[i] == affector.replaced_family) {
+        auto apply_rows = [&](int r0, int r1) {
+            for (int row = r0; row < r1; ++row) {
+                for (int column = 0; column < n; ++column) {
+                    const size_t i = size_t(row) * size_t(n) + size_t(column);
+                    if (amount[i] <= 0) {
+                        continue;
+                    }
+                    if (affector.kind == TerrainAffector::Kind::shader_constant) {
                         set_shader(i, affector.shader_family, amount[i], clamp);
+                        continue;
                     }
-                    continue;
+                    if (affector.kind == TerrainAffector::Kind::shader_replace) {
+                        if (grid_.shaders[i] == affector.replaced_family) {
+                            set_shader(i, affector.shader_family, amount[i], clamp);
+                        }
+                        continue;
+                    }
+                    const double h = grid_.heights[i];
+                    double target = h;
+                    if (affector.kind == TerrainAffector::Kind::height_terrace) {
+                        const double step = affector.value;
+                        if (step > 0) {
+                            const double base = std::floor(h / step) * step;
+                            const double t = (h - base) / step;
+                            const double edge = std::max(affector.terrace_fraction, 1e-6);
+                            target = base + step * std::clamp((t - (1 - edge)) / edge, 0.0, 1.0);
+                        }
+                    } else {
+                        const double value = affector.kind == TerrainAffector::Kind::height_fractal
+                                                 ? (f ? f->sample(world_x(column), world_z(row)) : 0) * affector.value
+                                                 : affector.value;
+                        switch (affector.operation) {
+                        case 0: target = value; break;
+                        case 1: target = h + value; break;
+                        case 2: target = h - value; break;
+                        case 3: target = h * value; break;
+                        default: break;
+                        }
+                    }
+                    grid_.heights[i] = float(h + (target - h) * amount[i]);
                 }
-                const double h = grid_.heights[i];
-                double target = h;
-                if (affector.kind == TerrainAffector::Kind::height_terrace) {
-                    const double step = affector.value;
-                    if (step > 0) {
-                        const double base = std::floor(h / step) * step;
-                        const double t = (h - base) / step;
-                        const double edge = std::max(affector.terrace_fraction, 1e-6);
-                        target = base + step * std::clamp((t - (1 - edge)) / edge, 0.0, 1.0);
-                    }
-                } else {
-                    const double value = affector.kind == TerrainAffector::Kind::height_fractal
-                                             ? (f ? f->sample(world_x(column), world_z(row)) : 0) * affector.value
-                                             : affector.value;
-                    switch (affector.operation) {
-                    case 0: target = value; break;
-                    case 1: target = h + value; break;
-                    case 2: target = h - value; break;
-                    case 3: target = h * value; break;
-                    default: break;
-                    }
-                }
-                grid_.heights[i] = float(h + (target - h) * amount[i]);
             }
-        }
+        };
+        parallel_rows(n, trace_ == nullptr, apply_rows);
     }
 
     // Within half the road's width of its height profile, blend toward the

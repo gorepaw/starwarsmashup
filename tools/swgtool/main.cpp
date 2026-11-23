@@ -568,12 +568,16 @@ ImageRgba hillshade(const TerrainGrid& grid, const ProceduralTerrain* terrain = 
     const auto [lo_it, hi_it] = std::minmax_element(grid.heights.begin(), grid.heights.end());
     const float lo = *lo_it, range = std::max(*hi_it - *lo_it, 1.0f);
     const Vec3 light = normalized(Vec3{-1, 2, -1});
-    ImageRgba image{uint32_t(grid.samples), uint32_t(grid.samples), {}};
-    image.pixels.resize(size_t(grid.samples) * size_t(grid.samples) * 4);
-    for (int row = 0; row < grid.samples; ++row) {
-        for (int column = 0; column < grid.samples; ++column) {
-            const int c0 = std::max(column - 1, 0), c1 = std::min(column + 1, grid.samples - 1);
-            const int r0 = std::max(row - 1, 0), r1 = std::min(row + 1, grid.samples - 1);
+    const int step = grid.samples > 2048 ? std::max(1, (grid.samples - 1) / 1024) : 1;
+    const int out_samples = (grid.samples - 1) / step + 1;
+    ImageRgba image{uint32_t(out_samples), uint32_t(out_samples), {}};
+    image.pixels.resize(size_t(out_samples) * size_t(out_samples) * 4);
+    for (int out_row = 0; out_row < out_samples; ++out_row) {
+        const int row = out_row * step;
+        for (int out_col = 0; out_col < out_samples; ++out_col) {
+            const int column = out_col * step;
+            const int c0 = std::max(column - step, 0), c1 = std::min(column + step, grid.samples - 1);
+            const int r0 = std::max(row - step, 0), r1 = std::min(row + step, grid.samples - 1);
             const float dx = (grid.at(c1, row) - grid.at(c0, row)) / float((c1 - c0) * grid.spacing);
             const float dz = (grid.at(column, r1) - grid.at(column, r0)) / float((r1 - r0) * grid.spacing);
             const float shade = std::clamp(dot(normalized(Vec3{-dx, 1, -dz}), light), 0.15f, 1.0f);
@@ -586,7 +590,7 @@ ImageRgba hillshade(const TerrainGrid& grid, const ProceduralTerrain* terrain = 
                 }
             }
             // Image rows run top to bottom; put +Z (north) at the top.
-            uint8_t* p = &image.pixels[(size_t(grid.samples - 1 - row) * size_t(grid.samples) + size_t(column)) * 4];
+            uint8_t* p = &image.pixels[(size_t(out_samples - 1 - out_row) * size_t(out_samples) + size_t(out_col)) * 4];
             for (int ch = 0; ch < 3; ++ch) {
                 p[ch] = uint8_t(std::clamp(base[ch] * shade * 255.0f, 0.0f, 255.0f));
             }

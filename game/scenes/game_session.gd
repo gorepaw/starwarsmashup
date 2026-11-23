@@ -6,6 +6,8 @@ extends Node3D
 
 const TerrainTool = preload("res://tools/render_terrain.gd")
 const Terrain3DBake = preload("res://tools/terrain3d_bake.gd")
+const SwgTerrainStreamer = preload("res://rendering/swg_terrain_streamer.gd")
+const TATOOINE_SKY = preload("res://rendering/tatooine_sky.gdshader")
 const SwgBuilding = preload("res://rendering/swg_building.gd")
 const Bf2Map = preload("res://rendering/bf2_map.gd")
 const SwgCity = preload("res://rendering/swg_city.gd")
@@ -116,6 +118,7 @@ var _view_setting := false
 var _show_stats := false
 var _map_meta := {}
 var _world: Node3D
+var _terrain_streamer: SwgTerrainStreamer
 var _world_bake := ""
 var _start_bake := ""
 var _buildings: Array = []
@@ -139,7 +142,8 @@ func start_session(config: Dictionary) -> bool:
 		printerr("SwmClient GDExtension not loaded")
 		_emit_or_menu(2)
 		return false
-	var bake := str(_config.get("bake", "imported_assets/terrain/tatooine_mos_eisley"))
+	var default_bake := "imported_assets/terrain/tatooine" if FileAccess.file_exists("res://imported_assets/terrain/tatooine.json") else "imported_assets/terrain/tatooine_mos_eisley"
+	var bake := str(_config.get("bake", default_bake))
 	_character_path = str(_config.get("character_path", "imported_assets/characters/stormtrooper/stormtrooper.gltf"))
 	var meta: Variant = JSON.parse_string(FileAccess.get_file_as_string(bake + ".json"))
 	if meta == null:
@@ -367,6 +371,11 @@ func step_frame(delta: float) -> void:
 		_audio.update(delta, _camera.global_position)
 	if _sky_dome != null:
 		_sky_dome.global_position = _camera.global_position
+	if _terrain_streamer != null:
+		var focus := _camera.global_position
+		if _client != null and _client.is_spawned():
+			focus = _client.get_presented()["position"]
+		_terrain_streamer.update_focus(focus)
 
 	if _pending_shot != "":
 		_shot_delay -= 1
@@ -1185,6 +1194,16 @@ func _add_terrain(bake: String, meta: Dictionary, use_terrain3d: bool) -> void:
 		return
 	if use_terrain3d:
 		printerr("Terrain3D isn't installed (tools/install_terrain3d.ps1); using a mesh")
+	if not Bf2Map.is_bf2(meta) and ClassDB.class_exists("SwmTerrain"):
+		var streamer := SwgTerrainStreamer.new()
+		streamer.name = "SwgTerrainStreamer"
+		if streamer.setup(bake, meta):
+			var sp := _resolve_spawn(meta)
+			var focus := Vector3(-sp.x, 0.0, sp.y)
+			streamer.warm_around(focus)
+			_world.add_child(streamer)
+			_terrain_streamer = streamer
+			return
 	var heights := FileAccess.get_file_as_bytes(bake + ".r32").to_float32_array()
 	var mesh := MeshInstance3D.new()
 	mesh.mesh = TerrainTool.build_mesh(heights, meta["samples"], meta["spacing"],
@@ -1205,6 +1224,7 @@ func _build_world(bake: String) -> bool:
 		remove_child(_world)
 		_world.queue_free()
 	_sky_dome = null
+	_terrain_streamer = null
 	_world = Node3D.new()
 	_world.name = "World"
 	add_child(_world)
@@ -1245,6 +1265,26 @@ func _build_world(bake: String) -> bool:
 		_sky_dome = Bf2Map.setup_environment(_world, bake, meta as Dictionary, environment, sun)
 		Bf2Map.add_water(_world, bake, meta as Dictionary, sun)
 		Bf2Map.add_fog_cloud(_world, bake, meta as Dictionary)
+	else:
+		var sky_mat := ShaderMaterial.new()
+		sky_mat.shader = TATOOINE_SKY
+		var sky := Sky.new()
+		sky.sky_material = sky_mat
+		environment.sky = sky
+		environment.background_mode = Environment.BG_SKY
+		environment.ambient_light_source = Environment.AMBIENT_SOURCE_SKY
+		environment.ambient_light_sky_contribution = 0.75
+		environment.fog_enabled = true
+		environment.fog_mode = Environment.FOG_MODE_DEPTH
+		environment.fog_depth_begin = 220.0
+		environment.fog_depth_end = 10500.0
+		environment.fog_depth_curve = 1.4
+		environment.fog_light_color = Color(0.86, 0.77, 0.63)
+		environment.fog_aerial_perspective = 0.65
+		environment.fog_sky_affect = 0.35
+		sun.rotation_degrees = Vector3(-34, -42, 0)
+		sun.light_color = Color(1.0, 0.95, 0.86)
+		sun.light_energy = 1.45
 	return true
 
 
@@ -1253,7 +1293,7 @@ func _setup_scene() -> void:
 	_camera.fov = 65
 	_camera.near = 0.05
 	_camera_sphere.radius = 0.15
-	_camera.far = 8000
+	_camera.far = 16000
 	add_child(_camera)
 
 	_pickups = Pickups.new(self, HUD_DIR)
@@ -1429,6 +1469,18 @@ func _resolve_spawn(meta: Dictionary) -> Vector2:
 	var sp: Variant = _config.get("spawn", null)
 	if sp is Vector2:
 		return sp
+	var hub_path := str(_config.get("hub", ""))
+	if hub_path != "":
+		var full := _os_path(hub_path)
+		if FileAccess.file_exists(full):
+			for line: String in FileAccess.get_file_as_string(full).split("\n"):
+				var trimmed := line.strip_edges()
+				if trimmed.begins_with("Spawn") and trimmed.contains("="):
+					var parts := trimmed.split("=", false, 1)[1].strip_edges().split(" ", false)
+					if parts.size() >= 2:
+						return Vector2(float(parts[0]), float(parts[1]))
+		if hub_path.contains("mos_eisley"):
+			return Vector2(3500.0, -4800.0)
 	var half: float = (int(meta["samples"]) - 1) * float(meta["spacing"]) / 2.0
 	return Vector2(float(meta["origin_x"]) + half, float(meta["origin_z"]) + half)
 

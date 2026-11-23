@@ -164,8 +164,16 @@ int main(int argc, char** argv) {
                 db.clear();
             }
         }
+        std::optional<swm::core::HubConfig> hub_config;
+        const swm::core::BotSkill skill = swm::core::BotSkill::preset(difficulty);
+        if (!hub_file.empty()) {
+            hub_config = swm::core::load_hub(hub_file);
+            hub_config->bot_skill = skill;
+        }
         if (has_spawn) {
             config.spawn = {-spawn_x, 0, spawn_z};  // Galaxies to game coordinates
+        } else if (hub_config && hub_config->spawn) {
+            config.spawn = *hub_config->spawn;
         } else {
             const swm::core::Vec3 corner = ground.clamp({-1e9, 0, 1e9});
             const swm::core::Vec3 other = ground.clamp({1e9, 0, -1e9});
@@ -204,16 +212,13 @@ int main(int argc, char** argv) {
         bot_config.loadout = config.loadout;
         bot_config.base_stats = config.base_stats;
         bot_config.battlefield = config.battlefield;
-        const swm::core::BotSkill skill = swm::core::BotSkill::preset(difficulty);
         swm::core::BotPlayers bots(bot_count, world, bot_config, {}, skill);
         swm::core::UdpHubNetwork hub_network;
         std::unique_ptr<swm::core::Hub> hub;
-        if (!hub_file.empty()) {
-            swm::core::HubConfig hub_config = swm::core::load_hub(hub_file);
-            hub_config.bot_skill = skill;
-            std::cout << std::format("hub {}: {} war terminal(s), battles on {} battlefields, {} per team\n", hub_config.name,
-                                     hub_config.recruiters.size(), hub_config.battlefields.size(), hub_config.team_size);
-            hub = std::make_unique<swm::core::Hub>(server, link.port(), world, std::move(hub_config), hub_network);
+        if (hub_config) {
+            std::cout << std::format("hub {}: {} war terminal(s), battles on {} battlefields, {} per team\n", hub_config->name,
+                                     hub_config->recruiters.size(), hub_config->battlefields.size(), hub_config->team_size);
+            hub = std::make_unique<swm::core::Hub>(server, link.port(), world, std::move(*hub_config), hub_network);
             hub->log = server.log;
         }
         std::cout << std::format("swm_server {}: UDP port {}, {} Hz, spawn ({:.1f}, {:.1f}) in Galaxies coordinates, {}\n",
