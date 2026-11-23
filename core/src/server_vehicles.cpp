@@ -103,10 +103,24 @@ void GameServer::update_vehicles(double dt) {
                 v.state.seat = 0;
             } else {
                 const CombatState combat = v.state.combat;
+                const double was = v.state.velocity.length();
                 v.state = driver->state;
                 v.state.combat = combat;  // the driver's state has them while driving
                 v.away = 0;
                 driven = true;
+                // A flyer stopped dead (into the ground or a wall): hurt by
+                // how fast it hit (ASSUMPTION: a tenth of its health for
+                // each 10 m/s over 10).
+                if (cls.kind == VehicleKind::flyer && !v.state.grounded && was > 10 &&
+                    v.state.velocity.length() < was * 0.3) {
+                    std::vector<Blast> blasts;
+                    damage_vehicle(v, cls.max_health * 0.1 * (was - 10) / 10, 0, blasts);
+                    for (size_t b = 0; b < blasts.size(); ++b) {
+                        const Blast blast = blasts[b];  // explode() may add more
+                        explode(blast, blasts);
+                    }
+                    if (v.dead_for >= 0) continue;
+                }
             }
         }
         if (!driven) {

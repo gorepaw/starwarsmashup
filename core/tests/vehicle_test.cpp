@@ -460,6 +460,52 @@ PersonScale = 1
     std::filesystem::remove_all(dir);
 }
 
+// A flyer: landed, it lifts off with the throttle, flies at its speeds where
+// it's pointed, climbs with its nose up, stays off the ground, and lands
+// low, slow and level with the throttle back.
+void test_flyer() {
+    VehicleClass v;
+    v.kind = VehicleKind::flyer;
+    v.min_speed = 15;
+    v.max_speed = v.forward_speed = 55;
+    v.acceleration = 20;
+    v.turn_rate = 1;
+    v.pitch_rate = 1;
+    v.takeoff_height = 2.5;
+    v.takeoff_time = 1;
+    v.landed_height = 0.5;
+    v.bounds_min = {-2, 0, -3};
+    v.bounds_max = {2, 1.5, 3};
+    Heightfield flat{401, 1.0, -200, -200, std::vector<float>(401 * 401, 0.0f)};
+    World world(flat);
+    MoveState state;
+    state.grounded = true;
+    MoveInput idle;
+    simulate_vehicle(state, idle, world, v, dt);
+    CHECK(state.grounded && near(state.position.y, 0.5) && state.velocity.length() == 0);
+    // Throttle: up and away, speeding to its top.
+    MoveInput throttle;
+    throttle.forward = 127;
+    for (int i = 0; i < 4 * 60; ++i) simulate_vehicle(state, throttle, world, v, dt);
+    CHECK(!state.grounded && near(state.velocity.length(), 55, 1e-3) && state.position.z < -100);
+    CHECK(state.position.y >= 2.5 - 1e-6);
+    // Nose up: it climbs.
+    MoveInput climb = throttle;
+    climb.pitch = 0.5f;
+    const double before = state.position.y;
+    for (int i = 0; i < 2 * 60; ++i) simulate_vehicle(state, climb, world, v, dt);
+    CHECK(state.position.y > before + 20 && near(state.pitch, 0.5, 1e-5));
+    // Nose down, throttle back: it comes down to skim, slows, and lands.
+    MoveInput down;
+    down.forward = -127;
+    down.pitch = -0.6f;
+    for (int i = 0; i < 20 * 60 && !state.grounded; ++i) {
+        if (state.position.y < 4) down.pitch = 0;
+        simulate_vehicle(state, down, world, v, dt);
+    }
+    CHECK(state.grounded && near(state.position.y, 0.5) && state.velocity.length() == 0);
+}
+
 // A bot by an empty bike gets in and drives it toward the post it wants;
 // stuck against nothing, it keeps going.
 void test_bot_drives() {
@@ -506,5 +552,6 @@ int main() {
     test_gunner_seat();
     test_bot_drives();
     test_turret();
+    test_flyer();
     return swm::test::finish("vehicle_test");
 }

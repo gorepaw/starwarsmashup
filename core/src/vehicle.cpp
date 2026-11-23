@@ -66,14 +66,31 @@ VehicleClass load_vehicle_class(const std::filesystem::path& path) {
     v.label = s.get("Label").value_or(v.name);
     v.model = path.parent_path() / s.get("Model").value_or(v.name + ".gltf");
     const std::string kind = s.get("Kind").value_or("hover");
-    if (kind != "hover" && kind != "walker" && kind != "turret") {
-        throw std::runtime_error(where + ": Kind is hover, walker or turret, not " + kind);
+    if (kind != "hover" && kind != "walker" && kind != "turret" && kind != "flyer") {
+        throw std::runtime_error(where + ": Kind is hover, walker, turret or flyer, not " + kind);
     }
-    v.kind = kind == "walker" ? VehicleKind::walker : kind == "turret" ? VehicleKind::turret : VehicleKind::hover;
+    v.kind = kind == "walker"   ? VehicleKind::walker
+             : kind == "turret" ? VehicleKind::turret
+             : kind == "flyer"  ? VehicleKind::flyer
+                                : VehicleKind::hover;
     v.max_health = std::max(1.0, s.number("MaxHealth", v.max_health));
     if (v.kind == VehicleKind::turret) {
         v.forward_speed = v.reverse_speed = v.strafe_speed = 0;
         v.turn_rate = s.number("MaxTurnSpeed", 2);
+    } else if (v.kind == VehicleKind::flyer) {
+        v.max_speed = v.forward_speed = s.number("MaxSpeed", v.max_speed);
+        v.min_speed = std::min(v.max_speed, s.number("MinSpeed", v.min_speed));
+        v.boost_speed = s.number("BoostSpeed", 0);
+        v.acceleration = std::max(5.0, (v.max_speed - v.min_speed) / 2);  // ASSUMPTION: two seconds over its range
+        v.boost_acceleration = std::max(v.acceleration, (v.boost_speed - v.max_speed) / 2);
+        v.turn_rate = s.number("TurnRate", 0.8);
+        v.pitch_rate = s.number("PitchRate", v.pitch_rate);
+        v.energy_restore = s.number("EnergyAutoRestore", v.energy_restore);
+        v.energy_boost_drain = s.number("EnergyBoostDrain", v.energy_boost_drain);
+        v.takeoff_height = s.number("TakeoffHeight", v.takeoff_height);
+        v.takeoff_time = std::max(0.1, s.number("TakeoffTime", v.takeoff_time));
+        v.landed_height = s.number("LandedHeight", v.landed_height);
+        v.landing_speed = s.number("LandingSpeed", v.landing_speed);
     } else if (v.kind == VehicleKind::walker) {
         v.forward_speed = s.number("MaxSpeed", 5);
         v.reverse_speed = v.strafe_speed = s.number("MaxStrafeSpeed", 3);
@@ -158,6 +175,79 @@ VehicleClass load_vehicle_class(const std::filesystem::path& path) {
     return v;
 }
 
+// A flyer. Landed (grounded) it sits at LandedHeight and, given throttle,
+// lifts to TakeoffHeight in TakeoffTime and flies off at MinSpeed. Flying,
+// its nose turns and pitches toward the look (TurnRate, PitchRate) and it
+// goes along it at a speed between MinSpeed and MaxSpeed (forward speeds
+// up, back slows; BoostSpeed on energy), never into the ground: low, slow
+// and level with the throttle back, it settles and lands (ASSUMPTION).
+// Hitting the ground or a wall stops it (the server reckons the damage).
+void simulate_flyer(MoveState& state, const MoveState& before, const MoveInput& input, const World& world,
+                    const VehicleClass& vehicle, double dt) {
+    const double f = input.forward / 127.0;
+    // The floor under it (not a roof over it: Hoth's hangar).
+    const double ground = world.ground_at(state.position.x, state.position.z, state.position.y, 1).height;
+    const double speed = state.velocity.length();
+    if (state.grounded) {
+        state.pitch = 0;
+        state.velocity = {};
+        state.position.y = ground + vehicle.landed_height;
+        if (f > 0.1) {
+            // Lifting off: up to its takeoff height, then away.
+            state.grounded = false;
+            state.velocity = {0, (vehicle.takeoff_height - vehicle.landed_height) / vehicle.takeoff_time, 0};
+        }
+        return;
+    }
+    // Nose toward the look.
+    const double pitch_to = std::clamp(double(input.pitch), -1.0, 1.0);
+    const double pitch = double(before.pitch) + std::clamp(pitch_to - double(before.pitch),
+                                                           -vehicle.pitch_rate * dt, vehicle.pitch_rate * dt);
+    state.pitch = float(pitch);
+    const bool boosting = vehicle.boost_speed > 0 && input.held(MoveInput::sprint) && state.energy > 0;
+    state.sprinting = boosting;
+    state.energy = boosting ? std::max(0.0, state.energy - vehicle.energy_boost_drain * dt)
+                            : std::min(100.0, state.energy + vehicle.energy_restore * dt);
+    const double wished = boosting ? vehicle.boost_speed
+                          : f > 0.1 ? vehicle.max_speed
+                          : f < -0.1 ? vehicle.min_speed
+                                     : std::clamp(speed, vehicle.min_speed, vehicle.max_speed);
+    const double rate = boosting ? vehicle.boost_acceleration : vehicle.acceleration;
+    const bool lifting = speed < vehicle.min_speed * 0.5 && state.velocity.y > 0;  // just off the ground
+    double next = lifting ? vehicle.min_speed
+                          : speed + std::clamp(wished - speed, -rate * dt, rate * dt);
+    const double s = std::sin(double(state.yaw)), c = std::cos(double(state.yaw));
+    const double cp = std::cos(pitch), sp = std::sin(pitch);
+    Vec3 velocity{-s * cp * next, sp * next, -c * cp * next};
+    Vec3 position = before.position + velocity * dt;
+    const double floor = world.ground_at(position.x, position.z, position.y, 0.5).height;
+    const double low = floor + vehicle.takeoff_height;
+    // Low (skimming), slow and level with the throttle back: it lands.
+    if (position.y < low + 0.5 && f < -0.1 && next <= vehicle.min_speed + 1 && std::abs(pitch) < 0.2) {
+        position.y = floor + vehicle.landed_height;
+        state.position = world.clamp(position);
+        state.velocity = {};
+        state.grounded = true;
+        state.pitch = 0;
+        return;
+    }
+    if (position.y < low) {
+        // Not into the ground: it skims along over it.
+        position.y = low;
+        velocity.y = std::max(0.0, velocity.y);
+        state.pitch = float(std::max(0.0, pitch));
+    }
+    const Vec3 moved = world.resolve_walls(before.position, position, vehicle.radius(), vehicle.height(),
+                                           vehicle.step_up, velocity);
+    if ((moved - position).length() > 0.05) {
+        velocity = {};  // ran into something: stopped (the server reckons the damage)
+        next = 0;
+    }
+    state.position = world.clamp(moved);
+    state.velocity = velocity;
+    (void)next;
+}
+
 void simulate_vehicle(MoveState& state, const MoveInput& input, const World& world, const VehicleClass& vehicle,
                       double dt) {
     const MoveState before = state;
@@ -173,6 +263,10 @@ void simulate_vehicle(MoveState& state, const MoveInput& input, const World& wor
         state.grounded = true;
         state.sprinting = false;
         return;  // it stays where it stands
+    }
+    if (vehicle.kind == VehicleKind::flyer) {
+        simulate_flyer(state, before, input, world, vehicle, dt);
+        return;
     }
     const double s = std::sin(double(state.yaw)), c = std::cos(double(state.yaw));
     const Vec3 forward{-s, 0, -c};

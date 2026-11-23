@@ -488,7 +488,7 @@ int cmd_export_vehicle(const std::vector<std::string>& args) {
     // posts) is a walker here (ASSUMPTION: not yet somewhere to spawn).
     const std::string base = lowercase(vehicle.base);
     const std::string kind = base == "armedbuilding" ? "turret" : base == "commandwalker" ? "walker" : base;
-    if (kind != "hover" && kind != "walker" && kind != "turret") {
+    if (kind != "hover" && kind != "walker" && kind != "turret" && kind != "flyer") {
         throw std::runtime_error(args[2] + " is a " + vehicle.base + ", not a hover or walker vehicle or a turret");
     }
     std::filesystem::create_directories(out_dir);
@@ -542,7 +542,9 @@ int cmd_export_vehicle(const std::vector<std::string>& args) {
                             "EnergyBoostDrain", "TurnRate", "TurnFilter", "PitchRate", "SetAltitude", "LiftSpring",
                             "LiftDamp", "GravityScale", "SpinRate", "BankAngle", "TrackCenter", "TrackOffset",
                             "EyePointOffset", "TiltValue", "PitchLimits", "YawLimits", "LegPairCount",
-                            "MapTexture", "HealthTexture", "ExplosionName", "EngineSound", "WakeEffect"}) {
+                            "MapTexture", "HealthTexture", "ExplosionName", "EngineSound", "WakeEffect",
+                            "MinSpeed", "TakeoffSpeed", "TakeoffTime", "TakeoffHeight", "LandingSpeed",
+                            "LandingTime", "LandedHeight"}) {
         if (const auto value = body_value(key)) {
             const std::string text(*value);
             out << key << " = " << (std::string_view(key) == "EngineSound" ? first_token(text) : text) << "\n";

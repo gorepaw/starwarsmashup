@@ -329,9 +329,11 @@ func step_frame(delta: float) -> void:
 		_weapons = _client.get_weapons()
 		_pose(_own, own)
 		_update_remotes(int(own["team"]))
-		var shown := {_client.get_entity_id(): {"position": own["position"], "yaw": float(own["yaw"])}}
+		var shown := {_client.get_entity_id(): {"position": own["position"], "yaw": float(own["yaw"]),
+				"pitch": float(own.get("pitch", 0.0))}}
 		for remote: Dictionary in _client.get_remotes():
-			shown[int(remote["id"])] = {"position": remote["position"], "yaw": float(remote["yaw"])}
+			shown[int(remote["id"])] = {"position": remote["position"], "yaw": float(remote["yaw"]),
+					"pitch": float(remote.get("pitch", 0.0))}
 		_vehicles.update(_client.get_vehicles(), shown, delta)
 		var game: Dictionary = _client.get_match()
 		_battle_ui.update_posts(game, int(own["team"]), _elapsed)

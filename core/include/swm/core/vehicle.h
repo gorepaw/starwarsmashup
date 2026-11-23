@@ -16,8 +16,9 @@ class World;
 
 // How a vehicle moves: hovering over the ground (speeder bikes, hover
 // tanks) or walking on it (AT-STs).
-// A turret stays where it stands and turns to its gunner's look.
-enum class VehicleKind : uint8_t { hover, walker, turret };
+// A turret stays where it stands and turns to its gunner's look; a flyer
+// (the snowspeeder) takes off and flies where its pilot looks.
+enum class VehicleKind : uint8_t { hover, walker, turret, flyer };
 
 // A Battlefront vehicle (written by `bf2tool export-vehicle` from its class):
 // its handling, body, health and the pilot's weapons.
@@ -83,6 +84,13 @@ struct VehicleClass {
     std::string explosion_effect;
     std::string engine_sound;
     double stride_speed = 0;  // a walker's steps' own pace (m/s), to play them at its speed
+    // A flyer: its speeds in the air (MinSpeed .. MaxSpeed, BoostSpeed on
+    // energy), how fast it pitches (PitchRate, radians a second), and its
+    // takeoff and landing: off the ground to TakeoffHeight in TakeoffTime,
+    // down to LandedHeight from below LandingSpeed.
+    double min_speed = 15, max_speed = 55;
+    double pitch_rate = 1.2;
+    double takeoff_height = 2.5, takeoff_time = 1, landed_height = 0.5, landing_speed = 5;
     std::string map_texture, health_texture;
 
     double radius() const;  // for walls: half its width

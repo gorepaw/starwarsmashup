@@ -79,6 +79,9 @@ constexpr std::array known_names = {
     "DeathShakeDelay", "DeathShakeRadius", "WaterDamageAmount", "NoCombatInterrupt", "AiSizeType",
     "LegPairCount", "WalkerLegPair", "LegBoneLeft", "LegBoneRight", "FootBoneLeft", "FootBoneRight",
     "JumpTimeMin", "JumpTimeMax", "MaxPitchSpeed",
+    // Flyers' (the snowspeeder's), by the same hashing.
+    "MinSpeed", "TakeoffTime", "TakeoffSpeed", "TakeoffHeight", "LandingTime", "LandingSpeed", "LandedHeight",
+    "LevelFilter", "PitchFilterDecel", "TurnFilterDecel",
 };
 
 const std::map<uint32_t, std::string_view>& name_table() {

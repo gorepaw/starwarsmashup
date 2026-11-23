@@ -1035,6 +1035,7 @@ void Bot::choose_vehicle(const GameClient& client, double now) {
                                return weapon_in_slot(s.loadout, 0) != nullptr;
                            });
         if (!armed && cls.kind == VehicleKind::turret) return false;
+        if (cls.kind == VehicleKind::flyer) return false;  // flying is for players (ASSUMPTION)
         const bool aboard = v.driver != 0 || std::any_of(v.gunners.begin(), v.gunners.end(),
                                                          [](uint32_t g) { return g != 0; });
         if (aboard && !field.allied(v.team, team)) return false;

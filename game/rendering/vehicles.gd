@@ -86,10 +86,13 @@ func update(vehicles: Array, shown: Dictionary, delta: float) -> void:
 		var node: Node3D = entry["node"]
 		node.visible = bool(v["alive"])
 		var driver := int(v["driver"])
+		var flyer := str(class_of(index).get("kind", "")) == "flyer"
 		if driver != 0 and shown.has(driver):
 			var at: Dictionary = shown[driver]
 			node.position = at["position"]
 			node.rotation.y = float(at["yaw"]) + PI
+			if flyer:
+				node.rotation.x = -float(at.get("pitch", 0.0))  # its nose, up or down
 		else:
 			var t := minf(1.0, EASE * delta)
 			node.position = node.position.lerp(v["position"], t)

@@ -826,7 +826,10 @@ godot::Dictionary SwmClient::get_battlefield() const {
         godot::Dictionary entry;
         entry["name"] = godot::String::utf8(v.name.c_str());
         entry["label"] = godot::String::utf8(v.label.c_str());
-        entry["kind"] = v.kind == core::VehicleKind::walker ? "walker" : "hover";
+        entry["kind"] = v.kind == core::VehicleKind::walker   ? "walker"
+                        : v.kind == core::VehicleKind::turret ? "turret"
+                        : v.kind == core::VehicleKind::flyer  ? "flyer"
+                                                              : "hover";
         entry["model"] = godot::String::utf8(v.model.generic_string().c_str());  // absolute or game-relative path
         entry["max_health"] = v.max_health;
         entry["altitude"] = v.altitude;
