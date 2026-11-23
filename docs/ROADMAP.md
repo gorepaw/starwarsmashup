@@ -194,11 +194,11 @@ Start the game from a main menu, make a character of any Galaxies species, and c
 - [x] A main menu scene, set as the project's main scene so opening the game starts there: New Character, Load Character, Settings, Quit. Battlefront's menu style (`bf2_screen.gd`) over a Galaxies backdrop.
 - [x] Load Character: the characters saved in the world database (name, species, where they are). Choose one to enter the hub where they left, as `net_demo.gd`'s arguments do now.
 - [x] Settings: the pause menu's options as their own screen.
-- [ ] `net_demo.gd` (2,000 lines) split into scenes the menu can start: the game client, the hub's HUD and screens, the battle's. Solo play still hosts its own hub. Joining a server by address comes when there's one to join.
+- [x] `net_demo.gd` (2,000 lines) split into scenes the menu can start: the game client, the hub's HUD and screens, the battle's. Solo play still hosts its own hub. Joining a server by address comes when there's one to join.
 
 **Species and rigging**
 - [x] Galaxies' ten playable species, male and female: Human, Twi'lek, Zabrak, Rodian, Bothan, Sullustan, Mon Calamari, Trandoshan, Wookiee and Ithorian. Each comes with its body, heads, hair and customization data.
-- [ ] Battlefront's clips on every species. The humanoid skeleton the soldier uses now covers most of them. Those with their own skeleton or proportions (Wookiees' long limbs, Ithorians' head and neck, and any the data shows) need their own retarget. Each is checked in the pose tools (`pose_soldier.gd`, `pose_clips.gd`). Meshes that need fixing are fixed in Blender, the results kept with the other imported assets (never committed).
+- [x] Battlefront's clips on every species. The humanoid skeleton the soldier uses now covers most of them. Those with their own skeleton or proportions (Wookiees' long limbs, Ithorians' head and neck, and any the data shows) need their own retarget. Each is checked in the pose tools (`pose_soldier.gd`, `pose_clips.gd`). Meshes that need fixing are fixed in Blender, the results kept with the other imported assets (never committed).
 - [x] Bodies per species: radius and height from the species' template, as the hub's creatures do, and the eye height for first person.
 
 **Character creator**
@@ -211,7 +211,7 @@ Start the game from a main menu, make a character of any Galaxies species, and c
   
   These are the same palettes and texture renderers the hub's crowd already uses.
 - [x] Name, with a random option, and a starting outfit.
-- [ ] Saved with the character. Every client draws other players from it: snapshots carry species and customization values (the crowd's color seed, made explicit).
+- [x] Saved with the character. Every client draws other players from it: snapshots carry species and customization values (the crowd's color seed, made explicit).
 
 **Species traits**
 - [x] Some species can't wear some gear, as in Galaxies: Wookiees and Ithorians most armor (Wookiees footwear too), Trandoshans footwear. The exact rules get checked online before they're built.

@@ -39,8 +39,8 @@ const std::array<SpeciesDef, species_count> species_table = [] {
         d.display_name = "Human";
         d.male_body = {0.40, 1.78, 1.60, 1.10, 0.88, 1.12};
         d.female_body = scaled_female(d.male_body, 0.95);
-        d.modifiers = {{Stat::max_health, 20, 1}, {Stat::max_energy, 10, 1}};
-        d.traits_summary = "+20 Health, +10 Energy; wears all standard armor";
+        d.modifiers = {};
+        d.traits_summary = "Baseline stats; wears all standard armor";
     }
     {
         SpeciesDef& d = table[size_t(Species::twilek)];

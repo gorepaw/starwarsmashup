@@ -245,6 +245,10 @@ struct Encoder {
             out.put(entity.look);
             out.put(entity.pose);
             out.put(entity.colors);
+            out.put(entity.species);
+            out.put(entity.gender);
+            out.put_string(entity.name);
+            out.put_long_string(entity.appearance);
         }
         out.put(uint16_t(m.bolts.size()));
         for (const BoltState& bolt : m.bolts) {
@@ -405,6 +409,16 @@ Message decode(std::span<const uint8_t> packet) {
             entity.look = in.get<uint8_t>();
             entity.pose = in.get<uint8_t>();
             entity.colors = in.get<uint16_t>();
+            entity.species = in.get<uint8_t>();
+            if (entity.species >= species_count) {
+                throw PacketError("bad species");
+            }
+            entity.gender = in.get<uint8_t>();
+            if (entity.gender > 1) {
+                throw PacketError("bad gender");
+            }
+            entity.name = in.get_string();
+            entity.appearance = in.get_long_string();
             m.entities.push_back(entity);
         }
         const size_t bolts = in.get<uint16_t>();

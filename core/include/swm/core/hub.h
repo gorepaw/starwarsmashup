@@ -151,6 +151,7 @@ private:
         std::unique_ptr<GameServer> server;
         std::unique_ptr<BotPlayers> bots;
         std::map<uint64_t, std::pair<std::string, int>> tickets;  // -> player and team
+        std::map<std::string, PlayerProfile> profiles;            // player name -> species & appearance
         uint64_t bot_ticket = 0;
         std::array<int, 2> soldiers{};  // sent or admitted per team
         std::array<int, 2> players{};   // players (not bots) sent per team

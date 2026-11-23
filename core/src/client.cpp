@@ -7,6 +7,7 @@
 
 #include "swm/core/net/bytes.h"
 #include "swm/core/net/protocol.h"
+#include "swm/core/species.h"
 
 namespace swm::core {
 
@@ -248,10 +249,12 @@ void GameClient::handle(const net::Datagram& datagram, double now) {
 void GameClient::reconcile(uint32_t last_input, const net::EntityState& server, double now) {
     const MoveState& server_state = server.state;
     const uint8_t spawn_count = self_.spawn_count;
-    const bool new_loadout = server.team != self_.team || server.loadout != self_.loadout;
+    const bool new_loadout =
+        !spawned_ || server.team != self_.team || server.loadout != self_.loadout || server.species != self_.species;
     self_ = server;  // also picks the loadout the replay below predicts with
     if (new_loadout) {
-        character_stats_ = stats_for(loadout(), config_.base_stats);
+        const Species sp = Species(std::min<size_t>(self_.species, species_count - 1));
+        character_stats_ = stats_for(loadout(), sp, config_.base_stats);
     }
     if (!spawned_) {
         spawned_ = true;

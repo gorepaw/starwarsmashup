@@ -8,6 +8,8 @@
 #include <godot_cpp/variant/utility_functions.hpp>
 #include <godot_cpp/variant/vector3.hpp>
 
+#include "swm/core/species.h"
+
 namespace swm::godot_bindings {
 
 namespace {
@@ -69,6 +71,10 @@ void describe(godot::Dictionary& out, const core::net::EntityState& entity) {
     out["look"] = int64_t(entity.look);  // 0: a player; else get_looks()[look - 1]
     out["pose"] = int64_t(entity.pose);  // 0 on their feet, 1 sitting
     out["colors"] = int64_t(entity.colors);  // 0: the look's own colors; else a seed to vary them by
+    out["species"] = godot::String::utf8(core::species_def(core::Species(entity.species)).id.c_str());
+    out["gender"] = godot::String::utf8(entity.gender == 1 ? "female" : "male");
+    out["name"] = godot::String::utf8(entity.name.c_str());
+    out["appearance"] = godot::String::utf8(entity.appearance.c_str());
 }
 
 godot::Color to_color(const std::array<double, 4>& c) {

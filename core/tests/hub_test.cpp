@@ -343,10 +343,86 @@ void test_creature_body() {
     CHECK(std::abs(bantha_x - (10 - 1.7)) < 0.01);
 }
 
+void test_wookiee_profile_in_battle() {
+    std::vector<float> flat(4, 0.0f);
+    const Heightfield ground(2, 200.0, -100, -100, flat);
+    const World world(ground);
+
+    MemoryCharacterStore store;
+    store.create_character(
+        {0, "Chewbacca", {0, 0, 0}, 0, "wookiee", "male", "Mos Eisley", R"({"height":1.0})"});
+
+    Battlefield field;
+    field.name = "Dunes";
+    field.min_x = field.min_z = -90;
+    field.max_x = field.max_z = 90;
+    Team reb{"Rebellion"}, imp{"Empire"};
+    Loadout l;
+    l.name = "Trooper";
+    reb.loadouts = {l};
+    imp.loadouts = {l};
+    field.teams = {reb, imp};
+    field.posts = {{"North", {0, 0, -20}, 5, 0, true}, {"South", {0, 0, 20}, 5, 1, true}};
+
+    HubConfig hub_cfg;
+    hub_cfg.name = "Mos Eisley";
+    hub_cfg.sides = {"Rebellion", "Empire"};
+    hub_cfg.battlefields = {{"dunes", field, {0, 1}}};
+    hub_cfg.recruiters = {{"Terminal", {0, 0, 0}, 10}};
+    hub_cfg.team_size = 1;
+    hub_cfg.queue_time = 0.05;
+    hub_cfg.return_delay = 0.1;
+
+    struct LoopNet : HubNetwork {
+        net::LoopbackHub hub;
+        uint16_t next_port = 100;
+        std::unique_ptr<net::Link> open_server(uint16_t& port) override {
+            port = next_port++;
+            return std::make_unique<net::LoopbackLink>(hub, net::Endpoint{1, port});
+        }
+        std::unique_ptr<net::Link> open_client() override {
+            return std::make_unique<net::LoopbackLink>(hub, net::Endpoint{2, next_port++});
+        }
+        net::Endpoint local(uint16_t port) const override { return {1, port}; }
+    } net;
+
+    uint16_t hub_port = 0;
+    auto hub_link = net.open_server(hub_port);
+    GameServer hub_server(*hub_link, world, ServerConfig{}, &store);
+    Hub hub(hub_server, hub_port, world, hub_cfg, net);
+    hub.load_battle_world = [](const Battlefield&) { return std::shared_ptr<const World>{}; };
+
+    auto client_link = net.open_client();
+    ClientSession session(*client_link, world, ClientConfig{.server = {1, hub_port}, .name = "Chewbacca"},
+                          [&](const std::string&) { return field; });
+    bool queued = false;
+    bool saw_wookiee_in_battle = false;
+    double now = 0;
+    for (; now < 5.0; now += 1.0 / 60) {
+        session.update(now);
+        hub_server.update(now);
+        hub.update(now);
+        if (session.generation() == 0 && session.client().spawned() && !queued) {
+            session.client().queue(0);
+            queued = true;
+        }
+        if (session.generation() == 1 && session.client().match() && session.client().spawned()) {
+            const auto& c = session.client();
+            if (c.self().species == uint8_t(Species::wookiee) && c.self().appearance == R"({"height":1.0})" &&
+                c.character_stats().max_health > 100.0) {
+                saw_wookiee_in_battle = true;
+                break;
+            }
+        }
+    }
+    CHECK(saw_wookiee_in_battle);
+}
+
 int main() {
     test_hub_file();
     test_creature_body();
     test_queue_battle_and_back();
     test_people();
+    test_wookiee_profile_in_battle();
     return swm::test::finish("hub_test");
 }

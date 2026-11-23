@@ -15,9 +15,16 @@
 #include "swm/core/net/link.h"
 #include "swm/core/net/protocol.h"
 #include "swm/core/persistence.h"
+#include "swm/core/species.h"
 #include "swm/core/world.h"
 
 namespace swm::core {
+
+struct PlayerProfile {
+    Species species = Species::human;
+    Gender gender = Gender::male;
+    std::string appearance;
+};
 
 struct ServerConfig {
     double tick_rate = 30;
@@ -94,6 +101,8 @@ public:
     bool alive(uint32_t entity) const;
     // The entity as snapshots describe it, if it's connected.
     std::optional<net::EntityState> describe(uint32_t entity) const;
+    std::optional<PlayerProfile> profile_of(uint32_t entity) const;
+    void set_player_profile(uint32_t entity, const PlayerProfile& profile);
     size_t bolt_count() const { return bolts_.size(); }
     size_t pickup_count() const { return pickups_.size(); }
     // Drops a health, ammo, dual or energy canister on the ground at `position`.
@@ -149,6 +158,10 @@ private:
         std::string name;
         uint32_t entity = 0;
         PersistentId character = 0;  // 0 without a store
+        Species species = Species::human;
+        Gender gender = Gender::male;
+        std::string location = "Mos Eisley";
+        std::string appearance = "{}";
         MoveState state;
         double health = 0;
         Life life = Life::alive;

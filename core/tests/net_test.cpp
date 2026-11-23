@@ -22,6 +22,10 @@ void test_protocol() {
     snapshot.server_tick = 1234;
     snapshot.last_input = 99;
     snapshot.entities.push_back({7, {{1.5, -2.25, 3e6}, {4, 0, -5}, 0.75f, false}});
+    snapshot.entities.back().species = uint8_t(Species::wookiee);
+    snapshot.entities.back().gender = 1;
+    snapshot.entities.back().name = "Chewtest";
+    snapshot.entities.back().appearance = std::string(320, 'a');
     snapshot.entities.push_back({8, {}});
     snapshot.impacts.push_back({7, 0, {10, 2, -5}, {0, 0, 1}, false});
     snapshot.pickups.push_back({42, PickupKind::dual, {-12.5, 3.0, 8.25}, 24.5f});
@@ -35,6 +39,8 @@ void test_protocol() {
     const auto* s = std::get_if<Snapshot>(&decoded);
     CHECK(s != nullptr && s->server_tick == 1234 && s->last_input == 99 && s->entities.size() == 2);
     CHECK(s != nullptr && s->entities[0].id == 7 && s->entities[0].state == snapshot.entities[0].state);
+    CHECK(s != nullptr && s->entities[0].species == uint8_t(Species::wookiee) && s->entities[0].gender == 1 &&
+          s->entities[0].name == "Chewtest" && s->entities[0].appearance.size() == 320);
     CHECK(s != nullptr && s->impacts.size() == 1 && s->impacts[0] == snapshot.impacts[0]);
     CHECK(s != nullptr && s->pickups.size() == 1 && s->pickups[0] == snapshot.pickups[0]);
     CHECK(s != nullptr && s->match && s->match->powerup_health == match.powerup_health);
@@ -239,11 +245,47 @@ void test_lost_welcome() {
     CHECK(client.status() == GameClient::Status::connected && client.spawned() && server.client_count() == 1);
 }
 
+void test_species_persistence_and_replication() {
+    std::vector<float> flat(4, 0.0f);
+    const Heightfield ground(2, 10.0, 0, 0, flat);
+    const World world(ground);
+    MemoryCharacterStore store;
+    const CharacterRecord created = store.create_character(
+        {0, "Chewtest", {1, 0, 2}, 0.5, "wookiee", "female", "Mos Eisley", R"({"height":0.9,"colors":{"index_color_1":3}})"});
+
+    LoopbackHub hub;
+    LoopbackLink server_link(hub, {1, 1});
+    LoopbackLink a_link(hub, {2, 1});
+    LoopbackLink b_link(hub, {3, 1});
+    GameServer server(server_link, world, ServerConfig{}, &store);
+    GameClient a(a_link, world, ClientConfig{.server = {1, 1}, .name = "Chewtest"});
+    GameClient b(b_link, world, ClientConfig{.server = {1, 1}, .name = "Observer"});
+
+    double now = 0;
+    for (; now < 0.6; now += 1.0 / 60) {
+        a.update(now);
+        b.update(now);
+        server.update(now);
+    }
+    CHECK(a.spawned() && b.spawned());
+    CHECK(a.self().species == uint8_t(Species::wookiee) && a.self().gender == 1);
+    CHECK(a.character_stats().max_health > 100.0);
+    const auto a_seen = find_remote(b.remotes(), a.entity_id());
+    CHECK(a_seen && a_seen->species == uint8_t(Species::wookiee) && a_seen->gender == 1 &&
+          a_seen->name == "Chewtest" && a_seen->appearance == created.appearance);
+
+    server.save_all();
+    const auto saved = store.find_by_name("Chewtest");
+    CHECK(saved && saved->species == "wookiee" && saved->gender == "female" &&
+          saved->appearance == created.appearance);
+}
+
 } // namespace
 
 int main() {
     test_protocol();
     test_session();
     test_lost_welcome();
+    test_species_persistence_and_replication();
     return swm::test::finish("net_test");
 }

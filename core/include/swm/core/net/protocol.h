@@ -11,13 +11,14 @@
 #include "swm/core/conquest.h"
 #include "swm/core/movement.h"
 #include "swm/core/persistence.h"
+#include "swm/core/species.h"
 
 namespace swm::core::net {
 
 // Every packet starts with a magic number, the protocol version and a message
 // type. Peers drop packets with another version. Bump it on any wire change.
 inline constexpr uint16_t protocol_magic = 0x4D53;  // "SM"
-inline constexpr uint16_t protocol_version = 16;
+inline constexpr uint16_t protocol_version = 17;
 inline constexpr uint8_t droid_explosion_weapon = 0xFF;  // Explosion::weapon sentinel for destroyed health/ammo droids
 // ...for a destroyed object (Battlefield::destructibles); clients draw it
 // from the object's own explosion as they see it go.
@@ -118,6 +119,10 @@ struct EntityState {
     uint8_t look = 0;         // 0: a player; else the server's looks[look - 1] (a hub's people)
     uint8_t pose = 0;         // 0: on their feet; 1: sitting
     uint16_t colors = 0;      // a look's colors: 0 its own; else a seed the client varies them by
+    uint8_t species = 0;      // index into core::all_species() (0 = human .. 9 = ithorian)
+    uint8_t gender = 0;       // 0 = male, 1 = female
+    std::string name;         // player name (empty for NPCs)
+    std::string appearance;   // player customization JSON (empty for NPCs/bots)
 
     bool alive() const { return life == Life::alive; }
 };

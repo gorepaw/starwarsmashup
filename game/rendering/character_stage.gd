@@ -87,11 +87,15 @@ func set_hair(hair_rel_gltf: String, color_overrides: Dictionary) -> void:
 		SwgColors.apply_custom(hair_node, hair_colors_data, color_overrides)
 
 
-func apply_appearance(appearance: Dictionary, scale_min: float, scale_max: float) -> void:
+func apply_appearance(appearance: Dictionary, scale_min: float, scale_max: float, body_height: float = 1.78) -> void:
 	if model == null:
 		return
 	var height_t := clampf(float(appearance.get("height", 0.5)), 0.0, 1.0)
-	var s := lerpf(scale_min, scale_max, height_t)
+	var bounds: Dictionary = species_meta.get("bounds", {})
+	var b_min: Array = bounds.get("min", [0.0, 0.0, 0.0])
+	var b_max: Array = bounds.get("max", [0.0, 1.8, 0.0])
+	var mesh_height := maxf(1.2, float(b_max[1]) - float(b_min[1]))
+	var s := (body_height * lerpf(scale_min, scale_max, height_t)) / mesh_height
 	model.scale = Vector3.ONE * s
 
 	var blends: Dictionary = appearance.get("blends", {})

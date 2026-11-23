@@ -159,9 +159,38 @@ std::optional<net::EntityState> GameServer::describe(uint32_t entity) const {
     return client ? std::optional(describe(*client)) : std::nullopt;
 }
 
+std::optional<PlayerProfile> GameServer::profile_of(uint32_t entity) const {
+    const Client* client = find(entity);
+    if (client == nullptr) {
+        return std::nullopt;
+    }
+    return PlayerProfile{client->species, client->gender, client->appearance};
+}
+
+void GameServer::set_player_profile(uint32_t entity, const PlayerProfile& profile) {
+    Client* client = find(entity);
+    if (client == nullptr) {
+        return;
+    }
+    client->species = profile.species;
+    client->gender = profile.gender;
+    if (!profile.appearance.empty()) {
+        client->appearance = profile.appearance;
+    }
+    client->stats = stats_for(loadout_of(*client), client->species, config_.base_stats);
+    if (client->life == Life::waiting || client->health <= 0 || client->health > client->stats.max_health) {
+        client->health = client->stats.max_health;
+    }
+}
+
 net::EntityState GameServer::describe(const Client& c) const {
-    return {c.entity, c.state, float(c.health), c.life, c.spawn_count, int8_t(c.team), uint8_t(c.loadout),
-            c.kills,  c.deaths, c.captures};
+    net::EntityState out{c.entity, c.state, float(c.health), c.life, c.spawn_count, int8_t(c.team),
+                         uint8_t(c.loadout), c.kills, c.deaths, c.captures};
+    out.species = uint8_t(c.species);
+    out.gender = uint8_t(c.gender);
+    out.name = c.name;
+    out.appearance = c.appearance;
+    return out;
 }
 
 const Loadout& GameServer::loadout_of(const Client& client) const {
@@ -301,7 +330,7 @@ GameServer::Client* GameServer::join(const net::Endpoint& from, const std::strin
         view = world_.clamp(view);
         view.y = world_.terrain().height_at(view.x, view.z);
         joined.state.position = view;
-        joined.stats = stats_for(loadout_of(joined), config_.base_stats);
+        joined.stats = stats_for(loadout_of(joined), joined.species, config_.base_stats);
         reset_loadout(joined.state, loadout_of(joined), joined.stats);
         clients_.push_back(joined);
         say(std::format("{} joined from {} as entity {} on team {}", name, from.to_string(), joined.entity,
@@ -316,6 +345,14 @@ GameServer::Client* GameServer::join(const net::Endpoint& from, const std::strin
             if (auto saved = store_->find_by_name(name)) {
                 joined.character = saved->id;
                 joined.state.yaw = saved->yaw;
+                joined.species = species_from_name(saved->species).value_or(Species::human);
+                joined.gender = gender_from_name(saved->gender).value_or(Gender::male);
+                if (!saved->location.empty()) {
+                    joined.location = saved->location;
+                }
+                if (!saved->appearance.empty()) {
+                    joined.appearance = saved->appearance;
+                }
                 spawn = world_.clamp(saved->position);
                 where = "returning";
             } else {
@@ -328,7 +365,7 @@ GameServer::Client* GameServer::join(const net::Endpoint& from, const std::strin
     }
     // Stand on whatever is under the spawn point, near its height: a building
     // floor, or the terrain. A saved position may have been mid-jump.
-    joined.stats = stats_for(config_.loadout, config_.base_stats);
+    joined.stats = stats_for(config_.loadout, joined.species, config_.base_stats);
     spawn.y = world_.ground_at(spawn.x, spawn.z, spawn.y, joined.stats.move.step_up).height;
     joined.state.position = spawn;
     reset_loadout(joined.state, config_.loadout, joined.stats);
@@ -349,7 +386,9 @@ void GameServer::save(std::span<const Client> clients) {
     }
     std::vector<CharacterRecord> records;
     for (const Client& client : clients) {
-        records.push_back({client.character, client.name, client.state.position, client.state.yaw});
+        records.push_back({client.character, client.name, client.state.position, client.state.yaw,
+                           species_def(client.species).id, client.gender == Gender::female ? "female" : "male",
+                           client.location, client.appearance});
     }
     try {
         store_->save(records);
@@ -610,7 +649,7 @@ void GameServer::spawn_at_post(Client& client, size_t loadout_index, size_t post
                             : world_.terrain().height_at(position.x, position.z);
     client.loadout = loadout_index;
     const Loadout& loadout = loadout_of(client);
-    client.stats = stats_for(loadout, config_.base_stats);
+    client.stats = stats_for(loadout, client.species, config_.base_stats);
     // (A spawn point over a seam in the floor, one of Mygeeto's CP2's: on
     // the floor both sides of it.) A spawn point a little under its floor
     // (one of Utapau's, a meter down) is on it: looking from a meter up.

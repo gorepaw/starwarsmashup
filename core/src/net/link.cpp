@@ -22,6 +22,23 @@ std::string ByteReader::get_string() {
     return value;
 }
 
+void ByteWriter::put_long_string(const std::string& value) {
+    const size_t length = std::min<size_t>(value.size(), 2048);
+    put(uint16_t(length));
+    data_.insert(data_.end(), value.begin(), value.begin() + std::ptrdiff_t(length));
+}
+
+std::string ByteReader::get_long_string() {
+    const size_t length = get<uint16_t>();
+    if (length > 2048) {
+        throw PacketError("string too long");
+    }
+    need(length);
+    std::string value(reinterpret_cast<const char*>(data_.data() + at_), length);
+    at_ += length;
+    return value;
+}
+
 void ByteReader::need(size_t bytes) const {
     if (data_.size() - at_ < bytes) {
         throw PacketError("packet truncated");

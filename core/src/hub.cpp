@@ -399,6 +399,9 @@ void Hub::send(Battle& battle, const Queued& player) {
     }
     const int team = battle.field.teams[size_t(player.team)];
     battle.tickets[ticket] = {player.name, team};
+    if (const auto prof = server_.profile_of(player.entity)) {
+        battle.profiles[player.name] = *prof;
+    }
     ++battle.soldiers[size_t(team)];
     ++battle.players[size_t(team)];
     server_.transfer(player.entity, net::Transfer{0, battle.port, ticket, battle.field.id});
@@ -470,6 +473,11 @@ void Hub::start_battle() {
     config.single_match = true;
     b->server = std::make_unique<GameServer>(*b->link, world, config);
     b->server->log = [this, id = b->id](const std::string& line) { say(std::format("battle {}: {}", id, line)); };
+    b->server->on_join = [b](uint32_t entity, const std::string& name) {
+        if (const auto it = b->profiles.find(name); it != b->profiles.end()) {
+            b->server->set_player_profile(entity, it->second);
+        }
+    };
     // Players with their ticket, on their side; bots wherever there's room.
     b->server->admit = [b](const std::string& name, uint64_t ticket) -> std::optional<int> {
         if (ticket == b->bot_ticket) {

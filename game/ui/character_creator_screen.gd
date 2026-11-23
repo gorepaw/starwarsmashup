@@ -179,7 +179,8 @@ func _apply_to_stage() -> void:
 		"colors": _colors,
 		"hair": str(_hairs[_hair_idx]["id"]) if _hair_idx >= 0 and _hair_idx < _hairs.size() else "",
 	}
-	_stage.apply_appearance(appearance, float(sp.get("scale_min", 0.88)), float(sp.get("scale_max", 1.12)))
+	var body_h := float(sp.get("female_height" if _gender == "female" else "male_height", 1.78))
+	_stage.apply_appearance(appearance, float(sp.get("scale_min", 0.88)), float(sp.get("scale_max", 1.12)), body_h)
 
 
 func _paint() -> void:
@@ -419,14 +420,19 @@ func _submit() -> void:
 	if _store == null:
 		return
 	var sp := _current_species()
+	var compact_sliders := {}
+	for k: String in _sliders:
+		var v := float(_sliders[k])
+		if absf(v - 0.5) > 0.005:
+			compact_sliders[k] = snappedf(v, 0.001)
 	var appearance := {
-		"height": float(_sliders.get("height", 0.5)),
-		"sliders": _sliders,
+		"height": snappedf(float(_sliders.get("height", 0.5)), 0.001),
+		"sliders": compact_sliders,
 		"colors": _colors,
 		"hair": str(_hairs[_hair_idx]["id"]) if _hair_idx >= 0 and _hair_idx < _hairs.size() else "",
 	}
 	var rec: Dictionary = _store.create_character(trimmed, str(sp["id"]), _gender,
-			JSON.stringify(appearance), "Mos Eisley", Vector3(-3550.0, 5.0, -4780.0), 0.0)
+			JSON.stringify(appearance), "Mos Eisley", Vector3(-3480.0, 5.0, -4794.0), 0.0)
 	if rec.is_empty():
 		_error_msg = _store.get_last_error()
 		return

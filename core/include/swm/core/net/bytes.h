@@ -23,7 +23,8 @@ public:
         data_.resize(at + sizeof(T));
         std::memcpy(data_.data() + at, &value, sizeof(T));
     }
-    void put_string(const std::string& value);  // u8 length + bytes, at most 255
+    void put_string(const std::string& value);       // u8 length + bytes, at most 255
+    void put_long_string(const std::string& value);  // u16 length + bytes, at most 2048
 
     const std::vector<uint8_t>& data() const { return data_; }
 
@@ -46,6 +47,7 @@ public:
         return value;
     }
     std::string get_string();
+    std::string get_long_string();
 
     bool at_end() const { return at_ == data_.size(); }
 

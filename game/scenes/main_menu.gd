@@ -12,6 +12,7 @@ const CharacterCreatorScreen = preload("res://ui/character_creator_screen.gd")
 const CharacterStage = preload("res://rendering/character_stage.gd")
 const TerrainTool = preload("res://tools/render_terrain.gd")
 const Bf2Audio = preload("res://audio/bf2_audio.gd")
+const GameSession = preload("res://scenes/game_session.gd")
 
 const HUD_DIR := "res://imported_assets/hud"
 const AUDIO_DIR := "res://imported_assets/audio"
@@ -192,21 +193,22 @@ func _launch_character(record: Dictionary) -> void:
 	var gltf_rel := "imported_assets/species/%s_%s/%s_%s.gltf" % [sp, gen, sp, gen]
 	if not FileAccess.file_exists("res://" + gltf_rel):
 		gltf_rel = "imported_assets/characters/stormtrooper/stormtrooper.gltf"
-	var exe := OS.get_executable_path()
-	var game_dir := ProjectSettings.globalize_path("res://")
-	var args := PackedStringArray([
-		"--path", game_dir,
-		"--script", "res://tools/net_demo.gd",
-		"--",
-		"imported_assets/terrain/tatooine_mos_eisley",
-		gltf_rel,
-		"--host", "0",
-		"--db", "world.sqlite",
-		"--hub", "hubs/mos_eisley.ini",
-		"--name", char_name,
-	])
-	OS.create_process(exe, args)
-	get_tree().quit(0)
+	if _store != null:
+		_store.close()
+		_store = null
+	GameSession.pending_config = {
+		"bake": "imported_assets/terrain/tatooine_mos_eisley",
+		"character_path": gltf_rel,
+		"host": 0,
+		"db": "world.sqlite",
+		"hub": "hubs/mos_eisley.ini",
+		"name": char_name,
+		"species": sp,
+		"gender": gen,
+		"appearance": str(record.get("appearance", "{}")),
+		"return_to_menu": true,
+	}
+	get_tree().change_scene_to_file("res://scenes/game_session.tscn")
 
 
 class MainMenuOverlay extends Bf2Screen:
