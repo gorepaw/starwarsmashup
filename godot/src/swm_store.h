@@ -9,6 +9,7 @@
 #include <godot_cpp/variant/string.hpp>
 #include <godot_cpp/variant/vector3.hpp>
 
+#include "swm/core/crafting.h"
 #include "swm/core/items.h"
 #include "swm/core/profession.h"
 #include "swm/core/sqlite_store.h"
@@ -56,6 +57,19 @@ public:
     godot::Dictionary profession_level(int64_t xp) const;
     int64_t get_specialization_slots() const { return core::specialization_slots; }
 
+    // Gathering & crafting data + deterministic scanner/preview helpers.
+    godot::Error load_crafting(const godot::String& resources_path, const godot::String& schematics_path);
+    godot::Array get_resources() const;
+    godot::Array get_schematics() const;
+    godot::Array get_work_orders() const;
+    godot::Dictionary scan_terrain(const godot::String& category, double x, double z, double radius = 60.0,
+                                   int64_t grid_n = 17) const;
+    godot::PackedStringArray auto_fill_schematic(const godot::String& schematic_id, const godot::Array& materials,
+                                                 const godot::String& mode) const;
+    godot::Dictionary preview_craft(const godot::String& schematic_id, const godot::PackedStringArray& resource_ids,
+                                    int64_t enhancement_count, int64_t crafter_level,
+                                    int64_t exp_quality_pct) const;
+
     static godot::Array get_species_list();
 
 protected:
@@ -65,6 +79,7 @@ private:
     std::unique_ptr<core::SqliteCharacterStore> store_;
     core::ItemCatalog catalog_;
     core::ProfessionBook professions_;
+    core::CraftingBook crafting_;
     std::string last_error_;
 };
 

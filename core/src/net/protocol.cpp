@@ -34,6 +34,10 @@ enum class Type : uint8_t {
     quest_request,
     profession_sync,
     profession_ack,
+    crafting_sync,
+    crafting_ack,
+    gather_request,
+    craft_request,
 };
 
 void put_vec3(ByteWriter& out, Vec3 v) {
@@ -582,6 +586,13 @@ struct Encoder {
             put_vec3(out, t.position);
             out.put(t.radius);
         }
+        out.put(uint8_t(std::min<size_t>(m.workbenches.size(), 255)));
+        for (size_t i = 0; i < m.workbenches.size() && i < 255; ++i) {
+            const Workbench& wb = m.workbenches[i];
+            out.put_string(wb.name);
+            put_vec3(out, wb.position);
+            out.put(wb.radius);
+        }
     }
     void operator()(const Refused& m) {
         out.put(uint8_t(Type::refused));
@@ -853,6 +864,61 @@ struct Encoder {
         out.put(uint8_t(Type::profession_ack));
         out.put(m.revision);
     }
+    void operator()(const CraftingSync& m) {
+        out.put(uint8_t(Type::crafting_sync));
+        out.put(m.revision);
+        out.put(uint16_t(std::min<size_t>(m.materials.size(), 65535)));
+        for (size_t i = 0; i < m.materials.size() && i < 65535; ++i) {
+            out.put_string(m.materials[i].resource_id);
+            out.put(m.materials[i].amount);
+        }
+        out.put(uint16_t(std::min<size_t>(m.presets.size(), 65535)));
+        for (size_t i = 0; i < m.presets.size() && i < 65535; ++i) {
+            const RecipePreset& p = m.presets[i];
+            out.put_string(p.name);
+            out.put_string(p.schematic_id);
+            out.put(uint8_t(std::min<size_t>(p.resource_ids.size(), 16)));
+            for (size_t j = 0; j < p.resource_ids.size() && j < 16; ++j) {
+                out.put_string(p.resource_ids[j]);
+            }
+            out.put(uint8_t(std::min<size_t>(p.enhancement_defs.size(), 8)));
+            for (size_t j = 0; j < p.enhancement_defs.size() && j < 8; ++j) {
+                out.put_string(p.enhancement_defs[j]);
+            }
+            out.put(p.exp_quality_pct);
+        }
+    }
+    void operator()(const CraftingAck& m) {
+        out.put(uint8_t(Type::crafting_ack));
+        out.put(m.revision);
+    }
+    void operator()(const GatherRequest& m) {
+        out.put(uint8_t(Type::gather_request));
+        out.put(uint8_t(m.action));
+        out.put(m.category);
+        out.put(m.target_id);
+    }
+    void operator()(const CraftRequest& m) {
+        out.put(uint8_t(Type::craft_request));
+        out.put(uint8_t(m.action));
+        out.put_string(m.schematic_id);
+        out.put(uint8_t(std::min<size_t>(m.resource_ids.size(), 16)));
+        for (size_t i = 0; i < m.resource_ids.size() && i < 16; ++i) {
+            out.put_string(m.resource_ids[i]);
+        }
+        out.put(uint8_t(std::min<size_t>(m.enhancement_item_ids.size(), 8)));
+        for (size_t i = 0; i < m.enhancement_item_ids.size() && i < 8; ++i) {
+            out.put(m.enhancement_item_ids[i]);
+        }
+        out.put(uint8_t(std::min<size_t>(m.enhancement_defs.size(), 8)));
+        for (size_t i = 0; i < m.enhancement_defs.size() && i < 8; ++i) {
+            out.put_string(m.enhancement_defs[i]);
+        }
+        out.put(m.exp_quality_pct);
+        out.put(m.batch_count);
+        out.put_string(m.preset_name);
+        out.put_string(m.order_id);
+    }
 };
 
 } // namespace
@@ -940,6 +1006,14 @@ Message decode(std::span<const uint8_t> packet) {
             t.position = get_vec3(in);
             t.radius = in.get<double>();
             m.mission_terminals.push_back(std::move(t));
+        }
+        const size_t workbenches = in.get<uint8_t>();
+        for (size_t i = 0; i < workbenches; ++i) {
+            Workbench wb;
+            wb.name = in.get_string();
+            wb.position = get_vec3(in);
+            wb.radius = in.get<double>();
+            m.workbenches.push_back(std::move(wb));
         }
         message = m;
         break;
@@ -1299,6 +1373,69 @@ Message decode(std::span<const uint8_t> packet) {
     case Type::profession_ack:
         message = ProfessionAck{in.get<uint32_t>()};
         break;
+    case Type::crafting_sync: {
+        CraftingSync m;
+        m.revision = in.get<uint32_t>();
+        const size_t mats = in.get<uint16_t>();
+        for (size_t i = 0; i < mats; ++i) {
+            MaterialStack st;
+            st.resource_id = in.get_string();
+            st.amount = in.get<int64_t>();
+            m.materials.push_back(std::move(st));
+        }
+        const size_t presets = in.get<uint16_t>();
+        for (size_t i = 0; i < presets; ++i) {
+            RecipePreset p;
+            p.name = in.get_string();
+            p.schematic_id = in.get_string();
+            const size_t rcount = in.get<uint8_t>();
+            if (rcount > 16) throw PacketError("too many preset resources");
+            for (size_t j = 0; j < rcount; ++j) p.resource_ids.push_back(in.get_string());
+            const size_t ecount = in.get<uint8_t>();
+            if (ecount > 8) throw PacketError("too many preset enhancements");
+            for (size_t j = 0; j < ecount; ++j) p.enhancement_defs.push_back(in.get_string());
+            p.exp_quality_pct = in.get<uint8_t>();
+            m.presets.push_back(std::move(p));
+        }
+        message = std::move(m);
+        break;
+    }
+    case Type::crafting_ack:
+        message = CraftingAck{in.get<uint32_t>()};
+        break;
+    case Type::gather_request: {
+        GatherRequest m;
+        const uint8_t action = in.get<uint8_t>();
+        if (action > uint8_t(GatherRequest::salvage_item)) throw PacketError("bad gather action");
+        m.action = GatherRequest::Action(action);
+        m.category = in.get<uint8_t>();
+        if (m.category >= resource_category_count) throw PacketError("bad resource category");
+        m.target_id = in.get<uint64_t>();
+        message = m;
+        break;
+    }
+    case Type::craft_request: {
+        CraftRequest m;
+        const uint8_t action = in.get<uint8_t>();
+        if (action > uint8_t(CraftRequest::fulfill_order)) throw PacketError("bad craft action");
+        m.action = CraftRequest::Action(action);
+        m.schematic_id = in.get_string();
+        const size_t rcount = in.get<uint8_t>();
+        if (rcount > 16) throw PacketError("too many craft resources");
+        for (size_t i = 0; i < rcount; ++i) m.resource_ids.push_back(in.get_string());
+        const size_t ecount = in.get<uint8_t>();
+        if (ecount > 8) throw PacketError("too many craft enhancements");
+        for (size_t i = 0; i < ecount; ++i) m.enhancement_item_ids.push_back(in.get<uint64_t>());
+        const size_t edcount = in.get<uint8_t>();
+        if (edcount > 8) throw PacketError("too many preset enhancements");
+        for (size_t i = 0; i < edcount; ++i) m.enhancement_defs.push_back(in.get_string());
+        m.exp_quality_pct = in.get<uint8_t>();
+        m.batch_count = in.get<uint8_t>();
+        m.preset_name = in.get_string();
+        m.order_id = in.get_string();
+        message = std::move(m);
+        break;
+    }
     default:
         throw PacketError("unknown message type");
     }

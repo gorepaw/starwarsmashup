@@ -56,6 +56,8 @@ bool MemoryCharacterStore::remove(PersistentId id) {
     loadouts_.erase(id);
     quests_.erase(id);
     professions_.erase(id);
+    materials_.erase(id);
+    presets_.erase(id);
     std::erase_if(items_, [id](const auto& kv) { return kv.second.owner_id == id; });
     return characters_.erase(id) > 0;
 }
@@ -124,6 +126,37 @@ std::vector<ProfessionProgress> MemoryCharacterStore::list_professions(Persisten
 
 void MemoryCharacterStore::save_professions(PersistentId owner_id, std::span<const ProfessionProgress> professions) {
     professions_[owner_id].assign(professions.begin(), professions.end());
+}
+
+std::vector<MaterialStack> MemoryCharacterStore::list_materials(PersistentId owner_id) {
+    const auto it = materials_.find(owner_id);
+    return it == materials_.end() ? std::vector<MaterialStack>{} : it->second;
+}
+
+void MemoryCharacterStore::save_materials(PersistentId owner_id, std::span<const MaterialStack> materials) {
+    materials_[owner_id].assign(materials.begin(), materials.end());
+}
+
+std::vector<RecipePreset> MemoryCharacterStore::list_presets(PersistentId owner_id) {
+    const auto it = presets_.find(owner_id);
+    return it == presets_.end() ? std::vector<RecipePreset>{} : it->second;
+}
+
+void MemoryCharacterStore::save_preset(PersistentId owner_id, const RecipePreset& preset) {
+    auto& list = presets_[owner_id];
+    for (RecipePreset& p : list) {
+        if (p.name == preset.name) {
+            p = preset;
+            return;
+        }
+    }
+    list.push_back(preset);
+}
+
+bool MemoryCharacterStore::delete_preset(PersistentId owner_id, const std::string& name) {
+    auto it = presets_.find(owner_id);
+    if (it == presets_.end()) return false;
+    return std::erase_if(it->second, [&](const RecipePreset& p) { return p.name == name; }) > 0;
 }
 
 void ensure_starter_kit(CharacterStore& store, PersistentId char_id) {

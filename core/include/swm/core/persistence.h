@@ -7,6 +7,7 @@
 #include <string>
 #include <vector>
 
+#include "swm/core/crafting.h"
 #include "swm/core/items.h"
 #include "swm/core/profession.h"
 #include "swm/core/quest.h"
@@ -73,6 +74,12 @@ public:
     virtual std::vector<ProfessionProgress> list_professions(PersistentId owner_id) = 0;
     // Replaces it.
     virtual void save_professions(PersistentId owner_id, std::span<const ProfessionProgress> professions) = 0;
+    // Dedicated Material Vault & Recipe Presets.
+    virtual std::vector<MaterialStack> list_materials(PersistentId owner_id) = 0;
+    virtual void save_materials(PersistentId owner_id, std::span<const MaterialStack> materials) = 0;
+    virtual std::vector<RecipePreset> list_presets(PersistentId owner_id) = 0;
+    virtual void save_preset(PersistentId owner_id, const RecipePreset& preset) = 0;
+    virtual bool delete_preset(PersistentId owner_id, const std::string& name) = 0;
 };
 
 // Keeps everything in memory, for tests.
@@ -96,6 +103,11 @@ public:
     void save_quests(PersistentId owner_id, std::span<const QuestProgress> quests) override;
     std::vector<ProfessionProgress> list_professions(PersistentId owner_id) override;
     void save_professions(PersistentId owner_id, std::span<const ProfessionProgress> professions) override;
+    std::vector<MaterialStack> list_materials(PersistentId owner_id) override;
+    void save_materials(PersistentId owner_id, std::span<const MaterialStack> materials) override;
+    std::vector<RecipePreset> list_presets(PersistentId owner_id) override;
+    void save_preset(PersistentId owner_id, const RecipePreset& preset) override;
+    bool delete_preset(PersistentId owner_id, const std::string& name) override;
 
 private:
     std::map<PersistentId, CharacterRecord> characters_;
@@ -105,6 +117,8 @@ private:
     std::map<PersistentId, std::map<int, CharacterLoadout>> loadouts_;
     std::map<PersistentId, std::vector<QuestProgress>> quests_;
     std::map<PersistentId, std::vector<ProfessionProgress>> professions_;
+    std::map<PersistentId, std::vector<MaterialStack>> materials_;
+    std::map<PersistentId, std::vector<RecipePreset>> presets_;
 };
 
 // Grants the standard-issue starter kit and Loadout 0 if the character has no items yet.

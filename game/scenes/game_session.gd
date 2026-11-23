@@ -212,6 +212,9 @@ func start_session(config: Dictionary) -> bool:
 			_server.set_catalog(catalog_path, _os_path("imported_assets/items"))
 		if FileAccess.file_exists(_os_path("professions/professions.ini")):
 			_server.set_professions(_os_path("professions/professions.ini"))
+		if FileAccess.file_exists(_os_path("crafting/resources.ini")) \
+				and FileAccess.file_exists(_os_path("crafting/schematics.ini")):
+			_server.set_crafting(_os_path("crafting/resources.ini"), _os_path("crafting/schematics.ini"))
 		var spawn := _resolve_spawn(meta as Dictionary)
 		if _server.start(int(host_val), bake_path, spawn) != OK:
 			_emit_or_menu(1)
@@ -448,7 +451,7 @@ func _input(event: InputEvent) -> void:
 		return
 	if _hub_ui != null and _hub_ui.is_terminal_open():
 		if escape or event.is_action_pressed("interact") or event.is_action_pressed("quest_log") \
-				or event.is_action_pressed("professions"):
+				or event.is_action_pressed("professions") or event.is_action_pressed("workbench"):
 			_hub_ui.close_terminal()
 		elif event.is_action_pressed("leave_queue"):
 			_client.queue(-1)
@@ -499,15 +502,26 @@ func _input(event: InputEvent) -> void:
 	elif event.is_action_pressed("professions") and not event.is_echo() and _hub_ui != null \
 			and _client.get_match().is_empty() and not _client.get_recruiters().is_empty():
 		_capture_mouse(not _hub_ui.toggle_professions(_client))
+	elif event.is_action_pressed("workbench") and not event.is_echo() and _hub_ui != null \
+			and _client.get_match().is_empty() and not _client.get_recruiters().is_empty():
+		_capture_mouse(not _hub_ui.toggle_workbench(_client))
+	elif event.is_action_pressed("scanner") and not event.is_echo() and _hub_ui != null \
+			and _client.get_match().is_empty() and not _client.get_recruiters().is_empty():
+		_hub_ui.toggle_scanner()
+	elif _hub_ui != null and _hub_ui.is_scanner_active() and event is InputEventMouseButton and event.pressed \
+			and (event as InputEventMouseButton).button_index in [MOUSE_BUTTON_WHEEL_UP, MOUSE_BUTTON_WHEEL_DOWN]:
+		_hub_ui.cycle_scanner(-1 if (event as InputEventMouseButton).button_index == MOUSE_BUTTON_WHEEL_UP else 1)
 	elif event.is_action_pressed("loadout_1") and not event.is_echo() and _client.get_match().is_empty():
 		_client.switch_loadout(0)
 	elif event.is_action_pressed("loadout_2") and not event.is_echo() and _client.get_match().is_empty():
 		_client.switch_loadout(1)
 	elif event.is_action_pressed("loadout_3") and not event.is_echo() and _client.get_match().is_empty():
 		_client.switch_loadout(2)
-	elif event.is_action_pressed("interact") and not event.is_echo() and _hub_ui != null \
-			and _hub_ui.try_open_terminal(_client):
-		_capture_mouse(false)
+	elif event.is_action_pressed("interact") and not event.is_echo() and _hub_ui != null:
+		if _hub_ui.try_open_terminal(_client):
+			_capture_mouse(false)
+		elif _hub_ui.is_scanner_active():
+			_hub_ui.extract_scanner(_client)
 	elif (_hub_ui == null or not _hub_ui.has_ui()) and event is InputEventKey and event.pressed \
 			and (event as InputEventKey).physical_keycode in [KEY_F, KEY_G] \
 			and _hub_ui != null and not _hub_ui.at_recruiter(_client).is_empty():
@@ -1488,6 +1502,14 @@ func _setup_scene() -> void:
 	_hub_ui.loot_taken.connect(func(cid: int, slot: int) -> void: _client.take_loot(cid, slot))
 	_hub_ui.item_sold.connect(func(iid: int) -> void: _client.sell_item(iid))
 	_hub_ui.all_junk_sold.connect(func() -> void: _client.sell_all_junk())
+	_hub_ui.corpse_harvested.connect(func(cid: int) -> void: _client.harvest_corpse(cid))
+	_hub_ui.craft_requested.connect(func(sid: String, rids: PackedStringArray, eids: PackedInt64Array, qpct: int, cnt: int) -> void:
+		_client.craft_item(sid, rids, eids, qpct, cnt))
+	_hub_ui.preset_saved.connect(func(pname: String, sid: String, rids: PackedStringArray, edefs: PackedStringArray, qpct: int) -> void:
+		_client.save_recipe_preset(pname, sid, rids, edefs, qpct))
+	_hub_ui.preset_deleted.connect(func(pname: String) -> void: _client.delete_recipe_preset(pname))
+	_hub_ui.work_order_fulfilled.connect(func(oid: String) -> void: _client.fulfill_work_order(oid))
+	_hub_ui.item_salvaged.connect(func(iid: int) -> void: _client.salvage_item(iid))
 	_hub_ui.quest_accepted.connect(func(id: String) -> void: _client.accept_quest(id))
 	_hub_ui.quest_abandoned.connect(func(id: String) -> void: _client.abandon_quest(id))
 	_hub_ui.terminal_closed.connect(func() -> void:
@@ -1498,6 +1520,10 @@ func _setup_scene() -> void:
 		if FileAccess.file_exists(_os_path("professions/professions.ini")) \
 				and _catalog_store.load_professions(_os_path("professions/professions.ini")) == OK:
 			_hub_ui.set_professions(_catalog_store.get_professions(), _catalog_store)
+		if FileAccess.file_exists(_os_path("crafting/resources.ini")) \
+				and FileAccess.file_exists(_os_path("crafting/schematics.ini")) \
+				and _catalog_store.load_crafting(_os_path("crafting/resources.ini"), _os_path("crafting/schematics.ini")) == OK:
+			_hub_ui.set_crafting(_catalog_store)
 		if _catalog_store.load_catalog(_os_path("items/swg_catalog.ini"), _os_path("imported_assets/items")) == OK:
 			_catalog = _catalog_store.get_catalog()
 			_battle_ui.set_catalog_names(_catalog)

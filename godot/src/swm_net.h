@@ -178,6 +178,19 @@ public:
     godot::Dictionary get_quests() const;
     // Our experience in each profession we have any in: [{id, xp}].
     godot::Array get_professions() const;
+    godot::Array get_workbenches() const;
+    godot::Array get_materials() const;
+    godot::Array get_presets() const;
+    void gather_extract(const godot::String& category_name);
+    void harvest_corpse(int64_t corpse_entity);
+    void salvage_item(int64_t item_id);
+    void craft_item(const godot::String& schematic_id, const godot::PackedStringArray& resource_ids,
+                    const godot::PackedInt64Array& enhancement_ids, int64_t exp_quality_pct, int64_t batch_count);
+    void save_recipe_preset(const godot::String& name, const godot::String& schematic_id,
+                            const godot::PackedStringArray& resource_ids,
+                            const godot::PackedStringArray& enhancement_defs, int64_t exp_quality_pct);
+    void delete_recipe_preset(const godot::String& name);
+    void fulfill_work_order(const godot::String& order_id);
     void talk_to(int64_t npc_entity);
     void use_mission_terminal(int64_t index);
     void accept_quest(const godot::String& id);
@@ -259,6 +272,7 @@ public:
     // Loads the profession roster (game/professions/professions.ini): players
     // earn experience and their loadouts' specialization slots apply.
     godot::Error set_professions(const godot::String& path);
+    godot::Error set_crafting(const godot::String& resources_path, const godot::String& schematics_path);
     // `spawn` is where new characters start, in Galaxies coordinates (x, z).
     godot::Error start(int64_t port, const godot::String& bake_prefix, const godot::Vector2& spawn);
     void update();
@@ -289,6 +303,8 @@ private:
     bool has_catalog_ = false;
     core::ProfessionBook professions_;
     bool has_professions_ = false;
+    core::CraftingBook crafting_;
+    bool has_crafting_ = false;
     core::UdpHubNetwork hub_network_;
     std::unique_ptr<core::Hub> hub_;
 };

@@ -603,6 +603,105 @@ godot::Array SwmClient::get_professions() const {
     return out;
 }
 
+godot::Array SwmClient::get_workbenches() const {
+    godot::Array out;
+    if (client()) {
+        const auto& wbs = client()->workbenches();
+        for (size_t i = 0; i < wbs.size(); ++i) {
+            godot::Dictionary entry;
+            entry["index"] = int64_t(i);
+            entry["name"] = godot::String::utf8(wbs[i].name.c_str());
+            entry["position"] = to_godot(wbs[i].position);
+            entry["radius"] = wbs[i].radius;
+            out.push_back(entry);
+        }
+    }
+    return out;
+}
+
+godot::Array SwmClient::get_materials() const {
+    godot::Array out;
+    if (client()) {
+        for (const core::MaterialStack& m : client()->crafting().materials) {
+            godot::Dictionary entry;
+            entry["resource_id"] = godot::String::utf8(m.resource_id.c_str());
+            entry["amount"] = m.amount;
+            out.push_back(entry);
+        }
+    }
+    return out;
+}
+
+godot::Array SwmClient::get_presets() const {
+    godot::Array out;
+    if (client()) {
+        for (const core::RecipePreset& p : client()->crafting().presets) {
+            godot::Dictionary entry;
+            entry["name"] = godot::String::utf8(p.name.c_str());
+            entry["schematic_id"] = godot::String::utf8(p.schematic_id.c_str());
+            godot::PackedStringArray rids, edefs;
+            for (const std::string& s : p.resource_ids) rids.push_back(godot::String::utf8(s.c_str()));
+            for (const std::string& s : p.enhancement_defs) edefs.push_back(godot::String::utf8(s.c_str()));
+            entry["resource_ids"] = rids;
+            entry["enhancement_defs"] = edefs;
+            entry["exp_quality_pct"] = int64_t(p.exp_quality_pct);
+            out.push_back(entry);
+        }
+    }
+    return out;
+}
+
+void SwmClient::gather_extract(const godot::String& category_name) {
+    if (client()) {
+        const auto cat = core::resource_category_from_name(to_std(category_name));
+        if (cat) client()->gather_extract(*cat);
+    }
+}
+
+void SwmClient::harvest_corpse(int64_t corpse_entity) {
+    if (client() && corpse_entity > 0) {
+        client()->harvest_corpse(uint32_t(corpse_entity));
+    }
+}
+
+void SwmClient::salvage_item(int64_t item_id) {
+    if (client() && item_id > 0) {
+        client()->salvage_item(uint64_t(item_id));
+    }
+}
+
+void SwmClient::craft_item(const godot::String& schematic_id, const godot::PackedStringArray& resource_ids,
+                           const godot::PackedInt64Array& enhancement_ids, int64_t exp_quality_pct,
+                           int64_t batch_count) {
+    if (!client()) return;
+    std::vector<std::string> rids;
+    rids.reserve(size_t(resource_ids.size()));
+    for (int i = 0; i < resource_ids.size(); ++i) rids.push_back(to_std(resource_ids[i]));
+    std::vector<uint64_t> eids;
+    eids.reserve(size_t(enhancement_ids.size()));
+    for (int i = 0; i < enhancement_ids.size(); ++i) eids.push_back(uint64_t(enhancement_ids[i]));
+    client()->craft_item(to_std(schematic_id), std::move(rids), std::move(eids), int(exp_quality_pct), int(batch_count));
+}
+
+void SwmClient::save_recipe_preset(const godot::String& name, const godot::String& schematic_id,
+                                   const godot::PackedStringArray& resource_ids,
+                                   const godot::PackedStringArray& enhancement_defs, int64_t exp_quality_pct) {
+    if (!client()) return;
+    std::vector<std::string> rids, edefs;
+    for (int i = 0; i < resource_ids.size(); ++i) rids.push_back(to_std(resource_ids[i]));
+    for (int i = 0; i < enhancement_defs.size(); ++i) edefs.push_back(to_std(enhancement_defs[i]));
+    client()->save_recipe_preset(to_std(name), to_std(schematic_id), std::move(rids), std::move(edefs),
+                                 int(exp_quality_pct));
+}
+
+void SwmClient::delete_recipe_preset(const godot::String& name) {
+    if (client()) client()->delete_recipe_preset(to_std(name));
+}
+
+void SwmClient::fulfill_work_order(const godot::String& order_id) {
+    if (client()) client()->fulfill_work_order(to_std(order_id));
+}
+
 godot::Dictionary SwmClient::get_quests() const {
     godot::Dictionary out;
     if (!client()) {
@@ -1366,6 +1465,18 @@ void SwmClient::_bind_methods() {
     ClassDB::bind_method(D_METHOD("get_mission_terminals"), &SwmClient::get_mission_terminals);
     ClassDB::bind_method(D_METHOD("get_quests"), &SwmClient::get_quests);
     ClassDB::bind_method(D_METHOD("get_professions"), &SwmClient::get_professions);
+    ClassDB::bind_method(D_METHOD("get_workbenches"), &SwmClient::get_workbenches);
+    ClassDB::bind_method(D_METHOD("get_materials"), &SwmClient::get_materials);
+    ClassDB::bind_method(D_METHOD("get_presets"), &SwmClient::get_presets);
+    ClassDB::bind_method(D_METHOD("gather_extract", "category_name"), &SwmClient::gather_extract);
+    ClassDB::bind_method(D_METHOD("harvest_corpse", "corpse_entity"), &SwmClient::harvest_corpse);
+    ClassDB::bind_method(D_METHOD("salvage_item", "item_id"), &SwmClient::salvage_item);
+    ClassDB::bind_method(D_METHOD("craft_item", "schematic_id", "resource_ids", "enhancement_ids", "exp_quality_pct", "batch_count"),
+                         &SwmClient::craft_item);
+    ClassDB::bind_method(D_METHOD("save_recipe_preset", "name", "schematic_id", "resource_ids", "enhancement_defs", "exp_quality_pct"),
+                         &SwmClient::save_recipe_preset);
+    ClassDB::bind_method(D_METHOD("delete_recipe_preset", "name"), &SwmClient::delete_recipe_preset);
+    ClassDB::bind_method(D_METHOD("fulfill_work_order", "order_id"), &SwmClient::fulfill_work_order);
     ClassDB::bind_method(D_METHOD("talk_to", "npc_entity"), &SwmClient::talk_to);
     ClassDB::bind_method(D_METHOD("use_mission_terminal", "index"), &SwmClient::use_mission_terminal);
     ClassDB::bind_method(D_METHOD("accept_quest", "id"), &SwmClient::accept_quest);
@@ -1471,6 +1582,18 @@ godot::Error SwmServer::set_professions(const godot::String& path) {
     return godot::OK;
 }
 
+godot::Error SwmServer::set_crafting(const godot::String& resources_path, const godot::String& schematics_path) {
+    try {
+        crafting_.load_resources(to_std(resources_path));
+        crafting_.load_schematics(to_std(schematics_path));
+        has_crafting_ = true;
+    } catch (const std::exception& error) {
+        godot::UtilityFunctions::push_error("set_crafting: ", error.what());
+        return godot::ERR_CANT_OPEN;
+    }
+    return godot::OK;
+}
+
 godot::Error SwmServer::start(int64_t port, const godot::String& bake_prefix, const godot::Vector2& spawn) {
     stop();  // the server refers to the ground, store and link replaced below
     try {
@@ -1489,6 +1612,7 @@ godot::Error SwmServer::start(int64_t port, const godot::String& bake_prefix, co
     config.battlefield = battlefield_;
     config.catalog = has_catalog_ ? &catalog_ : nullptr;
     config.professions = has_professions_ ? &professions_ : nullptr;
+    config.crafting = has_crafting_ ? &crafting_ : nullptr;
     config.spawn = {-spawn.x, 0, spawn.y};  // Galaxies to game coordinates
     server_ = std::make_unique<core::GameServer>(*udp_, *world_, config, store_.get());
     server_->log = [](const std::string& line) { godot::UtilityFunctions::print("server: ", line.c_str()); };
@@ -1556,6 +1680,7 @@ void SwmServer::_bind_methods() {
     ClassDB::bind_method(D_METHOD("set_hub", "path"), &SwmServer::set_hub);
     ClassDB::bind_method(D_METHOD("set_catalog", "catalog_ini", "bf2_items_dir"), &SwmServer::set_catalog);
     ClassDB::bind_method(D_METHOD("set_professions", "path"), &SwmServer::set_professions);
+    ClassDB::bind_method(D_METHOD("set_crafting", "resources_path", "schematics_path"), &SwmServer::set_crafting);
     ClassDB::bind_method(D_METHOD("add_building", "collision_path", "position", "yaw_degrees"),
                          &SwmServer::add_building);
     ClassDB::bind_method(D_METHOD("start", "port", "bake_prefix", "spawn"), &SwmServer::start);

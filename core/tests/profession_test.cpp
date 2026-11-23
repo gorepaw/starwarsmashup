@@ -55,6 +55,9 @@ void test_roster() {
     CHECK(in_wave("7B") == 10);
     CHECK(in_wave("7C") == 4);
     for (const ProfessionDef& def : book.all()) {
+        if (def.wave == "7A") {
+            CHECK(def.available);
+        }
         // Major unlocks at 1, 25, 50, 75 and 100.
         std::vector<int> levels;
         for (const ProfessionMilestone& m : def.milestones) levels.push_back(m.level);

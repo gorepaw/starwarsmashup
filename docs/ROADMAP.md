@@ -366,13 +366,13 @@ Streamlined 1–100 Galaxies professions that widen your tactical options, gear,
 **Wave 7A: Foundation (17 professions)**
 - [x] 4 decoupled armor professions (Unarmored, Light/Recon, Medium/Battle, Heavy/Assault with `explosion_push_resist`) plus universal Deflector Shield (PSG) mechanics (recharging buffer, `electro` 1.75× overload + lockout, `melee` 50% pierce + recharge disruption, HUD shield bar).
 - [x] 5 weapon professions: Pistols, Carbines, Rifles, Heavy Weapons, and consolidated Melee (`WeaponArchetype::melee`, lunge, arc sweep, block & timed parry, stagger, and 4 SWG melee weapons).
-- [ ] 3 gathering professions: Surveying & Mining, Foraging & Harvesting, and Salvaging.
-- [ ] 5 core crafting professions: Weaponsmith, Armorsmith, Tailor, Chef, and Architect (field camps/cover/furniture; housing in Stage 10+).
+- [x] 3 gathering professions: Surveying & Mining, Foraging & Harvesting, and Salvaging.
+- [x] 5 core crafting professions: Weaponsmith, Armorsmith, Tailor, Chef, and Architect (field camps/cover/furniture; housing in Stage 10+).
 
 **Streamlined gathering & crafting UX**
-- [ ] Unified Multi-Scanner projecting 3D holographic terrain contours and directional pings in-world, plus active field extraction (no modal polling or AFK kneeling).
-- [ ] Dedicated Material Vault separate from gear inventory, sorted by plain-English stat names.
-- [ ] Single-screen Unified Workbench with auto-fill ("Best for [Stat]" / "Cheapest"), 1-step base crafting + 1–2 optional enhancement slots, visible experimentation odds, Recipe Presets, batch crafting, and Hub Work Orders / Salvaging instead of grind-trash.
+- [x] Unified Multi-Scanner projecting 3D holographic terrain contours and directional pings in-world, plus active field extraction (no modal polling or AFK kneeling).
+- [x] Dedicated Material Vault separate from gear inventory, sorted by plain-English stat names.
+- [x] Single-screen Unified Workbench with auto-fill ("Best for [Stat]" / "Cheapest"), 1-step base crafting + 1–2 optional enhancement slots, visible experimentation odds, Recipe Presets, batch crafting, and Hub Work Orders / Salvaging instead of grind-trash.
 
 **Wave 7B: Specialist combat, support, social & economy (10 professions)**
 - [ ] Bounty Hunter, Smuggler, Squad Leader, Doctor, Combat Medic, Ranger, unified Entertainer (15–30 s Inspiration buffs), Image Designer, Merchant, and Pilot (tying into Stages 6 & 8). Politician deferred to Stage 10+; Jedi parked per [Design](DESIGN.md#open-questions).

@@ -138,6 +138,21 @@ SqliteCharacterStore::SqliteCharacterStore(const std::filesystem::path& path) {
                  " xp INTEGER NOT NULL DEFAULT 0,"
                  " PRIMARY KEY (owner_id, profession_id)"
                  ") STRICT");
+            exec("CREATE TABLE IF NOT EXISTS material_vault ("
+                 " owner_id INTEGER NOT NULL,"
+                 " resource_id TEXT NOT NULL,"
+                 " amount INTEGER NOT NULL DEFAULT 0,"
+                 " PRIMARY KEY (owner_id, resource_id)"
+                 ") STRICT");
+            exec("CREATE TABLE IF NOT EXISTS recipe_presets ("
+                 " owner_id INTEGER NOT NULL,"
+                 " name TEXT NOT NULL,"
+                 " schematic_id TEXT NOT NULL,"
+                 " resource_ids TEXT NOT NULL DEFAULT '',"
+                 " enhancement_defs TEXT NOT NULL DEFAULT '',"
+                 " exp_quality_pct INTEGER NOT NULL DEFAULT 50,"
+                 " PRIMARY KEY (owner_id, name)"
+                 ") STRICT");
             exec(("PRAGMA user_version = " + std::to_string(schema_version)).c_str());
             exec("COMMIT");
         } else if (version == 1 || version == 2) {
@@ -188,6 +203,21 @@ SqliteCharacterStore::SqliteCharacterStore(const std::filesystem::path& path) {
                  " xp INTEGER NOT NULL DEFAULT 0,"
                  " PRIMARY KEY (owner_id, profession_id)"
                  ") STRICT");
+            exec("CREATE TABLE IF NOT EXISTS material_vault ("
+                 " owner_id INTEGER NOT NULL,"
+                 " resource_id TEXT NOT NULL,"
+                 " amount INTEGER NOT NULL DEFAULT 0,"
+                 " PRIMARY KEY (owner_id, resource_id)"
+                 ") STRICT");
+            exec("CREATE TABLE IF NOT EXISTS recipe_presets ("
+                 " owner_id INTEGER NOT NULL,"
+                 " name TEXT NOT NULL,"
+                 " schematic_id TEXT NOT NULL,"
+                 " resource_ids TEXT NOT NULL DEFAULT '',"
+                 " enhancement_defs TEXT NOT NULL DEFAULT '',"
+                 " exp_quality_pct INTEGER NOT NULL DEFAULT 50,"
+                 " PRIMARY KEY (owner_id, name)"
+                 ") STRICT");
             exec(("PRAGMA user_version = " + std::to_string(schema_version)).c_str());
             exec("COMMIT");
         } else if (version == 3) {
@@ -209,6 +239,21 @@ SqliteCharacterStore::SqliteCharacterStore(const std::filesystem::path& path) {
                  " xp INTEGER NOT NULL DEFAULT 0,"
                  " PRIMARY KEY (owner_id, profession_id)"
                  ") STRICT");
+            exec("CREATE TABLE IF NOT EXISTS material_vault ("
+                 " owner_id INTEGER NOT NULL,"
+                 " resource_id TEXT NOT NULL,"
+                 " amount INTEGER NOT NULL DEFAULT 0,"
+                 " PRIMARY KEY (owner_id, resource_id)"
+                 ") STRICT");
+            exec("CREATE TABLE IF NOT EXISTS recipe_presets ("
+                 " owner_id INTEGER NOT NULL,"
+                 " name TEXT NOT NULL,"
+                 " schematic_id TEXT NOT NULL,"
+                 " resource_ids TEXT NOT NULL DEFAULT '',"
+                 " enhancement_defs TEXT NOT NULL DEFAULT '',"
+                 " exp_quality_pct INTEGER NOT NULL DEFAULT 50,"
+                 " PRIMARY KEY (owner_id, name)"
+                 ") STRICT");
             exec(("PRAGMA user_version = " + std::to_string(schema_version)).c_str());
             exec("COMMIT");
         } else if (version == 4) {
@@ -221,6 +266,40 @@ SqliteCharacterStore::SqliteCharacterStore(const std::filesystem::path& path) {
                  " profession_id TEXT NOT NULL,"
                  " xp INTEGER NOT NULL DEFAULT 0,"
                  " PRIMARY KEY (owner_id, profession_id)"
+                 ") STRICT");
+            exec("CREATE TABLE IF NOT EXISTS material_vault ("
+                 " owner_id INTEGER NOT NULL,"
+                 " resource_id TEXT NOT NULL,"
+                 " amount INTEGER NOT NULL DEFAULT 0,"
+                 " PRIMARY KEY (owner_id, resource_id)"
+                 ") STRICT");
+            exec("CREATE TABLE IF NOT EXISTS recipe_presets ("
+                 " owner_id INTEGER NOT NULL,"
+                 " name TEXT NOT NULL,"
+                 " schematic_id TEXT NOT NULL,"
+                 " resource_ids TEXT NOT NULL DEFAULT '',"
+                 " enhancement_defs TEXT NOT NULL DEFAULT '',"
+                 " exp_quality_pct INTEGER NOT NULL DEFAULT 50,"
+                 " PRIMARY KEY (owner_id, name)"
+                 ") STRICT");
+            exec(("PRAGMA user_version = " + std::to_string(schema_version)).c_str());
+            exec("COMMIT");
+        } else if (version == 5) {
+            exec("BEGIN");
+            exec("CREATE TABLE IF NOT EXISTS material_vault ("
+                 " owner_id INTEGER NOT NULL,"
+                 " resource_id TEXT NOT NULL,"
+                 " amount INTEGER NOT NULL DEFAULT 0,"
+                 " PRIMARY KEY (owner_id, resource_id)"
+                 ") STRICT");
+            exec("CREATE TABLE IF NOT EXISTS recipe_presets ("
+                 " owner_id INTEGER NOT NULL,"
+                 " name TEXT NOT NULL,"
+                 " schematic_id TEXT NOT NULL,"
+                 " resource_ids TEXT NOT NULL DEFAULT '',"
+                 " enhancement_defs TEXT NOT NULL DEFAULT '',"
+                 " exp_quality_pct INTEGER NOT NULL DEFAULT 50,"
+                 " PRIMARY KEY (owner_id, name)"
                  ") STRICT");
             exec(("PRAGMA user_version = " + std::to_string(schema_version)).c_str());
             exec("COMMIT");
@@ -260,6 +339,17 @@ SqliteCharacterStore::SqliteCharacterStore(const std::filesystem::path& path) {
         list_professions_ = prepare(db_, "SELECT profession_id, xp FROM professions WHERE owner_id = ? ORDER BY rowid ASC");
         insert_profession_ = prepare(db_, "INSERT INTO professions (owner_id, profession_id, xp) VALUES (?, ?, ?)");
         remove_professions_by_owner_ = prepare(db_, "DELETE FROM professions WHERE owner_id = ?");
+        list_materials_ = prepare(db_, "SELECT resource_id, amount FROM material_vault WHERE owner_id = ? ORDER BY rowid ASC");
+        insert_material_ = prepare(db_, "INSERT INTO material_vault (owner_id, resource_id, amount) VALUES (?, ?, ?)");
+        remove_materials_by_owner_ = prepare(db_, "DELETE FROM material_vault WHERE owner_id = ?");
+        list_presets_ = prepare(db_, "SELECT name, schematic_id, resource_ids, enhancement_defs, exp_quality_pct FROM recipe_presets WHERE owner_id = ? ORDER BY rowid ASC");
+        save_preset_ = prepare(db_, "INSERT INTO recipe_presets (owner_id, name, schematic_id, resource_ids, enhancement_defs, exp_quality_pct) "
+                                    "VALUES (?, ?, ?, ?, ?, ?) "
+                                    "ON CONFLICT(owner_id, name) DO UPDATE SET "
+                                    "schematic_id = excluded.schematic_id, resource_ids = excluded.resource_ids, "
+                                    "enhancement_defs = excluded.enhancement_defs, exp_quality_pct = excluded.exp_quality_pct");
+        delete_preset_ = prepare(db_, "DELETE FROM recipe_presets WHERE owner_id = ? AND name = ?");
+        remove_presets_by_owner_ = prepare(db_, "DELETE FROM recipe_presets WHERE owner_id = ?");
     } catch (...) {
         close();
         throw;
@@ -275,7 +365,8 @@ void SqliteCharacterStore::close() {
          {find_, find_by_name_, list_all_, insert_, update_, delete_, list_items_, grant_item_, remove_item_,
           remove_items_by_owner_, list_loadouts_, save_loadout_, remove_loadouts_by_owner_, update_economy_,
           list_quests_, insert_quest_, remove_quests_by_owner_, list_professions_, insert_profession_,
-          remove_professions_by_owner_}) {
+          remove_professions_by_owner_, list_materials_, insert_material_, remove_materials_by_owner_,
+          list_presets_, save_preset_, delete_preset_, remove_presets_by_owner_}) {
         sqlite3_finalize(statement);
     }
     find_ = find_by_name_ = list_all_ = insert_ = update_ = delete_ = nullptr;
@@ -283,6 +374,8 @@ void SqliteCharacterStore::close() {
     list_loadouts_ = save_loadout_ = remove_loadouts_by_owner_ = update_economy_ = nullptr;
     list_quests_ = insert_quest_ = remove_quests_by_owner_ = nullptr;
     list_professions_ = insert_profession_ = remove_professions_by_owner_ = nullptr;
+    list_materials_ = insert_material_ = remove_materials_by_owner_ = nullptr;
+    list_presets_ = save_preset_ = delete_preset_ = remove_presets_by_owner_ = nullptr;
     sqlite3_close(db_);
     db_ = nullptr;
 }
@@ -435,6 +528,20 @@ bool SqliteCharacterStore::remove(PersistentId id) {
         sqlite3_bind_int64(remove_professions_by_owner_, 1, sqlite3_int64(id));
         if (sqlite3_step(remove_professions_by_owner_) != SQLITE_DONE) {
             fail(db_, "delete character professions");
+        }
+    }
+    {
+        Reset r5{remove_materials_by_owner_};
+        sqlite3_bind_int64(remove_materials_by_owner_, 1, sqlite3_int64(id));
+        if (sqlite3_step(remove_materials_by_owner_) != SQLITE_DONE) {
+            fail(db_, "delete character materials");
+        }
+    }
+    {
+        Reset r6{remove_presets_by_owner_};
+        sqlite3_bind_int64(remove_presets_by_owner_, 1, sqlite3_int64(id));
+        if (sqlite3_step(remove_presets_by_owner_) != SQLITE_DONE) {
+            fail(db_, "delete character presets");
         }
     }
     Reset reset{delete_};
@@ -643,6 +750,116 @@ void SqliteCharacterStore::save_professions(PersistentId owner_id, std::span<con
         sqlite3_exec(db_, "ROLLBACK", nullptr, nullptr, nullptr);
         throw;
     }
+}
+
+namespace {
+
+std::string join_csv(const std::vector<std::string>& list) {
+    std::string out;
+    for (size_t i = 0; i < list.size(); ++i) {
+        if (i > 0) out += ',';
+        out += list[i];
+    }
+    return out;
+}
+
+std::vector<std::string> split_csv(const char* raw) {
+    std::vector<std::string> out;
+    if (!raw || !*raw) return out;
+    std::string cur;
+    for (const char* p = raw; *p; ++p) {
+        if (*p == ',') {
+            out.push_back(std::move(cur));
+            cur.clear();
+        } else {
+            cur += *p;
+        }
+    }
+    out.push_back(std::move(cur));
+    return out;
+}
+
+} // namespace
+
+std::vector<MaterialStack> SqliteCharacterStore::list_materials(PersistentId owner_id) {
+    Reset reset{list_materials_};
+    sqlite3_bind_int64(list_materials_, 1, sqlite3_int64(owner_id));
+    std::vector<MaterialStack> out;
+    for (;;) {
+        const int step = sqlite3_step(list_materials_);
+        if (step == SQLITE_DONE) break;
+        if (step != SQLITE_ROW) fail(db_, "list_materials");
+        const auto* id = reinterpret_cast<const char*>(sqlite3_column_text(list_materials_, 0));
+        out.push_back({id ? id : "", sqlite3_column_int64(list_materials_, 1)});
+    }
+    return out;
+}
+
+void SqliteCharacterStore::save_materials(PersistentId owner_id, std::span<const MaterialStack> materials) {
+    exec("BEGIN");
+    try {
+        {
+            Reset reset{remove_materials_by_owner_};
+            sqlite3_bind_int64(remove_materials_by_owner_, 1, sqlite3_int64(owner_id));
+            if (sqlite3_step(remove_materials_by_owner_) != SQLITE_DONE) fail(db_, "save_materials");
+        }
+        for (const MaterialStack& m : materials) {
+            if (m.amount <= 0) continue;
+            Reset reset{insert_material_};
+            sqlite3_bind_int64(insert_material_, 1, sqlite3_int64(owner_id));
+            sqlite3_bind_text(insert_material_, 2, m.resource_id.c_str(), int(m.resource_id.size()), SQLITE_TRANSIENT);
+            sqlite3_bind_int64(insert_material_, 3, m.amount);
+            if (sqlite3_step(insert_material_) != SQLITE_DONE) fail(db_, "save_materials");
+        }
+        exec("COMMIT");
+    } catch (...) {
+        sqlite3_exec(db_, "ROLLBACK", nullptr, nullptr, nullptr);
+        throw;
+    }
+}
+
+std::vector<RecipePreset> SqliteCharacterStore::list_presets(PersistentId owner_id) {
+    Reset reset{list_presets_};
+    sqlite3_bind_int64(list_presets_, 1, sqlite3_int64(owner_id));
+    std::vector<RecipePreset> out;
+    for (;;) {
+        const int step = sqlite3_step(list_presets_);
+        if (step == SQLITE_DONE) break;
+        if (step != SQLITE_ROW) fail(db_, "list_presets");
+        const auto* name = reinterpret_cast<const char*>(sqlite3_column_text(list_presets_, 0));
+        const auto* sch = reinterpret_cast<const char*>(sqlite3_column_text(list_presets_, 1));
+        const auto* rids = reinterpret_cast<const char*>(sqlite3_column_text(list_presets_, 2));
+        const auto* edefs = reinterpret_cast<const char*>(sqlite3_column_text(list_presets_, 3));
+        RecipePreset p;
+        p.name = name ? name : "";
+        p.schematic_id = sch ? sch : "";
+        p.resource_ids = split_csv(rids);
+        p.enhancement_defs = split_csv(edefs);
+        p.exp_quality_pct = uint8_t(std::clamp(sqlite3_column_int(list_presets_, 4), 0, 100));
+        out.push_back(std::move(p));
+    }
+    return out;
+}
+
+void SqliteCharacterStore::save_preset(PersistentId owner_id, const RecipePreset& preset) {
+    Reset reset{save_preset_};
+    const std::string rids = join_csv(preset.resource_ids);
+    const std::string edefs = join_csv(preset.enhancement_defs);
+    sqlite3_bind_int64(save_preset_, 1, sqlite3_int64(owner_id));
+    sqlite3_bind_text(save_preset_, 2, preset.name.c_str(), int(preset.name.size()), SQLITE_TRANSIENT);
+    sqlite3_bind_text(save_preset_, 3, preset.schematic_id.c_str(), int(preset.schematic_id.size()), SQLITE_TRANSIENT);
+    sqlite3_bind_text(save_preset_, 4, rids.c_str(), int(rids.size()), SQLITE_TRANSIENT);
+    sqlite3_bind_text(save_preset_, 5, edefs.c_str(), int(edefs.size()), SQLITE_TRANSIENT);
+    sqlite3_bind_int(save_preset_, 6, int(preset.exp_quality_pct));
+    if (sqlite3_step(save_preset_) != SQLITE_DONE) fail(db_, "save_preset");
+}
+
+bool SqliteCharacterStore::delete_preset(PersistentId owner_id, const std::string& name) {
+    Reset reset{delete_preset_};
+    sqlite3_bind_int64(delete_preset_, 1, sqlite3_int64(owner_id));
+    sqlite3_bind_text(delete_preset_, 2, name.c_str(), int(name.size()), SQLITE_TRANSIENT);
+    if (sqlite3_step(delete_preset_) != SQLITE_DONE) fail(db_, "delete_preset");
+    return sqlite3_changes(db_) > 0;
 }
 
 } // namespace swm::core

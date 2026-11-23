@@ -19,6 +19,7 @@ var tracker := {}     # the tracked quest: {title, step, progress, distance, log
 # Where the tracked quest's step is, on screen: {at (pixels), onscreen,
 # angle (radians: which way it lies, off screen), distance}; empty: none.
 var waypoint := {}
+var scanner := {}     # {mode, resource_name, concentration, peak_distance, cooldown, hint}; empty: off
 
 
 func _init(shared_art: RefCounted = null) -> void:
@@ -33,6 +34,8 @@ func _paint() -> void:
 		_paint_waypoint()
 	if not tracker.is_empty():
 		_paint_tracker()
+	if not scanner.is_empty():
+		_paint_scanner()
 	if tooltip != "":
 		_paint_tooltip()
 	if not queue.is_empty():
@@ -167,3 +170,24 @@ func _paint_notice() -> void:
 	text("gamefont_large", headline, Vector2(size.x * 0.5, top), "Center", color, 1.4 if detail != "" else 1.0)
 	if detail != "":
 		text("gamefont_small", detail, Vector2(size.x * 0.5, top + 48 * u), "Center", Color(TEXT, notice_alpha))
+
+
+func _paint_scanner() -> void:
+	var box := Rect2(Vector2(size.x * 0.5 - 190 * u, size.y - 166 * u), Vector2(380, 62) * u)
+	frame(box)
+	var mode_str := str(scanner.get("mode_label", scanner.get("mode", "Mineral"))).to_upper()
+	var res_name := str(scanner.get("resource_name", "None"))
+	var conc := clampf(float(scanner.get("concentration", 0.0)), 0.0, 1.0)
+	var dist := float(scanner.get("peak_distance", 0.0))
+	var cd := float(scanner.get("cooldown", 0.0))
+	text("gamefont_tiny", "SCANNER [%s]  %s" % [mode_str, res_name], Vector2(box.position.x + 12 * u, box.position.y + 8 * u), "Left", ACCENT)
+	var dist_txt := "Peak %d m" % roundi(dist) if dist >= 0.0 else "No vein"
+	text("gamefont_tiny", "%d%%  |  %s" % [roundi(conc * 100.0), dist_txt], Vector2(box.end.x - 12 * u, box.position.y + 8 * u), "Right", TEXT)
+	var bar_bg := Rect2(Vector2(box.position.x + 12 * u, box.position.y + 28 * u), Vector2(box.size.x - 24 * u, 8 * u))
+	draw_rect(bar_bg, Color(0.12, 0.16, 0.2, 0.85))
+	var bar_col := Color(0.25, 0.92, 0.55) if conc >= 0.6 else (ACCENT if conc >= 0.3 else Color(0.85, 0.45, 0.25))
+	draw_rect(Rect2(bar_bg.position, Vector2(bar_bg.size.x * conc, bar_bg.size.y)), bar_col)
+	var hint := str(scanner.get("hint", "[E] Extract  [Wheel] Mode  [G] Off"))
+	if cd > 0.05:
+		hint = "Extracting... %.1fs" % cd
+	text("gamefont_tiny", hint, Vector2(box.get_center().x, box.position.y + 42 * u), "Center", DIM)

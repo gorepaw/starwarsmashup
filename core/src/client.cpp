@@ -129,6 +129,71 @@ void GameClient::abandon_quest(const std::string& id) {
     }
 }
 
+void GameClient::gather_extract(ResourceCategory category) {
+    if (status_ == Status::connected) {
+        link_.send(config_.server, net::encode(net::GatherRequest{net::GatherRequest::extract_terrain, uint8_t(category), 0}));
+    }
+}
+
+void GameClient::harvest_corpse(uint32_t corpse_entity) {
+    if (status_ == Status::connected && corpse_entity != 0) {
+        link_.send(config_.server, net::encode(net::GatherRequest{net::GatherRequest::harvest_corpse, 0, corpse_entity}));
+    }
+}
+
+void GameClient::salvage_item(uint64_t item_id) {
+    if (status_ == Status::connected && item_id != 0) {
+        link_.send(config_.server, net::encode(net::GatherRequest{net::GatherRequest::salvage_item, 0, item_id}));
+    }
+}
+
+void GameClient::craft_item(const std::string& schematic_id, std::vector<std::string> resource_ids,
+                            std::vector<uint64_t> enhancement_item_ids, int exp_quality_pct, int batch_count) {
+    if (status_ == Status::connected && !schematic_id.empty()) {
+        net::CraftRequest req;
+        req.action = net::CraftRequest::craft;
+        req.schematic_id = schematic_id;
+        req.resource_ids = std::move(resource_ids);
+        req.enhancement_item_ids = std::move(enhancement_item_ids);
+        req.exp_quality_pct = uint8_t(std::clamp(exp_quality_pct, 0, 100));
+        req.batch_count = uint8_t(std::clamp(batch_count, 1, 10));
+        link_.send(config_.server, net::encode(req));
+    }
+}
+
+void GameClient::save_recipe_preset(const std::string& name, const std::string& schematic_id,
+                                    std::vector<std::string> resource_ids, std::vector<std::string> enhancement_defs,
+                                    int exp_quality_pct) {
+    if (status_ == Status::connected && !name.empty() && !schematic_id.empty()) {
+        net::CraftRequest req;
+        req.action = net::CraftRequest::save_preset;
+        req.preset_name = name;
+        req.schematic_id = schematic_id;
+        req.resource_ids = std::move(resource_ids);
+        req.enhancement_defs = std::move(enhancement_defs);
+        req.exp_quality_pct = uint8_t(std::clamp(exp_quality_pct, 0, 100));
+        link_.send(config_.server, net::encode(req));
+    }
+}
+
+void GameClient::delete_recipe_preset(const std::string& name) {
+    if (status_ == Status::connected && !name.empty()) {
+        net::CraftRequest req;
+        req.action = net::CraftRequest::delete_preset;
+        req.preset_name = name;
+        link_.send(config_.server, net::encode(req));
+    }
+}
+
+void GameClient::fulfill_work_order(const std::string& order_id) {
+    if (status_ == Status::connected && !order_id.empty()) {
+        net::CraftRequest req;
+        req.action = net::CraftRequest::fulfill_order;
+        req.order_id = order_id;
+        link_.send(config_.server, net::encode(req));
+    }
+}
+
 void GameClient::request_spawn(int loadout, int post) {
     spawn_request_ = net::SpawnRequest{uint8_t(std::clamp(loadout, 0, 255)), uint8_t(std::clamp(post, 0, 255))};
     last_spawn_request_ = -1e9;  // send at once
@@ -264,6 +329,7 @@ void GameClient::handle(const net::Datagram& datagram, double now) {
             vendors_ = welcome->vendors;
             quest_npcs_ = welcome->quest_npcs;
             mission_terminals_ = welcome->mission_terminals;
+            workbenches_ = welcome->workbenches;
             factions_ = welcome->factions;
             looks_ = welcome->looks;
         }
@@ -291,6 +357,15 @@ void GameClient::handle(const net::Datagram& datagram, double now) {
                 professions_ = *sync;
             }
             link_.send(config_.server, net::encode(net::ProfessionAck{sync->revision}));
+        }
+        return;
+    }
+    if (const auto* sync = std::get_if<net::CraftingSync>(&message)) {
+        if (status_ == Status::connected) {
+            if (sync->revision >= crafting_.revision) {
+                crafting_ = *sync;
+            }
+            link_.send(config_.server, net::encode(net::CraftingAck{sync->revision}));
         }
         return;
     }

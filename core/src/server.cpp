@@ -584,7 +584,7 @@ void GameServer::handle(const net::Endpoint& from, const net::Datagram& datagram
         }
         // Also answers a repeated Hello whose Welcome was lost.
         send(from, net::Welcome{client->entity, config_.tick_rate, tick_, client->character, recruiters_, factions_,
-                                looks_, quartermasters_, vendors_, quest_npcs_, mission_terminals_});
+                                looks_, quartermasters_, vendors_, quest_npcs_, mission_terminals_, workbenches_});
     }
     if (client == nullptr) {
         return;  // not connected: ignore everything but Hello
@@ -628,6 +628,14 @@ void GameServer::handle(const net::Endpoint& from, const net::Datagram& datagram
         }
     } else if (const auto* quest = std::get_if<net::QuestRequest>(&message)) {
         handle_quest_request(*client, *quest);
+    } else if (const auto* crafting_ack = std::get_if<net::CraftingAck>(&message)) {
+        if (crafting_ack->revision == client->crafting_rev) {
+            client->acked_crafting_rev = crafting_ack->revision;
+        }
+    } else if (const auto* gather = std::get_if<net::GatherRequest>(&message)) {
+        handle_gather_request(*client, *gather, now);
+    } else if (const auto* craft = std::get_if<net::CraftRequest>(&message)) {
+        handle_craft_request(*client, *craft);
     } else if (const auto* save_lo = std::get_if<net::SaveLoadoutRequest>(&message)) {
         if (!conquest_ && store_ != nullptr && config_.catalog != nullptr && client->character != 0 &&
             save_lo->loadout.slot_index >= 0 && save_lo->loadout.slot_index < max_character_loadouts) {
@@ -957,6 +965,9 @@ GameServer::Client* GameServer::join(const net::Endpoint& from, const std::strin
             joined.quest_rev = 1;
             joined.professions = store_->list_professions(joined.character);
             joined.profession_rev = 1;
+            joined.materials = store_->list_materials(joined.character);
+            joined.presets = store_->list_presets(joined.character);
+            joined.crafting_rev = 1;
             rebuild_client_loadouts(joined);  // with their professions' perks
         } catch (const std::exception& error) {
             say(std::format("inventory load error for {}: {}", name, error.what()));
@@ -1262,6 +1273,10 @@ void GameServer::step() {
         if (config_.professions != nullptr && client.profession_rev != client.acked_profession_rev &&
             (client.profession_sync_tick == 0 || tick_ - client.profession_sync_tick >= 8)) {
             send_profession_sync(client);
+        }
+        if (client.crafting_rev != client.acked_crafting_rev &&
+            (client.crafting_sync_tick == 0 || tick_ - client.crafting_sync_tick >= 8)) {
+            send_crafting_sync(client);
         }
         if (client.transfer) {
             send(client.endpoint, *client.transfer);

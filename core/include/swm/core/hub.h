@@ -12,6 +12,7 @@
 #include <vector>
 
 #include "swm/core/bot.h"
+#include "swm/core/crafting.h"
 #include "swm/core/loot.h"
 #include "swm/core/nav.h"
 #include "swm/core/conquest.h"
@@ -89,6 +90,8 @@ struct HubConfig {
     // ([mission_terminal]: Name, Position x z, Radius).
     QuestBook quests;
     std::vector<net::MissionTerminal> mission_terminals;
+    CraftingBook crafting;
+    std::vector<net::Workbench> workbenches;
 };
 
 // Reads a hub file (see game/hubs/): its war terminals (Galaxies x z), the

@@ -156,6 +156,18 @@ public:
     const net::QuestSync& quests() const { return quests_; }
     // Our experience in each profession (ProfessionSync).
     const net::ProfessionSync& professions() const { return professions_; }
+    const std::vector<net::Workbench>& workbenches() const { return workbenches_; }
+    const net::CraftingSync& crafting() const { return crafting_; }
+    void gather_extract(ResourceCategory category);
+    void harvest_corpse(uint32_t corpse_entity);
+    void salvage_item(uint64_t item_id);
+    void craft_item(const std::string& schematic_id, std::vector<std::string> resource_ids,
+                    std::vector<uint64_t> enhancement_item_ids, int exp_quality_pct, int batch_count);
+    void save_recipe_preset(const std::string& name, const std::string& schematic_id,
+                            std::vector<std::string> resource_ids, std::vector<std::string> enhancement_defs,
+                            int exp_quality_pct);
+    void delete_recipe_preset(const std::string& name);
+    void fulfill_work_order(const std::string& order_id);
     void talk_to(uint32_t npc_entity);
     void use_mission_terminal(int index);
     void accept_quest(const std::string& id);
@@ -233,8 +245,10 @@ private:
     std::vector<net::Vendor> vendors_;
     std::vector<net::QuestNpc> quest_npcs_;
     std::vector<net::MissionTerminal> mission_terminals_;
+    std::vector<net::Workbench> workbenches_;
     net::QuestSync quests_;
     net::ProfessionSync professions_;
+    net::CraftingSync crafting_;
     std::vector<net::TargetState> targets_;
     std::vector<net::VehicleState> vehicles_;
     std::vector<net::CorpseLootState> corpses_;

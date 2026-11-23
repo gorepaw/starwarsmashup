@@ -6,12 +6,14 @@
 #include <functional>
 #include <map>
 #include <optional>
+#include <set>
 #include <span>
 #include <string>
 #include <vector>
 
 #include "swm/core/combat.h"
 #include "swm/core/conquest.h"
+#include "swm/core/crafting.h"
 #include "swm/core/items.h"
 #include "swm/core/movement.h"
 #include "swm/core/net/link.h"
@@ -51,6 +53,7 @@ struct ServerConfig {
     // The profession roster (outliving the server): experience is earned and
     // loadouts' Active Specialization Slots apply with one.
     const ProfessionBook* professions = nullptr;
+    const CraftingBook* crafting = nullptr;
     bool friendly_fire = false;  // in a match
     bool single_match = false;   // one match, no next one (a hub's match: see match_over())
     bool pvp_enabled = true;     // false in open-world hubs (no player-vs-player harm outside matches)
@@ -162,6 +165,10 @@ public:
     const ProfessionBook* profession_book() const { return config_.professions; }
     // A connected player's experience in each profession; nullptr if not connected.
     const std::vector<ProfessionProgress>* professions_of(uint32_t entity) const;
+    // Crafting & Material Vault (server_crafting.cpp).
+    void set_crafting(const CraftingBook* book, std::vector<net::Workbench> workbenches);
+    const std::vector<MaterialStack>* materials_of(uint32_t entity) const;
+    const std::vector<RecipePreset>* presets_of(uint32_t entity) const;
     // What this client's snapshots say about it; nullptr if not connected.
     net::PlayerStatus* status(uint32_t entity);
     // Shows a client a message.
@@ -301,6 +308,12 @@ private:
         double shield = 0;
         double shield_recharge_timer = 0;
         double shield_disrupt_timer = 0;
+        std::vector<MaterialStack> materials;
+        std::vector<RecipePreset> presets;
+        uint32_t crafting_rev = 0;
+        uint32_t acked_crafting_rev = 0;
+        uint32_t crafting_sync_tick = 0;
+        double last_extract_time = -10.0;
     };
     // A vehicle in a match. Empty, it keeps its own state; driven, its
     // driver's state is its state (MoveState::vehicle), and the driver's
@@ -439,6 +452,11 @@ private:
     void save_professions(Client& client);
     void send_profession_sync(Client& client);
     void apply_professions(const Client& client, const CharacterLoadout& cl, Loadout& loadout) const;
+    // Crafting & gathering (server_crafting.cpp).
+    void handle_gather_request(Client& client, const net::GatherRequest& request, double now);
+    void handle_craft_request(Client& client, const net::CraftRequest& request);
+    void send_crafting_sync(Client& client);
+    void save_materials(Client& client);
     // Quests (server_quests.cpp).
     void handle_quest_request(Client& client, const net::QuestRequest& request);
     void apply_quests(Client& client, QuestEffects effects);
@@ -485,6 +503,8 @@ private:
     const QuestBook* quest_book_ = nullptr;
     std::vector<net::QuestNpc> quest_npcs_;
     std::vector<net::MissionTerminal> mission_terminals_;
+    std::vector<net::Workbench> workbenches_;
+    std::set<uint32_t> harvested_corpses_;
     std::vector<CorpseLoot> corpse_loots_;
     std::vector<Vehicle> vehicles_;
     std::vector<double> spawn_wait_;    // per vehicle spawn: seconds until it gives another

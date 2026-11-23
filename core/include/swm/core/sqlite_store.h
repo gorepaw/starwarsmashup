@@ -37,9 +37,14 @@ public:
     void save_quests(PersistentId owner_id, std::span<const QuestProgress> quests) override;
     std::vector<ProfessionProgress> list_professions(PersistentId owner_id) override;
     void save_professions(PersistentId owner_id, std::span<const ProfessionProgress> professions) override;
+    std::vector<MaterialStack> list_materials(PersistentId owner_id) override;
+    void save_materials(PersistentId owner_id, std::span<const MaterialStack> materials) override;
+    std::vector<RecipePreset> list_presets(PersistentId owner_id) override;
+    void save_preset(PersistentId owner_id, const RecipePreset& preset) override;
+    bool delete_preset(PersistentId owner_id, const std::string& name) override;
 
     // The schema version this build writes (PRAGMA user_version).
-    static constexpr int schema_version = 5;
+    static constexpr int schema_version = 6;
 
 private:
     void close();
@@ -68,6 +73,13 @@ private:
     sqlite3_stmt* list_professions_ = nullptr;
     sqlite3_stmt* insert_profession_ = nullptr;
     sqlite3_stmt* remove_professions_by_owner_ = nullptr;
+    sqlite3_stmt* list_materials_ = nullptr;
+    sqlite3_stmt* insert_material_ = nullptr;
+    sqlite3_stmt* remove_materials_by_owner_ = nullptr;
+    sqlite3_stmt* list_presets_ = nullptr;
+    sqlite3_stmt* save_preset_ = nullptr;
+    sqlite3_stmt* delete_preset_ = nullptr;
+    sqlite3_stmt* remove_presets_by_owner_ = nullptr;
 };
 
 } // namespace swm::core

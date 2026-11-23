@@ -14,6 +14,8 @@ const VendorScreen = preload("res://ui/vendor_screen.gd")
 const HubHud = preload("res://ui/hub_hud.gd")
 const QuestScreen = preload("res://ui/quest_screen.gd")
 const ProfessionScreen = preload("res://ui/profession_screen.gd")
+const WorkbenchScreen = preload("res://ui/workbench_screen.gd")
+const MultiScanner3D = preload("res://rendering/multi_scanner.gd")
 
 const TALK_REACH := 4.5     # meters from a quest NPC to talk to them (the server allows 6)
 const OFFER_REACH := 8.0    # an offer closes when you walk further than this from it
@@ -32,6 +34,12 @@ signal all_junk_sold
 signal terminal_closed
 signal quest_accepted(id: String)
 signal quest_abandoned(id: String)
+signal corpse_harvested(corpse_entity: int)
+signal craft_requested(schematic_id: String, resource_ids: PackedStringArray, enhancement_ids: PackedInt64Array, exp_quality_pct: int, batch_count: int)
+signal preset_saved(name: String, schematic_id: String, resource_ids: PackedStringArray, enhancement_defs: PackedStringArray, exp_quality_pct: int)
+signal preset_deleted(name: String)
+signal work_order_fulfilled(order_id: String)
+signal item_salvaged(item_id: int)
 
 var _hub_hud: HubHud
 var _terminal_screen: WarTerminalScreen
@@ -41,12 +49,15 @@ var _loot_screen: LootScreen
 var _vendor_screen: VendorScreen
 var _quest_screen: QuestScreen
 var _profession_screen: ProfessionScreen
+var _workbench_screen: WorkbenchScreen
+var _scanner: MultiScanner3D
 var _shown_loadouts: Array = []    # the loadouts the profession screen was last given
 var _settings: Settings
 var _world_root: Node3D
 var _recruiter_nodes: Array = []
 var _qm_nodes: Array = []
 var _vendor_nodes: Array = []
+var _workbench_nodes: Array = []
 var _corpse_nodes: Dictionary = {}  # corpse_entity -> {ring, label}
 var _target_nodes: Dictionary = {}  # target_id -> {root, body, label, hits: Array[{t, dmg}], last_dmg, flash}
 var _notice_id := 0
@@ -55,6 +66,7 @@ var _notice_time := 0.0
 var _notice_lines: PackedStringArray = []
 var _catalog: Array = []
 var _store: Object = null
+var _crafting_store: Object = null
 var _tracked := ""                 # the tracked quest's id
 var _known_quests := {}            # active quest ids last seen (a new one is tracked)
 var _offer_serial := -1            # the offer serial when we asked; -1: not waiting
@@ -96,6 +108,7 @@ func setup(layer: CanvasLayer, world_root: Node3D, art: RefCounted, settings: Se
 	_loot_screen = LootScreen.new(art)
 	_loot_screen.visible = false
 	_loot_screen.loot_taken.connect(func(cid: int, slot: int) -> void: loot_taken.emit(cid, slot))
+	_loot_screen.corpse_harvested.connect(func(cid: int) -> void: corpse_harvested.emit(cid))
 	_loot_screen.closed.connect(close_all_screens)
 	layer.add_child(_loot_screen)
 
@@ -126,6 +139,32 @@ func setup(layer: CanvasLayer, world_root: Node3D, art: RefCounted, settings: Se
 	_profession_screen.closed.connect(close_all_screens)
 	layer.add_child(_profession_screen)
 
+	_workbench_screen = WorkbenchScreen.new(art)
+	_workbench_screen.visible = false
+	_workbench_screen.craft_requested.connect(func(sid: String, rids: PackedStringArray, eids: PackedInt64Array, qpct: int, cnt: int) -> void:
+		craft_requested.emit(sid, rids, eids, qpct, cnt))
+	_workbench_screen.preset_saved.connect(func(pname: String, sid: String, rids: PackedStringArray, edefs: PackedStringArray, qpct: int) -> void:
+		preset_saved.emit(pname, sid, rids, edefs, qpct))
+	_workbench_screen.preset_deleted.connect(func(pname: String) -> void: preset_deleted.emit(pname))
+	_workbench_screen.work_order_fulfilled.connect(func(oid: String) -> void: work_order_fulfilled.emit(oid))
+	_workbench_screen.item_salvaged.connect(func(iid: int) -> void: item_salvaged.emit(iid))
+	_workbench_screen.closed.connect(close_all_screens)
+	layer.add_child(_workbench_screen)
+
+	if world_root != null:
+		_scanner = MultiScanner3D.new()
+		world_root.add_child(_scanner)
+
+
+func set_crafting(store: Object) -> void:
+	_crafting_store = store
+	if _workbench_screen != null:
+		_workbench_screen.store = store
+		if store != null:
+			_workbench_screen.resources = store.get_resources()
+			_workbench_screen.schematics = store.get_schematics()
+			_workbench_screen.work_orders = store.get_work_orders()
+
 
 func set_catalog(catalog: Array, store: Object, species: String, gender: String, appearance: String) -> void:
 	_catalog = catalog
@@ -138,6 +177,8 @@ func set_catalog(catalog: Array, store: Object, species: String, gender: String,
 		_inv_screen.store = store
 		_inv_screen.species = species
 		_inv_screen.gender = gender
+	if _workbench_screen != null:
+		_workbench_screen.catalog = catalog
 		_inv_screen.appearance_json = appearance
 	if _loot_screen != null:
 		_loot_screen.catalog = catalog
@@ -173,7 +214,8 @@ func is_any_screen_open() -> bool:
 			or (_loot_screen != null and _loot_screen.visible) \
 			or (_vendor_screen != null and _vendor_screen.visible) \
 			or (_quest_screen != null and _quest_screen.visible) \
-			or (_profession_screen != null and _profession_screen.visible)
+			or (_profession_screen != null and _profession_screen.visible) \
+			or (_workbench_screen != null and _workbench_screen.visible)
 
 
 func try_open_terminal(client: Object) -> bool:
@@ -197,6 +239,11 @@ func try_open_terminal(client: Object) -> bool:
 	if _vendor_screen != null and not vendor.is_empty():
 		_sync_screen_data(client)
 		_vendor_screen.open_vendor(str(vendor.get("name", "Vendor")), str(vendor.get("kind", "gear_vendor")))
+		return true
+	var wb := at_workbench(client)
+	if _workbench_screen != null and not wb.is_empty():
+		_sync_screen_data(client)
+		_workbench_screen.open_screen()
 		return true
 	if _quest_screen != null and not person.is_empty() and bool(person.get("giver", false)):
 		_await_offers(client, str(person["name"]))
@@ -264,6 +311,46 @@ func toggle_inventory(client: Object) -> bool:
 	return true
 
 
+func toggle_workbench(client: Object) -> bool:
+	if _workbench_screen == null or client == null or not client.is_spawned():
+		return false
+	if _workbench_screen.visible:
+		close_all_screens()
+		return false
+	close_all_screens()
+	_sync_screen_data(client)
+	_workbench_screen.open_screen()
+	return true
+
+
+func toggle_scanner() -> bool:
+	if _scanner == null:
+		return false
+	var on := _scanner.toggle()
+	if not on and _hub_hud != null:
+		_hub_hud.scanner = {}
+	return on
+
+
+func is_scanner_active() -> bool:
+	return _scanner != null and _scanner.active
+
+
+func cycle_scanner(step: int) -> void:
+	if _scanner != null and _scanner.active:
+		_scanner.cycle(step)
+
+
+func extract_scanner(client: Object) -> bool:
+	if _scanner == null or not _scanner.active or client == null or not client.is_spawned():
+		return false
+	if _scanner.extract_cooldown > 0.0:
+		return false
+	client.gather_extract(_scanner.current_mode())
+	_scanner.extract_cooldown = 1.5
+	return true
+
+
 func close_terminal() -> void:
 	close_all_screens()
 
@@ -284,6 +371,8 @@ func close_all_screens() -> void:
 		_quest_screen.visible = false
 	if _profession_screen != null:
 		_profession_screen.visible = false
+	if _workbench_screen != null:
+		_workbench_screen.visible = false
 	_offer_serial = -1
 	if was_open:
 		terminal_closed.emit()
@@ -298,6 +387,10 @@ func clear_recruiters() -> void:
 		if is_instance_valid(node):
 			node.queue_free()
 	_qm_nodes.clear()
+	for node: Node in _workbench_nodes:
+		if is_instance_valid(node):
+			node.queue_free()
+	_workbench_nodes.clear()
 	for node: Node in _vendor_nodes:
 		if is_instance_valid(node):
 			node.queue_free()
@@ -426,6 +519,34 @@ func add_recruiters(client: Object, world: Node3D) -> void:
 			_vendor_nodes.append(ring)
 			_vendor_nodes.append(label)
 
+	if _workbench_nodes.is_empty():
+		for wb: Dictionary in client.get_workbenches():
+			var pos: Vector3 = wb["position"]
+			var col := Color(0.35, 0.85, 1.0)
+			var ring := MeshInstance3D.new()
+			var torus := TorusMesh.new()
+			torus.outer_radius = float(wb["radius"])
+			torus.inner_radius = float(wb["radius"]) - 0.12
+			var mat := StandardMaterial3D.new()
+			mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+			mat.albedo_color = col
+			ring.mesh = torus
+			ring.material_override = mat
+			ring.position = pos + Vector3.UP * 0.08
+			var label := Label3D.new()
+			label.text = str(wb["name"])
+			label.billboard = BaseMaterial3D.BILLBOARD_ENABLED
+			label.fixed_size = true
+			label.pixel_size = 0.0014
+			label.font_size = 24
+			label.outline_size = 8
+			label.modulate = col
+			label.position = pos + Vector3.UP * 2.5
+			_world_root.add_child(ring)
+			_world_root.add_child(label)
+			_workbench_nodes.append(ring)
+			_workbench_nodes.append(label)
+
 
 func at_recruiter(client: Object) -> Dictionary:
 	if client == null or not client.is_spawned():
@@ -457,6 +578,17 @@ func at_vendor(client: Object) -> Dictionary:
 		var at: Vector3 = v["position"]
 		if Vector2(position.x - at.x, position.z - at.z).length() <= float(v["radius"]):
 			return v
+	return {}
+
+
+func at_workbench(client: Object) -> Dictionary:
+	if client == null or not client.is_spawned():
+		return {}
+	var position: Vector3 = client.get_presented()["position"]
+	for wb: Dictionary in client.get_workbenches():
+		var at: Vector3 = wb["position"]
+		if Vector2(position.x - at.x, position.z - at.z).length() <= float(wb["radius"]):
+			return wb
 	return {}
 
 
@@ -714,6 +846,17 @@ func _sync_screen_data(client: Object) -> void:
 			_profession_screen.loadouts = los.duplicate(true)
 		if _profession_screen.visible:
 			_profession_screen.queue_redraw()
+	if _workbench_screen != null:
+		_workbench_screen.materials = client.get_materials()
+		_workbench_screen.presets = client.get_presets()
+		_workbench_screen.inventory = inv
+		_workbench_screen.loadouts = los
+		var prof_xp := {}
+		for p: Dictionary in client.get_professions():
+			prof_xp[str(p["id"])] = int(p["xp"])
+		_workbench_screen.professions = prof_xp
+		if _workbench_screen.visible:
+			_workbench_screen.queue_redraw()
 
 
 func _update_targets(client: Object, delta: float) -> void:
@@ -811,6 +954,8 @@ func update_hub(client: Object, world: Node3D, delta: float, pause_visible: bool
 				_qm_screen.feedback = _notice
 			if _vendor_screen != null and _vendor_screen.visible:
 				_vendor_screen.feedback = _notice
+			if _workbench_screen != null and _workbench_screen.visible:
+				_workbench_screen.feedback = _notice
 
 	_sync_screen_data(client)
 
@@ -822,6 +967,7 @@ func update_hub(client: Object, world: Node3D, delta: float, pause_visible: bool
 	var terminal: Dictionary = at_recruiter(client) if in_hub else {}
 	var qm: Dictionary = at_quartermaster(client) if in_hub else {}
 	var vendor: Dictionary = at_vendor(client) if in_hub else {}
+	var wb: Dictionary = at_workbench(client) if in_hub else {}
 	var corpse: Dictionary = at_lootable_corpse(client) if in_hub else {}
 	var quest_npc: Dictionary = at_quest_npc(client) if in_hub else {}
 	var mission_terminal: Dictionary = at_mission_terminal(client) if in_hub else {}
@@ -872,6 +1018,8 @@ func update_hub(client: Object, world: Node3D, delta: float, pause_visible: bool
 		tip = "Press %s to talk to %s" % [_key_name("interact"), qm["name"]]
 	elif not vendor.is_empty():
 		tip = "Press %s to trade with %s" % [_key_name("interact"), vendor["name"]]
+	elif not wb.is_empty():
+		tip = "Press %s to use %s" % [_key_name("interact"), wb["name"]]
 	elif not quest_npc.is_empty():
 		tip = "Press %s to talk to %s" % [_key_name("interact"), quest_npc["name"]]
 	elif not mission_terminal.is_empty():
@@ -907,6 +1055,14 @@ func update_hub(client: Object, world: Node3D, delta: float, pause_visible: bool
 		_hub_hud.switching = {}
 	_hub_hud.notice = _notice
 	_hub_hud.notice_alpha = clampf(_notice_time, 0.0, 1.0)
+	if _scanner != null and _hub_hud != null:
+		if in_hub and _scanner.active:
+			_hub_hud.scanner = _scanner.update_scanner(client, _crafting_store, client.get_presented()["position"], delta)
+		else:
+			if _scanner.active:
+				_scanner.active = false
+				_scanner.visible = false
+			_hub_hud.scanner = {}
 	_hub_hud.queue_redraw()
 
 

@@ -376,6 +376,153 @@ godot::Dictionary SwmCharacterStore::profession_level(int64_t xp) const {
     return out;
 }
 
+godot::Error SwmCharacterStore::load_crafting(const godot::String& resources_path,
+                                              const godot::String& schematics_path) {
+    last_error_.clear();
+    try {
+        crafting_.load_resources(to_std(resources_path));
+        crafting_.load_schematics(to_std(schematics_path));
+        return godot::OK;
+    } catch (const std::exception& e) {
+        last_error_ = e.what();
+        return godot::ERR_CANT_OPEN;
+    }
+}
+
+godot::Array SwmCharacterStore::get_resources() const {
+    godot::Array out;
+    for (const core::ResourceDef& r : crafting_.resources()) {
+        godot::Dictionary d;
+        d["id"] = godot::String::utf8(r.id.c_str());
+        d["name"] = godot::String::utf8(r.name.c_str());
+        d["category"] = godot::String::utf8(std::string(core::resource_category_name(r.category)).c_str());
+        d["category_label"] = godot::String::utf8(std::string(core::resource_category_label(r.category)).c_str());
+        d["profession"] = godot::String::utf8(r.profession.c_str());
+        godot::Dictionary stats;
+        for (size_t i = 0; i < core::resource_stat_count; ++i) {
+            const std::string_view sname = core::resource_stat_name(core::ResourceStat(i));
+            stats[godot::String::utf8(sname.data(), int(sname.size()))] = int64_t(r.stats[i]);
+        }
+        d["stats"] = stats;
+        out.push_back(d);
+    }
+    return out;
+}
+
+godot::Array SwmCharacterStore::get_schematics() const {
+    godot::Array out;
+    for (const core::SchematicDef& s : crafting_.schematics()) {
+        godot::Dictionary d;
+        d["id"] = godot::String::utf8(s.id.c_str());
+        d["name"] = godot::String::utf8(s.name.c_str());
+        d["profession"] = godot::String::utf8(s.profession.c_str());
+        d["required_level"] = int64_t(s.required_level);
+        d["output_item"] = godot::String::utf8(s.output_item.c_str());
+        d["base_xp"] = s.base_xp;
+        d["enhancement_slots"] = int64_t(s.enhancement_slots);
+        godot::Array slots, weights;
+        for (const core::SchematicSlot& sl : s.slots) {
+            godot::Dictionary sd;
+            sd["category"] = godot::String::utf8(std::string(core::resource_category_name(sl.category)).c_str());
+            sd["category_label"] = godot::String::utf8(std::string(core::resource_category_label(sl.category)).c_str());
+            sd["amount"] = int64_t(sl.amount);
+            slots.push_back(sd);
+        }
+        for (const core::StatWeight& w : s.weights) {
+            godot::Dictionary wd;
+            wd["stat"] = godot::String::utf8(std::string(core::resource_stat_name(w.stat)).c_str());
+            wd["label"] = godot::String::utf8(std::string(core::resource_stat_label(w.stat)).c_str());
+            wd["weight"] = w.weight;
+            weights.push_back(wd);
+        }
+        d["slots"] = slots;
+        d["weights"] = weights;
+        out.push_back(d);
+    }
+    return out;
+}
+
+godot::Array SwmCharacterStore::get_work_orders() const {
+    godot::Array out;
+    for (const core::WorkOrder& wo : crafting_.work_orders()) {
+        godot::Dictionary d;
+        d["id"] = godot::String::utf8(wo.id.c_str());
+        d["title"] = godot::String::utf8(wo.title.c_str());
+        d["profession"] = godot::String::utf8(wo.profession.c_str());
+        d["output_item"] = godot::String::utf8(wo.output_item.c_str());
+        d["count"] = int64_t(wo.count);
+        d["reward_credits"] = wo.reward_credits;
+        d["reward_fp"] = wo.reward_fp;
+        d["reward_xp"] = wo.reward_xp;
+        out.push_back(d);
+    }
+    return out;
+}
+
+godot::Dictionary SwmCharacterStore::scan_terrain(const godot::String& category, double x, double z, double radius,
+                                                  int64_t grid_n) const {
+    godot::Dictionary out;
+    const auto cat = core::resource_category_from_name(to_std(category));
+    if (!cat) return out;
+    const core::ScanResult res = crafting_.scan_terrain(*cat, x, z, radius, int(grid_n));
+    out["resource_id"] = godot::String::utf8(res.best_resource_id.c_str());
+    out["resource_name"] = godot::String::utf8(res.best_resource_name.c_str());
+    out["concentration"] = res.concentration;
+    out["peak_x"] = res.peak_x;
+    out["peak_z"] = res.peak_z;
+    out["grid_n"] = int64_t(res.grid_n);
+    out["step"] = res.step;
+    godot::PackedFloat32Array grid;
+    grid.resize(int(res.grid.size()));
+    for (size_t i = 0; i < res.grid.size(); ++i) grid[int(i)] = res.grid[i];
+    out["grid"] = grid;
+    return out;
+}
+
+godot::PackedStringArray SwmCharacterStore::auto_fill_schematic(const godot::String& schematic_id,
+                                                                const godot::Array& materials,
+                                                                const godot::String& mode) const {
+    godot::PackedStringArray out;
+    const core::SchematicDef* s = crafting_.find_schematic(to_std(schematic_id));
+    if (s == nullptr) return out;
+    std::vector<core::MaterialStack> vault;
+    vault.reserve(size_t(materials.size()));
+    for (int i = 0; i < materials.size(); ++i) {
+        godot::Dictionary d = materials[i];
+        vault.push_back({to_std(d.get("resource_id", "")), int64_t(d.get("amount", 0))});
+    }
+    const std::string m = to_std(mode);
+    const core::AutoFillMode fill_mode = m == "best_quality" ? core::AutoFillMode::best_quality
+                                         : m == "cheapest"   ? core::AutoFillMode::cheapest
+                                                             : core::AutoFillMode::best_stat;
+    for (const std::string& rid : crafting_.auto_fill(*s, vault, fill_mode)) {
+        out.push_back(godot::String::utf8(rid.c_str()));
+    }
+    return out;
+}
+
+godot::Dictionary SwmCharacterStore::preview_craft(const godot::String& schematic_id,
+                                                   const godot::PackedStringArray& resource_ids,
+                                                   int64_t enhancement_count, int64_t crafter_level,
+                                                   int64_t exp_quality_pct) const {
+    godot::Dictionary out;
+    const core::SchematicDef* s = crafting_.find_schematic(to_std(schematic_id));
+    if (s == nullptr) return out;
+    std::vector<std::string> rids;
+    rids.reserve(size_t(resource_ids.size()));
+    for (int i = 0; i < resource_ids.size(); ++i) rids.push_back(to_std(resource_ids[i]));
+    const core::CraftPreview p = crafting_.preview_craft(*s, rids, int(enhancement_count), int(crafter_level),
+                                                         uint8_t(std::clamp<int64_t>(exp_quality_pct, 0, 100)));
+    out["base_quality"] = p.base_quality;
+    out["min_quality"] = p.min_quality;
+    out["max_quality"] = p.max_quality;
+    out["great_success"] = p.odds.great_success;
+    out["success"] = p.odds.success;
+    out["neutral"] = p.odds.neutral;
+    out["minor_flaw"] = p.odds.minor_flaw;
+    return out;
+}
+
 godot::Error SwmCharacterStore::save_loadout(int64_t char_id, int64_t slot_index, const godot::Dictionary& loadout) {
     last_error_.clear();
     if (!store_) {
@@ -668,6 +815,17 @@ void SwmCharacterStore::_bind_methods() {
     ClassDB::bind_method(D_METHOD("get_professions"), &SwmCharacterStore::get_professions);
     ClassDB::bind_method(D_METHOD("profession_level", "xp"), &SwmCharacterStore::profession_level);
     ClassDB::bind_method(D_METHOD("get_specialization_slots"), &SwmCharacterStore::get_specialization_slots);
+    ClassDB::bind_method(D_METHOD("load_crafting", "resources_path", "schematics_path"),
+                         &SwmCharacterStore::load_crafting);
+    ClassDB::bind_method(D_METHOD("get_resources"), &SwmCharacterStore::get_resources);
+    ClassDB::bind_method(D_METHOD("get_schematics"), &SwmCharacterStore::get_schematics);
+    ClassDB::bind_method(D_METHOD("get_work_orders"), &SwmCharacterStore::get_work_orders);
+    ClassDB::bind_method(D_METHOD("scan_terrain", "category", "x", "z", "radius", "grid_n"),
+                         &SwmCharacterStore::scan_terrain, DEFVAL(60.0), DEFVAL(17));
+    ClassDB::bind_method(D_METHOD("auto_fill_schematic", "schematic_id", "materials", "mode"),
+                         &SwmCharacterStore::auto_fill_schematic);
+    ClassDB::bind_method(D_METHOD("preview_craft", "schematic_id", "resource_ids", "enhancement_count", "crafter_level", "exp_quality_pct"),
+                         &SwmCharacterStore::preview_craft);
     ClassDB::bind_static_method("SwmCharacterStore", D_METHOD("get_species_list"),
                                 &SwmCharacterStore::get_species_list);
 }

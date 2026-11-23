@@ -178,6 +178,12 @@ HubConfig load_hub(const std::filesystem::path& path) {
             t.position = point(s.get("Position").value_or(""), "a [mission_terminal]'s Position");
             t.radius = s.number("Radius", 3);
             hub.mission_terminals.push_back(std::move(t));
+        } else if (s.name == "workbench") {
+            net::Workbench wb;
+            wb.name = s.get("Name").value_or("Workbench");
+            wb.position = point(s.get("Position").value_or(""), "a [workbench]'s Position");
+            wb.radius = s.number("Radius", 4);
+            hub.workbenches.push_back(std::move(wb));
         } else if (s.name == "vendor") {
             net::Vendor v;
             v.name = s.get("Name").value_or("Vendor");
@@ -226,6 +232,12 @@ HubConfig load_hub(const std::filesystem::path& path) {
     if (const auto loot = main->get("LootTables")) {
         hub.loot_tables.load(path.parent_path() / *loot);
     }
+    if (const auto res = main->get("Resources")) {
+        hub.crafting.load_resources(path.parent_path() / *res);
+    }
+    if (const auto sch = main->get("Schematics")) {
+        hub.crafting.load_schematics(path.parent_path() / *sch);
+    }
     return hub;
 }
 
@@ -268,6 +280,11 @@ Hub::Hub(GameServer& server, uint16_t port, const World& world, HubConfig config
         t.position = world_.clamp(t.position);
         t.position.y = world_.terrain().height_at(t.position.x, t.position.z);
     }
+    for (net::Workbench& wb : config_.workbenches) {
+        wb.position = world_.clamp(wb.position);
+        wb.position.y = world_.terrain().height_at(wb.position.x, wb.position.z);
+    }
+    server_.set_crafting(&config_.crafting, config_.workbenches);
     if (config_.spawns) {
         const Vec3 origin = config_.spawn ? *config_.spawn
                             : !config_.recruiters.empty() ? config_.recruiters[0].position

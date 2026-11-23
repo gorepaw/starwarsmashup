@@ -6,6 +6,7 @@ extends "res://ui/bf2_screen.gd"
 const ItemTooltip = preload("res://ui/item_tooltip.gd")
 
 signal loot_taken(corpse_entity: int, slot: int)
+signal corpse_harvested(corpse_entity: int)
 signal closed
 
 var corpse: Dictionary = {}  # {entity_id, name, position, items: [{slot, def_id, quality}]}
@@ -58,6 +59,7 @@ func _paint() -> void:
 	var y := box.position.y + 14 * u
 	text("gamefont_medium", cname, Vector2(x, y), "Left", TEXT)
 	var items: Array = corpse.get("items", [])
+	button(Rect2(box.end.x - 322 * u, y - 2 * u, 100 * u, 28 * u), "Harvest", "harvest", false, false, cid_ok(corpse))
 	button(Rect2(box.end.x - 214 * u, y - 2 * u, 104 * u, 28 * u), "Loot All", "loot_all", false, false, not items.is_empty())
 	button(Rect2(box.end.x - 102 * u, y - 2 * u, 84 * u, 28 * u), "Close", "close", false, true)
 
@@ -109,10 +111,17 @@ func _paint() -> void:
 		ItemTooltip.draw(self, _mouse_pos, str(hdef.get("name", hdid)), lines)
 
 
+func cid_ok(c: Dictionary) -> bool:
+	return int(c.get("entity_id", 0)) > 0
+
+
 func _on_click(id: String, _at: Vector2) -> void:
 	var cid := int(corpse.get("entity_id", 0))
 	if id == "close":
 		closed.emit()
+	elif id == "harvest":
+		if cid > 0:
+			corpse_harvested.emit(cid)
 	elif id == "loot_all":
 		if cid > 0:
 			loot_taken.emit(cid, -1)

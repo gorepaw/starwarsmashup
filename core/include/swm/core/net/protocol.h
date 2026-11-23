@@ -9,6 +9,7 @@
 #include <vector>
 
 #include "swm/core/conquest.h"
+#include "swm/core/crafting.h"
 #include "swm/core/movement.h"
 #include "swm/core/persistence.h"
 #include "swm/core/species.h"
@@ -18,7 +19,7 @@ namespace swm::core::net {
 // Every packet starts with a magic number, the protocol version and a message
 // type. Peers drop packets with another version. Bump it on any wire change.
 inline constexpr uint16_t protocol_magic = 0x4D53;  // "SM"
-inline constexpr uint16_t protocol_version = 26;
+inline constexpr uint16_t protocol_version = 27;
 inline constexpr uint8_t droid_explosion_weapon = 0xFF;  // Explosion::weapon sentinel for destroyed health/ammo droids
 // ...for a destroyed object (Battlefield::destructibles); clients draw it
 // from the object's own explosion as they see it go.
@@ -87,6 +88,14 @@ struct MissionTerminal {
     friend bool operator==(const MissionTerminal&, const MissionTerminal&) = default;
 };
 
+struct Workbench {
+    std::string name;
+    Vec3 position;  // game space
+    double radius = 4;
+
+    friend bool operator==(const Workbench&, const Workbench&) = default;
+};
+
 // A quest as the quest log, the tracker and an offer show it.
 struct QuestInfo {
     std::string id;
@@ -150,6 +159,7 @@ struct Welcome {
     std::vector<Vendor> vendors;
     std::vector<QuestNpc> quest_npcs;
     std::vector<MissionTerminal> mission_terminals;
+    std::vector<Workbench> workbenches;
 };
 
 // Client -> hub, repeated until the hub's PlayerStatus shows it: queue for a
@@ -427,10 +437,46 @@ struct ProfessionAck {
     uint32_t revision = 0;
 };
 
+// Server -> client, repeated until acknowledged: Material Vault & Recipe Presets.
+struct CraftingSync {
+    uint32_t revision = 0;
+    std::vector<MaterialStack> materials;
+    std::vector<RecipePreset> presets;
+
+    friend bool operator==(const CraftingSync&, const CraftingSync&) = default;
+};
+
+struct CraftingAck {
+    uint32_t revision = 0;
+};
+
+// Client -> server: active field extraction, corpse harvest/salvage, or item salvage.
+struct GatherRequest {
+    enum Action : uint8_t { extract_terrain = 0, harvest_corpse = 1, salvage_item = 2 };
+    Action action = extract_terrain;
+    uint8_t category = 0;
+    uint64_t target_id = 0;
+};
+
+// Client -> server: craft item(s), manage recipe presets, or fulfill a Hub Work Order.
+struct CraftRequest {
+    enum Action : uint8_t { craft = 0, save_preset = 1, delete_preset = 2, fulfill_order = 3 };
+    Action action = craft;
+    std::string schematic_id;
+    std::vector<std::string> resource_ids;
+    std::vector<uint64_t> enhancement_item_ids;
+    std::vector<std::string> enhancement_defs;
+    uint8_t exp_quality_pct = 50;
+    uint8_t batch_count = 1;
+    std::string preset_name;
+    std::string order_id;
+};
+
 using Message = std::variant<Hello, Welcome, Refused, InputBatch, Snapshot, Goodbye, SpawnRequest, QueueRequest,
                              Transfer, InventorySync, InventoryAck, SaveLoadoutRequest, SwitchLoadoutRequest,
                              ShopBuyRequest, DestroyItemRequest, LootTakeRequest, VendorSellRequest, UseItemRequest,
-                             QuestSync, QuestAck, QuestRequest, ProfessionSync, ProfessionAck>;
+                             QuestSync, QuestAck, QuestRequest, ProfessionSync, ProfessionAck, CraftingSync,
+                             CraftingAck, GatherRequest, CraftRequest>;
 
 std::vector<uint8_t> encode(const Message& message);
 // Throws PacketError on malformed packets or another protocol version.
