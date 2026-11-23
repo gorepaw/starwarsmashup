@@ -516,7 +516,11 @@ void GameServer::run_match() {
             units.push_back({client.team, client.state.position});
         }
     }
-    for (const MatchEvent& event : conquest_->step(dt, units, clients_.size())) {
+    const auto match_events = conquest_->step(dt, units, clients_.size());
+    for (size_t i = 0; i < field.destructibles.size(); ++i) {
+        world_.set_destroyed(i, !conquest_->destructible_alive(i));
+    }
+    for (const MatchEvent& event : match_events) {
         switch (event.kind) {
         case MatchEvent::went_live:
             say("the match is live");
@@ -796,6 +800,10 @@ void GameServer::advance_bolts() {
         }
         if (nearest) {
             const Vec3 at = from + (to - from) * *nearest;
+            if (!bounces && !harmless && world_hit && world_hit->t == *nearest && world_hit->destructible >= 0) {
+                damage_destructible(size_t(world_hit->destructible), bolt_damage(def, def.bolt_life - bolt.life),
+                                    bolt.owner, blasts);
+            }
             if (!bounces) {
                 if (def.explosion_damage > 0 && def.explosion_outer > 0) {
                     blasts.push_back({bolt, at, normal, false});
@@ -856,6 +864,25 @@ void GameServer::damage_powerup(size_t index, double amount, uint32_t attacker, 
     }
 }
 
+void GameServer::damage_destructible(size_t index, double amount, uint32_t attacker, std::vector<Blast>& blasts) {
+    if (!conquest_ || !conquest_->destructible_alive(index) || amount <= 0) {
+        return;
+    }
+    if (conquest_->damage_destructible(index, amount)) {
+        const Destructible& d = conquest_->battlefield().destructibles[index];
+        world_.set_destroyed(index, true);
+        say(std::format("{} destroyed", d.name));
+        Blast blast;
+        blast.bolt.owner = attacker;
+        blast.bolt.team = -1;
+        blast.bolt.weapon = net::object_explosion_weapon;
+        blast.at = d.center;
+        blast.normal = {0, 1, 0};
+        blast.destructible = int(index);
+        blasts.push_back(blast);
+    }
+}
+
 // Damage to everyone near: teammates are spared (unless friendly fire is
 // on), the thrower isn't (ASSUMPTION: Battlefront hurts the thrower too).
 void GameServer::explode(const Blast& blast, std::vector<Blast>& blasts) {
@@ -866,8 +893,14 @@ void GameServer::explode(const Blast& blast, std::vector<Blast>& blasts) {
         droid_def.explosion_damage = 20.0;
         droid_def.explosion_inner = 1.25;
         droid_def.explosion_outer = 2.5;
+    } else if (blast.destructible >= 0 && conquest_) {
+        // A destroyed object's own explosion, out from its middle.
+        const Destructible& d = conquest_->battlefield().destructibles[size_t(blast.destructible)];
+        droid_def.explosion_damage = d.explosion_damage;
+        droid_def.explosion_inner = d.explosion_inner;
+        droid_def.explosion_outer = d.explosion_outer;
     }
-    const WeaponDef& def = blast.droid ? droid_def : *bolt.def;
+    const WeaponDef& def = blast.droid || blast.destructible >= 0 ? droid_def : *bolt.def;
     if (def.explosion_damage <= 0 || def.explosion_outer <= 0) {
         return;
     }
@@ -914,6 +947,25 @@ void GameServer::explode(const Blast& blast, std::vector<Blast>& blasts) {
             const double amount = explosion_damage(def, blast.at, stations[i].position);
             if (amount > 0 && !sheltered(stations[i].position)) {
                 damage_powerup(i, amount, bolt.owner, blasts);
+            }
+        }
+        // Objects whose bounds it reaches (not its own: that's gone).
+        // ASSUMPTION: full damage within the inner radius of the nearest
+        // point of its bounds, falling to nothing at the outer, unsheltered.
+        const auto& objects = conquest_->battlefield().destructibles;
+        for (size_t i = 0; i < objects.size(); ++i) {
+            if (int(i) == blast.destructible || !conquest_->destructible_alive(i)) {
+                continue;
+            }
+            const double distance = (objects[i].nearest(blast.at) - blast.at).length();
+            const double amount =
+                distance <= def.explosion_inner ? def.explosion_damage
+                : distance >= def.explosion_outer
+                    ? 0.0
+                    : def.explosion_damage * (def.explosion_outer - distance) /
+                          (def.explosion_outer - def.explosion_inner);
+            if (amount > 0) {
+                damage_destructible(i, amount, bolt.owner, blasts);
             }
         }
     }

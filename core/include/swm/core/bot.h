@@ -8,6 +8,7 @@
 #include <vector>
 
 #include "swm/core/client.h"
+#include "swm/core/conquest.h"
 #include "swm/core/net/udp.h"
 #include "swm/core/vec3.h"
 
@@ -65,6 +66,9 @@ public:
     const BotSkill& skill() const { return skill_; }
     // Where it's taking cover, if it is.
     const std::optional<Vec3>& cover() const { return cover_; }
+    // The destructible (index into the battlefield's) it's shooting its way
+    // through, or -1.
+    int breach() const { return breach_; }
     // The side it queues for in a hub (default: picked from the seed).
     void set_queue_team(int team) { queue_team_ = team; }
     // The walkable grid of the battlefield it plays on (shared between bots;
@@ -85,6 +89,10 @@ private:
     // Somewhere near (on ground it can stand on) that the enemy at `enemy`
     // (its eyes) can't see: behind something tall, or low (then crouched).
     std::optional<Vec3> find_cover(const GameClient& client, const World& world, Vec3 enemy, bool& crouch);
+    // Its route ending short of `destination` by something standing that can
+    // be destroyed (Kashyyyk's barricades), in sight from `eye` and range:
+    // that (its index), or -1.
+    int find_breach(const GameClient& client, const World& world, Vec3 destination, Vec3 eye) const;
     // Where to head now on the way to `destination`: the next corner of its
     // route (planned again when the destination moves, when it's stuck, and
     // now and then), or the destination itself without a grid. Sets pace_.
@@ -108,6 +116,8 @@ private:
     double next_cover_ = 0;      // thinks about cover again then
     double retreat_until_ = 0;   // falling back to a held post until then
     double next_roll_ = 0;       // may roll aside then
+    int breach_ = -1;            // the destructible in its way it's shooting, or -1
+    double next_breach_ = 0;     // looks for one again then
     Vec3 offset_;            // where in the post it stands
     Vec3 home_;              // the post's console (or middle), from its middle: where a spot out of reach gives way to
     double next_objective_ = 0;
@@ -161,6 +171,8 @@ private:
     };
     const World& world_;
     std::shared_ptr<const NavGrid> navigation_;  // the battlefield's, shared by the bots
+    std::vector<Destructible> destructibles_;    // the battlefield's
+    std::vector<uint8_t> destroyed_;             // as last seen, to forget routes past them when it changes
     std::vector<std::unique_ptr<Player>> players_;
 };
 

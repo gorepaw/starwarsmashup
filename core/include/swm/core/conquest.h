@@ -92,6 +92,26 @@ struct Door {
     std::optional<double> hit(Vec3 a, Vec3 b) const;
 };
 
+// Something that can be destroyed (Battlefront's "destructablebuilding":
+// Coruscant's library stacks, Kamino's consoles, Kashyyyk's wooden
+// barricades...). Its collision is the map's triangles of its part
+// (MapCollision::Triangle::part), gone once it's destroyed, when its wreck's
+// take their place. Shots that hit it and blasts that reach its bounds hurt
+// it; at no health it's destroyed, and its own explosion goes off. It stands
+// again when the next match starts.
+struct Destructible {
+    std::string name;
+    double max_health = 100;
+    Vec3 center;     // of its bounds (game space, axis-aligned)
+    Vec3 half_size;  // its bounds' half extents
+    // Its explosion (ExplosionName's): this much damage within `inner`,
+    // falling to nothing at `outer`.
+    double explosion_damage = 0, explosion_inner = 0, explosion_outer = 0;
+
+    // The nearest point of its bounds to `point`.
+    Vec3 nearest(Vec3 point) const;
+};
+
 // A health or ammo droid (Battlefront's "powerupstation" class: its
 // com_item_healthrecharge and com_item_weaponrecharge). Every `delay` seconds
 // each living soldier within `radius` gets `health` health and `ammo` of
@@ -169,6 +189,7 @@ struct Battlefield {
     std::vector<DamageRegion> damage_regions;
     std::vector<PowerupStation> powerups;
     std::vector<Door> doors;
+    std::vector<Destructible> destructibles;
     std::array<Team, 2> teams;
     std::vector<CommandPost> posts;
     std::vector<Barrier> barriers;
@@ -214,7 +235,10 @@ struct Battlefield {
 // place and rotation), and its health and ammo droids (`Powerup = x y z
 // radius delay health ammo`, see PowerupStation), and its doors (`Door = x y z
 // radius open_time` for the trigger, then its box as a death region's, `x y
-// z sx sy sz` and 9 rotation numbers; see Door). `Minimap = x0 z0
+// z sx sy sz` and 9 rotation numbers; see Door), and what can be destroyed
+// (`Destructible = health x y z hx hy hz damage inner outer name`: its
+// bounds' center and half extents, its explosion, then its name; see
+// Destructible). `Minimap = x0 z0
 // x1 z1` is where the map's minimap image lies: the coordinates under its
 // left, top, right and bottom edges (north up). Throws
 // std::runtime_error if it, a map or a loadout can't be read or makes no
@@ -246,6 +270,7 @@ struct MatchState {
     std::vector<PostState> posts;
     std::vector<float> powerup_health;  // current health per Battlefield::powerups[i]; <= 0: destroyed
     std::vector<float> doors;           // how open each of Battlefield::doors is, 0 (shut) .. 1
+    std::vector<float> destructibles;   // health per Battlefield::destructibles[i]; <= 0: destroyed
 };
 
 struct MatchEvent {
@@ -282,6 +307,10 @@ public:
     bool powerup_alive(size_t index) const;
     // Damages health/ammo droid `index`. Returns true on the hit that destroys it.
     bool damage_powerup(size_t index, double amount);
+    // Whether destructible `index` stands.
+    bool destructible_alive(size_t index) const;
+    // Damages destructible `index`. Returns true on the hit that destroys it.
+    bool damage_destructible(size_t index, double amount);
     // Whether door `index` is shut (more than half), stopping shots.
     bool door_shut(size_t index) const;
     // Where along a..b (0..1) the segment first meets a shut door, if it does.

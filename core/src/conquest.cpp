@@ -153,6 +153,18 @@ void read_regions(Battlefield& field, const Ini::Section& section, const std::st
             }
             station.position.x = -station.position.x;
             field.powerups.push_back(station);
+        } else if (iequals(key, "Destructible")) {
+            std::istringstream fields(value);
+            Destructible d;
+            if (!(fields >> d.max_health >> d.center.x >> d.center.y >> d.center.z >> d.half_size.x >>
+                  d.half_size.y >> d.half_size.z >> d.explosion_damage >> d.explosion_inner >> d.explosion_outer) ||
+                d.max_health <= 0) {
+                throw std::runtime_error(where + ": Destructible is \"health x y z hx hy hz damage inner outer "
+                                         "name\", got \"" + value + "\"");
+            }
+            std::getline(fields >> std::ws, d.name);
+            d.center.x = -d.center.x;
+            field.destructibles.push_back(d);
         } else if (iequals(key, "Door")) {
             std::istringstream fields(value);
             Door door;
@@ -249,6 +261,12 @@ bool DeathRegion::contains(Vec3 point) const {
         break;
     }
     return std::abs(x) <= size.x && std::abs(y) <= size.y && std::abs(z) <= size.z;
+}
+
+Vec3 Destructible::nearest(Vec3 point) const {
+    return {std::clamp(point.x, center.x - half_size.x, center.x + half_size.x),
+            std::clamp(point.y, center.y - half_size.y, center.y + half_size.y),
+            std::clamp(point.z, center.z - half_size.z, center.z + half_size.z)};
 }
 
 bool Door::triggered_by(Vec3 feet) const {
@@ -495,6 +513,10 @@ void Conquest::reset() {
     for (const PowerupStation& station : battlefield_.powerups) {
         state_.powerup_health.push_back(float(station.max_health));
     }
+    state_.destructibles.clear();
+    for (const Destructible& d : battlefield_.destructibles) {
+        state_.destructibles.push_back(float(d.max_health));
+    }
 }
 
 bool Conquest::can_spawn(int team, size_t post) const {
@@ -512,6 +534,18 @@ bool Conquest::damage_powerup(size_t index, double amount) {
     }
     state_.powerup_health[index] = float(std::max(0.0, double(state_.powerup_health[index]) - amount));
     return state_.powerup_health[index] <= 0.0f;
+}
+
+bool Conquest::destructible_alive(size_t index) const {
+    return index < state_.destructibles.size() && state_.destructibles[index] > 0.0f;
+}
+
+bool Conquest::damage_destructible(size_t index, double amount) {
+    if (!destructible_alive(index) || amount <= 0) {
+        return false;
+    }
+    state_.destructibles[index] = float(std::max(0.0, double(state_.destructibles[index]) - amount));
+    return state_.destructibles[index] <= 0.0f;
 }
 
 bool Conquest::door_shut(size_t index) const {

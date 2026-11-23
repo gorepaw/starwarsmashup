@@ -83,6 +83,10 @@ public:
     // back from there (off a walkway onto Kamino's pod roofs, no way up from
     // them: no). Remembered: a pocket once found is known in all of it.
     bool leads_back(Vec3 from, Vec3 landing) const;
+    // Forgets what it worked out over the area (x, z; and a little around
+    // it), and every pocket and climb it found anywhere: something there
+    // changed (was destroyed, or stands again). Worked out again as needed.
+    void forget(double min_x, double max_x, double min_z, double max_z) const;
     // Tiles worked out so far.
     size_t tiles_built() const { return built_; }
 

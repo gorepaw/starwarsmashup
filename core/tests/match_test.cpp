@@ -81,7 +81,8 @@ void test_battlefield_file() {
                                                       "DeathRegion = box 10 0 20 2 1 4 0 0 1 0 1 0 -1 0 0\n"
                                                       "DamageRegion = 50 sphere 40 0 40 3 3 3 1 0 0 0 1 0 0 0 1\n"
                                                       "Powerup = 20 1 30 3 2 0 1\n"
-                                                      "Door = 50 0 60 3 1 50 1.5 64 2 1.5 0.2 1 0 0 0 1 0 0 0 1\n\n"
+                                                      "Door = 50 0 60 3 1 50 1.5 64 2 1.5 0.2 1 0 0 0 1 0 0 0 1\n"
+                                                      "Destructible = 850 10 1 40 1.5 1.3 1.5 20 0 2 comp 5\n\n"
                                                       "[post]\nName = CP1\nPosition = 10 10\nOwner = 1\n"
                                                       "Altitude = -6 -1\nSpawnPoint = 12 12 -5\nSpawnPoint = 8 8 -5\n\n"
                                                       "[post]\nName = CP2\nPosition = 30 30\nOwner = 2\n";
@@ -117,6 +118,12 @@ void test_battlefield_file() {
     const auto through = bounded.doors[0].hit({-50, 1.5, 60}, {-50, 1.5, 70});
     CHECK(through && near(*through, 0.38, 1e-6) && !bounded.doors[0].hit({-50, 3.5, 60}, {-50, 3.5, 70}));
     CHECK(bounded.doors[0].triggered_by({-51, 0, 61}) && !bounded.doors[0].triggered_by({-50, 0, 56}));
+    // Something that can be destroyed: its health, bounds (x the other way),
+    // explosion and name (spaces and all).
+    CHECK(bounded.destructibles.size() == 1 && bounded.destructibles[0].max_health == 850 &&
+          bounded.destructibles[0].center == Vec3(-10, 1, 40) && bounded.destructibles[0].half_size == Vec3(1.5, 1.3, 1.5) &&
+          bounded.destructibles[0].explosion_outer == 2 && bounded.destructibles[0].name == "comp 5");
+    CHECK(bounded.destructibles[0].nearest({0, 0, 40}) == Vec3(-8.5, 0, 40));
     // A post in a cellar: its middle height, taken from within it and not
     // from the ground over it; its spawn points' heights.
     const CommandPost& cellar = bounded.posts[0];
@@ -354,14 +361,14 @@ void test_match_server() {
     CHECK(killed && a.self().kills == 1 && b.self().deaths == 2 && a.match()->tickets[1] < tickets);
 }
 
-void add_wall(MapCollision& collision, Vec3 low, Vec3 high) {
+void add_wall(MapCollision& collision, Vec3 low, Vec3 high, int16_t part = 0) {
     const auto corner = [&](int i) {
         return Vec3{i & 1 ? high.x : low.x, i & 2 ? high.y : low.y, i & 4 ? high.z : low.z};
     };
     const int faces[6][4] = {{0, 1, 3, 2}, {4, 6, 7, 5}, {0, 4, 5, 1}, {2, 3, 7, 6}, {0, 2, 6, 4}, {1, 5, 7, 3}};
     for (const auto& f : faces) {
-        collision.triangles.push_back({corner(f[0]), corner(f[2]), corner(f[1])});
-        collision.triangles.push_back({corner(f[0]), corner(f[3]), corner(f[2])});
+        collision.triangles.push_back({corner(f[0]), corner(f[2]), corner(f[1]), blocks_characters | blocks_shots, part});
+        collision.triangles.push_back({corner(f[0]), corner(f[3]), corner(f[2]), blocks_characters | blocks_shots, part});
     }
 }
 
@@ -687,6 +694,52 @@ void test_doors() {
     CHECK(a.match()->doors[0] == 0.0f);
 }
 
+// A wall right across the field that can be destroyed, between a bot and
+// the post it's going for: stood, it stops shots and soldiers (the world's
+// part); the bot, its route ending at it with no one to shoot, shoots it
+// down, and its way then goes through. The world without it, everyone's.
+void test_destructibles() {
+    Battlefield battlefield = three_posts();
+    battlefield.warmup = 120;
+    battlefield.destructibles.push_back({.name = "barricade", .max_health = 400, .center = {-40, 1.5, 0},
+                                         .half_size = {1, 1.5, 51}, .explosion_damage = 20, .explosion_outer = 3});
+    Field field(battlefield);
+    MapCollision wall;
+    add_wall(wall, {-41, 0, -51}, {-39, 3, 51}, 1);
+    field.world.add_map_collision(wall);
+    const auto hit = field.world.raycast_hit({-50, 1, 0}, {-30, 1, 0});
+    CHECK(hit && hit->destructible == 0 && field.world.walk_blocked({-45, 0, 0}, {-35, 0, 0}));
+    field.world.set_destroyed(0, true);
+    CHECK(!field.world.raycast_hit({-50, 1, 0}, {-30, 1, 0}) && !field.world.walk_blocked({-45, 0, 0}, {-35, 0, 0}));
+    field.world.set_destroyed(0, false);
+
+    // One bot (the West's), and someone on the other side watching.
+    uint32_t next_port = 50;
+    ClientConfig base{.server = {1, 1}};
+    base.battlefield = battlefield;
+    BotPlayers bots(1, field.world, base, [&] {
+        return std::make_unique<net::LoopbackLink>(field.hub, net::Endpoint{next_port++, 1});
+    });
+    GameClient& watcher = field.join("watcher");
+    double destroyed_at = -1, through_at = -1;
+    field.run(90, [&] {
+        bots.update(field.now);
+        if (destroyed_at < 0 && watcher.match() && !watcher.match()->destructibles.empty() &&
+            watcher.match()->destructibles[0] <= 0) {
+            destroyed_at = field.now;
+        }
+        for (const GameClient::Remote& remote : watcher.remotes()) {
+            if (through_at < 0 && remote.alive() && remote.state.position.x > -37) {
+                through_at = field.now;
+            }
+        }
+    });
+    std::printf("destructibles: the bot's barricade down at %.1f s, the bot through at %.1f s\n", destroyed_at,
+                through_at);
+    CHECK(destroyed_at > 0 && through_at > destroyed_at && field.world.destroyed(0));
+    bots.disconnect();
+}
+
 void test_bots_play_a_match() {
     Battlefield battlefield = three_posts();
     battlefield.posts.insert(battlefield.posts.begin() + 1, CommandPost{.name = "Inner west", .position = {-30, 0, 10}});
@@ -776,6 +829,7 @@ void test_drop_pace() {
 
 int main() {
     test_doors();
+    test_destructibles();
     test_drop_pace();
     test_battlefield_file();
     test_capture();

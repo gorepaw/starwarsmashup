@@ -563,6 +563,17 @@ void Bot::update(GameClient& client, const World& world, double now) {
         target_ = target->id;
         target_since_ = now;
     }
+    // Its way blocked by something that can be destroyed: with no one to
+    // shoot, it shoots that.
+    if (!in_match || target != nullptr || !destination) {
+        breach_ = -1;
+    } else if (now >= next_breach_) {
+        next_breach_ = now + 1;
+        breach_ = find_breach(client, world, *destination, eye);
+    }
+    if (breach_ >= 0 && (size_t(breach_) >= match->destructibles.size() || match->destructibles[size_t(breach_)] <= 0)) {
+        breach_ = -1;
+    }
 
     // In a fight: cover to reload or when hurt; falling back badly hurt (no
     // droid to go to); now and then a roll aside.
@@ -684,6 +695,13 @@ void Bot::update(GameClient& client, const World& world, double now) {
         // Keep moving toward the objective while sidestepping.
         const double s = std::sin(controls.yaw), c = std::cos(controls.yaw);
         move = move * 0.6 + Vec3{c, 0, -s} * (strafe_ * 0.7);
+    } else if (breach_ >= 0) {
+        // At its middle, on the projectile's arc.
+        const Vec3 d = client.config().battlefield->destructibles[size_t(breach_)].center - eye;
+        const auto arc = ballistic_pitch(weapon.bolt_speed, weapon.bolt_gravity * gravity, std::hypot(d.x, d.z), d.y);
+        controls.yaw = yaw_toward(d);
+        controls.pitch = arc.value_or(0) - weapon.shot_elevate;
+        controls.fire = arc.has_value();
     } else {
         if (move.length() > 0) {
             controls.yaw = yaw_toward(move);
@@ -765,11 +783,40 @@ void Bot::update(GameClient& client, const World& world, double now) {
     client.set_input(controls);
 }
 
+int Bot::find_breach(const GameClient& client, const World& world, Vec3 destination, Vec3 eye) const {
+    constexpr double short_by = 4;  // m its route ends from where it's going
+    constexpr double near_end = 6;  // m from that end the thing in the way is
+    const auto& match = client.match();
+    if (path_.empty() || !match || horizontal_distance(path_.back(), destination) < short_by) {
+        return -1;
+    }
+    const auto& objects = client.config().battlefield->destructibles;
+    int best = -1;
+    double nearest = near_end;
+    for (size_t i = 0; i < objects.size() && i < match->destructibles.size(); ++i) {
+        if (match->destructibles[i] <= 0) {
+            continue;
+        }
+        const double off = horizontal_distance(objects[i].nearest(path_.back()), path_.back());
+        if (off >= nearest || (objects[i].center - eye).length() > skill_.fire_range) {
+            continue;
+        }
+        const auto hit = world.raycast_hit(eye, objects[i].center);
+        if (!hit || hit->destructible == int(i)) {
+            nearest = off;
+            best = int(i);
+        }
+    }
+    return best;
+}
+
 BotPlayers::BotPlayers(int count, const World& world, const ClientConfig& base, LinkFactory open_link,
                        BotSkill skill)
     : world_(world) {
     if (base.battlefield) {
         navigation_ = std::make_shared<NavGrid>(world, *base.battlefield);
+        destructibles_ = base.battlefield->destructibles;
+        destroyed_.assign(destructibles_.size(), 0);
     }
     for (int i = 0; i < count; ++i) {
         ClientConfig config = base;
@@ -788,6 +835,16 @@ void BotPlayers::set_skill(BotSkill skill) {
 }
 
 void BotPlayers::update(double now) {
+    // Routes past what's been destroyed (or stands again), worked out anew.
+    for (size_t i = 0; i < destructibles_.size() && navigation_; ++i) {
+        const uint8_t gone = world_.destroyed(i) ? 1 : 0;
+        if (gone != destroyed_[i]) {
+            destroyed_[i] = gone;
+            const Destructible& d = destructibles_[i];
+            navigation_->forget(d.center.x - d.half_size.x, d.center.x + d.half_size.x, d.center.z - d.half_size.z,
+                                d.center.z + d.half_size.z);
+        }
+    }
     for (auto& player : players_) {
         player->bot.update(player->client, world_, now);
         player->client.update(now);

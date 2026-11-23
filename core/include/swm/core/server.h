@@ -203,6 +203,7 @@ private:
         Vec3 at;
         Vec3 normal{0, 1, 0};
         bool droid = false;
+        int destructible = -1;  // a destroyed object's own explosion (its index)
     };
 
     void receive(double now);
@@ -227,6 +228,7 @@ private:
     net::EntityState describe(const Client& client) const;
     Vec3 spawn_point(uint32_t index) const;
     Vec3 position_at(const Client& client, double tick) const;
+    void damage_destructible(size_t index, double amount, uint32_t attacker, std::vector<Blast>& blasts);
     // What a shot from a to b first meets: the world, or a shut door.
     std::optional<World::RayHit> shot_hit(Vec3 a, Vec3 b) const;
     void drop_silent(double now);

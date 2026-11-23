@@ -89,6 +89,27 @@ NavGrid::NavGrid(const World& world, const Battlefield& field, const MoveParams&
 
 NavGrid::~NavGrid() = default;
 
+void NavGrid::forget(double min_x, double max_x, double min_z, double max_z) const {
+    // A body's width and clearance around it change too.
+    const double margin = move_.radius + settings_.clearance + settings_.cell * 2;
+    const Cell low = cell_at({min_x - margin, 0, min_z - margin});
+    const Cell high = cell_at({max_x + margin, 0, max_z + margin});
+    for (int tz = std::max(0, low.z >> tile_bits); tz <= std::min(tiles_z_ - 1, high.z >> tile_bits); ++tz) {
+        for (int tx = std::max(0, low.x >> tile_bits); tx <= std::min(tiles_x_ - 1, high.x >> tile_bits); ++tx) {
+            tiles_[size_t(tz) * size_t(tiles_x_) + size_t(tx)].reset();
+        }
+    }
+    for (auto& tile : tiles_) {
+        if (tile) {
+            for (uint8_t& f : tile->flags) {
+                f &= uint8_t(~pocket_bit);
+            }
+        }
+    }
+    climbs_.clear();
+    leads_back_.clear();
+}
+
 NavGrid::Cell NavGrid::cell_at(Vec3 p) const {
     return {int(std::floor((p.x - x0_) / settings_.cell)), int(std::floor((p.z - z0_) / settings_.cell))};
 }

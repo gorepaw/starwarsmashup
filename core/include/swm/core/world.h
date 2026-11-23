@@ -39,10 +39,14 @@ enum Blocks : uint8_t { blocks_characters = 1, blocks_shots = 2 };
 // The collision of a map's props, in game space: triangles, each stopping
 // characters, shots or both. bf2tool export-map writes it next to the
 // terrain bake (map_collision_path).
+// A triangle may belong to a destructible object (Battlefield::destructibles):
+// `part` n > 0 while destructible n - 1 stands, -n once it's destroyed (its
+// wreck's), 0 always.
 struct MapCollision {
     struct Triangle {
         Vec3 a, b, c;
         uint8_t blocks = blocks_characters | blocks_shots;
+        int16_t part = 0;
     };
     std::vector<Triangle> triangles;
 };
@@ -117,6 +121,7 @@ public:
     struct RayHit {
         double t = 0;
         Vec3 normal{0, 1, 0};  // unit, facing the incoming ray
+        int destructible = -1;  // the standing destructible it hit (index), or -1
     };
     std::optional<RayHit> raycast_hit(Vec3 a, Vec3 b) const;
     std::optional<double> raycast(Vec3 a, Vec3 b) const;
@@ -133,6 +138,14 @@ public:
     // the ground inside one (Yavin's minitemple, a stepped pyramid) is no
     // place to stand.
     bool inside_solid(Vec3 point, double reach) const;
+
+    // Destructible `index` destroyed (its triangles gone, its wreck's
+    // there) or standing (as at first). The server sets this from its match
+    // and each client from the server's snapshots, so both see the same
+    // world. It's state on a const World, deliberately: everyone sharing a
+    // world (a battle's server and its bots) shares the battle.
+    void set_destroyed(size_t index, bool destroyed) const;
+    bool destroyed(size_t index) const { return index < destroyed_.size() && destroyed_[index]; }
 
     Vec3 clamp(Vec3 position) const { return terrain_.clamp(position); }
     // The highest point of any building or map triangle (-inf with none).
@@ -163,7 +176,12 @@ private:
         uint8_t blocks;
         bool floor;    // facing up, gentle enough to stand on
         bool ceiling;  // facing down as gently: an underside, neither ground nor wall
+        int16_t part = 0;  // as MapCollision::Triangle's
     };
+    // Whether a solid is there now (its destructible's state).
+    bool present(const Solid& s) const {
+        return s.part == 0 || (s.part > 0 ? !destroyed(size_t(s.part - 1)) : destroyed(size_t(-s.part - 1)));
+    }
     // resolve_walls; with let_out false, props the body started inside push too.
     Vec3 push_out(Vec3 from, Vec3 position, double radius, double height, double step_up, Vec3& velocity,
                   bool let_out) const;
@@ -179,6 +197,7 @@ private:
     const Heightfield& terrain_;
     std::vector<Building> buildings_;
     std::vector<Solid> solids_;
+    mutable std::vector<uint8_t> destroyed_;  // per destructible
     double top_ = -std::numeric_limits<double>::infinity();
     static constexpr double grid_cell_ = 4;  // meters
     double grid_x0_ = 0, grid_z0_ = 0;

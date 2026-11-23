@@ -360,6 +360,11 @@ godot::Dictionary SwmClient::get_match() const {
         doors.push_back(open);
     }
     out["doors"] = doors;  // how open each of the battlefield's doors is, 0..1
+    godot::PackedFloat32Array destructibles;
+    for (const float health : match.destructibles) {
+        destructibles.push_back(health);
+    }
+    out["destructibles"] = destructibles;  // health of each of the battlefield's destructibles; <= 0: destroyed
     return out;
 }
 
@@ -608,6 +613,9 @@ godot::Array SwmClient::take_explosions() {
             entry["normal"] = to_godot(e.normal);
             entry["radius"] = double(e.radius);
             entry["owner"] = int64_t(e.owner);
+            if (e.weapon == core::net::object_explosion_weapon) {
+                continue;  // drawn from the object's own explosion as it's seen to go (Bf2Map)
+            }
             if (e.weapon == core::net::droid_explosion_weapon) {
                 entry["effect"] = godot::String("com_sfx_explosion_sm");
                 entry["light_color"] = godot::Color(1.0f, 0.72f, 0.3f, 1.0f);

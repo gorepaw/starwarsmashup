@@ -25,6 +25,7 @@ const POWERUPS := &"bf2_powerups"  # the health and ammo droids' nodes (meta "po
 const DROID_TURN_TIME := 1.2       # s the health droid turns before it waits (ASSUMPTION)
 const DROID_TURN_RANGE := 1.2      # radians either way of where it was placed it looks
 const GONK_ROCK_RATE := 1.6        # rocks a second, the ammo droid shifting from foot to foot
+const DESTRUCTIBLES := &"bf2_destructibles"  # what can be destroyed (meta "bf2_destructible": export-map's; "wreck": its wreck's node or null)
 const DOORS := &"bf2_doors"  # doors' nodes (meta "bf2_door": export-map's; "player": their AnimationPlayer)
 
 
@@ -148,6 +149,25 @@ static func add_objects(parent: Node, prefix: String) -> int:
 				node.set_meta("player", player)
 				node.set_meta("open", -1.0)
 				node.add_to_group(DOORS)
+		if object.has("destructible"):
+			# Its wreck (DestroyedGeometryName) placed with it, hidden until
+			# it's destroyed; the same model: it stays; none: it just goes.
+			var spec: Dictionary = object["destructible"]
+			var wreck_file := str(spec.get("destroyed_model", ""))
+			var wreck: Node3D = null
+			if wreck_file != "" and wreck_file != model:
+				if not models.has(wreck_file):
+					models[wreck_file] = _load_model(dir.path_join(wreck_file))
+				if models[wreck_file] != null:
+					wreck = (models[wreck_file] as Node3D).duplicate() as Node3D
+					wreck.transform = node.transform
+					wreck.visible = false
+					parent.add_child(wreck)
+			node.set_meta("bf2_destructible", spec)
+			node.set_meta("wreck", wreck)
+			node.set_meta("keep", wreck_file == model)
+			node.set_meta("standing", -1)  # not known yet
+			node.add_to_group(DESTRUCTIBLES)
 		parent.add_child(node)
 		count += 1
 	for template: Variant in models.values():
@@ -155,6 +175,33 @@ static func add_objects(parent: Node, prefix: String) -> int:
 			(template as Node).free()
 	print("placed ", count, " objects (", models.size(), " models) from ", path.get_file())
 	return count
+
+
+# What's been destroyed, as the server says (`health` by the battlefield's
+# destructible index; <= 0: destroyed): the wreck in its place. Returns an
+# explosion (position, effect, radius) for each seen to go just now, not for
+# what was already gone when first seen.
+static func update_destructibles(tree: SceneTree, health: PackedFloat32Array) -> Array[Dictionary]:
+	var explosions: Array[Dictionary] = []
+	for node: Node3D in tree.get_nodes_in_group(DESTRUCTIBLES):
+		var spec: Dictionary = node.get_meta("bf2_destructible")
+		var index := int(spec["index"])
+		if index >= health.size():
+			continue
+		var standing := 1 if health[index] > 0.0 else 0
+		var was := int(node.get_meta("standing"))
+		if standing == was:
+			continue
+		node.set_meta("standing", standing)
+		node.visible = standing == 1 or bool(node.get_meta("keep"))
+		var wreck: Node3D = node.get_meta("wreck")
+		if wreck != null:
+			wreck.visible = standing == 0
+		if was == 1 and standing == 0:
+			var c: Array = spec.get("center", [0, 0, 0])
+			explosions.append({"position": Vector3(c[0], c[1], c[2]), "effect": str(spec.get("explosion_effect", "")),
+					"radius": maxf(2.0, float(spec.get("explosion_radius", 0)))})
+	return explosions
 
 
 # The doors, as open as the server says (`open`: 0 shut .. 1, by the

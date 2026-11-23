@@ -133,6 +133,10 @@ void put_match(ByteWriter& out, const MatchState& m) {
     for (const float open : m.doors) {
         out.put(uint8_t(std::lround(std::clamp(open, 0.0f, 1.0f) * 255)));
     }
+    out.put(uint16_t(m.destructibles.size()));
+    for (const float health : m.destructibles) {
+        out.put(health);
+    }
 }
 
 int8_t get_team(ByteReader& in) {
@@ -174,6 +178,11 @@ MatchState get_match(ByteReader& in) {
     m.doors.reserve(doors);
     for (size_t i = 0; i < doors; ++i) {
         m.doors.push_back(in.get<uint8_t>() / 255.0f);
+    }
+    const size_t destructibles = in.get<uint16_t>();
+    m.destructibles.reserve(destructibles);
+    for (size_t i = 0; i < destructibles; ++i) {
+        m.destructibles.push_back(in.get<float>());
     }
     return m;
 }

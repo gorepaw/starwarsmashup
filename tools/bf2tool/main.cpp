@@ -921,6 +921,7 @@ int cmd_export_map(const std::vector<std::string>& args) {
     core::MapCollision collision;
     std::vector<std::string> powerups;  // the health and ammo droids' lines for the map file
     std::vector<std::string> doors;     // the doors' lines (core::Door)
+    std::vector<std::string> destructibles;  // what can be destroyed: lines (core::Destructible)
     std::map<std::string, std::vector<CollisionTriangle>> shapes;  // model -> its collision
     {
         std::ofstream json(out_dir / (map + ".objects.json"), std::ios::binary);
@@ -944,6 +945,7 @@ int cmd_export_map(const std::vector<std::string>& args) {
             // collision, placed in game space.
             std::string model;
             std::string door_json;
+            std::string destructible_json;
             if (library.classes().find(object.type) != nullptr) {
                 const OdfClass resolved = library.classes().resolve(object.type);
                 // A door's opening: its class's Animation clip from the
@@ -1070,11 +1072,68 @@ int cmd_export_map(const std::vector<std::string>& args) {
                             std::cerr << std::format("door {}: no collision for its box\n", object.name);
                         }
                     }
-                    for (const CollisionTriangle& t :
-                         door && !locked ? std::vector<CollisionTriangle>{} : shape->second) {
-                        collision.triangles.push_back(
-                            {place(t.a), place(t.b), place(t.c),
-                             uint8_t((t.soldiers ? core::blocks_characters : 0) | (t.ordnance ? core::blocks_shots : 0))});
+                    // Something that can be destroyed (a "destructablebuilding"
+                    // with health): its collision is its part's, there while it
+                    // stands; its wreck's (DestroyedGeometryName) there once
+                    // it's destroyed. Its bounds (game space) and explosion
+                    // (ExplosionName's) go in the map file.
+                    const double max_health = std::atof(resolved.get("MaxHealth").value_or("0").c_str());
+                    const bool destructible = lowercase(resolved.base) == "destructablebuilding" && max_health > 0;
+                    const int16_t part = destructible ? int16_t(destructibles.size() + 1) : int16_t(0);
+                    core::Vec3 low{1e9, 1e9, 1e9}, high{-1e9, -1e9, -1e9};
+                    const auto add = [&](const std::vector<CollisionTriangle>& triangles, int16_t as) {
+                        for (const CollisionTriangle& t : triangles) {
+                            core::MapCollision::Triangle placed{
+                                place(t.a), place(t.b), place(t.c),
+                                uint8_t((t.soldiers ? core::blocks_characters : 0) |
+                                        (t.ordnance ? core::blocks_shots : 0)),
+                                as};
+                            if (as > 0) {
+                                for (const core::Vec3& p : {placed.a, placed.b, placed.c}) {
+                                    low = {std::min(low.x, p.x), std::min(low.y, p.y), std::min(low.z, p.z)};
+                                    high = {std::max(high.x, p.x), std::max(high.y, p.y), std::max(high.z, p.z)};
+                                }
+                            }
+                            collision.triangles.push_back(placed);
+                        }
+                    };
+                    add(door && !locked ? std::vector<CollisionTriangle>{} : shape->second, part);
+                    if (destructible) {
+                        std::string wreck;
+                        if (const auto destroyed = resolved.get("DestroyedGeometryName")) {
+                            wreck = model_file(*destroyed);
+                            if (library.model(*destroyed) != nullptr) {
+                                add(model_collision(library, *destroyed, collision_use(resolved)), int16_t(-part));
+                            }
+                        }
+                        if (low.x > high.x) {
+                            // No collision: a meter round where it stands.
+                            const core::Vec3 at{-object.position[0], object.position[1] + 1, object.position[2]};
+                            low = at - core::Vec3{1, 1, 1};
+                            high = at + core::Vec3{1, 1, 1};
+                        }
+                        double damage = 0, inner = 0, outer = 0;
+                        std::string effect;
+                        if (const auto name = resolved.get("ExplosionName")) {
+                            const OdfClass explosion = library.classes().resolve(*name);
+                            damage = std::atof(explosion.get("Damage").value_or("0").c_str());
+                            // Its radii, or one: DamageRadius (ASSUMPTION: full
+                            // at the middle, falling to nothing there).
+                            inner = std::atof(explosion.get("DamageRadiusInner").value_or("0").c_str());
+                            outer = std::atof(
+                                explosion.get("DamageRadiusOuter").value_or(explosion.get("DamageRadius").value_or("0")).c_str());
+                            effect = lowercase(explosion.get("Effect").value_or(""));
+                        }
+                        const core::Vec3 center = (low + high) * 0.5, half = (high - low) * 0.5;
+                        destructible_json = std::format(
+                            ", \"destructible\": {{\"index\": {}, \"health\": {:g}, \"destroyed_model\": {}, "
+                            "\"explosion_effect\": {}, \"explosion_radius\": {:g}, \"center\": [{:.2f}, {:.2f}, {:.2f}]}}",
+                            destructibles.size(), max_health, json_string(wreck), json_string(effect), outer, center.x,
+                            center.y, center.z);
+                        destructibles.push_back(std::format(
+                            "Destructible = {:g} {:.2f} {:.2f} {:.2f} {:.2f} {:.2f} {:.2f} {:g} {:g} {:g} {}", max_health,
+                            -center.x, center.y, center.z, std::max(0.05, half.x), std::max(0.05, half.y),
+                            std::max(0.05, half.z), damage, inner, outer, object.name));
                     }
                 }
             }
@@ -1153,7 +1212,7 @@ int cmd_export_map(const std::vector<std::string>& args) {
             }
             json << (written++ ? ",\n" : "\n") << "    {\"layer\": " << json_string(object.layer)
                  << ", \"class\": " << json_string(object.type) << ", \"name\": " << json_string(object.name)
-                 << ", \"model\": " << json_string(model) << hologram << powerup << door_json
+                 << ", \"model\": " << json_string(model) << hologram << powerup << door_json << destructible_json
                  << std::format(", \"position\": [{}, {}, {}], \"basis\": [", -object.position[0], object.position[1],
                                 object.position[2]);
             for (size_t i = 0; i < 9; ++i) {
@@ -1308,6 +1367,9 @@ int cmd_export_map(const std::vector<std::string>& args) {
         ini << line << "\n";
     }
     for (const std::string& line : doors) {
+        ini << line << "\n";
+    }
+    for (const std::string& line : destructibles) {
         ini << line << "\n";
     }
     if (no_terrain) {

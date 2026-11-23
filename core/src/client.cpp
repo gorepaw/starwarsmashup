@@ -217,6 +217,13 @@ void GameClient::handle(const net::Datagram& datagram, double now) {
     impacts_.insert(impacts_.end(), snapshot->impacts.begin(), snapshot->impacts.end());
     pickups_ = snapshot->pickups;
     match_ = snapshot->match;
+    if (match_) {
+        // What's been destroyed, gone from our world too (so we move as the
+        // server has us move).
+        for (size_t i = 0; i < match_->destructibles.size(); ++i) {
+            world_.set_destroyed(i, match_->destructibles[i] <= 0.0f);
+        }
+    }
     player_status_ = snapshot->you;
 
     std::map<uint32_t, std::deque<Sample>> seen;

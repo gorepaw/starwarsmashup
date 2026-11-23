@@ -366,6 +366,11 @@ func _process(delta: float) -> bool:
 		_update_posts(game, int(own["team"]))
 		_update_powerups(game, delta)
 		Bf2Map.animate_doors(self, game.get("doors", PackedFloat32Array()))
+		for blast: Dictionary in Bf2Map.update_destructibles(self, game.get("destructibles", PackedFloat32Array())):
+			if _effects != null:
+				var radius := float(blast["radius"])
+				_effects.spawn_explosion(blast["position"], Vector3.UP, radius, str(blast["effect"]),
+						Color(1.0, 0.7, 0.3), radius * 2.0)
 		if own["life"] == "waiting" and not game.is_empty():
 			_choose_spawn(game, own)
 		else:

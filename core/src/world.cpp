@@ -17,7 +17,7 @@ namespace {
 constexpr uint32_t collision_magic = 0x4C434D53;  // "SMCL"
 constexpr uint32_t collision_version = 1;
 constexpr uint32_t map_collision_magic = 0x434D4D53;  // "SMMC"
-constexpr uint32_t map_collision_version = 1;
+constexpr uint32_t map_collision_version = 2;  // 1: without parts
 // Map triangles at most this steep (55 degrees, as MoveParams') are ground.
 // (Felucia's ramp up to its cliff top has a stretch of 50.2.)
 const double walkable_normal_y = std::cos(55 * std::numbers::pi / 180);
@@ -228,6 +228,7 @@ void save_map_collision(const MapCollision& collision, const std::filesystem::pa
         put_point(out, triangle.b);
         put_point(out, triangle.c);
         out.put(triangle.blocks);
+        out.put(triangle.part);
     }
     std::ofstream file(path, std::ios::binary);
     file.write(reinterpret_cast<const char*>(out.data().data()), std::streamsize(out.data().size()));
@@ -245,8 +246,12 @@ MapCollision load_map_collision(const std::filesystem::path& path) {
     MapCollision collision;
     try {
         net::ByteReader in(data);
-        if (in.get<uint32_t>() != map_collision_magic || in.get<uint32_t>() != map_collision_version) {
-            throw std::runtime_error(path.string() + " is not a version 1 map collision file");
+        if (in.get<uint32_t>() != map_collision_magic) {
+            throw std::runtime_error(path.string() + " is not a map collision file");
+        }
+        const uint32_t version = in.get<uint32_t>();
+        if (version < 1 || version > map_collision_version) {
+            throw std::runtime_error(path.string() + " is a map collision file of an unknown version");
         }
         const uint32_t count = in.get<uint32_t>();
         collision.triangles.reserve(count);
@@ -256,6 +261,9 @@ MapCollision load_map_collision(const std::filesystem::path& path) {
             triangle.b = get_point(in);
             triangle.c = get_point(in);
             triangle.blocks = in.get<uint8_t>();
+            if (version >= 2) {
+                triangle.part = in.get<int16_t>();
+            }
             collision.triangles.push_back(triangle);
         }
         if (!in.at_end()) {
@@ -320,7 +328,7 @@ void World::add_map_collision(const MapCollision& collision) {
         if (length < 1e-9 || t.blocks == 0) {
             continue;  // degenerate, or stops nothing
         }
-        Solid s{t.a, t.b, t.c, n * (1 / length), 0, 0, 0, 0, 0, 0, t.blocks, false, false};
+        Solid s{t.a, t.b, t.c, n * (1 / length), 0, 0, 0, 0, 0, 0, t.blocks, false, false, t.part};
         s.min_x = std::min({t.a.x, t.b.x, t.c.x});
         s.max_x = std::max({t.a.x, t.b.x, t.c.x});
         s.min_y = std::min({t.a.y, t.b.y, t.c.y});
@@ -365,6 +373,16 @@ void World::add_map_collision(const MapCollision& collision) {
     }
 }
 
+void World::set_destroyed(size_t index, bool destroyed) const {
+    if (index >= destroyed_.size()) {
+        if (!destroyed) {
+            return;
+        }
+        destroyed_.resize(index + 1, 0);
+    }
+    destroyed_[index] = destroyed ? 1 : 0;
+}
+
 size_t World::add_map_collision_of(const std::filesystem::path& bake) {
     const std::filesystem::path path = map_collision_path(bake);
     if (!std::filesystem::exists(path)) {
@@ -387,7 +405,9 @@ void World::for_solids(double min_x, double max_x, double min_z, double max_z, V
     for (int gz = z0; gz <= z1; ++gz) {
         for (int gx = x0; gx <= x1; ++gx) {
             for (const uint32_t i : grid_[size_t(gz) * size_t(grid_w_) + size_t(gx)]) {
-                visit(solids_[i]);
+                if (present(solids_[i])) {
+                    visit(solids_[i]);
+                }
             }
         }
     }
@@ -412,7 +432,9 @@ void World::for_solids_along(Vec3 a, Vec3 b, Visit&& visit) const {
     for (int i = 0; i <= steps; ++i) {
         if (gx >= 0 && gx < grid_w_ && gz >= 0 && gz < grid_h_) {
             for (const uint32_t index : grid_[size_t(gz) * size_t(grid_w_) + size_t(gx)]) {
-                visit(solids_[index]);
+                if (present(solids_[index])) {
+                    visit(solids_[index]);
+                }
             }
         }
         if (next_x < next_z) {
@@ -578,7 +600,7 @@ bool World::floor_between(double x, double z, double low, double high) const {
 std::optional<World::RayHit> World::cast(Vec3 a, Vec3 b, uint8_t blocks, bool front_only) const {
     std::optional<RayHit> best;
     const Vec3 d = b - a;
-    const auto consider = [&](double t, Vec3 normal) {
+    const auto consider = [&](double t, Vec3 normal, int destructible = -1) {
         if (t >= 0 && t <= 1 && (!best || t < best->t)) {
             const double len = normal.length();
             if (len > 1e-9) {
@@ -589,7 +611,7 @@ std::optional<World::RayHit> World::cast(Vec3 a, Vec3 b, uint8_t blocks, bool fr
             if (dot(normal, d) > 0) {
                 normal = normal * -1.0;
             }
-            best = RayHit{t, normal};
+            best = RayHit{t, normal, destructible};
         }
     };
 
@@ -618,7 +640,7 @@ std::optional<World::RayHit> World::cast(Vec3 a, Vec3 b, uint8_t blocks, bool fr
     for_solids_along(a, b, [&](const Solid& s) {
         if ((s.blocks & blocks) && (!front_only || s.normal.dot(d) < 0)) {
             if (const auto t = segment_triangle(a, d, s.a, s.b, s.c)) {
-                consider(*t, s.normal);
+                consider(*t, s.normal, s.part > 0 ? s.part - 1 : -1);
             }
         }
     });
