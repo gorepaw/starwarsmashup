@@ -147,7 +147,16 @@ class Aimer extends SkeletonModifier3D:
 	var step := 0.0       # m the chest is carried over (+) or under the hips
 	var arms := Transform3D()  # first person: the arms' kick, bob and sway, about the chest
 	var eye_local := Vector3.ZERO  # the head as last drawn (skeleton space)
+	# The left hand on the weapon's fore-grip: this point in the right hand's
+	# hold point's space (the weapon's: +Z along the barrel), or none (a
+	# pistol's, a launcher's set holds it its own way).
+	var grip: Variant = null
 	var _spine: Array[int] = []
+	var _left_arm := -1
+	var _left_forearm := -1
+	var _left_wrist := -1
+	var _hold_left := -1
+	var _hold_right := -1
 	var _root := -1
 	var _head := -1
 	var _clavicles: Array[int] = []
@@ -165,6 +174,11 @@ class Aimer extends SkeletonModifier3D:
 			var bone := skeleton.find_bone(bone_name)
 			if bone >= 0:
 				_clavicles.append(bone)
+		_left_arm = skeleton.find_bone("lArm")
+		_left_forearm = skeleton.find_bone("lForeArm")
+		_left_wrist = skeleton.find_bone("lWrist")
+		_hold_left = skeleton.find_bone("hold_l")
+		_hold_right = skeleton.find_bone("hold_r")
 
 	func _process_modification_with_delta(delta: float) -> void:
 		var skeleton := get_skeleton()
@@ -205,12 +219,51 @@ class Aimer extends SkeletonModifier3D:
 			var move := about * Transform3D(Basis(Vector3.RIGHT, bend - pitch)) * arms * about.affine_inverse()
 			for bone in _clavicles:
 				_set_global(skeleton, bone, move * skeleton.get_bone_global_pose(bone))
+		_grip(skeleton)
 		# Shrinks the head and whatever is worn on it (helmet, hair).
 		if _head >= 0:
 			skeleton.set_bone_pose_scale(_head, Vector3.ONE * (0.001 if first_person else 1.0))
 			# Read now: once the modifiers are done the skeleton's poses go back
 			# to the animation's, without the bending and steadying.
 			eye_local = skeleton.get_bone_global_pose(_head).origin
+
+	# The left hand onto the weapon's fore-grip (`grip`): two-bone IK on the
+	# upper arm and forearm, bending in the plane the animation bends them in,
+	# the hand turned as the animation has it.
+	func _grip(skeleton: Skeleton3D) -> void:
+		if grip == null or _left_arm < 0 or _left_forearm < 0 or _left_wrist < 0 or _hold_right < 0:
+			return
+		var target: Vector3 = skeleton.get_bone_global_pose(_hold_right) * (grip as Vector3)
+		var wrist := skeleton.get_bone_global_pose(_left_wrist).origin
+		if _hold_left >= 0:
+			# Where the palm grips, not the wrist.
+			target -= skeleton.get_bone_global_pose(_hold_left).origin - wrist
+		var a := skeleton.get_bone_global_pose(_left_arm).origin
+		var b := skeleton.get_bone_global_pose(_left_forearm).origin
+		var upper := (b - a).length()
+		var lower := (wrist - b).length()
+		if upper < 1e-4 or lower < 1e-4:
+			return
+		var reach := clampf((target - a).length(), absf(upper - lower) + 1e-3, upper + lower - 1e-3)
+		# The elbow: open or close it to the reach.
+		var normal := (a - b).cross(wrist - b)
+		if normal.length() < 1e-6:
+			normal = Vector3.RIGHT
+		normal = normal.normalized()
+		var now := (a - b).angle_to(wrist - b)
+		var wanted := acos(clampf((upper * upper + lower * lower - reach * reach) / (2.0 * upper * lower), -1.0, 1.0))
+		var turn := now - wanted
+		var tried := b + Basis(normal, turn) * (wrist - b)
+		var other := b + Basis(normal, -turn) * (wrist - b)
+		if absf((other - a).length() - reach) < absf((tried - a).length() - reach):
+			turn = -turn
+		_rotate_global(skeleton, _left_forearm, Basis(normal, turn))
+		# The shoulder: point the arm at it.
+		wrist = skeleton.get_bone_global_pose(_left_wrist).origin
+		var from := (wrist - a).normalized()
+		var to := (target - a).normalized()
+		if from.cross(to).length() > 1e-6:
+			_rotate_global(skeleton, _left_arm, Basis(Quaternion(from, to)))
 
 	static func _local(skeleton: Skeleton3D, bone: int) -> Transform3D:
 		return Transform3D(Basis(skeleton.get_bone_pose_rotation(bone)).scaled(skeleton.get_bone_pose_scale(bone)),
@@ -344,6 +397,7 @@ func set_anim_set(anim_set: String) -> void:
 	if anim_set == _anim_set or _tree == null:
 		return
 	_anim_set = anim_set
+	_set_grip()
 	var clips: Dictionary = ANIM_SETS.get(anim_set, {})
 	for entry: Dictionary in _clip_nodes:
 		var role: StringName = entry["role"]
@@ -574,11 +628,27 @@ func set_weapon(path: String) -> void:
 		if baked != null:
 			baked.visible = true
 		_muzzle = model.find_child("hp_muzzle", true, false) as Node3D
+	else:
+		baked.visible = false
+		_weapon = template.duplicate() as Node3D
+		baked.get_parent().add_child(_weapon)
+		_muzzle = _weapon.find_child("hp_muzzle", true, false) as Node3D
+	_set_grip()
+
+
+# Where the left hand holds a rifle: along the barrel, from the grip (the
+# weapon's origin, in the right hand) part way to the muzzle, a little under
+# it (ASSUMPTION: 55% of the way, 12 to 42 cm out, at 60% of the muzzle's height, by eye: the E-11's falls
+# where Battlefront's rifle clips put the hand). None for a pistol's or a
+# launcher's set.
+func _set_grip() -> void:
+	if _aimer == null:
 		return
-	baked.visible = false
-	_weapon = template.duplicate() as Node3D
-	baked.get_parent().add_child(_weapon)
-	_muzzle = _weapon.find_child("hp_muzzle", true, false) as Node3D
+	if _anim_set != "rifle" or _muzzle == null:
+		_aimer.grip = null
+		return
+	var reach := clampf(_muzzle.position.z * 0.55, 0.12, 0.42)
+	_aimer.grip = Vector3(0.0, _muzzle.position.y * 0.6, reach)
 
 
 # The model's own weapon: the mesh on its right hand's hold point.

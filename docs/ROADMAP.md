@@ -241,7 +241,7 @@ Galaxies' weapons and armor become items you own, wear, and put into three loado
 **Holding weapons**
 - [ ] Each weapon held properly: its grip points, hand poses by archetype, and Battlefront's animation set for its kind (rifle, pistol, bazooka). This fixes the third-person hands, and first person uses the same points.
   - [x] Battlefront's animation set by the weapon's kind (`WeaponDef::anim_set`, `Soldier.set_anim_set`): pistols with human_3's pistol clips (run, walk, shoot, reload, standing and crouched; held raised, one-handed, since Battlefront has no pistol idle), launchers with human_2's bazooka clips, the rest the rifle's; every species and native exported with them (35 clips).
-  - [ ] Grip points and hand poses: the left hand on each rifle's fore-grip.
+  - [x] Grip points: the left hand on each rifle's fore-grip (two-bone IK on the left arm after the animation, `Soldier.Aimer`), the grip found along the barrel from the weapon's muzzle (ASSUMPTION: 55% of the way out, by eye), so a T-21 is held as far out as it is long; pistols and launchers keep their sets' own hands. First person holds by the same point.
 - [ ] Soldiers hold their own weapon's model, not all the E-11. The HUD's weapon panels show the models.
   - [x] Held models: a weapon names its model (an item's `Model`; Battlefront's weapons a Galaxies one of their kind and side, `core::default_weapon_model`: pistols the DL-44 or D18, rifles a side's carbine, sniper rifles the DLT-20A, shotguns the SG-82, launchers the T-21 for want of a Galaxies launcher), and every soldier, yours and everyone's, holds the one in their hand on the right hand's hold point in place of the E-11 the models were exported with (`Soldier.set_weapon`).
   - [ ] The HUD's weapon panels showing the models.
