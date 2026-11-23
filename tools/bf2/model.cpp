@@ -41,9 +41,10 @@ constexpr uint32_t vertex_texcoords = 1u << 9;
 constexpr uint32_t vertex_compressed = 0xf000;  // compressed position, bone info, normal or texcoords
 
 // Reads an uncompressed vertex buffer into `segment`: position, bone
-// indices and weights (skipped: skinned vertices are read in their bind pose,
-// in model space), normal, tangents (skipped), color or static lighting,
-// texcoords. False for compressed buffers or an unexpected stride.
+// indices (the first of the four: Battlefront's skinned vehicles are hard
+// skinned, all four alike) and weights (skipped), normal, tangents
+// (skipped), color or static lighting, texcoords. False for compressed
+// buffers or an unexpected stride.
 bool read_vertices(std::span<const uint8_t> vbuf, ModelSegment& segment) {
     const uint32_t count = read<uint32_t>(vbuf, 0);
     const uint32_t stride = read<uint32_t>(vbuf, 4);
@@ -61,6 +62,7 @@ bool read_vertices(std::span<const uint8_t> vbuf, ModelSegment& segment) {
         return false;
     }
     segment.positions.resize(count);
+    segment.vertex_bones.assign(flags & vertex_bone_indices ? count : 0, 0);
     segment.normals.assign(count, {0, 1, 0});
     segment.uvs.assign(count, {0, 0});
     segment.colors.assign(color ? count : 0, {255, 255, 255, 255});
@@ -68,6 +70,9 @@ bool read_vertices(std::span<const uint8_t> vbuf, ModelSegment& segment) {
     for (uint32_t i = 0; i < count; ++i) {
         size_t at = 12 + size_t(i) * stride;
         segment.positions[i] = read<std::array<float, 3>>(vbuf, at);
+        if (flags & vertex_bone_indices) {
+            segment.vertex_bones[i] = vbuf[at + 12];
+        }
         at += 12 + bones;
         if (normal) {
             segment.normals[i] = read<std::array<float, 3>>(vbuf, at);
@@ -148,6 +153,11 @@ ModelSegment read_segment(const UcfbNode& segm) {
             indices = &child;
         } else if (child.tag == "VBUF" && segment.positions.empty()) {
             read_vertices(child.data, segment);
+        } else if (child.tag == "BMAP" && child.data.size() >= 4) {
+            const uint32_t count = read<uint32_t>(child.data, 0);
+            for (uint32_t i = 0; i < count && 4 + i < child.data.size(); ++i) {
+                segment.bone_map.push_back(child.data[4 + i]);
+            }
         }
     }
     if (indices != nullptr && !segment.positions.empty()) {

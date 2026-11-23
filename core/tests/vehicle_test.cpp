@@ -170,6 +170,37 @@ VehicleScale = 0.1
     CHECK(v.model == dir / "test_bike" / "test_bike.gltf");
     CHECK(v.loadout.weapons[0] && v.loadout.weapons[0]->name == "test_bike_cannon");
     CHECK(v.loadout.weapons[0] && near(v.loadout.weapons[0]->vehicle_factor, 0.1));
+
+    // A walker: its pace, its run on energy (an AT-ST's BoostSpeed), its
+    // steps' own pace and its camera's distance.
+    std::filesystem::create_directories(dir / "test_walker");
+    std::ofstream(dir / "test_walker" / "test_walker.ini") << R"([vehicle]
+Name = test_walker
+Kind = walker
+MaxSpeed = 5.0
+MaxStrafeSpeed = 3.5
+BoostSpeed = 10
+BoostAcceleration = 100.0
+EnergyBoostDrain = 20
+TrackCenter = 0.0 9.25 -3.0
+TrackOffset = 0.0 0.0 13.0
+StrideSpeed = 6.806
+Bounds = -2.4 0 -2.5 2.4 8.5 3.6
+)";
+    const VehicleClass w = load_vehicle_class(dir / "test_walker" / "test_walker.ini");
+    CHECK(w.kind == VehicleKind::walker && near(w.forward_speed, 5) && near(w.boost_speed, 10));
+    CHECK(near(w.boost_acceleration, 20) && near(w.energy_boost_drain, 20));  // no faster than twice its own
+    CHECK(near(w.stride_speed, 6.806) && near(w.track_offset.z, 13));
+    Heightfield flat{101, 1.0, -50, -50, std::vector<float>(101 * 101, 0.0f)};
+    World world(flat);
+    MoveState state;
+    MoveInput run;
+    run.forward = 127;
+    run.buttons = MoveInput::sprint;
+    for (int i = 0; i < 60; ++i) {
+        simulate_vehicle(state, run, world, w, dt);
+    }
+    CHECK(near(Vec3{state.velocity.x, 0, state.velocity.z}.length(), 10, 1e-6) && state.energy < 100);
     std::filesystem::remove_all(dir);
 }
 

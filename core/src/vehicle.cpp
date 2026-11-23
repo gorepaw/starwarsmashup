@@ -77,6 +77,11 @@ VehicleClass load_vehicle_class(const std::filesystem::path& path) {
         v.turn_rate = s.number("MaxTurnSpeed", 1.5);
         // ASSUMPTION: a walker gets to speed in about half a second.
         v.acceleration = v.deceleration = v.traction = v.forward_speed * 2;
+        // Its run (the AT-ST's BoostSpeed), on energy.
+        v.boost_speed = s.number("BoostSpeed", 0);
+        v.boost_acceleration = std::min(s.number("BoostAcceleration", v.acceleration), v.acceleration * 2);
+        v.energy_restore = s.number("EnergyAutoRestore", v.energy_restore);
+        v.energy_boost_drain = s.number("EnergyBoostDrain", v.energy_boost_drain);
     } else {
         v.forward_speed = s.number("ForwardSpeed", v.forward_speed);
         v.reverse_speed = s.number("ReverseSpeed", v.reverse_speed);
@@ -114,11 +119,13 @@ VehicleClass load_vehicle_class(const std::filesystem::path& path) {
     v.yaw_min = yaw_lo * degrees, v.yaw_max = yaw_hi * degrees;
     v.pitch_min = pitch_lo * degrees, v.pitch_max = pitch_hi * degrees;
     v.track_center = read_vec3(s, "TrackCenter", v.track_center);
+    v.track_offset = read_vec3(s, "TrackOffset", v.track_offset);
     v.explosion_damage = s.number("ExplosionDamage", 0);
     v.explosion_inner = s.number("ExplosionRadiusInner", 0);
     v.explosion_outer = std::max(v.explosion_inner, s.number("ExplosionRadiusOuter", 0));
     v.explosion_effect = s.get("ExplosionEffect").value_or("");
     v.engine_sound = s.get("EngineSound").value_or("");
+    v.stride_speed = s.number("StrideSpeed", 0);
     v.map_texture = s.get("MapTexture").value_or("");
     v.health_texture = s.get("HealthTexture").value_or("");
     v.loadout.name = v.name;

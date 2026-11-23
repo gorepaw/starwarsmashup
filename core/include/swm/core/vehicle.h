@@ -60,12 +60,14 @@ struct VehicleClass {
     // The third-person camera: TrackCenter, the point it looks over, behind
     // and above (its model's space).
     Vec3 track_center{0, 2.5, -6};
+    Vec3 track_offset;  // TrackOffset: the chase camera further back (z) from TrackCenter
     // The pilot's weapons, as a loadout's primary and sidearm.
     Loadout loadout;
     // Destroyed: its explosion (whoever's near takes it), and its look.
     double explosion_damage = 0, explosion_inner = 0, explosion_outer = 0;
     std::string explosion_effect;
     std::string engine_sound;
+    double stride_speed = 0;  // a walker's steps' own pace (m/s), to play them at its speed
     std::string map_texture, health_texture;
 
     double radius() const;  // for walls: half its width

@@ -1014,11 +1014,13 @@ func _update_camera(target: Vector3, delta: float) -> void:
 		if soldier != null:
 			PlayerAppearance.set_first_person(_own, false)
 		var track: Vector3 = _vehicles.class_of(driving).get("track_center", Vector3(0, 2.5, -6))
+		var offset: Vector3 = _vehicles.class_of(driving).get("track_offset", Vector3.ZERO)
 		_camera_yaw = _yaw
 		var look := _camera_basis()
-		# ASSUMPTION: a little nearer than TrackCenter, which frames it small.
-		var pivot := target + Vector3.UP * track.y * 0.7
-		var at := pivot + look * Vector3(0, 0.3, maxf(3.5, -track.z * 0.75))
+		# At TrackCenter's height; ASSUMPTION: a little nearer than its and
+		# TrackOffset's distance, which frame it small.
+		var pivot := target + Vector3.UP * track.y
+		var at := pivot + look * Vector3(0, 0.3, maxf(3.5, (offset.z - track.z) * 0.75))
 		at.y = maxf(at.y, _client.get_ground_height(at.x, at.z, pivot.y) + 0.5)
 		_camera.global_position = at
 		_camera.look_at(pivot + look * Vector3(0, 0, -10), Vector3.UP)

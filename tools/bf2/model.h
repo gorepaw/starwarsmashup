@@ -50,6 +50,11 @@ struct ModelSegment {
     std::vector<std::array<float, 3>> normals;
     std::vector<std::array<float, 2>> uvs;
     std::vector<std::array<uint8_t, 4>> colors;  // RGBA; empty if the vertices have none
+    // A skinned segment's (a walker's legs): each vertex's bone, an index into
+    // `bone_map`, which indexes the skeleton's bones; such a vertex is stored
+    // in its bone's space. Empty for a rigid segment.
+    std::vector<uint8_t> vertex_bones;
+    std::vector<uint8_t> bone_map;  // BMAP
     bool baked_lighting = false;  // the colors are static lighting, not paint
     // Triangles from the stored strips (degenerates dropped), each wound so
     // its front faces the stored normals in Battlefront's coordinates when

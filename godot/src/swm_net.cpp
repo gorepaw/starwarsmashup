@@ -820,10 +820,12 @@ godot::Dictionary SwmClient::get_battlefield() const {
         entry["altitude"] = v.altitude;
         entry["eye"] = to_godot(v.eye);
         entry["track_center"] = to_godot(v.track_center);
+        entry["track_offset"] = to_godot(v.track_offset);
         entry["bounds_min"] = to_godot(v.bounds_min);
         entry["bounds_max"] = to_godot(v.bounds_max);
         entry["explosion_effect"] = godot::String::utf8(v.explosion_effect.c_str());
         entry["engine_sound"] = godot::String::utf8(v.engine_sound.c_str());
+        entry["stride_speed"] = v.stride_speed;
         entry["map_texture"] = godot::String::utf8(v.map_texture.c_str());
         entry["health_texture"] = godot::String::utf8(v.health_texture.c_str());
         vehicles.push_back(entry);

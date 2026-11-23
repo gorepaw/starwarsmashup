@@ -476,6 +476,21 @@ int cmd_export_vehicle(const std::vector<std::string>& args) {
         << "export-vehicle.\n; Game data from your own install: don't commit or share it.\n\n[vehicle]\nName = "
         << name << "\nKind = " << kind << "\n";
     const std::string geometry = vehicle.get("GeometryName").value_or(name);
+    // The driver's body's values: those before a second Flyer- or
+    // WalkerSection (a gunner's seat: the jungle AT-ST's TURRET1 has its own
+    // limits and eye).
+    const auto body_value = [&](std::string_view key) -> std::optional<std::string> {
+        std::optional<std::string> found;
+        int sections = 0;
+        for (const auto& [hash, value] : vehicle.properties) {
+            if (hash == odf_hash("FlyerSection") || hash == odf_hash("WalkerSection")) {
+                ++sections;
+            } else if (sections <= 1 && hash == odf_hash(key)) {
+                found = value;
+            }
+        }
+        return found;
+    };
     for (const char* key : {"Label", "VehicleType", "MaxHealth", "MaxSpeed", "MaxStrafeSpeed", "MaxTurnSpeed",
                             "Acceleration", "Deceleration", "Traction", "ForwardSpeed", "ReverseSpeed",
                             "StrafeSpeed", "BoostSpeed", "BoostAcceleration", "EnergyAutoRestore",
@@ -483,7 +498,7 @@ int cmd_export_vehicle(const std::vector<std::string>& args) {
                             "LiftDamp", "GravityScale", "SpinRate", "BankAngle", "TrackCenter", "TrackOffset",
                             "EyePointOffset", "TiltValue", "PitchLimits", "YawLimits", "LegPairCount",
                             "MapTexture", "HealthTexture", "ExplosionName", "EngineSound", "WakeEffect"}) {
-        if (const auto value = vehicle.get(key)) {
+        if (const auto value = body_value(key)) {
             const std::string text(*value);
             out << key << " = " << (std::string_view(key) == "EngineSound" ? first_token(text) : text) << "\n";
         }
@@ -500,8 +515,81 @@ int cmd_export_vehicle(const std::vector<std::string>& args) {
             }
         }
     }
+    // A walker's clips (its AnimationName bank): its legs hang from its
+    // skeleton, so it's written posed by them. Clip names are hashed; those
+    // found by hashing likely words are named, the rest by their hash.
+    std::vector<ModelClip> clips;
+    if (const auto bank_name = vehicle.get("AnimationName")) {
+        const UcfbNode* bank = library.animation_bank(*bank_name);
+        const UcfbNode* bin = bank ? bank->child("BIN_") : nullptr;
+        if (bin != nullptr) {
+            std::map<uint32_t, std::string> names;
+            for (const char* word : {"idle", "turnl", "turnr", "death01", "walkforward", "walkbackward", "walk",
+                                     "walkback", "forward", "backward", "runforward", "runbackward", "stand",
+                                     "crouch", "fire", "strafeleft", "straferight", "stepleft", "stepright"}) {
+                names[name_hash(word)] = word;
+            }
+            // The AT-ST's steps, whose names weren't found, by what they do
+            // (their root's motion and where their feet start and end): a
+            // stride, then the other (each ending where the other starts),
+            // a start from standing into each, and a stop from each's first pose.
+            for (const auto& [hash, role] : {std::pair{0x52054ecbu, "walk_a"}, std::pair{0x92cfb678u, "walk_b"},
+                                            std::pair{0x8cf982bbu, "walkstart_a"},
+                                            std::pair{0x7ac23eb6u, "walkstart_b"},
+                                            std::pair{0x722b8a22u, "walkstop_a"},
+                                            std::pair{0xaeb58c68u, "walkstop_b"}}) {
+                names.try_emplace(hash, role);
+            }
+            double stride_speed = 0;
+            for (Animation& clip : parse_animation_bank(bin->data)) {
+                const auto known = names.find(clip.name_hash);
+                std::string clip_name = known != names.end() ? known->second : std::format("{:08x}", clip.name_hash);
+                // Its steps in place: the game moves the walker, so the bone
+                // that carries it forward (the one that drifts furthest
+                // across the ground) loses that drift, spread evenly over the
+                // clip. (Its death keeps its fall.)
+                AnimationTrack* carrier = nullptr;
+                double drift = 0;
+                for (AnimationTrack& track : clip.tracks) {
+                    if (track.translations.size() < 2) continue;
+                    const Vec3 d = track.translations.back() - track.translations.front();
+                    const double ground = std::hypot(d.x, d.z);
+                    if (ground > drift) {
+                        drift = ground;
+                        carrier = &track;
+                    }
+                }
+                if (carrier != nullptr && drift > 0.05 && clip_name.starts_with("walk")) {
+                    const Vec3 d = carrier->translations.back() - carrier->translations.front();
+                    const float last = float(carrier->translations.size() - 1);
+                    for (size_t f = 0; f < carrier->translations.size(); ++f) {
+                        carrier->translations[f].x -= d.x * float(f) / last;
+                        carrier->translations[f].z -= d.z * float(f) / last;
+                    }
+                    if (clip_name == "walk_a" && clip.frame_count > 1) {
+                        stride_speed = drift / ((clip.frame_count - 1) / animation_fps);
+                    }
+                }
+                std::cerr << std::format("  clip {} ({} frames, {:.2f} m over the ground)\n", clip_name,
+                                         clip.frame_count, drift);
+                clips.push_back({std::move(clip_name), std::move(clip)});
+            }
+            if (stride_speed > 0) {
+                out << std::format("StrideSpeed = {:.3f}\n", stride_speed);
+            }
+        } else {
+            std::cerr << std::format("  no animation bank {}\n", *bank_name);
+        }
+    }
     std::set<std::string> textures_written;
+    // Unposed first: its box (posed, segments sit in their bones' spaces).
     const ModelExport model = export_model(library, geometry, out_dir, out_dir / "textures", textures_written);
+    if (!clips.empty()) {
+        const ModelExport posed =
+            export_model(library, geometry, out_dir, out_dir / "textures", textures_written, clips);
+        std::cerr << std::format("  posed: {} segments, {} skipped, {} clips\n", posed.segments, posed.skipped,
+                                 clips.size());
+    }
     out << "Model = " << geometry << ".gltf\n";
     // Its body, for walls and hits: the box round what's drawn (its
     // collision primitives can sit off it: the speeder bike's are 0.7 m

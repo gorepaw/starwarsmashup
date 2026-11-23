@@ -263,6 +263,7 @@ ModelExport export_model(const AssetLibrary& library, std::string_view name, con
     const bool animated = !clips.empty() && !skeleton.bones.empty();
     std::map<std::string, swg::Gltf::Mesh> bone_meshes;  // bone -> its segments
     swg::Gltf::Mesh mesh{lowercase(name), {}};
+    swg::Gltf::Mesh skinned_mesh{lowercase(name) + "_skinned", {}};  // animated: skinned segments
     std::map<std::string, int> images;  // texture name -> image index
     const std::filesystem::path relative_textures = std::filesystem::relative(texture_dir, model_dir);
     for (const ModelSegment& segment : model.segments) {
@@ -270,14 +271,28 @@ ModelExport export_model(const AssetLibrary& library, std::string_view name, con
             ++result.skipped;
             continue;
         }
+        // A skinned segment's vertices each into model space through their
+        // own bone (its bind pose; animated, the skin moves them from there).
+        const bool skinned = !segment.vertex_bones.empty() && !segment.bone_map.empty() && !skeleton.bones.empty();
+        std::vector<std::array<uint16_t, 4>> joints;
         // Into model space through the segment's bone (unless it gets a
         // node of its own), then mirror x.
-        const bool on_node = animated && std::any_of(skeleton.bones.begin(), skeleton.bones.end(),
-                                                     [&](const ModelBone& b) { return b.name == segment.bone; });
-        const Transform bone = on_node ? Transform{} : skeleton.model_transform(segment.bone);
-        const Transform turn{bone.rotation, {0, 0, 0}};
+        const bool on_node = !skinned && animated &&
+                             std::any_of(skeleton.bones.begin(), skeleton.bones.end(),
+                                         [&](const ModelBone& b) { return b.name == segment.bone; });
+        const Transform segment_bone = on_node || skinned ? Transform{} : skeleton.model_transform(segment.bone);
         std::vector<Vec3> positions, normals;
         for (size_t i = 0; i < segment.positions.size(); ++i) {
+            Transform bone = segment_bone;
+            if (skinned) {
+                const size_t mapped = segment.vertex_bones[i] < segment.bone_map.size()
+                                          ? segment.bone_map[segment.vertex_bones[i]]
+                                          : 0;
+                const size_t joint = mapped < skeleton.bones.size() ? mapped : 0;
+                bone = skeleton.model_transform(skeleton.bones[joint].name);
+                joints.push_back({uint16_t(joint), 0, 0, 0});
+            }
+            const Transform turn{bone.rotation, {0, 0, 0}};
             const auto p = bone.apply(segment.positions[i]);
             const auto n = turn.apply(segment.normals[i]);
             positions.push_back({-p[0], p[1], p[2]});
@@ -306,6 +321,12 @@ ModelExport export_model(const AssetLibrary& library, std::string_view name, con
             primitive.attributes["COLOR_0"] = gltf.add_vec4(colors);
         }
         primitive.indices = gltf.add_indices(triangles);
+        const bool skin_it = skinned && animated;
+        if (skin_it) {
+            primitive.attributes["JOINTS_0"] = gltf.add_joints(joints);
+            primitive.attributes["WEIGHTS_0"] =
+                gltf.add_vec4(std::vector<std::array<float, 4>>(joints.size(), {1, 0, 0, 0}));
+        }
 
         swg::Gltf::Material material;
         material.name = segment.textures[0].empty() ? "untextured" : lowercase(segment.textures[0]);
@@ -337,7 +358,7 @@ ModelExport export_model(const AssetLibrary& library, std::string_view name, con
         material.unlit = (segment.flags & material_glow) || segment.baked_lighting;
         primitive.material = int(gltf.materials.size());
         gltf.materials.push_back(material);
-        (on_node ? bone_meshes[segment.bone] : mesh).primitives.push_back(primitive);
+        (skin_it ? skinned_mesh : on_node ? bone_meshes[segment.bone] : mesh).primitives.push_back(primitive);
         ++result.segments;
     }
     if (result.segments == 0) {
@@ -373,6 +394,28 @@ ModelExport export_model(const AssetLibrary& library, std::string_view name, con
             const auto parent = bone_nodes.find(bone.parent);
             gltf.nodes[size_t(parent == bone_nodes.end() ? 0 : parent->second)].children.push_back(
                 bone_nodes[bone.name]);
+        }
+        // Skinned segments: one mesh on a node of its own, skinned by every
+        // bone (joint i is skeleton bone i), bound where the bones rest.
+        if (!skinned_mesh.primitives.empty()) {
+            swg::Gltf::Skin skin;
+            std::vector<Mat4> inverse_binds;
+            for (const ModelBone& bone : skeleton.bones) {
+                skin.joints.push_back(bone_nodes[bone.name]);
+                const Transform bind = skeleton.model_transform(bone.name);
+                const Mat4 global = Mat4::from_rotation_translation(
+                    matrix_quat(bind.rotation), Vec3{bind.position[0], bind.position[1], bind.position[2]});
+                inverse_binds.push_back(to_gltf(global).inverse_rigid());
+            }
+            skin.inverse_bind_matrices = gltf.add_matrices(inverse_binds);
+            gltf.skins.push_back(std::move(skin));
+            swg::Gltf::Node skinned_node;
+            skinned_node.name = skinned_mesh.name;
+            skinned_node.mesh = int(gltf.meshes.size());
+            skinned_node.skin = int(gltf.skins.size()) - 1;
+            gltf.meshes.push_back(skinned_mesh);
+            gltf.nodes[0].children.push_back(int(gltf.nodes.size()));
+            gltf.nodes.push_back(skinned_node);
         }
         // Each clip's tracks on the bones they name (by name_hash).
         for (const ModelClip& clip : clips) {
