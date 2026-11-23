@@ -503,10 +503,15 @@ int cmd_export_vehicle(const std::vector<std::string>& args) {
     std::set<std::string> textures_written;
     const ModelExport model = export_model(library, geometry, out_dir, out_dir / "textures", textures_written);
     out << "Model = " << geometry << ".gltf\n";
-    // Its body, for walls and hits: the box round its collision (mesh and
-    // primitives), in game space (x mirrored).
+    // Its body, for walls and hits: the box round what's drawn (its
+    // collision primitives can sit off it: the speeder bike's are 0.7 m
+    // high), else round its collision (mesh and primitives), in game space
+    // (x mirrored).
     const std::vector<CollisionTriangle> collision = model_collision(library, geometry);
-    if (!collision.empty()) {
+    if (model.segments > 0 && model.min[1] < model.max[1]) {
+        out << std::format("Bounds = {:.3f} {:.3f} {:.3f} {:.3f} {:.3f} {:.3f}\n", model.min[0], model.min[1],
+                           model.min[2], model.max[0], model.max[1], model.max[2]);
+    } else if (!collision.empty()) {
         std::array<float, 3> lo{1e9f, 1e9f, 1e9f}, hi{-1e9f, -1e9f, -1e9f};
         for (const CollisionTriangle& triangle : collision) {
             for (const auto& p : {triangle.a, triangle.b, triangle.c}) {

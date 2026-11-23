@@ -282,6 +282,11 @@ ModelExport export_model(const AssetLibrary& library, std::string_view name, con
             const auto n = turn.apply(segment.normals[i]);
             positions.push_back({-p[0], p[1], p[2]});
             normals.push_back({-n[0], n[1], n[2]});
+            const std::array<float, 3> q{float(-p[0]), float(p[1]), float(p[2])};
+            for (size_t k = 0; k < 3; ++k) {
+                result.min[k] = std::min(result.min[k], q[k]);
+                result.max[k] = std::max(result.max[k], q[k]);
+            }
         }
         // Mirroring reverses the winding: swap two corners back.
         std::vector<uint32_t> triangles = segment.triangles;

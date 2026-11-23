@@ -96,16 +96,19 @@ VehicleClass load_vehicle_class(const std::filesystem::path& path) {
         std::istringstream in(*bounds);
         Vec3 lo, hi;
         if (in >> lo.x >> lo.y >> lo.z >> hi.x >> hi.y >> hi.z) {
-            // Hover vehicles' models sit on their origin, over the ground by
-            // their altitude: their body starts at the origin.
-            v.bounds_min = {lo.x, std::max(0.0, lo.y), lo.z};
-            v.bounds_max = {hi.x, std::max(hi.y, v.bounds_min.y + 0.5), hi.z};
+            v.bounds_min = lo;
+            v.bounds_max = {hi.x, std::max(hi.y, lo.y + 0.5), hi.z};
         }
     }
     // A walker steps over a third of its height (ASSUMPTION); a hover
     // vehicle glides over what's under its altitude and a bit.
     v.step_up = v.kind == VehicleKind::walker ? std::max(0.6, v.bounds_max.y / 3) : std::max(0.6, v.altitude + 0.4);
     v.eye = read_vec3(s, "EyePointOffset", v.eye);
+    if (v.eye.y <= 0) {
+        // None (an AT-ST's is zero): from high on its body, ahead of its
+        // middle (ASSUMPTION: where a walker's head and guns are).
+        v.eye = {0, v.bounds_max.y * 0.75, v.bounds_max.z * 0.5};
+    }
     const auto [yaw_lo, yaw_hi] = read_pair(s, "YawLimits", {-15, 15});
     const auto [pitch_lo, pitch_hi] = read_pair(s, "PitchLimits", {-5, 5});
     v.yaw_min = yaw_lo * degrees, v.yaw_max = yaw_hi * degrees;

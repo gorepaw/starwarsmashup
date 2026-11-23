@@ -15,6 +15,11 @@ const NATIVES_TEAM := 2  # a battlefield's natives (core::natives_team)
 const Soldier = preload("res://rendering/soldier.gd")
 const PlayerAppearance = preload("res://rendering/player_appearance.gd")
 const Pickups = preload("res://rendering/pickups.gd")
+const Vehicles = preload("res://rendering/vehicles.gd")
+# Riding a hover vehicle (a speeder bike), where the rider's feet go in its
+# model's space: crouched on it (ASSUMPTION: by eye; Battlefront poses its
+# riders with their own clips, not read yet).
+const RIDER_SEAT := Vector3(0, -0.5, -0.25)
 const Bf2Effects = preload("res://rendering/bf2_effects.gd")
 const Bf2Audio = preload("res://audio/bf2_audio.gd")
 const Settings = preload("res://ui/settings.gd")
@@ -102,6 +107,7 @@ var _was_alive := false
 var _powerup_nodes: Array = []
 var _generation := 0
 var _explosions_seen := 0
+var _vehicles := Vehicles.new()
 var _own_bolts: Array = []
 var _remote_bolts := {}
 var _kills := 0
@@ -253,6 +259,7 @@ func start_session(config: Dictionary) -> bool:
 	_battle_ui.set_world_context(_world_bake, _map_meta, _battlefield)
 	_battle_ui.add_posts()
 	_bind_powerups()
+	_vehicles.setup(_world, _battlefield.get("vehicles", []))
 	if _bot == "" and not DisplayServer.get_name().to_lower().contains("headless"):
 		DisplayServer.window_set_size(Vector2i(1280, 720))
 		_capture_mouse(true)
@@ -317,6 +324,10 @@ func step_frame(delta: float) -> void:
 		_weapons = _client.get_weapons()
 		_pose(_own, own)
 		_update_remotes(int(own["team"]))
+		var shown := {_client.get_entity_id(): {"position": own["position"], "yaw": float(own["yaw"])}}
+		for remote: Dictionary in _client.get_remotes():
+			shown[int(remote["id"])] = {"position": remote["position"], "yaw": float(remote["yaw"])}
+		_vehicles.update(_client.get_vehicles(), shown, delta)
 		var game: Dictionary = _client.get_match()
 		_battle_ui.update_posts(game, int(own["team"]), _elapsed)
 		_update_powerups(game, delta)
@@ -357,11 +368,13 @@ func step_frame(delta: float) -> void:
 			SwgCity.update_doors(_doors, people, delta)
 
 	_battle_ui.hub_markers = _hub_ui.radar_markers(_client) if _hub_ui != null else []
+	_battle_ui.driving = _driven_vehicle()
 	_battle_ui.update_hud(_client, _weapons, _remotes.size(), _client.get_max_health(),
 			_show_stats, delta, _pause_menu != null and _pause_menu.visible,
 			_hub_ui != null and _hub_ui.is_terminal_open(), _hub_ui, _generation, _bot,
 			_camera, _yaw if _bot == "" else float(_client.get_presented().get("yaw", _yaw)),
 			_capture_mouse, _who)
+	_show_vehicle_prompt()
 	if _hub_ui != null:
 		_hub_ui.update_hub(_client, _world, delta, _pause_menu != null and _pause_menu.visible,
 				_battle_ui.center_label(), _battle_ui.match_label())
@@ -609,7 +622,39 @@ func _controls() -> Dictionary:
 			"sprint": Input.is_action_pressed("sprint"), "jump": Input.is_action_pressed("jump"),
 			"fire": Input.is_action_pressed("fire") and can_fire, "reload": Input.is_action_pressed("reload"),
 			"secondary": Input.is_action_pressed("grenade"), "crouch": Input.is_action_pressed("crouch"),
+			"use": Input.is_action_pressed("interact") and not _client.get_match().is_empty(),
 			"weapon": _weapon}
+
+
+# The vehicle we drive: {label, health, max_health, ...} or {}.
+func _driven_vehicle() -> Dictionary:
+	if _client == null or not _client.is_spawned():
+		return {}
+	var own: Dictionary = _client.get_presented()
+	var index := int(own.get("vehicle", -1))
+	if index < 0:
+		return {}
+	var out := _vehicles.class_of(index).duplicate()
+	out["health"] = out.get("max_health", 1.0)
+	for v: Dictionary in _client.get_vehicles():
+		if int(v["driver"]) == _client.get_entity_id():
+			out["health"] = v["health"]
+			out["max_health"] = v["max_health"]
+	return out
+
+
+# On foot by an empty vehicle: how to get in.
+func _show_vehicle_prompt() -> void:
+	if _client == null or not _client.is_spawned() or _client.get_match().is_empty():
+		return
+	var own: Dictionary = _client.get_presented()
+	var label := _battle_ui.center_label()
+	if int(own.get("vehicle", -1)) >= 0 or not bool(own["alive"]) or label == null or label.text != "":
+		return
+	var v := _vehicles.enterable(_client.get_vehicles(), own["position"])
+	if not v.is_empty():
+		var key := Settings.binding_name(_settings.bindings["interact"]) if _settings.bindings.has("interact") else "E"
+		label.text = "Press %s to get in the %s" % [key, str(_vehicles.class_of(int(v["vehicle"])).get("label", "vehicle"))]
 
 
 func _aim() -> Vector2:
@@ -619,6 +664,11 @@ func _aim() -> Vector2:
 	var eye_h := float(_own.get("crouched_eye_height", CROUCHED_EYE_HEIGHT)) if own.get("crouched", false) \
 			else float(_own.get("eye_height", EYE_HEIGHT))
 	var eye: Vector3 = own["position"] + Vector3.UP * eye_h
+	var driving := int(own.get("vehicle", -1))
+	if driving >= 0:
+		# Its guns fire from its eye point.
+		eye = Vehicles.to_world(own["position"], float(own["yaw"]),
+				_vehicles.class_of(driving).get("eye", Vector3.UP))
 	var target := _camera.global_position - _camera.global_basis.z * AIM_DISTANCE
 	var to := target - eye
 	return Vector2(atan2(-to.x, -to.z), atan2(to.y, Vector2(to.x, to.z).length()))
@@ -874,6 +924,19 @@ func _load_person(look: int) -> Node3D:
 
 func _pose(character: Dictionary, state: Dictionary) -> void:
 	var soldier := character["soldier"] as Soldier
+	var vehicle := int(state.get("vehicle", -1))
+	soldier.model.visible = vehicle < 0 or str(_vehicles.class_of(vehicle).get("kind", "")) == "hover"
+	if vehicle >= 0:
+		# Inside a walker's cab: not seen. On a hover vehicle: crouched on it.
+		if soldier.model.visible:
+			var seated := state.duplicate()
+			seated["crouched"] = true
+			seated["sprinting"] = false
+			seated["velocity"] = Vector3.ZERO
+			seated["position"] = Vehicles.to_world(state["position"], float(state["yaw"]), RIDER_SEAT)
+			soldier.set_weapon("")
+			soldier.pose(seated, _delta)
+		return
 	soldier.set_weapon(str(state.get("weapon_model", "")))  # its own weapon's model
 	soldier.set_anim_set(str(state.get("anim_set", "rifle")))  # held as its kind is
 	soldier.pose(state, _delta)
@@ -921,6 +984,21 @@ func _camera_pivot(target: Vector3) -> Vector3:
 
 func _update_camera(target: Vector3, delta: float) -> void:
 	var soldier := _soldier_of(_client.get_entity_id())
+	var driving := int(_client.get_presented().get("vehicle", -1))
+	if driving >= 0:
+		# Behind and over it, from its TrackCenter, turning with the look.
+		if soldier != null:
+			PlayerAppearance.set_first_person(_own, false)
+		var track: Vector3 = _vehicles.class_of(driving).get("track_center", Vector3(0, 2.5, -6))
+		_camera_yaw = _yaw
+		var look := _camera_basis()
+		# ASSUMPTION: a little nearer than TrackCenter, which frames it small.
+		var pivot := target + Vector3.UP * track.y * 0.7
+		var at := pivot + look * Vector3(0, 0.3, maxf(3.5, -track.z * 0.75))
+		at.y = maxf(at.y, _client.get_ground_height(at.x, at.z, pivot.y) + 0.5)
+		_camera.global_position = at
+		_camera.look_at(pivot + look * Vector3(0, 0, -10), Vector3.UP)
+		return
 	var scoped := _update_zoom(delta)
 	var from_eyes := (_first_person or scoped) and soldier != null and bool(_client.get_presented()["alive"])
 	if soldier != null:
@@ -1443,6 +1521,7 @@ func _arrive() -> void:
 	_battle_ui.set_world_context(_world_bake, _map_meta, _battlefield)
 	_battle_ui.add_posts()
 	_bind_powerups()
+	_vehicles.setup(_world, _battlefield.get("vehicles", []))
 	_was_alive = false
 	print("transferred to ", "the battle on " + str(_battlefield["name"]) if not _battlefield.is_empty() else "the hub")
 

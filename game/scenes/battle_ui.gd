@@ -58,6 +58,7 @@ var _was_choosing := false
 
 var _map_meta: Dictionary = {}
 var hub_markers: Array = []  # a hub's radar markers (HubUI.radar_markers), set before each update
+var driving := {}            # the vehicle we drive ({label, health, max_health, ...}), set before each update
 var _world_bake := ""
 var _battlefield: Dictionary = {}
 var _display_names: Dictionary = {}
@@ -480,6 +481,10 @@ func _update_bf2_hud(client: Object, weapons: Array, max_health: float, delta: f
 		b["player1.weapon1.reticule.position"] = true
 		b["player1.health"] = true
 		b["player1.healthFraction"] = clampf(float(own["health"]) / maxf(1.0, max_health), 0.0, 1.0)
+		if not driving.is_empty():
+			# Driving: the vehicle's health.
+			b["player1.healthFraction"] = clampf(float(driving["health"]) / maxf(1.0, float(driving["max_health"])),
+					0.0, 1.0)
 		b["player1.energyFraction"] = clampf(float(own["energy"]) / 100.0, 0.0, 1.0)
 		var target := _aimed_at(client, camera)
 		var tint := Color8(220, 220, 220)
@@ -507,7 +512,7 @@ func _update_bf2_hud(client: Object, weapons: Array, max_health: float, delta: f
 			else:
 				b["player1.weapon1.heat"] = clampf(float(own["heat"]), 0.0, 1.0)
 				b["player1.weapon1.ammoInfinite"] = true
-		var secondary: Dictionary = client.get_secondary()
+		var secondary: Dictionary = client.get_secondary() if driving.is_empty() else {}
 		if not secondary.is_empty():
 			b["player1.weapon2.name"] = _display_name(str(secondary["name"]))
 			b["player1.weapon2.change"] = true

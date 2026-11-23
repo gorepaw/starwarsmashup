@@ -148,6 +148,10 @@ public:
     godot::Array get_vendors() const;
     // Shooting-range targets in the hub: [{id, name, position, health, max_health, alive}].
     godot::Array get_targets() const;
+    // A match's vehicles: [{id, vehicle (its class: an index into the
+    // battlefield's "vehicles"), position, velocity, yaw, pitch, health,
+    // max_health, driver (entity; 0 empty), team, alive}].
+    godot::Array get_vehicles() const;
     // Nearby lootable corpses: [{entity_id, name, position, items: [{slot, def_id, quality}]}].
     godot::Array get_corpses() const;
     // Authoritative inventory & loadouts synced from the server.
@@ -201,6 +205,9 @@ private:
     const core::Loadout& loadout() const;
     // An entity's loadout, by team and loadout index.
     const core::Loadout& loadout_of(int team, int loadout) const;
+    // What an entity fires with now: its vehicle's guns while it drives,
+    // else its loadout's.
+    const core::Loadout& weapons_of(uint32_t entity) const;
 
     std::chrono::steady_clock::time_point start_time_ = std::chrono::steady_clock::now();
     core::net::ImpairedLink::Settings impairment_;

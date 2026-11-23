@@ -166,7 +166,7 @@ VehicleScale = 0.1
 )";
     const VehicleClass v = load_vehicle_class(dir / "test_bike" / "test_bike.ini");
     CHECK(v.label == "Speederbike" && v.max_health == 80 && near(v.altitude, 0.85));
-    CHECK(near(v.yaw_max, 15 * std::numbers::pi / 180) && near(v.bounds_min.z, -1.6) && v.bounds_min.y == 0);
+    CHECK(near(v.yaw_max, 15 * std::numbers::pi / 180) && near(v.bounds_min.z, -1.6) && near(v.bounds_min.y, -0.2));
     CHECK(v.model == dir / "test_bike" / "test_bike.gltf");
     CHECK(v.loadout.weapons[0] && v.loadout.weapons[0]->name == "test_bike_cannon");
     CHECK(v.loadout.weapons[0] && near(v.loadout.weapons[0]->vehicle_factor, 0.1));

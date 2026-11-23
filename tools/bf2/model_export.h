@@ -55,6 +55,10 @@ struct ModelExport {
     int segments = 0;  // segments written (one glTF primitive each)
     int skipped = 0;   // segments without readable vertices (skinned or compressed only)
     std::vector<std::string> missing_textures;
+    // The box round what was written, in game space (meaningful without
+    // clips: with them, segments are in their bones' spaces).
+    std::array<float, 3> min{1e9f, 1e9f, 1e9f};
+    std::array<float, 3> max{-1e9f, -1e9f, -1e9f};
 };
 
 // A clip to write with a model (export_model), under its name.

@@ -34,6 +34,7 @@ godot::Dictionary to_dictionary(const core::MoveState& state) {
     out["crouched"] = state.crouched;
     out["roll"] = double(state.roll);          // seconds of rolling left (0: not rolling)
     out["roll_yaw"] = double(state.roll_yaw);  // the way it rolls
+    out["vehicle"] = int64_t(state.vehicle);    // the vehicle class it drives; -1 on foot
     const core::CombatState& c = state.combat;
     out["weapon"] = int64_t(c.weapon);
     out["rounds"] = int64_t(c.weapons[c.weapon].rounds);
@@ -286,6 +287,48 @@ godot::Array SwmClient::get_vendors() const {
             entry["kind"] = godot::String::utf8(v.kind.c_str());
             entry["position"] = to_godot(v.position);
             entry["radius"] = v.radius;
+            out.push_back(entry);
+        }
+    }
+    return out;
+}
+
+const core::Loadout& SwmClient::weapons_of(uint32_t entity) const {
+    const auto classes = client() ? client()->vehicle_classes() : std::span<const core::VehicleClass>{};
+    if (client() && entity == uint32_t(client()->entity_id())) {
+        const int v = client()->predicted().vehicle;
+        return v >= 0 && size_t(v) < classes.size() ? classes[size_t(v)].loadout : loadout();
+    }
+    if (client()) {
+        for (const auto& remote : client()->remotes()) {
+            if (remote.id == entity) {
+                const int v = remote.state.vehicle;
+                if (v >= 0 && size_t(v) < classes.size()) {
+                    return classes[size_t(v)].loadout;
+                }
+                return loadout_of(remote.team, remote.loadout);
+            }
+        }
+    }
+    return loadout_of(-1, 0);
+}
+
+godot::Array SwmClient::get_vehicles() const {
+    godot::Array out;
+    if (client()) {
+        for (const core::net::VehicleState& v : client()->vehicles()) {
+            godot::Dictionary entry;
+            entry["id"] = int64_t(v.id);
+            entry["vehicle"] = int64_t(v.vehicle);
+            entry["position"] = to_godot(v.position);
+            entry["velocity"] = to_godot(v.velocity);
+            entry["yaw"] = double(v.yaw);
+            entry["pitch"] = double(v.pitch);
+            entry["health"] = double(v.health);
+            entry["max_health"] = double(v.max_health);
+            entry["driver"] = int64_t(v.driver);
+            entry["team"] = int64_t(v.team);
+            entry["alive"] = v.alive;
             out.push_back(entry);
         }
     }
@@ -634,6 +677,27 @@ godot::Dictionary SwmClient::get_battlefield() const {
         posts.push_back(entry);
     }
     out["posts"] = posts;
+    // Its vehicles' classes: what they look like and how they're seen.
+    godot::Array vehicles;
+    for (const core::VehicleClass& v : field.vehicles) {
+        godot::Dictionary entry;
+        entry["name"] = godot::String::utf8(v.name.c_str());
+        entry["label"] = godot::String::utf8(v.label.c_str());
+        entry["kind"] = v.kind == core::VehicleKind::walker ? "walker" : "hover";
+        entry["model"] = godot::String::utf8(v.model.generic_string().c_str());  // absolute or game-relative path
+        entry["max_health"] = v.max_health;
+        entry["altitude"] = v.altitude;
+        entry["eye"] = to_godot(v.eye);
+        entry["track_center"] = to_godot(v.track_center);
+        entry["bounds_min"] = to_godot(v.bounds_min);
+        entry["bounds_max"] = to_godot(v.bounds_max);
+        entry["explosion_effect"] = godot::String::utf8(v.explosion_effect.c_str());
+        entry["engine_sound"] = godot::String::utf8(v.engine_sound.c_str());
+        entry["map_texture"] = godot::String::utf8(v.map_texture.c_str());
+        entry["health_texture"] = godot::String::utf8(v.health_texture.c_str());
+        vehicles.push_back(entry);
+    }
+    out["vehicles"] = vehicles;
     godot::Array powerups;
     for (const core::PowerupStation& station : field.powerups) {
         godot::Dictionary entry;
@@ -792,6 +856,7 @@ void SwmClient::set_input(const godot::Dictionary& c) {
     controls.reload = bool(c.get("reload", false));
     controls.secondary = bool(c.get("secondary", false));
     controls.crouch = bool(c.get("crouch", false));
+    controls.use = bool(c.get("use", false));
     controls.weapon = int(int64_t(c.get("weapon", 0)));
     client()->set_input(controls);
 }
@@ -892,6 +957,7 @@ godot::Array SwmClient::get_bolts() const {
             if (bolt.owner == uint32_t(client()->entity_id())) {
                 owner_def = &loadout();  // own missiles and grenades
             }
+            owner_def = &weapons_of(bolt.owner);  // a vehicle's guns, while it drives
             entry["kind"] = bolt.kind == core::Projectile::bolt      ? "bolt"
                             : bolt.kind == core::Projectile::missile ? "missile"
                                                                      : "grenade";
@@ -968,6 +1034,26 @@ godot::Array SwmClient::take_explosions() {
             if (e.weapon == core::net::object_explosion_weapon) {
                 continue;  // drawn from the object's own explosion as it's seen to go (Bf2Map)
             }
+            if (e.weapon == core::net::vehicle_explosion_weapon) {
+                // A destroyed vehicle: its class's explosion (the wreck nearest it).
+                std::string effect = "com_sfx_explosion_lg";
+                double best = 1e9;
+                const auto classes = client()->vehicle_classes();
+                for (const core::net::VehicleState& v : client()->vehicles()) {
+                    const double d = (v.position - e.position).length();
+                    if (!v.alive && d < best && v.vehicle < classes.size() &&
+                        !classes[v.vehicle].explosion_effect.empty()) {
+                        best = d;
+                        effect = classes[v.vehicle].explosion_effect;
+                    }
+                }
+                entry["effect"] = godot::String::utf8(effect.c_str());
+                entry["sound"] = godot::String("com_weap_obj_large_exp");
+                entry["light_color"] = godot::Color(1.0f, 0.7f, 0.3f, 1.0f);
+                entry["light_radius"] = std::max(8.0, double(e.radius) * 2.0);
+                out.push_back(entry);
+                continue;
+            }
             if (e.weapon == core::net::droid_explosion_weapon) {
                 entry["effect"] = godot::String("com_sfx_explosion_sm");
                 entry["sound"] = godot::String("com_weap_obj_small_exp");
@@ -987,6 +1073,7 @@ godot::Array SwmClient::take_explosions() {
                 }
                 owner_def = &loadout_of(team, loadout_index);
             }
+            owner_def = &weapons_of(e.owner);
             const core::WeaponDef* weapon = core::weapon_in_slot(*owner_def, e.weapon);
             entry["effect"] = weapon ? godot::String::utf8(weapon->explosion_effect.c_str()) : godot::String();
             entry["sound"] = weapon && !weapon->explosion_sound.empty()
@@ -1016,6 +1103,7 @@ godot::Array SwmClient::take_impacts() {
                 }
                 owner_def = &loadout_of(team, loadout_index);
             }
+            owner_def = &weapons_of(imp.owner);
             const core::WeaponDef* weapon = core::weapon_in_slot(*owner_def, imp.weapon);
             godot::Dictionary entry;
             entry["position"] = to_godot(imp.position);
@@ -1075,8 +1163,9 @@ godot::Dictionary SwmClient::get_secondary() const {
 
 godot::Array SwmClient::get_weapons() const {
     godot::Array out;
+    const core::Loadout& carried = client() ? weapons_of(uint32_t(client()->entity_id())) : loadout();
     for (int slot = 0; slot < core::hand_slots; ++slot) {
-        const core::WeaponDef* held = core::weapon_in_slot(loadout(), slot);
+        const core::WeaponDef* held = core::weapon_in_slot(carried, slot);
         godot::Dictionary entry;
         if (held == nullptr) {
             out.push_back(entry);
@@ -1211,6 +1300,7 @@ void SwmClient::_bind_methods() {
     ClassDB::bind_method(D_METHOD("get_quartermasters"), &SwmClient::get_quartermasters);
     ClassDB::bind_method(D_METHOD("get_vendors"), &SwmClient::get_vendors);
     ClassDB::bind_method(D_METHOD("get_targets"), &SwmClient::get_targets);
+    ClassDB::bind_method(D_METHOD("get_vehicles"), &SwmClient::get_vehicles);
     ClassDB::bind_method(D_METHOD("get_corpses"), &SwmClient::get_corpses);
     ClassDB::bind_method(D_METHOD("get_factions"), &SwmClient::get_factions);
     ClassDB::bind_method(D_METHOD("queue", "team", "mode"), &SwmClient::queue, DEFVAL("standard"));
