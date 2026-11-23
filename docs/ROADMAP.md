@@ -11,9 +11,9 @@ Battles come first, the world after. A match has clear boundaries and can be tes
 | 4 | Items, weapons and armor | Galaxies gear in an inventory and three loadouts |
 | 5 | Tatooine around Mos Eisley | A loop outside the city: hunt, loot, sell, quest |
 | 6 | Vehicles | Battlefront's in matches, Galaxies' in the world |
-| 7 | More cities | Theed, Coronet and the rest (on hold) |
-| 8 | Professions | Simplified Galaxies professions |
-| 9 | Space combat | Battlefront II's space battles |
+| 7 | Professions | Streamlined Galaxies professions (1–100) |
+| 8 | Space combat | Battlefront II's space battles |
+| 9 | More cities | Theed, Coronet and the rest (on hold) |
 | 10+ | World systems | The planets fill up |
 
 The battlefield evolves alongside: **instanced matches on Battlefront II's own maps → much later, command-post battles built from Galaxies assets in the open world.**
@@ -34,7 +34,7 @@ Walk around Mos Eisley, queue at a recruiter, load into a 32v32 conquest match o
 
 ### Tasks
 
-What was left of Stage 1 moved to the stages after it: the remaining controls, bot behaviors, doors, destructibles and audio to Stage 2; vehicles to Stage 6; navigation on Galaxies terrain to Stage 5; other cities to Stage 7.
+What was left of Stage 1 moved to the stages after it: the remaining controls, bot behaviors, doors, destructibles and audio to Stage 2; vehicles to Stage 6; navigation on Galaxies terrain to Stage 5; other cities to Stage 9.
 
 **Hub**
 - [x] Mos Eisley region loaded as a walkable hub: the city the world snapshot places, 700 m around its middle (`swgtool export-city`): its buildings (with their interiors and lights), walls, props and terminals, 1,623 objects, drawn by the client and collided with on the server and clients alike (every model's collision extent and floors). Inside the buildings, their furniture (900 pieces), lit by their rooms' own lights, and no terrain: the cantina's main room is a meter under the street. Their doors (140) slide open as anyone comes near, as their door styles say. The third-person camera keeps inside their rooms, under their vaulted ceilings (collision from the drawn rooms, the camera's only). Its people: Galaxies' own Tatooine commoners (Rodians, Bith, Aqualish, Sullustans, Nikto, Devaronians, humans, Twi'leks, Zabraks), dressed as their templates' client data says, a crowd of 30 wandering the streets around the cantina and the war terminal and lingering; stormtroopers guarding the terminal and patrolling the plaza; a patron and a dancer in the cantina and a Bith sitting at its side room's console. Galaxies' own creatures where its snapshot places them (rontos, saddled dewbacks and banthas, worrts, an eopie, a cu pa: 13), breathing, solid to walk and shoot into. Ours too, on their own skeletons with their own clips: a dewback walking east of the machine yard, a bantha resting by the war terminal (kneeling: Galaxies' banthas lie on their sides) and one standing; they're simulated as a person is, with their own body against walls (their templates' collision radius, 1.7 m: a round body, not their length). They walk, stand and sit with Galaxies' own animations, run by the hub's server, so every player sees the same people. In Galaxies' colors: its shaders tint skin, hair, eyes and clothes by palettes; the set pieces wear their looks' own colors (stormtroopers white), and the crowd each their own, from the palettes' plain colors, the same for every player. Faces are composited as Galaxies' texture renderers do (skin, brows, makeup, freckles, a Zabrak's tattoos), and the crowd's vary too. Glowing things (the cantina's wall lights, terminals' screens) add their light, as Galaxies' additive effects do. Who stands where, and how the crowd's colors vary, is ours (it was Galaxies' server data). Its particle effects too, where the snapshot places them (15: steam from vents and a crashed ship, smoke plumes, a campfire's fire, embers and smoke), as Galaxies' effects describe them (their waveforms read by comparing effects: rate, speed, lifetime, gravity, spread over the emitter; color, alpha, size over a particle's life), drawn as Godot's particles; fire and embers add their light.
@@ -235,7 +235,7 @@ Galaxies' weapons and armor become items you own, wear, and put into three loado
 - [ ] Item definitions (data files) separate from item instances (a persistent id and its stat values). Inventory and loadouts saved in SQLite through the persistence interface.
 - [ ] Weapon archetypes (handling, fire mode, projectile, heat, animation set), from Battlefront's weapon classes.
 - [ ] Galaxies weapons imported: models with their hardpoints (muzzle, scope), each mapped to an archetype with a sidegrade stat profile. Pistols, carbines, rifles, heavy weapons and grenades.
-- [ ] Galaxies armor imported: every set's pieces in their slots (helmet, chest, biceps, bracers, gloves, belt, leggings, boots), with the species variants where Galaxies has them, and stats on the gear model.
+- [ ] Galaxies armor imported: every set's pieces in their slots (helmet, chest, biceps, bracers, gloves, belt, leggings, boots), with the species variants where Galaxies has them, plus the universal Deflector Shield (Personal Shield Generator) slot, and stats on the gear model.
 - [ ] Clothing as appearance items. Appearance is separate from stats: wear what you like.
 
 **Holding weapons**
@@ -246,10 +246,10 @@ Galaxies' weapons and armor become items you own, wear, and put into three loado
 
 MMO-style screens in Battlefront II's frames, fonts and colors:
 - [ ] Inventory: what you carry, with tooltips showing every stat and a comparison with what's equipped. Drag to equip; sort; drop or destroy.
-- [ ] Equipment: a paperdoll of your character, its weapon, armor and appearance slots, and the model updating as you change them. Slots your species can't use are greyed out.
+- [ ] Equipment: a paperdoll of your character, its weapon, armor, deflector shield and appearance slots, and the model updating as you change them. Slots your species can't use are greyed out.
 
 **Loadouts**
-- [ ] Up to three loadouts per character. Each is a full kit: primary, sidearm, secondary, armor and other gear. An item can be in more than one, since only one is worn at a time.
+- [ ] Up to three loadouts per character. Each is a full kit: primary, sidearm, secondary, armor, deflector shield and other gear. An item can be in more than one, since only one is worn at a time.
 - [ ] In the world, switching loadouts takes several seconds. The HUD shows a bar, and taking damage interrupts it.
 - [ ] In a match, the spawn screen lists your three loadouts in place of Battlefront's classes, and you pick one each time you spawn. The match server gets them from the hub, never from the client. Bots carry stock loadouts for their side.
 - [ ] Standard queue (quality flattened) and gear queue (quality counts).
@@ -321,28 +321,59 @@ Battlefront's vehicles in matches, and Galaxies' vehicles for getting around Tat
 - [ ] Vehicle spawns from the maps' own spawn objects (Endor's AT-STs), tied to command posts, with respawn timers.
 - [ ] The maps' turrets manned (Mos Eisley's turret layer, props for now).
 - [ ] Bots drive and gun.
-- [ ] Flyers over ground maps after the ground vehicles. They lead into Stage 9.
+- [ ] Flyers over ground maps after the ground vehicles. They lead into Stage 8.
 
 **In the world**
 - [ ] Galaxies' personal vehicles (speeder bikes, swoops, landspeeders) as items you call and ride across Tatooine. Creature mounts later.
 
 ---
 
-## Stage 7: More cities
+## Stage 7: Professions
 
-On hold until you say go. Each city becomes a hub file with its war terminals and the objects its snapshot places, on its planet's terrain: Theed, Coronet, and the rest. Each is stitched into its whole planet as Mos Eisley is in Stage 5. Then Tatooine's other towns (Anchorhead, Bestine, Mos Espa, Mos Entha) fill out the planet.
+### Goal
+
+Streamlined 1–100 Galaxies professions that widen your tactical options, gear, and companions without creating stat walls or inventory/crafting clutter. See [Professions](PROFESSIONS.md) for the complete 31-profession roster, SWG crosswalk, and deep dives.
+
+### Decisions
+
+- **Uncapped 1–100 leveling + Active Specialization Slots:** Every profession levels 1–100 on one character, with major milestone unlocks at 1 / 25 / 50 / 75 / 100. Combat balance is enforced by equipped gear plus a fixed number of Active Specialization Slots saved per loadout.
+- **4 decoupled armor professions + universal Deflector Shield slot:** Armor proficiency is decoupled from weapon and advanced professions into Unarmored, Light/Recon, Medium/Battle, and Heavy/Assault (1–100 each). Every character shares a universal Deflector Shield (PSG) equipment slot.
+- **Single consolidated Melee profession:** Unifies SWG's 1H, 2H, polearm, and unarmed/Teräs Käsi lines into one 1–100 Melee profession.
+- **Droid Operations decoupled from Droid Engineer:** Mirrors Bio-Engineer vs. Creature Handler so crafters sell combat droids to frontline operators.
+- **Tactical companions in 32v32 matches:** Tactical-sized pets and destructible combat/support droids are allowed in instanced matches, capped at 1 active companion per player with a cooldown on death; full-size beasts and mounts stay open-world.
+
+### Tasks
+
+**Core profession framework**
+- [ ] Data-driven profession definitions, 1–100 milestone tables, and XP routing in `core/` (no 30 fragmented XP pools).
+- [ ] Uncapped profession XP/level persistence in `core::CharacterStore`, plus Active Specialization Slots and 1 Companion Slot per loadout.
+- [ ] In-game profession & loadout planner showing exact milestone unlocks, stat weights, and active slot usage.
+
+**Wave 7A: Foundation (17 professions)**
+- [ ] 4 decoupled armor professions (Unarmored, Light/Recon, Medium/Battle, Heavy/Assault) plus universal Deflector Shield (PSG) mechanics (`electro` overload, `melee` pierce/disrupt).
+- [ ] 5 weapon professions: Pistols, Carbines, Rifles, Heavy Weapons, and consolidated Melee.
+- [ ] 3 gathering professions: Surveying & Mining, Foraging & Harvesting, and Salvaging.
+- [ ] 5 core crafting professions: Weaponsmith, Armorsmith, Tailor, Chef, and Architect (field camps/cover/furniture; housing in Stage 10+).
+
+**Streamlined gathering & crafting UX**
+- [ ] Unified Multi-Scanner projecting 3D holographic terrain contours and directional pings in-world, plus active field extraction (no modal polling or AFK kneeling).
+- [ ] Dedicated Material Vault separate from gear inventory, sorted by plain-English stat names.
+- [ ] Single-screen Unified Workbench with auto-fill ("Best for [Stat]" / "Cheapest"), 1-step base crafting + 1–2 optional enhancement slots, visible experimentation odds, Recipe Presets, batch crafting, and Hub Work Orders / Salvaging instead of grind-trash.
+
+**Wave 7B: Specialist combat, support, social & economy (10 professions)**
+- [ ] Bounty Hunter, Smuggler, Squad Leader, Doctor, Combat Medic, Ranger, unified Entertainer (15–30 s Inspiration buffs), Image Designer, Merchant, and Pilot (tying into Stages 6 & 8). Politician deferred to Stage 10+; Jedi parked per [Design](DESIGN.md#open-questions).
+
+**Wave 7C: Animal taming & combat robots (4 professions)**
+- [ ] Bio-Engineer (DNA sampling, custom creature eggs, organic armor tissues, stim additives) and Creature Handler (active wild taming, Datapad/Stables roster, single-button context pings, tactical match pets, and open-world mounts).
+- [ ] Droid Engineer (modular chassis + Core/Primary/Utility plug-in bays) and Droid Operations (field deployment, remote repair, overcharges, combat chassis certification) running on `core::Bot` + `core::NavGrid` with `DamageType::electro` vulnerability.
+
+### Exit criteria
+
+Level a combat, armor, gathering, and crafting profession; gather resources with the multi-scanner into the Material Vault; craft an enhanced weapon or deflector shield on the single-screen workbench; and take a loadout with active specialization perks and a tactical pet or combat droid into a 32v32 match.
 
 ---
 
-## Stage 8: Professions
-
-Simplified versions of Galaxies' professions. The specifics are worked out with you before this starts. Two points from the design:
-- Skills widen what you can do (gear, gadgets, vehicles, abilities) rather than opening stat gaps.
-- Crafted items are just item instances with other stat values, so nothing from Stage 4 has to change.
-
----
-
-## Stage 9: Space combat
+## Stage 8: Space combat
 
 Battlefront II's space battles, queued from the hubs like ground battles:
 - its space maps imported;
@@ -353,11 +384,17 @@ Builds on Stage 6's flyers.
 
 ---
 
+## Stage 9: More cities
+
+On hold until you say go. Each city becomes a hub file with its war terminals and the objects its snapshot places, on its planet's terrain: Theed, Coronet, and the rest. Each is stitched into its whole planet as Mos Eisley is in Stage 5. Then Tatooine's other towns (Anchorhead, Bestine, Mos Espa, Mos Entha) fill out the planet.
+
+---
+
 ## Stage 10+: World systems
 
 Added in order of how directly they feed the battles. Each is a streamlined, transparent version of its Galaxies counterpart.
 
-1. **Resources and harvesting**, if the crafting professions need more than Stage 8 gives them: spawning resources with visible stats, and readable surveying.
+1. **Resources and harvesting**, if the crafting professions need more than Stage 7 gives them: spawning resources with visible stats, and readable surveying.
 2. **Housing and player cities:** structures placed on the terrain. Player cities can host their own war terminals and become hubs.
 3. **Open-world Galactic Civil War:** battles move out of instances into live conquest zones in the world.
 
@@ -373,4 +410,8 @@ Decided 2026-11-22:
 2. **Looting:** Galaxies-style. Open the corpse with E and take what you want; credits are taken automatically.
 3. **Ithorians** get the same treatment as Wookiees: kept out of standard armor, with built-in traits in return.
 4. **Switching loadouts in the world** takes several seconds and is interrupted only by taking damage.
-5. **Order:** Stage 2 → 3 → 4 → 5 → 6, then 7 when you say go, 8, 9. Species come before armor so armor is imported for every species from the start. Items come before the open world, since loot and vendors need them.
+5. **Order:** Stage 2 → 3 → 4 → 5 → 6 → 7 (Professions) → 8 (Space combat), with 9 (More cities) on hold until you say go. Species come before armor so armor is imported for every species from the start. Items come before the open world, since loot and vendors need them.
+6. **Profession progression:** Uncapped 1–100 leveling per profession, balanced per loadout via equipped gear and a fixed number of Active Specialization Slots.
+7. **Armor & shields:** Four decoupled armor professions (Unarmored, Light/Recon, Medium/Battle, Heavy/Assault) plus a universal Deflector Shield (PSG) equipment slot for everyone.
+8. **Melee & droids:** Classic SWG melee lines consolidate into a single Melee profession; Droid Operations (fielding combat droids) is separate from Droid Engineer (crafting droids).
+9. **Match companions:** Tactical-sized pets and destructible combat/support droids are allowed in instanced 32v32 matches, capped at 1 active companion per player with a cooldown on death.

@@ -52,22 +52,23 @@ Galaxies has hundreds of weapons and dozens of armor sets. Battlefront has about
 - **Three loadouts:** each character keeps up to three, each a full kit. In a match they're the classes you choose from when you spawn. In the world, switching between them takes several seconds.
 - **Overheating** from Battlefront stays.
 - **Damage types:** ballistic, laser, electro, bio, explosive and melee.
-- **Gear slots, not classes:** a loadout is a primary weapon, a sidearm, a secondary (throwables and gadgets, used with their own button), and armor and other gear, filled from the player's inventory.
+- **Gear slots, not classes:** a loadout is a primary weapon, a sidearm, a secondary (throwables and gadgets, used with their own button), armor, a universal **Deflector Shield (PSG)**, active profession specialization slots, and an optional companion slot, filled from the player's inventory and roster.
 - **Any gear can change any character statistic.** Armor mostly sets general damage mitigation, mitigation per damage type, movement speed and health; a heavy weapon could slow its carrier too.
 - **Getting gear before crafting exists:** faction quartermasters sell standard-issue gear for faction points earned in battle. Crafted gear supplements it later.
 - **Shooting range:** every hub has one for trying weapons before committing to them.
 
 ## Professions and skills
 
-- Galaxies-style skill trees: novice → four branches → master, with a skill point budget, so characters are hybrids built from multiple professions.
-- Combat, crafting, social/entertainment, and gathering professions are all first-class.
-- **Less opaque than the original:** every skill shows exactly what it grants, and an in-game planner shows full builds before you commit.
-- Respec is possible but has a cost (time or credits), so builds still mean something.
+- **1–100 per profession:** Every profession levels 1–100 with milestone unlocks at 1 / 25 / 50 / 75 / 100 instead of SWG's 4×4 box grids and fragmented XP pools. See [Professions](PROFESSIONS.md).
+- **Uncapped leveling, loadout-scoped power:** One character can level every profession to 100; each loadout carries a fixed number of Active Specialization Slots so combat builds stay balanced.
+- **Decoupled armor:** Four armor professions (Unarmored, Light/Recon, Medium/Battle, Heavy/Assault) are completely separate from weapons and specialist professions, while everyone shares a universal Deflector Shield slot.
+- Combat, crafting, gathering, companion, social/entertainment, and economy professions are all first-class.
+- **Less opaque than the original:** every milestone shows exactly what it grants, and an in-game planner shows full loadout builds before you commit.
 
 ## Crafting and economy
 
 - **Spawning resources:** each resource has rated stats (e.g. overall quality, conductivity, decay resistance), spawns in specific areas for a limited time, then depletes.
-- Survey → harvest → craft → experiment. Experimentation odds and stat contributions are shown.
+- **Streamlined UX:** one Unified Multi-Scanner with 3D terrain contours, a dedicated Material Vault with plain-English stat sorting, and a single-screen workbench (auto-fill, 1-step base crafting + optional enhancement slots, visible experimentation odds, Recipe Presets, and work orders/salvage instead of grind-trash).
 - Items are mostly player-crafted. Loot supplements crafting instead of replacing it.
 - Creatures and NPCs drop credits, junk to sell to junk dealers (as in Galaxies), and now and then gear.
 - Item decay and repair keep demand alive.
@@ -95,7 +96,7 @@ Galaxies has hundreds of weapons and dozens of armor sets. Battlefront has about
 
 ## Open questions
 
-- Space: Battlefront II's space battles are planned as queued battles ([Roadmap](ROADMAP.md) Stage 9). Open-world space flight is out of scope.
+- Space: Battlefront II's space battles are planned as queued battles ([Roadmap](ROADMAP.md) Stage 8). Open-world space flight is out of scope.
 - Jedi / Force users: how they fit a shooter without breaking balance. Undecided.
 - Death and penalties: cloning, item decay on death, PvP loss rules.
 - Population target per planet and per server.
