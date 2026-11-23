@@ -648,4 +648,17 @@ std::string WorldPopulation::loot_table_for(uint32_t entity) const {
     return {};
 }
 
+KillTags WorldPopulation::kill_tags(uint32_t entity) const {
+    for (const CreatureMob& m : creatures_) {
+        if (m.entity == entity) return {spawns_.creatures[m.archetype].id, "", false};
+    }
+    for (const BanditMob& m : bandits_) {
+        if (m.entity == entity) {
+            const BanditArchetype& type = spawns_.bandits[m.archetype];
+            return {type.id, type.gang, true};
+        }
+    }
+    return {};
+}
+
 } // namespace swm::core

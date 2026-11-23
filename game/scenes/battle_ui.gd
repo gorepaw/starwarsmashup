@@ -19,6 +19,7 @@ const SEEN_FIRING := 2.0
 const FRIEND_COLOR := Color(0.35, 0.6, 1.0)
 const ENEMY_COLOR := Color(1.0, 0.3, 0.25)
 const NEUTRAL_COLOR := Color(0.9, 0.9, 0.9)
+const HUB_MAP_RANGE := 250.0  # meters to the radar's edge in a hub's open world (ASSUMPTION: by eye)
 const POST_BEAM_HEIGHT := 30.0
 const HOLO_LENS_HEIGHT := 0.32
 const HOLO_LENS_RADIUS := 0.15
@@ -56,6 +57,7 @@ var _outside := 0.0
 var _was_choosing := false
 
 var _map_meta: Dictionary = {}
+var hub_markers: Array = []  # a hub's radar markers (HubUI.radar_markers), set before each update
 var _world_bake := ""
 var _battlefield: Dictionary = {}
 var _display_names: Dictionary = {}
@@ -614,9 +616,33 @@ func _update_capture_ring(own: Dictionary, team: int, game: Dictionary) -> void:
 		return
 
 
+# A hub's radar: the planet's terrain (its bake's ground preview, north up)
+# under the quests' places, their givers and the mission terminals.
+func _update_hub_minimap() -> void:
+	var bake := str(_map_meta.get("bake", ""))
+	if bake == "" or _bf2_hud.map_player.is_empty():
+		return
+	var file := bake + "_ground_preview.png"
+	if _bf2_hud.minimap.get("file", "") != file:
+		var path := ProjectSettings.globalize_path(file if file.begins_with("res://") else "res://" + file)
+		var image := Image.load_from_file(path) if FileAccess.file_exists(path) else null
+		if image == null:
+			return
+		var origin_x := float(_map_meta.get("origin_x", 0))
+		var origin_z := float(_map_meta.get("origin_z", 0))
+		var extent := (float(_map_meta.get("samples", 1)) - 1) * float(_map_meta.get("spacing", 1))
+		_bf2_hud.minimap = {"file": file, "texture": ImageTexture.create_from_image(image), "left_x": origin_x,
+				"top_z": origin_z + extent, "right_x": origin_x + extent, "bottom_z": origin_z}
+	_bf2_hud.map_range = HUB_MAP_RANGE
+	_bf2_hud.bindings["player1.map.enable"] = true
+	_bf2_hud.map_markers.append_array(hub_markers)
+
+
 func _update_minimap(client: Object, team: int, game: Dictionary) -> void:
 	if _battlefield.is_empty():
+		_update_hub_minimap()
 		return
+	_bf2_hud.map_range = Bf2Hud.MAP_RANGE
 	var file := str(_map_meta.get("minimap", ""))
 	if _bf2_hud.minimap.get("file", "") != file and file != "":
 		var image := Image.load_from_file(ProjectSettings.globalize_path("res://" + str(_map_meta["dir"]).path_join(file)))

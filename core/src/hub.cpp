@@ -172,6 +172,12 @@ HubConfig load_hub(const std::filesystem::path& path) {
             qm.position = point(s.get("Position").value_or(""), "a [quartermaster]'s Position");
             qm.radius = s.number("Radius", qm.radius);
             hub.quartermasters.push_back(std::move(qm));
+        } else if (s.name == "mission_terminal") {
+            net::MissionTerminal t;
+            t.name = s.get("Name").value_or("Mission Terminal");
+            t.position = point(s.get("Position").value_or(""), "a [mission_terminal]'s Position");
+            t.radius = s.number("Radius", 3);
+            hub.mission_terminals.push_back(std::move(t));
         } else if (s.name == "vendor") {
             net::Vendor v;
             v.name = s.get("Name").value_or("Vendor");
@@ -214,6 +220,9 @@ HubConfig load_hub(const std::filesystem::path& path) {
             look_of(b.template_path);
         }
     }
+    if (const auto quests = main->get("Quests")) {
+        hub.quests.load(path.parent_path() / *quests);
+    }
     if (const auto loot = main->get("LootTables")) {
         hub.loot_tables.load(path.parent_path() / *loot);
     }
@@ -255,6 +264,16 @@ Hub::Hub(GameServer& server, uint16_t port, const World& world, HubConfig config
         v.position.y = world_.terrain().height_at(v.position.x, v.position.z);
     }
     server_.set_vendors(config_.vendors);
+    for (net::MissionTerminal& t : config_.mission_terminals) {
+        t.position = world_.clamp(t.position);
+        t.position.y = world_.terrain().height_at(t.position.x, t.position.z);
+    }
+    if (config_.spawns) {
+        const Vec3 origin = config_.spawn ? *config_.spawn
+                            : !config_.recruiters.empty() ? config_.recruiters[0].position
+                                                          : Vec3{};
+        config_.quests.set_world(&*config_.spawns, origin);
+    }
     for (const HubRangeTarget& rt : config_.range_targets) {
         server_.add_range_target(rt.name, rt.position, rt.patrol_end, rt.speed, rt.health, rt.mitigation, rt.respawn);
     }
@@ -301,6 +320,9 @@ Hub::Hub(GameServer& server, uint16_t port, const World& world, HubConfig config
                 msg += " — Press E on corpse to loot";
             }
             server_.notify(killer_entity, msg);
+            if (const KillTags tags = population_->kill_tags(npc_entity); !tags.type_id.empty()) {
+                server_.quest_kill(killer_entity, tags, info->state.position);
+            }
         }
     };
 }
@@ -350,11 +372,26 @@ void Hub::add_people() {
     streets.min_x = lo_x, streets.max_x = hi_x, streets.min_z = lo_z, streets.max_z = hi_z;
     streets_ = std::make_unique<NavGrid>(world_, streets);
 
+    // Who quests send players to talk to: their givers and the people in their steps.
+    std::vector<std::string> quest_people = config_.quests.givers();
+    for (const QuestDef& def : config_.quests.quests()) {
+        for (const QuestStep& step : def.steps) {
+            if (!step.npc.empty()) quest_people.push_back(step.npc);
+        }
+    }
+    const std::vector<std::string> givers = config_.quests.givers();
+    std::vector<net::QuestNpc> quest_npcs;
     for (const HubPerson& person : config_.people) {
         Vec3 at = person.position;
         at.y = world_.terrain().height_at(at.x, at.z);
         const uint32_t entity =
             server_.add_npc(person.name, at, person.yaw, uint8_t(person.look + 1), person.pose, 0, person.radius);
+        const auto named = [&](const std::string& name) { return name == person.name; };
+        if (std::any_of(quest_people.begin(), quest_people.end(), named) &&
+            std::none_of(quest_npcs.begin(), quest_npcs.end(),
+                         [&](const net::QuestNpc& n) { return n.name == person.name; })) {
+            quest_npcs.push_back({entity, person.name, at, std::any_of(givers.begin(), givers.end(), named)});
+        }
         if (person.route.size() >= 1) {
             walkers_.push_back({.entity = entity, .route = person.route});
         } else {
@@ -377,6 +414,16 @@ void Hub::add_people() {
         walkers_.push_back(walker);
     }
     say(std::format("{} people in {}: {} walking", walkers_.size() + standing_, config_.name, walkers_.size()));
+    for (const std::string& name : quest_people) {
+        if (std::none_of(quest_npcs.begin(), quest_npcs.end(), [&](const net::QuestNpc& n) { return n.name == name; })) {
+            say(std::format("quests name {}, who isn't one of {}'s people", name, config_.name));
+        }
+    }
+    if (!config_.quests.quests().empty() || !config_.mission_terminals.empty()) {
+        say(std::format("{} quest(s), {} quest people, {} mission terminal(s)", config_.quests.quests().size(),
+                        quest_npcs.size(), config_.mission_terminals.size()));
+        server_.set_quests(&config_.quests, std::move(quest_npcs), config_.mission_terminals);
+    }
     if (config_.spawns) {
         std::map<std::string, uint8_t> look_map;
         for (size_t i = 0; i < config_.looks.size(); ++i) {

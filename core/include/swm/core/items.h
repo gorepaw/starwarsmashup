@@ -14,7 +14,7 @@
 
 namespace swm::core {
 
-enum class ItemKind : uint8_t { weapon, armor, deflector_shield, clothing, junk, supply };
+enum class ItemKind : uint8_t { weapon, armor, deflector_shield, clothing, junk, supply, quest };
 
 enum class QueueMode : uint8_t { standard = 0, gear = 1 };
 

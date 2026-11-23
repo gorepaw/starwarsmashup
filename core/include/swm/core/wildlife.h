@@ -8,6 +8,7 @@
 
 #include "swm/core/bot.h"
 #include "swm/core/items.h"
+#include "swm/core/quest.h"
 #include "swm/core/vec3.h"
 
 namespace swm::core {
@@ -91,6 +92,8 @@ public:
     std::vector<uint32_t> mob_entities() const;
     int64_t xp_for(uint32_t entity) const;
     std::string loot_table_for(uint32_t entity) const;
+    // What a creature or bandit counts as for quests (empty type id: neither).
+    KillTags kill_tags(uint32_t entity) const;
 
 private:
     struct CreatureMob {

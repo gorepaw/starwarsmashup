@@ -58,6 +58,7 @@ const TABLE_OUTPUT := "6903ed32"
 
 var bindings := {}        # event -> bool, float, String, Color, Array
 var minimap := {}         # {texture, left_x, top_z, right_x, bottom_z} (game space), or empty
+var map_range := MAP_RANGE  # meters to the small map's edge (a hub's open world shows further)
 var map_markers: Array = []  # [{position: Vector2 (game x, z), color, kind: "post" | "soldier" | "droid", label, icon}]
 var map_player := {}      # {position: Vector2, yaw}
 var messages: Array = []  # [{text, color, age}], newest last
@@ -376,7 +377,7 @@ func _map(node: Dictionary, xf: Transform2D, color: Color, z: float, screen: Vec
 	var radius := MAP_RADIUS * screen.y
 	var player: Vector2 = map_player["position"]
 	var yaw := float(map_player["yaw"])
-	var meters := radius / MAP_RANGE
+	var meters := radius / map_range
 	# Game (x, z) -> map pixels: relative to the player, turned so its facing
 	# (-z at yaw 0) points up.
 	var to_map := func(p: Vector2) -> Vector2:
@@ -417,9 +418,9 @@ func _map(node: Dictionary, xf: Transform2D, color: Color, z: float, screen: Vec
 	for marker: Dictionary in map_markers:
 		var at: Vector2 = to_map.call(marker["position"])
 		if at.length() > radius * 0.95:
-			if marker.get("kind") != "post":
+			if marker.get("kind") != "post" and marker.get("kind") != "waypoint":
 				continue
-			at = at.normalized() * radius * 0.95  # posts stay on the rim
+			at = at.normalized() * radius * 0.95  # posts and quest waypoints stay on the rim
 		var big: bool = marker.get("kind") == "post"
 		var dot_size := radius * (0.16 if big else 0.07)
 		var marker_color: Color = marker["color"]

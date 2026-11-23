@@ -356,6 +356,7 @@ func step_frame(delta: float) -> void:
 					people.append(remote["position"])
 			SwgCity.update_doors(_doors, people, delta)
 
+	_battle_ui.hub_markers = _hub_ui.radar_markers(_client) if _hub_ui != null else []
 	_battle_ui.update_hud(_client, _weapons, _remotes.size(), _client.get_max_health(),
 			_show_stats, delta, _pause_menu != null and _pause_menu.visible,
 			_hub_ui != null and _hub_ui.is_terminal_open(), _hub_ui, _generation, _bot,
@@ -431,7 +432,7 @@ func _input(event: InputEvent) -> void:
 			_resume()
 		return
 	if _hub_ui != null and _hub_ui.is_terminal_open():
-		if escape or event.is_action_pressed("interact"):
+		if escape or event.is_action_pressed("interact") or event.is_action_pressed("quest_log"):
 			_hub_ui.close_terminal()
 		elif event.is_action_pressed("leave_queue"):
 			_client.queue(-1)
@@ -476,6 +477,9 @@ func _input(event: InputEvent) -> void:
 	elif event.is_action_pressed("inventory") and not event.is_echo() and _hub_ui != null \
 			and _client.get_match().is_empty() and not _client.get_recruiters().is_empty():
 		_capture_mouse(not _hub_ui.toggle_inventory(_client))
+	elif event.is_action_pressed("quest_log") and not event.is_echo() and _hub_ui != null \
+			and _client.get_match().is_empty() and not _client.get_recruiters().is_empty():
+		_capture_mouse(not _hub_ui.toggle_quest_log(_client))
 	elif event.is_action_pressed("loadout_1") and not event.is_echo() and _client.get_match().is_empty():
 		_client.switch_loadout(0)
 	elif event.is_action_pressed("loadout_2") and not event.is_echo() and _client.get_match().is_empty():
@@ -1392,6 +1396,8 @@ func _setup_scene() -> void:
 	_hub_ui.loot_taken.connect(func(cid: int, slot: int) -> void: _client.take_loot(cid, slot))
 	_hub_ui.item_sold.connect(func(iid: int) -> void: _client.sell_item(iid))
 	_hub_ui.all_junk_sold.connect(func() -> void: _client.sell_all_junk())
+	_hub_ui.quest_accepted.connect(func(id: String) -> void: _client.accept_quest(id))
+	_hub_ui.quest_abandoned.connect(func(id: String) -> void: _client.abandon_quest(id))
 	_hub_ui.terminal_closed.connect(func() -> void:
 		if _bot == "" and (_pause_menu == null or not _pause_menu.visible):
 			_capture_mouse(true))

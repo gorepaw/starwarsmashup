@@ -29,6 +29,9 @@ enum class Type : uint8_t {
     loot_take,
     vendor_sell,
     use_item,
+    quest_sync,
+    quest_ack,
+    quest_request,
 };
 
 void put_vec3(ByteWriter& out, Vec3 v) {
@@ -43,6 +46,62 @@ Vec3 get_vec3(ByteReader& in) {
     v.y = in.get<double>();
     v.z = in.get<double>();
     return v;
+}
+
+void put_quest(ByteWriter& out, const QuestInfo& q) {
+    out.put_string(q.id);
+    out.put_string(q.title);
+    out.put_string(q.giver);
+    out.put_long_string(q.summary);
+    out.put(uint8_t(std::min<size_t>(q.steps.size(), 32)));
+    for (size_t i = 0; i < q.steps.size() && i < 32; ++i) {
+        out.put_string(q.steps[i]);
+    }
+    out.put(q.step);
+    out.put(q.count);
+    out.put(q.needed);
+    out.put(uint8_t(q.has_waypoint));
+    if (q.has_waypoint) {
+        put_vec3(out, q.waypoint);
+    }
+    out.put(q.credits);
+    out.put(q.experience);
+    out.put(q.faction_points);
+    out.put(uint8_t(std::min<size_t>(q.items.size(), 16)));
+    for (size_t i = 0; i < q.items.size() && i < 16; ++i) {
+        out.put_string(q.items[i]);
+    }
+    out.put(uint8_t(q.mission));
+}
+
+QuestInfo get_quest(ByteReader& in) {
+    QuestInfo q;
+    q.id = in.get_string();
+    q.title = in.get_string();
+    q.giver = in.get_string();
+    q.summary = in.get_long_string();
+    const size_t steps = in.get<uint8_t>();
+    if (steps > 32) throw PacketError("too many quest steps");
+    for (size_t i = 0; i < steps; ++i) {
+        q.steps.push_back(in.get_string());
+    }
+    q.step = in.get<uint8_t>();
+    q.count = in.get<uint16_t>();
+    q.needed = in.get<uint16_t>();
+    q.has_waypoint = in.get<uint8_t>() != 0;
+    if (q.has_waypoint) {
+        q.waypoint = get_vec3(in);
+    }
+    q.credits = in.get<int64_t>();
+    q.experience = in.get<int64_t>();
+    q.faction_points = in.get<int64_t>();
+    const size_t items = in.get<uint8_t>();
+    if (items > 16) throw PacketError("too many quest reward items");
+    for (size_t i = 0; i < items; ++i) {
+        q.items.push_back(in.get_string());
+    }
+    q.mission = in.get<uint8_t>() != 0;
+    return q;
 }
 
 // Full precision for now. Quantizing positions and velocities is a later
@@ -476,6 +535,21 @@ struct Encoder {
             put_vec3(out, v.position);
             out.put(v.radius);
         }
+        out.put(uint8_t(std::min<size_t>(m.quest_npcs.size(), 255)));
+        for (size_t i = 0; i < m.quest_npcs.size() && i < 255; ++i) {
+            const QuestNpc& n = m.quest_npcs[i];
+            out.put(n.entity);
+            out.put_string(n.name);
+            put_vec3(out, n.position);
+            out.put(uint8_t(n.giver));
+        }
+        out.put(uint8_t(std::min<size_t>(m.mission_terminals.size(), 255)));
+        for (size_t i = 0; i < m.mission_terminals.size() && i < 255; ++i) {
+            const MissionTerminal& t = m.mission_terminals[i];
+            out.put_string(t.name);
+            put_vec3(out, t.position);
+            out.put(t.radius);
+        }
     }
     void operator()(const Refused& m) {
         out.put(uint8_t(Type::refused));
@@ -689,6 +763,34 @@ struct Encoder {
         out.put(uint8_t(Type::use_item));
         out.put(m.item_id);
     }
+    void operator()(const QuestSync& m) {
+        out.put(uint8_t(Type::quest_sync));
+        out.put(m.revision);
+        out.put(uint8_t(std::min<size_t>(m.active.size(), 64)));
+        for (size_t i = 0; i < m.active.size() && i < 64; ++i) {
+            put_quest(out, m.active[i]);
+        }
+        out.put(uint16_t(std::min<size_t>(m.completed.size(), 1024)));
+        for (size_t i = 0; i < m.completed.size() && i < 1024; ++i) {
+            out.put_string(m.completed[i]);
+        }
+        out.put(uint8_t(std::min<size_t>(m.offers.size(), 64)));
+        for (size_t i = 0; i < m.offers.size() && i < 64; ++i) {
+            put_quest(out, m.offers[i]);
+        }
+        out.put_string(m.offer_source);
+        out.put(m.offer_serial);
+    }
+    void operator()(const QuestAck& m) {
+        out.put(uint8_t(Type::quest_ack));
+        out.put(m.revision);
+    }
+    void operator()(const QuestRequest& m) {
+        out.put(uint8_t(Type::quest_request));
+        out.put(uint8_t(m.action));
+        out.put(m.target);
+        out.put_string(m.quest_id);
+    }
 };
 
 } // namespace
@@ -759,6 +861,23 @@ Message decode(std::span<const uint8_t> packet) {
             v.position = get_vec3(in);
             v.radius = in.get<double>();
             m.vendors.push_back(std::move(v));
+        }
+        const size_t npcs = in.get<uint8_t>();
+        for (size_t i = 0; i < npcs; ++i) {
+            QuestNpc n;
+            n.entity = in.get<uint32_t>();
+            n.name = in.get_string();
+            n.position = get_vec3(in);
+            n.giver = in.get<uint8_t>() != 0;
+            m.quest_npcs.push_back(std::move(n));
+        }
+        const size_t terminals = in.get<uint8_t>();
+        for (size_t i = 0; i < terminals; ++i) {
+            MissionTerminal t;
+            t.name = in.get_string();
+            t.position = get_vec3(in);
+            t.radius = in.get<double>();
+            m.mission_terminals.push_back(std::move(t));
         }
         message = m;
         break;
@@ -1049,6 +1168,40 @@ Message decode(std::span<const uint8_t> packet) {
     case Type::use_item:
         message = UseItemRequest{in.get<uint64_t>()};
         break;
+    case Type::quest_sync: {
+        QuestSync m;
+        m.revision = in.get<uint32_t>();
+        const size_t active = in.get<uint8_t>();
+        for (size_t i = 0; i < active; ++i) {
+            m.active.push_back(get_quest(in));
+        }
+        const size_t completed = in.get<uint16_t>();
+        if (completed > 1024) throw PacketError("too many completed quests");
+        for (size_t i = 0; i < completed; ++i) {
+            m.completed.push_back(in.get_string());
+        }
+        const size_t offers = in.get<uint8_t>();
+        for (size_t i = 0; i < offers; ++i) {
+            m.offers.push_back(get_quest(in));
+        }
+        m.offer_source = in.get_string();
+        m.offer_serial = in.get<uint16_t>();
+        message = std::move(m);
+        break;
+    }
+    case Type::quest_ack:
+        message = QuestAck{in.get<uint32_t>()};
+        break;
+    case Type::quest_request: {
+        QuestRequest m;
+        const uint8_t action = in.get<uint8_t>();
+        if (action > QuestRequest::abandon) throw PacketError("bad quest action");
+        m.action = QuestRequest::Action(action);
+        m.target = in.get<uint32_t>();
+        m.quest_id = in.get_string();
+        message = std::move(m);
+        break;
+    }
     default:
         throw PacketError("unknown message type");
     }

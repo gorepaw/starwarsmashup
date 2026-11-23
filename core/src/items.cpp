@@ -166,6 +166,7 @@ std::optional<ItemKind> item_kind_from_name(std::string_view name) {
     if (name == "clothing") return ItemKind::clothing;
     if (name == "junk") return ItemKind::junk;
     if (name == "supply") return ItemKind::supply;
+    if (name == "quest") return ItemKind::quest;
     return std::nullopt;
 }
 
@@ -177,6 +178,7 @@ std::string_view item_kind_name(ItemKind k) {
     case ItemKind::clothing: return "clothing";
     case ItemKind::junk: return "junk";
     case ItemKind::supply: return "supply";
+    case ItemKind::quest: return "quest";
     }
     return "weapon";
 }
@@ -223,6 +225,7 @@ void ItemCatalog::load(const std::filesystem::path& catalog_ini, const std::file
             if (def.kind == ItemKind::deflector_shield) default_slot = "deflector_shield";
             else if (def.kind == ItemKind::junk) default_slot = "junk";
             else if (def.kind == ItemKind::supply) default_slot = "supply";
+            else if (def.kind == ItemKind::quest) default_slot = "quest";
             def.slot = s.get("Slot").value_or(default_slot);
             def.anim_set.clear();
         }

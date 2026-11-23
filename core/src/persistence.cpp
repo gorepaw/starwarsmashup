@@ -106,6 +106,15 @@ void MemoryCharacterStore::update_economy(PersistentId id, int64_t credits, int6
     it->second.active_loadout = active_loadout;
 }
 
+std::vector<QuestProgress> MemoryCharacterStore::list_quests(PersistentId owner_id) {
+    const auto it = quests_.find(owner_id);
+    return it == quests_.end() ? std::vector<QuestProgress>{} : it->second;
+}
+
+void MemoryCharacterStore::save_quests(PersistentId owner_id, std::span<const QuestProgress> quests) {
+    quests_[owner_id].assign(quests.begin(), quests.end());
+}
+
 void ensure_starter_kit(CharacterStore& store, PersistentId char_id) {
     if (!store.list_items(char_id).empty()) {
         return;

@@ -17,7 +17,9 @@ add_library(swm_core STATIC
   src/net/protocol.cpp
   src/net/udp.cpp
   src/persistence.cpp
+  src/quest.cpp
   src/server.cpp
+  src/server_quests.cpp
   src/species.cpp
   src/wildlife.cpp
   src/world.cpp)
@@ -33,7 +35,7 @@ add_library(swm_sqlite_store STATIC src/sqlite_store.cpp)
 target_link_libraries(swm_sqlite_store PUBLIC swm_core PRIVATE swm::sqlite3)
 swm_target_warnings(swm_sqlite_store)
 
-foreach(test core_test movement_test nav_test net_test persistence_test combat_test match_test hub_test species_test items_test wildlife_test loot_test)
+foreach(test core_test movement_test nav_test net_test persistence_test combat_test match_test hub_test species_test items_test wildlife_test loot_test quest_test)
   add_executable(${test} tests/${test}.cpp)
   target_link_libraries(${test} PRIVATE swm_core swm_sqlite_store)
   swm_target_warnings(${test})

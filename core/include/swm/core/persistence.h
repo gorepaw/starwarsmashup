@@ -8,6 +8,7 @@
 #include <vector>
 
 #include "swm/core/items.h"
+#include "swm/core/quest.h"
 #include "swm/core/vec3.h"
 
 namespace swm::core {
@@ -63,6 +64,10 @@ public:
     virtual void save_loadout(PersistentId owner_id, const CharacterLoadout& loadout) = 0;
     virtual void update_economy(PersistentId id, int64_t credits, int64_t faction_points, int64_t experience,
                                 int active_loadout) = 0;
+    // The character's quest journal: what it has taken and finished.
+    virtual std::vector<QuestProgress> list_quests(PersistentId owner_id) = 0;
+    // Replaces the character's journal.
+    virtual void save_quests(PersistentId owner_id, std::span<const QuestProgress> quests) = 0;
 };
 
 // Keeps everything in memory, for tests.
@@ -82,6 +87,8 @@ public:
     void save_loadout(PersistentId owner_id, const CharacterLoadout& loadout) override;
     void update_economy(PersistentId id, int64_t credits, int64_t faction_points, int64_t experience,
                         int active_loadout) override;
+    std::vector<QuestProgress> list_quests(PersistentId owner_id) override;
+    void save_quests(PersistentId owner_id, std::span<const QuestProgress> quests) override;
 
 private:
     std::map<PersistentId, CharacterRecord> characters_;
@@ -89,6 +96,7 @@ private:
     std::map<PersistentId, ItemInstance> items_;
     PersistentId next_item_id_ = 1;
     std::map<PersistentId, std::map<int, CharacterLoadout>> loadouts_;
+    std::map<PersistentId, std::vector<QuestProgress>> quests_;
 };
 
 // Grants the standard-issue starter kit and Loadout 0 if the character has no items yet.

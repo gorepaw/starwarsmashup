@@ -16,6 +16,7 @@
 #include "swm/core/net/link.h"
 #include "swm/core/net/protocol.h"
 #include "swm/core/persistence.h"
+#include "swm/core/quest.h"
 #include "swm/core/species.h"
 #include "swm/core/world.h"
 
@@ -126,6 +127,15 @@ public:
     void set_quartermasters(std::vector<net::Quartermaster> quartermasters);
     // Open-world vendors (junk dealers, gear/supplies vendors) in a hub.
     void set_vendors(std::vector<net::Vendor> vendors);
+    // A hub's quests: its quest book (outliving the server), the people who
+    // give quests or take part in them, and its mission terminals, told to
+    // clients as they join. Characters' journals are saved with them.
+    void set_quests(const QuestBook* book, std::vector<net::QuestNpc> npcs,
+                    std::vector<net::MissionTerminal> terminals);
+    // A player killed a creature or bandit at `at`: advances their quests.
+    void quest_kill(uint32_t killer, const KillTags& tags, Vec3 at);
+    // A connected player's quest journal; nullptr if not connected.
+    const std::vector<QuestProgress>* quests_of(uint32_t entity) const;
     // Adds a shooting-range target in a hub (stationary if speed <= 0).
     uint32_t add_range_target(std::string name, Vec3 home, Vec3 patrol_end, double speed, double max_health = 400,
                               double mitigation = 0, double respawn_time = 2.5);
@@ -256,6 +266,15 @@ private:
         uint32_t last_sync_tick = 0;
         int switching_to = -1;
         double switch_remaining = 0.0;
+        std::vector<QuestProgress> quests;
+        uint32_t quest_rev = 0;
+        uint32_t acked_quest_rev = 0;
+        uint32_t quest_sync_tick = 0;
+        uint32_t quest_inventory_rev = 0;  // the inventory revision quests last looked at
+        std::vector<std::string> offers;   // quest ids the last giver or terminal offered
+        std::string offer_source;
+        uint16_t offer_serial = 0;
+        uint32_t notice_tick = UINT32_MAX;  // when the notice was last set
     };
     struct RangeTarget {
         uint32_t entity = 0;
@@ -361,6 +380,18 @@ private:
     void rebuild_client_loadouts(Client& client);
     void scrub_item_from_loadouts(Client& client, uint64_t item_id);
     void send_inventory_sync(Client& client);
+    // Quests (server_quests.cpp).
+    void handle_quest_request(Client& client, const net::QuestRequest& request);
+    void apply_quests(Client& client, QuestEffects effects);
+    void check_quest_positions();
+    void send_quest_sync(Client& client);
+    net::QuestInfo describe_quest(const Client& client, const QuestDef& def, const QuestProgress* progress) const;
+    std::string step_text(const QuestStep& step) const;
+    std::string item_name(const std::string& def_id) const;
+    int held_count(const Client& client, const std::string& def_id) const;
+    void give_item(Client& client, const std::string& def_id, double quality);
+    void take_items(Client& client, const std::string& def_id, int count);
+    void save_economy(Client& client);
     const Loadout& loadout_of(const Client& client) const;
     net::EntityState describe(const Client& client) const;
     Vec3 spawn_point(uint32_t index) const;
@@ -392,6 +423,9 @@ private:
     std::vector<net::Recruiter> recruiters_;
     std::vector<net::Quartermaster> quartermasters_;
     std::vector<net::Vendor> vendors_;
+    const QuestBook* quest_book_ = nullptr;
+    std::vector<net::QuestNpc> quest_npcs_;
+    std::vector<net::MissionTerminal> mission_terminals_;
     std::vector<CorpseLoot> corpse_loots_;
     std::vector<RangeTarget> targets_;
     std::array<std::string, 2> factions_;

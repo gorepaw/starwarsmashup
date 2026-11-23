@@ -464,6 +464,113 @@ void SwmClient::use_item(int64_t item_id) {
     }
 }
 
+namespace {
+
+godot::Dictionary quest_dictionary(const core::net::QuestInfo& q) {
+    godot::Dictionary out;
+    out["id"] = godot::String::utf8(q.id.c_str());
+    out["title"] = godot::String::utf8(q.title.c_str());
+    out["giver"] = godot::String::utf8(q.giver.c_str());
+    out["summary"] = godot::String::utf8(q.summary.c_str());
+    godot::Array steps;
+    for (const std::string& step : q.steps) {
+        steps.push_back(godot::String::utf8(step.c_str()));
+    }
+    out["steps"] = steps;
+    out["step"] = int64_t(q.step);
+    out["count"] = int64_t(q.count);
+    out["needed"] = int64_t(q.needed);
+    if (q.has_waypoint) {
+        out["waypoint"] = to_godot(q.waypoint);
+    }
+    out["credits"] = int64_t(q.credits);
+    out["experience"] = int64_t(q.experience);
+    out["faction_points"] = int64_t(q.faction_points);
+    godot::Array items;
+    for (const std::string& item : q.items) {
+        items.push_back(godot::String::utf8(item.c_str()));
+    }
+    out["items"] = items;
+    out["mission"] = q.mission;
+    return out;
+}
+
+} // namespace
+
+godot::Array SwmClient::get_quest_npcs() const {
+    godot::Array out;
+    if (client()) {
+        for (const core::net::QuestNpc& n : client()->quest_npcs()) {
+            godot::Dictionary entry;
+            entry["entity"] = int64_t(n.entity);
+            entry["name"] = godot::String::utf8(n.name.c_str());
+            entry["position"] = to_godot(n.position);
+            entry["giver"] = n.giver;
+            out.push_back(entry);
+        }
+    }
+    return out;
+}
+
+godot::Array SwmClient::get_mission_terminals() const {
+    godot::Array out;
+    if (client()) {
+        const auto& terminals = client()->mission_terminals();
+        for (size_t i = 0; i < terminals.size(); ++i) {
+            godot::Dictionary entry;
+            entry["index"] = int64_t(i);
+            entry["name"] = godot::String::utf8(terminals[i].name.c_str());
+            entry["position"] = to_godot(terminals[i].position);
+            entry["radius"] = terminals[i].radius;
+            out.push_back(entry);
+        }
+    }
+    return out;
+}
+
+godot::Dictionary SwmClient::get_quests() const {
+    godot::Dictionary out;
+    if (!client()) {
+        return out;
+    }
+    const core::net::QuestSync& sync = client()->quests();
+    out["revision"] = int64_t(sync.revision);
+    godot::Array active, completed, offers;
+    for (const core::net::QuestInfo& q : sync.active) active.push_back(quest_dictionary(q));
+    for (const std::string& title : sync.completed) completed.push_back(godot::String::utf8(title.c_str()));
+    for (const core::net::QuestInfo& q : sync.offers) offers.push_back(quest_dictionary(q));
+    out["active"] = active;
+    out["completed"] = completed;
+    out["offers"] = offers;
+    out["offer_source"] = godot::String::utf8(sync.offer_source.c_str());
+    out["offer_serial"] = int64_t(sync.offer_serial);
+    return out;
+}
+
+void SwmClient::talk_to(int64_t npc_entity) {
+    if (client()) {
+        client()->talk_to(uint32_t(npc_entity));
+    }
+}
+
+void SwmClient::use_mission_terminal(int64_t index) {
+    if (client()) {
+        client()->use_mission_terminal(int(index));
+    }
+}
+
+void SwmClient::accept_quest(const godot::String& id) {
+    if (client()) {
+        client()->accept_quest(to_std(id));
+    }
+}
+
+void SwmClient::abandon_quest(const godot::String& id) {
+    if (client()) {
+        client()->abandon_quest(to_std(id));
+    }
+}
+
 godot::Dictionary SwmClient::get_battlefield() const {
     godot::Dictionary out;
     if (!battlefield()) {
@@ -1119,6 +1226,13 @@ void SwmClient::_bind_methods() {
     ClassDB::bind_method(D_METHOD("sell_item", "item_id"), &SwmClient::sell_item);
     ClassDB::bind_method(D_METHOD("sell_all_junk"), &SwmClient::sell_all_junk);
     ClassDB::bind_method(D_METHOD("use_item", "item_id"), &SwmClient::use_item);
+    ClassDB::bind_method(D_METHOD("get_quest_npcs"), &SwmClient::get_quest_npcs);
+    ClassDB::bind_method(D_METHOD("get_mission_terminals"), &SwmClient::get_mission_terminals);
+    ClassDB::bind_method(D_METHOD("get_quests"), &SwmClient::get_quests);
+    ClassDB::bind_method(D_METHOD("talk_to", "npc_entity"), &SwmClient::talk_to);
+    ClassDB::bind_method(D_METHOD("use_mission_terminal", "index"), &SwmClient::use_mission_terminal);
+    ClassDB::bind_method(D_METHOD("accept_quest", "id"), &SwmClient::accept_quest);
+    ClassDB::bind_method(D_METHOD("abandon_quest", "id"), &SwmClient::abandon_quest);
     ClassDB::bind_method(D_METHOD("get_battlefield"), &SwmClient::get_battlefield);
     ClassDB::bind_method(D_METHOD("is_allied", "a", "b"), &SwmClient::is_allied);
     ClassDB::bind_method(D_METHOD("get_match"), &SwmClient::get_match);

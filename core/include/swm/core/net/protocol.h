@@ -18,7 +18,7 @@ namespace swm::core::net {
 // Every packet starts with a magic number, the protocol version and a message
 // type. Peers drop packets with another version. Bump it on any wire change.
 inline constexpr uint16_t protocol_magic = 0x4D53;  // "SM"
-inline constexpr uint16_t protocol_version = 22;
+inline constexpr uint16_t protocol_version = 23;
 inline constexpr uint8_t droid_explosion_weapon = 0xFF;  // Explosion::weapon sentinel for destroyed health/ammo droids
 // ...for a destroyed object (Battlefield::destructibles); clients draw it
 // from the object's own explosion as they see it go.
@@ -64,6 +64,45 @@ struct Vendor {
     friend bool operator==(const Vendor&, const Vendor&) = default;
 };
 
+// One of a hub's people who gives quests or takes part in them (someone
+// to talk to or deliver to): the player talks to them with the interact key.
+struct QuestNpc {
+    uint32_t entity = 0;
+    std::string name;
+    Vec3 position;       // game space, where they stand
+    bool giver = false;  // offers quests (clients mark them)
+
+    friend bool operator==(const QuestNpc&, const QuestNpc&) = default;
+};
+
+// A hub's mission terminal: standing within `radius`, a player can browse
+// its generated missions.
+struct MissionTerminal {
+    std::string name;
+    Vec3 position;  // game space
+    double radius = 3;
+
+    friend bool operator==(const MissionTerminal&, const MissionTerminal&) = default;
+};
+
+// A quest as the quest log, the tracker and an offer show it.
+struct QuestInfo {
+    std::string id;
+    std::string title;
+    std::string giver;
+    std::string summary;
+    std::vector<std::string> steps;  // an offer's every step; an active quest's up to its current one
+    uint8_t step = 0;                // the current step (active)
+    uint16_t count = 0, needed = 0;  // the current step's progress
+    bool has_waypoint = false;
+    Vec3 waypoint;                   // game space: where the current step is
+    int64_t credits = 0, experience = 0, faction_points = 0;
+    std::vector<std::string> items;  // reward item def ids
+    bool mission = false;
+
+    friend bool operator==(const QuestInfo&, const QuestInfo&) = default;
+};
+
 struct LootItemEntry {
     uint8_t slot = 0;
     std::string def_id;
@@ -107,6 +146,8 @@ struct Welcome {
     std::vector<std::string> looks;
     std::vector<Quartermaster> quartermasters;
     std::vector<Vendor> vendors;
+    std::vector<QuestNpc> quest_npcs;
+    std::vector<MissionTerminal> mission_terminals;
 };
 
 // Client -> hub, repeated until the hub's PlayerStatus shows it: queue for a
@@ -321,9 +362,37 @@ struct UseItemRequest {
     uint64_t item_id = 0;
 };
 
+// Server -> client, repeated until acknowledged: the quest journal, and
+// what the giver or terminal the player last talked to offers.
+struct QuestSync {
+    uint32_t revision = 0;
+    std::vector<QuestInfo> active;
+    std::vector<std::string> completed;  // titles, oldest first
+    std::vector<QuestInfo> offers;
+    std::string offer_source;   // who offers them: a person's name, or a terminal's
+    uint16_t offer_serial = 0;  // changes each time the player talks to a giver or uses a terminal
+
+    friend bool operator==(const QuestSync&, const QuestSync&) = default;
+};
+
+// Client -> server: acknowledges QuestSync `revision`.
+struct QuestAck {
+    uint32_t revision = 0;
+};
+
+// Client -> server: talk to a quest NPC (by entity), use a mission
+// terminal (by index), or accept or abandon a quest (by id).
+struct QuestRequest {
+    enum Action : uint8_t { talk = 0, terminal = 1, accept = 2, abandon = 3 };
+    Action action = talk;
+    uint32_t target = 0;
+    std::string quest_id;
+};
+
 using Message = std::variant<Hello, Welcome, Refused, InputBatch, Snapshot, Goodbye, SpawnRequest, QueueRequest,
                              Transfer, InventorySync, InventoryAck, SaveLoadoutRequest, SwitchLoadoutRequest,
-                             ShopBuyRequest, DestroyItemRequest, LootTakeRequest, VendorSellRequest, UseItemRequest>;
+                             ShopBuyRequest, DestroyItemRequest, LootTakeRequest, VendorSellRequest, UseItemRequest,
+                             QuestSync, QuestAck, QuestRequest>;
 
 std::vector<uint8_t> encode(const Message& message);
 // Throws PacketError on malformed packets or another protocol version.

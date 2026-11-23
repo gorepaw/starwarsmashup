@@ -57,7 +57,7 @@ static func build_lines(def: Dictionary, inst: Dictionary, store: Object, equipp
 	var faction := str(def.get("faction", "neutral")).capitalize()
 	lines.append({"text": "%s | %s | %s" % [kind.replace("_", " ").capitalize(), slot.replace("_", " ").capitalize(), faction],
 			"color": Bf2Screen.DIM})
-	if not inst.is_empty() and kind != "junk" and kind != "supply":
+	if not inst.is_empty() and kind != "junk" and kind != "supply" and kind != "quest":
 		lines.append({"text": "Quality: %d%%" % roundi(quality * 100.0), "color": Bf2Screen.ACCENT})
 	if kind == "supply":
 		var heal := float(def.get("heal_amount", 0.0))

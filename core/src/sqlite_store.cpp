@@ -122,6 +122,14 @@ SqliteCharacterStore::SqliteCharacterStore(const std::filesystem::path& path) {
                  " appearance_json TEXT NOT NULL DEFAULT '{}',"
                  " PRIMARY KEY (owner_id, slot_index)"
                  ") STRICT");
+            exec("CREATE TABLE IF NOT EXISTS quests ("
+                 " owner_id INTEGER NOT NULL,"
+                 " quest_id TEXT NOT NULL,"
+                 " step INTEGER NOT NULL DEFAULT 0,"
+                 " count INTEGER NOT NULL DEFAULT 0,"
+                 " done INTEGER NOT NULL DEFAULT 0,"
+                 " PRIMARY KEY (owner_id, quest_id)"
+                 ") STRICT");
             exec(("PRAGMA user_version = " + std::to_string(schema_version)).c_str());
             exec("COMMIT");
         } else if (version == 1 || version == 2) {
@@ -155,6 +163,26 @@ SqliteCharacterStore::SqliteCharacterStore(const std::filesystem::path& path) {
                  " appearance_json TEXT NOT NULL DEFAULT '{}',"
                  " PRIMARY KEY (owner_id, slot_index)"
                  ") STRICT");
+            exec("CREATE TABLE IF NOT EXISTS quests ("
+                 " owner_id INTEGER NOT NULL,"
+                 " quest_id TEXT NOT NULL,"
+                 " step INTEGER NOT NULL DEFAULT 0,"
+                 " count INTEGER NOT NULL DEFAULT 0,"
+                 " done INTEGER NOT NULL DEFAULT 0,"
+                 " PRIMARY KEY (owner_id, quest_id)"
+                 ") STRICT");
+            exec(("PRAGMA user_version = " + std::to_string(schema_version)).c_str());
+            exec("COMMIT");
+        } else if (version == 3) {
+            exec("BEGIN");
+            exec("CREATE TABLE IF NOT EXISTS quests ("
+                 " owner_id INTEGER NOT NULL,"
+                 " quest_id TEXT NOT NULL,"
+                 " step INTEGER NOT NULL DEFAULT 0,"
+                 " count INTEGER NOT NULL DEFAULT 0,"
+                 " done INTEGER NOT NULL DEFAULT 0,"
+                 " PRIMARY KEY (owner_id, quest_id)"
+                 ") STRICT");
             exec(("PRAGMA user_version = " + std::to_string(schema_version)).c_str());
             exec("COMMIT");
         } else if (version != schema_version) {
@@ -185,6 +213,9 @@ SqliteCharacterStore::SqliteCharacterStore(const std::filesystem::path& path) {
                                      "secondary_id = excluded.secondary_id, gear_json = excluded.gear_json, appearance_json = excluded.appearance_json");
         remove_loadouts_by_owner_ = prepare(db_, "DELETE FROM loadouts WHERE owner_id = ?");
         update_economy_ = prepare(db_, "UPDATE characters SET credits = ?, faction_points = ?, experience = ?, active_loadout = ? WHERE id = ?");
+        list_quests_ = prepare(db_, "SELECT quest_id, step, count, done FROM quests WHERE owner_id = ? ORDER BY rowid ASC");
+        insert_quest_ = prepare(db_, "INSERT INTO quests (owner_id, quest_id, step, count, done) VALUES (?, ?, ?, ?, ?)");
+        remove_quests_by_owner_ = prepare(db_, "DELETE FROM quests WHERE owner_id = ?");
     } catch (...) {
         close();
         throw;
@@ -198,12 +229,14 @@ SqliteCharacterStore::~SqliteCharacterStore() {
 void SqliteCharacterStore::close() {
     for (sqlite3_stmt* statement :
          {find_, find_by_name_, list_all_, insert_, update_, delete_, list_items_, grant_item_, remove_item_,
-          remove_items_by_owner_, list_loadouts_, save_loadout_, remove_loadouts_by_owner_, update_economy_}) {
+          remove_items_by_owner_, list_loadouts_, save_loadout_, remove_loadouts_by_owner_, update_economy_,
+          list_quests_, insert_quest_, remove_quests_by_owner_}) {
         sqlite3_finalize(statement);
     }
     find_ = find_by_name_ = list_all_ = insert_ = update_ = delete_ = nullptr;
     list_items_ = grant_item_ = remove_item_ = remove_items_by_owner_ = nullptr;
     list_loadouts_ = save_loadout_ = remove_loadouts_by_owner_ = update_economy_ = nullptr;
+    list_quests_ = insert_quest_ = remove_quests_by_owner_ = nullptr;
     sqlite3_close(db_);
     db_ = nullptr;
 }
@@ -344,6 +377,13 @@ bool SqliteCharacterStore::remove(PersistentId id) {
             fail(db_, "delete character loadouts");
         }
     }
+    {
+        Reset r3{remove_quests_by_owner_};
+        sqlite3_bind_int64(remove_quests_by_owner_, 1, sqlite3_int64(id));
+        if (sqlite3_step(remove_quests_by_owner_) != SQLITE_DONE) {
+            fail(db_, "delete character quests");
+        }
+    }
     Reset reset{delete_};
     sqlite3_bind_int64(delete_, 1, sqlite3_int64(id));
     if (sqlite3_step(delete_) != SQLITE_DONE) {
@@ -456,6 +496,45 @@ void SqliteCharacterStore::update_economy(PersistentId id, int64_t credits, int6
     }
     if (sqlite3_changes(db_) != 1) {
         throw std::runtime_error("sqlite: no character " + std::to_string(id));
+    }
+}
+
+std::vector<QuestProgress> SqliteCharacterStore::list_quests(PersistentId owner_id) {
+    Reset reset{list_quests_};
+    sqlite3_bind_int64(list_quests_, 1, sqlite3_int64(owner_id));
+    std::vector<QuestProgress> out;
+    for (;;) {
+        const int step = sqlite3_step(list_quests_);
+        if (step == SQLITE_DONE) break;
+        if (step != SQLITE_ROW) fail(db_, "list_quests");
+        const auto* id = reinterpret_cast<const char*>(sqlite3_column_text(list_quests_, 0));
+        out.push_back({id ? id : "", sqlite3_column_int(list_quests_, 1), sqlite3_column_int(list_quests_, 2),
+                       sqlite3_column_int(list_quests_, 3) != 0});
+    }
+    return out;
+}
+
+void SqliteCharacterStore::save_quests(PersistentId owner_id, std::span<const QuestProgress> quests) {
+    exec("BEGIN");
+    try {
+        {
+            Reset reset{remove_quests_by_owner_};
+            sqlite3_bind_int64(remove_quests_by_owner_, 1, sqlite3_int64(owner_id));
+            if (sqlite3_step(remove_quests_by_owner_) != SQLITE_DONE) fail(db_, "save_quests");
+        }
+        for (const QuestProgress& q : quests) {
+            Reset reset{insert_quest_};
+            sqlite3_bind_int64(insert_quest_, 1, sqlite3_int64(owner_id));
+            sqlite3_bind_text(insert_quest_, 2, q.id.c_str(), int(q.id.size()), SQLITE_TRANSIENT);
+            sqlite3_bind_int(insert_quest_, 3, q.step);
+            sqlite3_bind_int(insert_quest_, 4, q.count);
+            sqlite3_bind_int(insert_quest_, 5, q.done ? 1 : 0);
+            if (sqlite3_step(insert_quest_) != SQLITE_DONE) fail(db_, "save_quests");
+        }
+        exec("COMMIT");
+    } catch (...) {
+        sqlite3_exec(db_, "ROLLBACK", nullptr, nullptr, nullptr);
+        throw;
     }
 }
 

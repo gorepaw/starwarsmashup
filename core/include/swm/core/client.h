@@ -140,6 +140,16 @@ public:
     void sell_item(uint64_t item_id);
     void sell_all_junk();
     void use_item(uint64_t item_id);
+    // Quests: the hub's quest people and mission terminals, our journal and
+    // what was last offered (QuestSync), and asking to talk to one of them
+    // (by entity), use a terminal (by index), or accept or abandon a quest.
+    const std::vector<net::QuestNpc>& quest_npcs() const { return quest_npcs_; }
+    const std::vector<net::MissionTerminal>& mission_terminals() const { return mission_terminals_; }
+    const net::QuestSync& quests() const { return quests_; }
+    void talk_to(uint32_t npc_entity);
+    void use_mission_terminal(int index);
+    void accept_quest(const std::string& id);
+    void abandon_quest(const std::string& id);
     // What the server says about us: queue, notices.
     const net::PlayerStatus& player_status() const { return player_status_; }
     // Where the server sent us (status transferring).
@@ -211,6 +221,9 @@ private:
     std::vector<net::Recruiter> recruiters_;
     std::vector<net::Quartermaster> quartermasters_;
     std::vector<net::Vendor> vendors_;
+    std::vector<net::QuestNpc> quest_npcs_;
+    std::vector<net::MissionTerminal> mission_terminals_;
+    net::QuestSync quests_;
     std::vector<net::TargetState> targets_;
     std::vector<net::CorpseLootState> corpses_;
     std::array<std::string, 2> factions_;

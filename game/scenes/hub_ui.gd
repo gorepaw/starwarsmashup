@@ -1,6 +1,7 @@
 # Hub UI & world markers: War Terminal screen, Quartermaster shop,
 # Inventory & Loadouts screen, queue HUD, shooting range target visuals/DPS,
-# and battle outcome notices.
+# battle outcome notices, and quests (givers' offers, mission terminals, the
+# quest log, the tracker, objective markers on screen and on the radar).
 class_name HubUI
 extends Node
 
@@ -11,6 +12,12 @@ const InventoryScreen = preload("res://ui/inventory_screen.gd")
 const LootScreen = preload("res://ui/loot_screen.gd")
 const VendorScreen = preload("res://ui/vendor_screen.gd")
 const HubHud = preload("res://ui/hub_hud.gd")
+const QuestScreen = preload("res://ui/quest_screen.gd")
+
+const TALK_REACH := 4.5     # meters from a quest NPC to talk to them (the server allows 6)
+const OFFER_REACH := 8.0    # an offer closes when you walk further than this from it
+const GIVER_COLOR := Color(1.0, 0.8, 0.35)
+const TERMINAL_COLOR := Color(0.45, 0.85, 1.0)
 
 signal queue_requested(side: int, mode: String)
 signal item_bought(def_id: String, use_fp: bool)
@@ -22,6 +29,8 @@ signal loot_taken(corpse_entity: int, slot: int)
 signal item_sold(item_id: int)
 signal all_junk_sold
 signal terminal_closed
+signal quest_accepted(id: String)
+signal quest_abandoned(id: String)
 
 var _hub_hud: HubHud
 var _terminal_screen: WarTerminalScreen
@@ -29,6 +38,7 @@ var _qm_screen: QuartermasterScreen
 var _inv_screen: InventoryScreen
 var _loot_screen: LootScreen
 var _vendor_screen: VendorScreen
+var _quest_screen: QuestScreen
 var _settings: Settings
 var _world_root: Node3D
 var _recruiter_nodes: Array = []
@@ -42,6 +52,11 @@ var _notice_time := 0.0
 var _notice_lines: PackedStringArray = []
 var _catalog: Array = []
 var _store: Object = null
+var _tracked := ""                 # the tracked quest's id
+var _known_quests := {}            # active quest ids last seen (a new one is tracked)
+var _offer_serial := -1            # the offer serial when we asked; -1: not waiting
+var _offer_at := Vector3.ZERO      # where the offer was asked for
+var _giver_nodes: Dictionary = {}  # npc entity -> Sprite3D over their head
 
 
 func setup(layer: CanvasLayer, world_root: Node3D, art: RefCounted, settings: Settings) -> void:
@@ -89,6 +104,19 @@ func setup(layer: CanvasLayer, world_root: Node3D, art: RefCounted, settings: Se
 	_vendor_screen.closed.connect(close_all_screens)
 	layer.add_child(_vendor_screen)
 
+	_quest_screen = QuestScreen.new(art)
+	_quest_screen.visible = false
+	_quest_screen.quest_accepted.connect(func(id: String) -> void:
+		_tracked = id
+		quest_accepted.emit(id))
+	_quest_screen.quest_abandoned.connect(func(id: String) -> void: quest_abandoned.emit(id))
+	_quest_screen.quest_tracked.connect(func(id: String) -> void:
+		_tracked = id
+		_quest_screen.tracked = id
+		_quest_screen.queue_redraw())
+	_quest_screen.closed.connect(close_all_screens)
+	layer.add_child(_quest_screen)
+
 
 func set_catalog(catalog: Array, store: Object, species: String, gender: String, appearance: String) -> void:
 	_catalog = catalog
@@ -108,6 +136,8 @@ func set_catalog(catalog: Array, store: Object, species: String, gender: String,
 	if _vendor_screen != null:
 		_vendor_screen.catalog = catalog
 		_vendor_screen.store = store
+	if _quest_screen != null:
+		_quest_screen.catalog = catalog
 
 
 func has_ui() -> bool:
@@ -123,10 +153,16 @@ func is_any_screen_open() -> bool:
 			or (_qm_screen != null and _qm_screen.visible) \
 			or (_inv_screen != null and _inv_screen.visible) \
 			or (_loot_screen != null and _loot_screen.visible) \
-			or (_vendor_screen != null and _vendor_screen.visible)
+			or (_vendor_screen != null and _vendor_screen.visible) \
+			or (_quest_screen != null and _quest_screen.visible)
 
 
 func try_open_terminal(client: Object) -> bool:
+	# Talking to someone a quest names counts, whatever else they do (the
+	# junk dealer buys junk too).
+	var person := at_quest_npc(client)
+	if not person.is_empty():
+		client.talk_to(int(person["entity"]))
 	if _terminal_screen != null and not at_recruiter(client).is_empty():
 		_terminal_screen.visible = true
 		return true
@@ -143,6 +179,16 @@ func try_open_terminal(client: Object) -> bool:
 		_sync_screen_data(client)
 		_vendor_screen.open_vendor(str(vendor.get("name", "Vendor")), str(vendor.get("kind", "gear_vendor")))
 		return true
+	if _quest_screen != null and not person.is_empty() and bool(person.get("giver", false)):
+		_await_offers(client, str(person["name"]))
+		return true
+	var mission_terminal := at_mission_terminal(client)
+	if _quest_screen != null and not mission_terminal.is_empty():
+		client.use_mission_terminal(int(mission_terminal["index"]))
+		_await_offers(client, str(mission_terminal["name"]))
+		return true
+	if not person.is_empty():
+		return false  # talked: what it did comes back as a notice
 	var corpse := at_lootable_corpse(client)
 	if _loot_screen != null and not corpse.is_empty():
 		_loot_screen.corpse = corpse
@@ -150,6 +196,27 @@ func try_open_terminal(client: Object) -> bool:
 		_loot_screen.queue_redraw()
 		return true
 	return false
+
+
+func _await_offers(client: Object, from: String) -> void:
+	close_all_screens()
+	_offer_serial = int(client.get_quests().get("offer_serial", 0))
+	_offer_at = client.get_presented()["position"]
+	_quest_screen.player_position = _offer_at
+	_quest_screen.open_offers(from)
+
+
+# Opens or closes the quest log; true if it's open now.
+func toggle_quest_log(client: Object) -> bool:
+	if _quest_screen == null or client == null or not client.is_spawned():
+		return false
+	if _quest_screen.visible and _quest_screen.mode == "log":
+		close_all_screens()
+		return false
+	close_all_screens()
+	_sync_quests(client)
+	_quest_screen.open_log()
+	return true
 
 
 func toggle_inventory(client: Object) -> bool:
@@ -180,6 +247,9 @@ func close_all_screens() -> void:
 		_loot_screen.visible = false
 	if _vendor_screen != null:
 		_vendor_screen.visible = false
+	if _quest_screen != null:
+		_quest_screen.visible = false
+	_offer_serial = -1
 	if was_open:
 		terminal_closed.emit()
 
@@ -203,6 +273,10 @@ func clear_recruiters() -> void:
 			if n is Node and is_instance_valid(n):
 				(n as Node).queue_free()
 	_corpse_nodes.clear()
+	for node: Node in _giver_nodes.values():
+		if is_instance_valid(node):
+			node.queue_free()
+	_giver_nodes.clear()
 	for entry: Dictionary in _target_nodes.values():
 		var r: Variant = entry.get("root")
 		if r is Node and is_instance_valid(r):
@@ -349,6 +423,167 @@ func at_vendor(client: Object) -> Dictionary:
 		if Vector2(position.x - at.x, position.z - at.z).length() <= float(v["radius"]):
 			return v
 	return {}
+
+
+# The nearest of the people quests name, within talking reach.
+func at_quest_npc(client: Object) -> Dictionary:
+	if client == null or not client.is_spawned():
+		return {}
+	var position: Vector3 = client.get_presented()["position"]
+	var best := {}
+	var best_d := TALK_REACH
+	for npc: Dictionary in client.get_quest_npcs():
+		var at: Vector3 = npc["position"]
+		var d := Vector2(position.x - at.x, position.z - at.z).length()
+		if d <= best_d:
+			best_d = d
+			best = npc
+	return best
+
+
+func at_mission_terminal(client: Object) -> Dictionary:
+	if client == null or not client.is_spawned():
+		return {}
+	var position: Vector3 = client.get_presented()["position"]
+	for t: Dictionary in client.get_mission_terminals():
+		var at: Vector3 = t["position"]
+		if Vector2(position.x - at.x, position.z - at.z).length() <= float(t["radius"]):
+			return t
+	return {}
+
+
+# The quest journal into the quest screen; tracks a quest that's new, or
+# the first when the tracked one is gone.
+func _sync_quests(client: Object) -> Dictionary:
+	var quests: Dictionary = client.get_quests()
+	var active: Array = quests.get("active", [])
+	var ids := {}
+	for q: Dictionary in active:
+		var id := str(q["id"])
+		ids[id] = true
+		if not _known_quests.is_empty() and not _known_quests.has(id):
+			_tracked = id
+	if not ids.has(_tracked):
+		_tracked = str(active[0]["id"]) if not active.is_empty() else ""
+	_known_quests = ids if not ids.is_empty() else {"": true}
+	if _quest_screen != null:
+		_quest_screen.active = active
+		_quest_screen.completed = quests.get("completed", [])
+		_quest_screen.tracked = _tracked
+		_quest_screen.player_position = client.get_presented()["position"]
+		if _quest_screen.visible and _quest_screen.mode == "offers":
+			if _quest_screen.waiting and int(quests.get("offer_serial", 0)) != _offer_serial:
+				_quest_screen.waiting = false
+				_offer_serial = -1
+			if not _quest_screen.waiting:
+				_quest_screen.offers = quests.get("offers", [])
+				_quest_screen.source = str(quests.get("offer_source", _quest_screen.source))
+		if _quest_screen.visible:
+			_quest_screen.queue_redraw()
+	return quests
+
+
+func tracked_quest(client: Object) -> Dictionary:
+	for q: Dictionary in client.get_quests().get("active", []):
+		if str(q["id"]) == _tracked:
+			return q
+	return {}
+
+
+# What the radar shows for quests: the tracked step's place (on the rim when
+# it's further than the radar reaches), the other quests' dimmer, and the
+# quest givers and mission terminals near by.
+func radar_markers(client: Object) -> Array:
+	var out: Array = []
+	if client == null or not client.is_spawned() or client.get_recruiters().is_empty():
+		return out
+	for q: Dictionary in client.get_quests().get("active", []):
+		if not q.has("waypoint"):
+			continue
+		var at: Vector3 = q["waypoint"]
+		var tracked := str(q["id"]) == _tracked
+		out.append({"position": Vector2(at.x, at.z), "kind": "waypoint", "icon": "hud_objective_icon",
+				"color": Color(GIVER_COLOR, 1.0 if tracked else 0.45)})
+	for npc: Dictionary in client.get_quest_npcs():
+		if bool(npc.get("giver", false)):
+			var at: Vector3 = npc["position"]
+			out.append({"position": Vector2(at.x, at.z), "kind": "giver", "color": GIVER_COLOR})
+	for t: Dictionary in client.get_mission_terminals():
+		var at: Vector3 = t["position"]
+		out.append({"position": Vector2(at.x, at.z), "kind": "terminal", "color": TERMINAL_COLOR})
+	return out
+
+
+func _update_quest_hud(client: Object) -> void:
+	var quests := _sync_quests(client)
+	if _quest_screen.visible and _quest_screen.mode == "offers":
+		var here: Vector3 = client.get_presented()["position"]
+		if Vector2(here.x - _offer_at.x, here.z - _offer_at.z).length() > OFFER_REACH:
+			close_all_screens()
+	_update_giver_markers(client)
+	var quest := tracked_quest(client)
+	if quest.is_empty():
+		_hub_hud.tracker = {}
+		_hub_hud.waypoint = {}
+		return
+	var steps: Array = quest.get("steps", [])
+	var progress := ""
+	if int(quest.get("needed", 0)) > 1:
+		progress = "%d/%d" % [int(quest.get("count", 0)), int(quest["needed"])]
+	var own: Vector3 = client.get_presented()["position"]
+	var distance := ""
+	var waypoint := {}
+	if quest.has("waypoint"):
+		var at: Vector3 = quest["waypoint"]
+		var meters := Vector2(at.x - own.x, at.z - own.z).length()
+		distance = "%d m" % roundi(meters) if meters < 1000 else "%.1f km" % (meters / 1000.0)
+		var camera := _world_root.get_viewport().get_camera_3d() if _world_root != null else null
+		if camera != null and meters > 3.0:
+			waypoint = _screen_marker(camera, at + Vector3.UP * 2.2, distance)
+	_hub_hud.tracker = {"title": str(quest.get("title", "")), "step": str(steps.back()) if not steps.is_empty() else "",
+			"progress": progress, "distance": distance, "log_key": _key_name("quest_log")}
+	_hub_hud.waypoint = waypoint
+
+
+# Where a place is on screen, or the edge it lies past.
+func _screen_marker(camera: Camera3D, at: Vector3, distance: String) -> Dictionary:
+	var view := _hub_hud.size
+	var center := view * 0.5
+	var behind := camera.is_position_behind(at)
+	var point := camera.unproject_position(at)
+	var margin := 48.0 * view.y / 600.0
+	var inside := Rect2(Vector2(margin, margin), view - Vector2(margin, margin) * 2)
+	if not behind and inside.has_point(point):
+		return {"at": point, "onscreen": true, "distance": distance}
+	var direction := (point - center) if not behind else (center - point)
+	if direction.length() < 0.001:
+		direction = Vector2(0, 1)
+	var angle := direction.angle()
+	# Out along that way to the margin's edge.
+	var half := inside.size * 0.5
+	var scale := minf(half.x / maxf(absf(direction.x), 0.001), half.y / maxf(absf(direction.y), 0.001))
+	return {"at": center + direction * scale, "onscreen": false, "angle": angle, "distance": distance}
+
+
+# Battlefront's objective chevrons over each quest giver's head.
+func _update_giver_markers(client: Object) -> void:
+	if _world_root == null or not _giver_nodes.is_empty():
+		return
+	var texture: Texture2D = _hub_hud.art.texture("hud_objective_icon") if _hub_hud != null else null
+	if texture == null:
+		return
+	for npc: Dictionary in client.get_quest_npcs():
+		if not bool(npc.get("giver", false)):
+			continue
+		var sprite := Sprite3D.new()
+		sprite.texture = texture
+		sprite.billboard = BaseMaterial3D.BILLBOARD_ENABLED
+		sprite.fixed_size = true
+		sprite.pixel_size = 0.0012
+		sprite.modulate = GIVER_COLOR
+		sprite.position = (npc["position"] as Vector3) + Vector3.UP * 2.45
+		_world_root.add_child(sprite)
+		_giver_nodes[int(npc["entity"])] = sprite
 
 
 func at_lootable_corpse(client: Object) -> Dictionary:
@@ -515,6 +750,8 @@ func update_hub(client: Object, world: Node3D, delta: float, pause_visible: bool
 	if in_hub:
 		_update_targets(client, delta)
 		_update_corpse_markers(client)
+		if _quest_screen != null and _hub_hud != null:
+			_update_quest_hud(client)
 	var status: Dictionary = client.get_player_status()
 	if int(status.get("notice_id", 0)) != _notice_id:
 		_notice_id = int(status["notice_id"])
@@ -539,6 +776,8 @@ func update_hub(client: Object, world: Node3D, delta: float, pause_visible: bool
 	var qm: Dictionary = at_quartermaster(client) if in_hub else {}
 	var vendor: Dictionary = at_vendor(client) if in_hub else {}
 	var corpse: Dictionary = at_lootable_corpse(client) if in_hub else {}
+	var quest_npc: Dictionary = at_quest_npc(client) if in_hub else {}
+	var mission_terminal: Dictionary = at_mission_terminal(client) if in_hub else {}
 	if _terminal_screen.visible and terminal.is_empty():
 		close_all_screens()
 	if _qm_screen != null and _qm_screen.visible and qm.is_empty():
@@ -586,6 +825,10 @@ func update_hub(client: Object, world: Node3D, delta: float, pause_visible: bool
 		tip = "Press %s to talk to %s" % [_key_name("interact"), qm["name"]]
 	elif not vendor.is_empty():
 		tip = "Press %s to trade with %s" % [_key_name("interact"), vendor["name"]]
+	elif not quest_npc.is_empty():
+		tip = "Press %s to talk to %s" % [_key_name("interact"), quest_npc["name"]]
+	elif not mission_terminal.is_empty():
+		tip = "Press %s to use the %s" % [_key_name("interact"), mission_terminal["name"]]
 	elif not corpse.is_empty():
 		var n_items := (corpse.get("items", []) as Array).size()
 		tip = "Press %s to loot %s (%d %s)" % [_key_name("interact"), corpse["name"], n_items, "item" if n_items == 1 else "items"]

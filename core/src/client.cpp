@@ -105,6 +105,30 @@ void GameClient::use_item(uint64_t item_id) {
     }
 }
 
+void GameClient::talk_to(uint32_t npc_entity) {
+    if (status_ == Status::connected) {
+        link_.send(config_.server, net::encode(net::QuestRequest{net::QuestRequest::talk, npc_entity, ""}));
+    }
+}
+
+void GameClient::use_mission_terminal(int index) {
+    if (status_ == Status::connected && index >= 0) {
+        link_.send(config_.server, net::encode(net::QuestRequest{net::QuestRequest::terminal, uint32_t(index), ""}));
+    }
+}
+
+void GameClient::accept_quest(const std::string& id) {
+    if (status_ == Status::connected && !id.empty() && id.size() <= 255) {
+        link_.send(config_.server, net::encode(net::QuestRequest{net::QuestRequest::accept, 0, id}));
+    }
+}
+
+void GameClient::abandon_quest(const std::string& id) {
+    if (status_ == Status::connected && !id.empty() && id.size() <= 255) {
+        link_.send(config_.server, net::encode(net::QuestRequest{net::QuestRequest::abandon, 0, id}));
+    }
+}
+
 void GameClient::request_spawn(int loadout, int post) {
     spawn_request_ = net::SpawnRequest{uint8_t(std::clamp(loadout, 0, 255)), uint8_t(std::clamp(post, 0, 255))};
     last_spawn_request_ = -1e9;  // send at once
@@ -230,6 +254,8 @@ void GameClient::handle(const net::Datagram& datagram, double now) {
             recruiters_ = welcome->recruiters;
             quartermasters_ = welcome->quartermasters;
             vendors_ = welcome->vendors;
+            quest_npcs_ = welcome->quest_npcs;
+            mission_terminals_ = welcome->mission_terminals;
             factions_ = welcome->factions;
             looks_ = welcome->looks;
         }
@@ -248,6 +274,15 @@ void GameClient::handle(const net::Datagram& datagram, double now) {
                 }
             }
             link_.send(config_.server, net::encode(net::InventoryAck{sync->revision}));
+        }
+        return;
+    }
+    if (const auto* sync = std::get_if<net::QuestSync>(&message)) {
+        if (status_ == Status::connected) {
+            if (sync->revision >= quests_.revision) {
+                quests_ = *sync;
+            }
+            link_.send(config_.server, net::encode(net::QuestAck{sync->revision}));
         }
         return;
     }

@@ -15,6 +15,10 @@ var notice := ""      # e.g. "Victory at Endor: 3 kills, 1 deaths, 2 captures"
 var notice_alpha := 0.0
 var info := {}        # {credits, fp, xp, loadout_name, inv_key}
 var switching := {}   # {name, progress}: non-empty while channeling a loadout switch
+var tracker := {}     # the tracked quest: {title, step, progress, distance, log_key}; empty: none
+# Where the tracked quest's step is, on screen: {at (pixels), onscreen,
+# angle (radians: which way it lies, off screen), distance}; empty: none.
+var waypoint := {}
 
 
 func _init(shared_art: RefCounted = null) -> void:
@@ -25,6 +29,10 @@ func _init(shared_art: RefCounted = null) -> void:
 func _paint() -> void:
 	if not info.is_empty():
 		_paint_info()
+	if not waypoint.is_empty():
+		_paint_waypoint()
+	if not tracker.is_empty():
+		_paint_tracker()
 	if tooltip != "":
 		_paint_tooltip()
 	if not queue.is_empty():
@@ -53,6 +61,63 @@ func _paint_switching() -> void:
 	draw_rect(bar_bg, Color(0.1, 0.12, 0.16, 0.9))
 	var frac := clampf(float(switching.get("progress", 0.0)), 0.0, 1.0)
 	draw_rect(Rect2(bar_bg.position, Vector2(bar_bg.size.x * frac, bar_bg.size.y)), ACCENT)
+
+
+# The tracked quest, at the right: its title, the step it's on and how far.
+func _paint_tracker() -> void:
+	var step := str(tracker.get("step", ""))
+	var progress := str(tracker.get("progress", ""))
+	var lines := _wrap_line(step + ("  " + progress if progress != "" else ""), 268 * u)
+	var box := Rect2(Vector2(size.x - 296 * u, 150 * u), Vector2(282 * u, (58 + 15 * lines.size()) * u))
+	frame(box, "border_3_pieces")
+	text("gamefont_tiny", "Quest   [%s] Log" % str(tracker.get("log_key", "L")), box.position + Vector2(12, 8) * u,
+			"Left", DIM)
+	var distance := str(tracker.get("distance", ""))
+	if distance != "":
+		text("gamefont_tiny", distance, Vector2(box.end.x - 12 * u, box.position.y + 8 * u), "Right", ACCENT)
+	text("gamefont_small", str(tracker.get("title", "")), box.position + Vector2(12, 24) * u, "Left", ACCENT)
+	var y := box.position.y + 44 * u
+	for line in lines:
+		text("gamefont_tiny", line, Vector2(box.position.x + 12 * u, y), "Left", TEXT)
+		y += 15 * u
+
+
+func _wrap_line(value: String, width: float) -> PackedStringArray:
+	var lines := PackedStringArray()
+	var line := ""
+	for word in value.split(" ", false):
+		var candidate := word if line == "" else line + " " + word
+		if line != "" and art.text_width("gamefont_tiny", candidate, u) > width:
+			lines.append(line)
+			line = word
+		else:
+			line = candidate
+	lines.append(line)
+	return lines
+
+
+# Battlefront's objective marker: its chevrons over the place, with the
+# distance under them; off screen, its other chevrons at the edge, pointing
+# the way.
+func _paint_waypoint() -> void:
+	var at: Vector2 = waypoint["at"]
+	var icon_size := 30 * u
+	var color := Color(ACCENT, 0.9)
+	if bool(waypoint.get("onscreen", false)):
+		var t: Texture2D = art.texture("hud_objective_icon")
+		if t != null:
+			draw_texture_rect(t, Rect2(at - Vector2(icon_size * 0.5, icon_size), Vector2(icon_size, icon_size)), false, color)
+		text("gamefont_tiny", str(waypoint.get("distance", "")), at + Vector2(0, 4 * u), "Center", color)
+		return
+	var t: Texture2D = art.texture("hud_objective_icon_offscreen")
+	if t == null:
+		return
+	# Its chevrons point up: turned to point the way.
+	draw_set_transform(at, float(waypoint.get("angle", 0.0)) + PI * 0.5)
+	draw_texture_rect(t, Rect2(-Vector2(icon_size, icon_size) * 0.5, Vector2(icon_size, icon_size)), false, color)
+	draw_set_transform(Vector2.ZERO)
+	var inward := -Vector2.from_angle(float(waypoint.get("angle", 0.0))) * icon_size * 1.1
+	text("gamefont_tiny", str(waypoint.get("distance", "")), at + inward - Vector2(0, 6 * u), "Center", color)
 
 
 # Battlefront's tooltip: its text on a dark bar fading out at the ends.

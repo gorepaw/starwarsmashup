@@ -85,6 +85,10 @@ struct HubConfig {
     HubCrowd crowd;
     std::optional<WorldSpawns> spawns;
     LootTableSet loot_tables;
+    // Its quests (Quests = a file of them) and mission terminals
+    // ([mission_terminal]: Name, Position x z, Radius).
+    QuestBook quests;
+    std::vector<net::MissionTerminal> mission_terminals;
 };
 
 // Reads a hub file (see game/hubs/): its war terminals (Galaxies x z), the

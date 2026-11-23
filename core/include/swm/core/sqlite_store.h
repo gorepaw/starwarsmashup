@@ -33,9 +33,11 @@ public:
     void save_loadout(PersistentId owner_id, const CharacterLoadout& loadout) override;
     void update_economy(PersistentId id, int64_t credits, int64_t faction_points, int64_t experience,
                         int active_loadout) override;
+    std::vector<QuestProgress> list_quests(PersistentId owner_id) override;
+    void save_quests(PersistentId owner_id, std::span<const QuestProgress> quests) override;
 
     // The schema version this build writes (PRAGMA user_version).
-    static constexpr int schema_version = 3;
+    static constexpr int schema_version = 4;
 
 private:
     void close();
@@ -58,6 +60,9 @@ private:
     sqlite3_stmt* save_loadout_ = nullptr;
     sqlite3_stmt* remove_loadouts_by_owner_ = nullptr;
     sqlite3_stmt* update_economy_ = nullptr;
+    sqlite3_stmt* list_quests_ = nullptr;
+    sqlite3_stmt* insert_quest_ = nullptr;
+    sqlite3_stmt* remove_quests_by_owner_ = nullptr;
 };
 
 } // namespace swm::core

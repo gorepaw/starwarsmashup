@@ -430,7 +430,7 @@ func _paint_inventory(box: Rect2) -> void:
 		var def: Dictionary = _def_by_id.get(str(inst.get("def_id", "")), {})
 		var k := str(def.get("kind", ""))
 		if _category == "misc":
-			if k != "junk" and k != "supply":
+			if k != "junk" and k != "supply" and k != "quest":
 				continue
 		elif _category != "all" and k != _category:
 			continue
@@ -473,6 +473,8 @@ func _paint_inventory(box: Rect2) -> void:
 			sub_txt = "Junk | Sell: %d Cr" % int(def.get("sell_value", 0))
 		elif kind == "supply":
 			sub_txt = "Supply | +%d HP" % roundi(float(def.get("heal_amount", 0.0)))
+		elif kind == "quest":
+			sub_txt = "Quest item"
 		else:
 			sub_txt = "%s | Q %d%% %s" % [str(def.get("slot", "")).capitalize(),
 					roundi(float(inst.get("quality", 0.5)) * 100), used_in]
@@ -575,7 +577,7 @@ func _quick_equip(inst: Dictionary) -> void:
 	if kind == "supply":
 		item_used.emit(int(inst.get("id", 0)))
 		return
-	if kind == "junk":
+	if kind == "junk" or kind == "quest":
 		return
 	if kind == "clothing":
 		_paperdoll_mode = "appearance"

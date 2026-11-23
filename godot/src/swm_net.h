@@ -162,6 +162,19 @@ public:
     void sell_item(int64_t item_id);
     void sell_all_junk();
     void use_item(int64_t item_id);
+    // Quests. The hub's quest people: [{entity, name, position, giver}];
+    // its mission terminals: [{index, name, position, radius}]; the journal:
+    // {revision, active: [quest], completed: [title], offers: [quest],
+    // offer_source, offer_serial}, a quest being {id, title, giver, summary,
+    // steps: [text], step, count, needed, waypoint (or absent), credits,
+    // experience, faction_points, items: [def id], mission}.
+    godot::Array get_quest_npcs() const;
+    godot::Array get_mission_terminals() const;
+    godot::Dictionary get_quests() const;
+    void talk_to(int64_t npc_entity);
+    void use_mission_terminal(int64_t index);
+    void accept_quest(const godot::String& id);
+    void abandon_quest(const godot::String& id);
     // The terrain bake (prefix) of the world the client is in now: a
     // battle's own (its battlefield's map), or the one start() was given.
     godot::String get_bake() const;

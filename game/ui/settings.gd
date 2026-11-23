@@ -29,6 +29,7 @@ const ACTIONS := [
 	["interact", "Use", KEY_E],
 	["leave_queue", "Leave the Queue", KEY_X],
 	["inventory", "Inventory & Loadouts", KEY_I],
+	["quest_log", "Quest Log", KEY_L],
 	["loadout_1", "Loadout 1", KEY_F5],
 	["loadout_2", "Loadout 2", KEY_F6],
 	["loadout_3", "Loadout 3", KEY_F7],

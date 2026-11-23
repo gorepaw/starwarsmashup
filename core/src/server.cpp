@@ -118,7 +118,12 @@ net::PlayerStatus* GameServer::status(uint32_t entity) {
 
 void GameServer::notify(uint32_t entity, const std::string& text) {
     if (Client* client = find(entity)) {
-        client->status.notice = text.substr(0, 255);
+        // Several in one tick (a kill's reward and the quest it advanced) share the line.
+        const std::string line = client->notice_tick == tick_ && !client->status.notice.empty()
+                                     ? client->status.notice + "  |  " + text
+                                     : text;
+        client->status.notice = line.substr(0, 255);
+        client->notice_tick = tick_;
         ++client->status.notice_id;
     }
 }
@@ -559,7 +564,7 @@ void GameServer::handle(const net::Endpoint& from, const net::Datagram& datagram
         }
         // Also answers a repeated Hello whose Welcome was lost.
         send(from, net::Welcome{client->entity, config_.tick_rate, tick_, client->character, recruiters_, factions_,
-                                looks_, quartermasters_, vendors_});
+                                looks_, quartermasters_, vendors_, quest_npcs_, mission_terminals_});
     }
     if (client == nullptr) {
         return;  // not connected: ignore everything but Hello
@@ -593,6 +598,12 @@ void GameServer::handle(const net::Endpoint& from, const net::Datagram& datagram
         if (ack->revision == client->inventory_rev) {
             client->acked_inventory_rev = ack->revision;
         }
+    } else if (const auto* quest_ack = std::get_if<net::QuestAck>(&message)) {
+        if (quest_ack->revision == client->quest_rev) {
+            client->acked_quest_rev = quest_ack->revision;
+        }
+    } else if (const auto* quest = std::get_if<net::QuestRequest>(&message)) {
+        handle_quest_request(*client, *quest);
     } else if (const auto* save_lo = std::get_if<net::SaveLoadoutRequest>(&message)) {
         if (!conquest_ && store_ != nullptr && config_.catalog != nullptr && client->character != 0 &&
             save_lo->loadout.slot_index >= 0 && save_lo->loadout.slot_index < max_character_loadouts) {
@@ -914,6 +925,8 @@ GameServer::Client* GameServer::join(const net::Endpoint& from, const std::strin
             joined.char_loadouts = store_->list_loadouts(joined.character);
             rebuild_client_loadouts(joined);
             joined.inventory_rev = 1;
+            joined.quests = store_->list_quests(joined.character);
+            joined.quest_rev = 1;
         } catch (const std::exception& error) {
             say(std::format("inventory load error for {}: {}", name, error.what()));
         }
@@ -1065,6 +1078,9 @@ void GameServer::step() {
         }
     }
     advance_pickups();
+    if (tick_ % 15 == 0) {
+        check_quest_positions();
+    }
 
     net::Snapshot base_snapshot;
     base_snapshot.server_tick = tick_;
@@ -1171,6 +1187,10 @@ void GameServer::step() {
         if (client.inventory_rev != client.acked_inventory_rev &&
             (client.last_sync_tick == 0 || tick_ - client.last_sync_tick >= 8)) {
             send_inventory_sync(client);
+        }
+        if (quest_book_ != nullptr && client.quest_rev != client.acked_quest_rev &&
+            (client.quest_sync_tick == 0 || tick_ - client.quest_sync_tick >= 8)) {
+            send_quest_sync(client);
         }
         if (client.transfer) {
             send(client.endpoint, *client.transfer);

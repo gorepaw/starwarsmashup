@@ -6,8 +6,11 @@
 # Writes <output_prefix>hud.png, pause.png, options.png, scores.png, end.png,
 # spawn.png, and a hub's: terminal.png (the war terminal), queued.png (its
 # screen while queued), hub.png (the tooltip and the queue over the HUD) and
-# back.png (how the last battle went). With a map, the minimap uses its image as the battlefield
-# file places it. Needs a real window and bf2tool export-hud's output.
+# back.png (how the last battle went), and quests: offers.png (a quest
+# giver's offer), questlog.png (the quest log) and quests.png (the tracker and
+# objective marker over the HUD, its radar on Tatooine's map when the
+# terrain bake is there). With a map, the minimap uses its image as the
+# battlefield file places it. Needs a real window and bf2tool export-hud's output.
 extends SceneTree
 
 const Bf2Hud = preload("res://ui/bf2_hud.gd")
@@ -17,8 +20,10 @@ const ScoreScreen = preload("res://ui/score_screen.gd")
 const PauseMenu = preload("res://ui/pause_menu.gd")
 const WarTerminalScreen = preload("res://ui/war_terminal_screen.gd")
 const HubHud = preload("res://ui/hub_hud.gd")
+const QuestScreen = preload("res://ui/quest_screen.gd")
 
-const SHOTS := ["hud", "pause", "options", "scores", "end", "spawn", "terminal", "queued", "hub", "back"]
+const SHOTS := ["hud", "pause", "options", "scores", "end", "spawn", "terminal", "queued", "hub", "back",
+		"offers", "questlog", "quests"]
 
 var _prefix := ""
 var _hud: Bf2Hud
@@ -27,6 +32,7 @@ var _scores: ScoreScreen
 var _pause: PauseMenu
 var _terminal: WarTerminalScreen
 var _hub: HubHud
+var _quests: QuestScreen
 var _index := -1
 var _frames := 0
 var _minimap := {}
@@ -60,7 +66,8 @@ func _initialize() -> void:
 	_pause.settings = Settings.new()
 	_terminal = WarTerminalScreen.new(_hud.art)
 	_hub = HubHud.new(_hud.art)
-	for screen: Control in [_spawn, _scores, _pause, _terminal, _hub]:
+	_quests = QuestScreen.new(_hud.art)
+	for screen: Control in [_spawn, _scores, _pause, _terminal, _hub, _quests]:
 		screen.visible = false
 		layer.add_child(screen)
 	_sample_hud()
@@ -97,13 +104,30 @@ func _next() -> void:
 	_spawn.visible = shot == "spawn"
 	_terminal.visible = shot in ["terminal", "queued"]
 	_terminal.queued = 1 if shot == "queued" else -1
-	_hub.visible = shot in ["hub", "back"]
-	_hub.tooltip = "Press E to use the War Terminal" if shot == "hub" else ""
+	_hub.visible = shot in ["hub", "back", "quests"]
+	_quests.visible = shot in ["offers", "questlog"]
+	if shot == "offers":
+		var offered := _quests.offers
+		_quests.open_offers("Teska Vo")
+		_quests.offers = offered
+		_quests.waiting = false
+	elif shot == "questlog":
+		_quests.open_log()
+	if shot == "quests":
+		_sample_quest_hud()
+	_hub.tracker = {"title": "Pests at the Gate", "step": "Kill kreetles", "progress": "2/5", "distance": "540 m",
+			"log_key": "L"} if shot == "quests" else {}
+	_hub.waypoint = {"at": Vector2(1215, 300), "onscreen": false, "angle": -0.35, "distance": "540 m"} \
+			if shot == "quests" else {}
+	_hub.info = {"credits": 1240, "fp": 125, "xp": 860, "loadout_name": "Standard Issue", "inv_key": "I"} \
+			if shot == "quests" else {}
+	_hub.tooltip = "Press E to use the War Terminal" if shot == "hub" else \
+			("Press E to talk to Corporal Dask" if shot == "quests" else "")
 	_hub.queue = {"side": "Empire", "icon": "imp_icon", "battlefield": "Polis Massa", "starts_in": 6.2,
 			"in_queue": 3, "leave_key": "X"} if shot == "hub" else {}
 	_hub.notice = "Victory at Endor: 12 kills, 1 death, 3 captures" if shot == "back" else ""
 	_hub.notice_alpha = 1.0
-	for control: Control in [_hud, _spawn, _scores, _pause, _terminal, _hub]:
+	for control: Control in [_hud, _spawn, _scores, _pause, _terminal, _hub, _quests]:
 		control.queue_redraw()
 
 
@@ -148,6 +172,36 @@ func _sample_hud() -> void:
 	_hud.apply_tables()
 
 
+# The hub's radar: Tatooine's map round Mos Eisley, a tracked quest's place
+# past its rim, quest givers and mission terminals.
+func _sample_quest_hud() -> void:
+	var bake := "imported_assets/terrain/tatooine"
+	if not FileAccess.file_exists("res://" + bake + ".json"):
+		return
+	var meta: Dictionary = JSON.parse_string(FileAccess.get_file_as_string("res://" + bake + ".json"))
+	var image := Image.load_from_file(ProjectSettings.globalize_path("res://" + bake + "_ground_preview.png"))
+	if image == null:
+		return
+	var extent := (float(meta["samples"]) - 1) * float(meta["spacing"])
+	_hud.minimap = {"texture": ImageTexture.create_from_image(image), "left_x": meta["origin_x"],
+			"top_z": float(meta["origin_z"]) + extent, "right_x": float(meta["origin_x"]) + extent,
+			"bottom_z": meta["origin_z"]}
+	_hud.map_range = 250.0
+	_hud.map_player = {"position": Vector2(-3500, -4800), "yaw": 0.4}
+	_hud.map_markers = [
+		{"position": Vector2(-3980, -4750), "kind": "waypoint", "icon": "hud_objective_icon",
+				"color": Color(1.0, 0.8, 0.35)},
+		{"position": Vector2(-3500, -4790), "kind": "giver", "color": Color(1.0, 0.8, 0.35)},
+		{"position": Vector2(-3512, -4800), "kind": "giver", "color": Color(1.0, 0.8, 0.35)},
+		{"position": Vector2(-3420.9, -4745.1), "kind": "terminal", "color": Color(0.45, 0.85, 1.0)},
+		{"position": Vector2(-3475.7, -4694.1), "kind": "terminal", "color": Color(0.45, 0.85, 1.0)}]
+	_hud.messages = []
+	_hud.bindings.erase("player1.team1.texture")
+	_hud.bindings.erase("player1.team2.texture")
+	_hud.bindings.erase("victorytimer")
+	_hud.apply_tables()
+
+
 func _sample_screens() -> void:
 	var players := func(prefix: String, count: int, you: int) -> Array:
 		var out: Array = []
@@ -184,6 +238,29 @@ func _sample_screens() -> void:
 	_terminal.starts_in = 6.2
 	_terminal.in_queue = 3
 	_terminal.keys = {"leave": "X", "close": "Esc"}
+	var ledger := {"id": "the_valarian_ledger", "title": "The Valarian Ledger", "giver": "Teska Vo",
+			"summary": "Teska Vo keeps accounts for a Hutt who would very much like to know where the Valarian " +
+			"Syndicate moves its cargo. Their enforcers carry shipping ledgers. Make the Syndicate's camps feel " +
+			"unsafe, then take a ledger from one of the enforcers.",
+			"steps": ["Thin out the Valarian Syndicate", "Take a shipping ledger from a Valarian enforcer",
+					"Bring the ledger to Teska Vo"], "step": 0, "count": 0, "needed": 4,
+			"credits": 450, "experience": 200, "faction_points": 0, "items": [], "mission": false}
+	var pests := {"id": "pests_at_the_gate", "title": "Pests at the Gate", "giver": "Corporal Dask",
+			"summary": "Worrts and kreetles have been chewing through the moisture lines outside the city. The " +
+			"garrison won't spend troopers on vermin, so Corporal Dask will spend credits on you instead.",
+			"steps": ["Kill lesser desert worrts", "Kill kreetles"], "step": 1, "count": 2, "needed": 5,
+			"waypoint": Vector3(-3980, 0, -4750), "credits": 300, "experience": 150, "faction_points": 25,
+			"items": [], "mission": false}
+	var mission := {"id": "mission:lair:7", "title": "Destroy: Cu Pa Lair", "giver": "Mission Terminal",
+			"summary": "A lair of Cu Pas has been reported 890 m east of the city. Clear it out: all 4 of them.",
+			"steps": ["Travel to the lair (890 m east)"], "step": 0, "count": 0, "needed": 0,
+			"waypoint": Vector3(-4380, 0, -4780), "credits": 462, "experience": 120, "faction_points": 0,
+			"items": [], "mission": true}
+	_quests.offers = [ledger]
+	_quests.active = [pests, mission]
+	_quests.completed = ["A Stranger in Mos Eisley"]
+	_quests.tracked = "pests_at_the_gate"
+	_quests.player_position = Vector3(-3500, 0, -4800)
 
 
 func _load_minimap(bake: String, battlefield: String) -> Dictionary:
