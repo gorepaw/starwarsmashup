@@ -82,7 +82,8 @@ void test_battlefield_file() {
                                                       "DamageRegion = 50 sphere 40 0 40 3 3 3 1 0 0 0 1 0 0 0 1\n"
                                                       "Powerup = 20 1 30 3 2 0 1\n"
                                                       "Door = 50 0 60 3 1 50 1.5 64 2 1.5 0.2 1 0 0 0 1 0 0 0 1\n"
-                                                      "Destructible = 850 10 1 40 1.5 1.3 1.5 20 0 2 comp 5\n\n"
+                                                      "Destructible = 850 10 1 40 1.5 1.3 1.5 20 0 2 3.5 comp 5\n"
+                                                      "DeathRegion = box 70 0 70 2 2 2 1 0 0 0 1 0 0 0 1 0\n\n"
                                                       "[post]\nName = CP1\nPosition = 10 10\nOwner = 1\n"
                                                       "Altitude = -6 -1\nSpawnPoint = 12 12 -5\nSpawnPoint = 8 8 -5\n\n"
                                                       "[post]\nName = CP2\nPosition = 30 30\nOwner = 2\n";
@@ -94,7 +95,7 @@ void test_battlefield_file() {
     CHECK(bounded.boundaries.size() == 1 && bounded.min_x == -100 && bounded.max_x == 0 && bounded.min_z == 0 &&
           bounded.max_z == 100);
     CHECK(bounded.contains({-10, 0, 10}) && bounded.contains({-49, 0, 49}) && !bounded.contains({-60, 0, 60}));
-    CHECK(bounded.death_regions.size() == 1 && bounded.death_regions[0].center == Vec3(-10, 0, 20));
+    CHECK(bounded.death_regions.size() == 2 && bounded.death_regions[0].center == Vec3(-10, 0, 20));
     CHECK(bounded.deadly({-13.5, 0, 20}) && !bounded.deadly({-10, 0, 23.5}) && bounded.deadly({-10, 0, 21.5}));
     // Feet below it, or the body in it; not standing on top of it.
     CHECK(bounded.deadly({-10, -1.5, 20}) && !bounded.deadly({-10, 1.5, 20}));
@@ -122,7 +123,26 @@ void test_battlefield_file() {
     // explosion and name (spaces and all).
     CHECK(bounded.destructibles.size() == 1 && bounded.destructibles[0].max_health == 850 &&
           bounded.destructibles[0].center == Vec3(-10, 1, 40) && bounded.destructibles[0].half_size == Vec3(1.5, 1.3, 1.5) &&
-          bounded.destructibles[0].explosion_outer == 2 && bounded.destructibles[0].name == "comp 5");
+          bounded.destructibles[0].explosion_outer == 2 && bounded.destructibles[0].regen == 3.5 &&
+          bounded.destructibles[0].name == "comp 5");
+    // A death region there only while it stands.
+    CHECK(bounded.death_regions.size() == 2 && bounded.death_regions[0].while_standing == -1 &&
+          bounded.death_regions[1].while_standing == 0);
+    {
+        Conquest match(bounded);
+        CHECK(match.deadly({-70, 0, 70}) && match.destructible_alive(0));
+        CHECK(match.damage_destructible(0, 1000) && !match.deadly({-70, 0, 70}) && bounded.deadly({-70, 0, 70}));
+        // It grows back: 850 at 3.5 a second, about 243 s; then the region's back.
+        CHECK(match.state().destructibles[0] == -850.0f);
+        for (int i = 0; i < 240 * 30; ++i) {
+            match.step(1.0 / 30, {}, 0);
+        }
+        CHECK(!match.destructible_alive(0) && !match.deadly({-70, 0, 70}));
+        for (int i = 0; i < 4 * 30; ++i) {
+            match.step(1.0 / 30, {}, 0);
+        }
+        CHECK(match.destructible_alive(0) && match.state().destructibles[0] == 850.0f && match.deadly({-70, 0, 70}));
+    }
     CHECK(bounded.destructibles[0].nearest({0, 0, 40}) == Vec3(-8.5, 0, 40));
     // A post in a cellar: its middle height, taken from within it and not
     // from the ground over it; its spawn points' heights.

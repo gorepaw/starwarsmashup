@@ -366,6 +366,7 @@ func _process(delta: float) -> bool:
 		_update_posts(game, int(own["team"]))
 		_update_powerups(game, delta)
 		Bf2Map.animate_doors(self, game.get("doors", PackedFloat32Array()))
+		Bf2Map.animate_world(self, delta, game.get("destructibles", PackedFloat32Array()))
 		for blast: Dictionary in Bf2Map.update_destructibles(self, game.get("destructibles", PackedFloat32Array())):
 			if _effects != null:
 				var radius := float(blast["radius"])

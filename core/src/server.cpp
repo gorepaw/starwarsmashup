@@ -467,7 +467,7 @@ void GameServer::run_match() {
         }
         // So do death regions, at once, and falling through a hole in the
         // terrain with nothing below.
-        if (client.life == Life::alive && (field.deadly(client.state.position) ||
+        if (client.life == Life::alive && (conquest_->deadly(client.state.position) ||
                                            client.state.position.y < world_.terrain().lowest() - fall_depth)) {
             kill(client, 0);
             continue;

@@ -61,6 +61,10 @@ struct DeathRegion {
     // height (y).
     Vec3 size;
     std::array<double, 9> basis{1, 0, 0, 0, 1, 0, 0, 0, 1};  // row-major; its columns are the region's axes
+    // A death region there only while destructible `while_standing` stands
+    // (Tantive IV's turbine, stopped while its console is destroyed); -1:
+    // always.
+    int while_standing = -1;
 
     bool contains(Vec3 point) const;
 };
@@ -107,6 +111,10 @@ struct Destructible {
     // Its explosion (ExplosionName's): this much damage within `inner`,
     // falling to nothing at `outer`.
     double explosion_damage = 0, explosion_inner = 0, explosion_outer = 0;
+    // Health a second it mends (a mission script's doing: Tantive IV's
+    // turbine console); destroyed, it grows back from nothing and stands
+    // again once whole. 0: it stays destroyed until the next match.
+    double regen = 0;
 
     // The nearest point of its bounds to `point`.
     Vec3 nearest(Vec3 point) const;
@@ -236,9 +244,10 @@ struct Battlefield {
 // radius delay health ammo`, see PowerupStation), and its doors (`Door = x y z
 // radius open_time` for the trigger, then its box as a death region's, `x y
 // z sx sy sz` and 9 rotation numbers; see Door), and what can be destroyed
-// (`Destructible = health x y z hx hy hz damage inner outer name`: its
-// bounds' center and half extents, its explosion, then its name; see
-// Destructible). `Minimap = x0 z0
+// (`Destructible = health x y z hx hy hz damage inner outer regen name`: its
+// bounds' center and half extents, its explosion, how fast it mends, then
+// its name; see Destructible). A death region may end with a destructible's
+// index: it's there only while that stands. `Minimap = x0 z0
 // x1 z1` is where the map's minimap image lies: the coordinates under its
 // left, top, right and bottom edges (north up). Throws
 // std::runtime_error if it, a map or a loadout can't be read or makes no
@@ -270,7 +279,9 @@ struct MatchState {
     std::vector<PostState> posts;
     std::vector<float> powerup_health;  // current health per Battlefield::powerups[i]; <= 0: destroyed
     std::vector<float> doors;           // how open each of Battlefield::doors is, 0 (shut) .. 1
-    std::vector<float> destructibles;   // health per Battlefield::destructibles[i]; <= 0: destroyed
+    // Health per Battlefield::destructibles[i]; <= 0: destroyed (one that
+    // mends grows back from minus its full health, standing again at 0).
+    std::vector<float> destructibles;
 };
 
 struct MatchEvent {
@@ -311,6 +322,9 @@ public:
     bool destructible_alive(size_t index) const;
     // Damages destructible `index`. Returns true on the hit that destroys it.
     bool damage_destructible(size_t index, double amount);
+    // Whether a soldier standing at `feet` is in a death region that's there
+    // now (Battlefield::deadly, less those whose destructible is destroyed).
+    bool deadly(Vec3 feet) const;
     // Whether door `index` is shut (more than half), stopping shots.
     bool door_shut(size_t index) const;
     // Where along a..b (0..1) the segment first meets a shut door, if it does.
@@ -322,6 +336,7 @@ private:
     void reset();
     void capture(double dt, std::span<const Unit> units, std::vector<MatchEvent>& events);
     void move_doors(double dt, std::span<const Unit> units);
+    void mend(double dt);
     void finish(int winner, std::vector<MatchEvent>& events);
 
     Battlefield battlefield_;

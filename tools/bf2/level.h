@@ -180,6 +180,32 @@ struct LevelEffect {
     const ConfigRecord* get(std::string_view property) const;
 };
 
+// A world animation ("anim": a .wld's Animation("name", length, loop,
+// local)): position and rotation keys, each a time and a value in
+// Battlefront's coordinates, rotations as angles about x, y and z in
+// radians. (Each key then has an interpolation byte and two spline handles,
+// not kept.) Keys move an object from where it's placed.
+struct WorldAnimation {
+    struct Key {
+        float time = 0;
+        std::array<float, 3> value{};
+    };
+    std::string name;
+    float length = 0;
+    bool loop = false;
+    bool local = false;  // ASSUMPTION: its second flag, translations along the object's own axes
+    std::vector<Key> positions, rotations;
+};
+
+// An animation group ("anmg": AnimationGroup("name", play at start, ...)):
+// its animations, each moving an object, by name. Mission scripts play,
+// pause and rewind groups.
+struct WorldAnimationGroup {
+    std::string name;
+    bool play_at_start = false;
+    std::vector<std::pair<std::string, std::string>> members;  // animation, object
+};
+
 struct Level {
     Terrain terrain;
     LevelWater water;
@@ -189,6 +215,8 @@ struct Level {
     std::vector<WorldItem> objects;
     std::vector<WorldItem> regions;
     std::vector<LevelBarrier> barriers;
+    std::vector<WorldAnimation> animations;
+    std::vector<WorldAnimationGroup> animation_groups;
     std::vector<LevelPath> paths;
     // The paths the map's boundaries ("bnd_") name, by group (as paths'):
     // the playable area is inside any of them. Their names' hashes.

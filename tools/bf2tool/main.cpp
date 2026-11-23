@@ -42,6 +42,8 @@ constexpr const char* usage = R"(usage:
   bf2tool export-map <_lvl_pc dir> <map> -o <out dir> [--mode conquest] [--skip <layer>]...
                      [--death <region>]... [--open <object>]... [--team <post>=<n>]... [--disable <barrier>]...
                      [--drop-boundary <path>]... [--set <object>.<property>=<value>]...
+                     [--regen <object>=<health a second>]... [--kill-plays <object>=<animation group>]...
+                     [--kill-stops <object>=<animation group>]... [--kill-removes <object>=<death region>]...
   bf2tool export-hud <_lvl_pc dir> -o <out dir>
   bf2tool export-effects <_lvl_pc dir> -o <out dir>
 )";
@@ -428,6 +430,12 @@ int cmd_export_map(const std::vector<std::string>& args) {
     std::vector<std::string> opened;
     std::vector<std::string> disabled;
     std::vector<std::string> dropped_boundaries;
+    // What the mission script does when an object is destroyed (OnObjectKill)
+    // and stands again (OnObjectRespawn), by the object's name (lowercase):
+    // a world animation group it plays (and rewinds), a looping one it
+    // pauses, a death region it removes; and how fast the object mends.
+    std::map<std::string, double> regens;
+    std::map<std::string, std::string> kill_plays, kill_stops, kill_removes;
     std::map<std::string, std::string> teams;  // post name (lowercase) -> team
     // object name (lowercase) -> property, value: the mission script's
     // SetProperty (a door's IsLocked, a post's SpawnPath or CaptureRegion)
@@ -452,6 +460,20 @@ int cmd_export_map(const std::vector<std::string>& args) {
                 return 2;
             }
             teams[lowercase(args[i + 1].substr(0, eq))] = args[i + 1].substr(eq + 1);
+        } else if (args[i] == "--regen" || args[i] == "--kill-plays" || args[i] == "--kill-stops" ||
+                   args[i] == "--kill-removes") {
+            const size_t eq = args[i + 1].find('=');
+            if (eq == std::string::npos) {
+                std::cerr << usage;
+                return 2;
+            }
+            const std::string object = lowercase(args[i + 1].substr(0, eq)), value = args[i + 1].substr(eq + 1);
+            if (args[i] == "--regen") {
+                regens[object] = std::atof(value.c_str());
+            } else {
+                (args[i] == "--kill-plays" ? kill_plays : args[i] == "--kill-stops" ? kill_stops : kill_removes)[object] =
+                    lowercase(value);
+            }
         } else if (args[i] == "--set") {
             const std::string& set = args[i + 1];
             const size_t dot = set.find('.'), eq = set.find('=');
@@ -917,6 +939,50 @@ int cmd_export_map(const std::vector<std::string>& args) {
         }
     }
 
+    // What can be destroyed, in the order the objects come (their indices),
+    // as the objects below go.
+    std::map<std::string, int> destructible_index;  // object name (lowercase) -> index
+    for (const WorldItem& object : level.objects) {
+        if (!included(object) || std::find(opened.begin(), opened.end(), lowercase(object.name)) != opened.end() ||
+            library.classes().find(object.type) == nullptr) {
+            continue;
+        }
+        const OdfClass resolved = library.classes().resolve(object.type);
+        if (resolved.get("GeometryName") && lowercase(resolved.base) == "destructablebuilding" &&
+            std::atof(resolved.get("MaxHealth").value_or("0").c_str()) > 0) {
+            const int index = int(destructible_index.size());
+            destructible_index.emplace(lowercase(object.name), index);
+        }
+    }
+    // World animations by the object they move (lowercase): its group, and
+    // the destructible whose fate plays or stops it (-1: none) and how.
+    struct ObjectAnimation {
+        const WorldAnimationGroup* group;
+        const WorldAnimation* animation;
+        int trigger = -1;
+        std::string mode;  // "plays" or "stops", with a trigger
+    };
+    std::map<std::string, std::vector<ObjectAnimation>> object_animations;
+    for (const WorldAnimationGroup& group : level.animation_groups) {
+        ObjectAnimation found{&group, nullptr};
+        for (const auto& [table, how] : {std::pair{&kill_plays, "plays"}, std::pair{&kill_stops, "stops"}}) {
+            for (const auto& [object, name] : *table) {
+                if (name == lowercase(group.name) && destructible_index.contains(object)) {
+                    found.trigger = destructible_index[object];
+                    found.mode = how;
+                }
+            }
+        }
+        for (const auto& [animation_name, object] : group.members) {
+            for (const WorldAnimation& animation : level.animations) {
+                if (lowercase(animation.name) == lowercase(animation_name)) {
+                    found.animation = &animation;
+                    object_animations[lowercase(object)].push_back(found);
+                }
+            }
+        }
+    }
+
     // Objects, in game space (x mirrored; rotations conjugated by the mirror).
     core::MapCollision collision;
     std::vector<std::string> powerups;  // the health and ammo droids' lines for the map file
@@ -946,6 +1012,7 @@ int cmd_export_map(const std::vector<std::string>& args) {
             std::string model;
             std::string door_json;
             std::string destructible_json;
+            std::string animation_json;
             if (library.classes().find(object.type) != nullptr) {
                 const OdfClass resolved = library.classes().resolve(object.type);
                 // A door's opening: its class's Animation clip from the
@@ -1079,7 +1146,27 @@ int cmd_export_map(const std::vector<std::string>& args) {
                     // (ExplosionName's) go in the map file.
                     const double max_health = std::atof(resolved.get("MaxHealth").value_or("0").c_str());
                     const bool destructible = lowercase(resolved.base) == "destructablebuilding" && max_health > 0;
-                    const int16_t part = destructible ? int16_t(destructibles.size() + 1) : int16_t(0);
+                    int16_t part = destructible ? int16_t(destructibles.size() + 1) : int16_t(0);
+                    // Moved by a world animation that a destroyed object
+                    // plays: where it rests while that stands, where the
+                    // animation leaves it once it's destroyed (its last
+                    // position key; ASSUMPTION: rotation keys don't move its
+                    // collision).
+                    std::optional<core::Vec3> moved;
+                    if (const auto it = object_animations.find(lowercase(object.name)); it != object_animations.end()) {
+                        for (const ObjectAnimation& a : it->second) {
+                            if (a.mode == "plays" && !destructible && !a.animation->positions.empty()) {
+                                part = int16_t(a.trigger + 1);
+                                const auto& o = a.animation->positions.back().value;
+                                const core::Vec3 m{-o[0], o[1], o[2]};
+                                moved = a.animation->local
+                                            ? core::Vec3{basis[0] * m.x + basis[1] * m.y + basis[2] * m.z,
+                                                         basis[3] * m.x + basis[4] * m.y + basis[5] * m.z,
+                                                         basis[6] * m.x + basis[7] * m.y + basis[8] * m.z}
+                                            : m;
+                            }
+                        }
+                    }
                     core::Vec3 low{1e9, 1e9, 1e9}, high{-1e9, -1e9, -1e9};
                     const auto add = [&](const std::vector<CollisionTriangle>& triangles, int16_t as) {
                         for (const CollisionTriangle& t : triangles) {
@@ -1098,6 +1185,15 @@ int cmd_export_map(const std::vector<std::string>& args) {
                         }
                     };
                     add(door && !locked ? std::vector<CollisionTriangle>{} : shape->second, part);
+                    if (moved) {
+                        for (const CollisionTriangle& t : shape->second) {
+                            collision.triangles.push_back(
+                                {place(t.a) + *moved, place(t.b) + *moved, place(t.c) + *moved,
+                                 uint8_t((t.soldiers ? core::blocks_characters : 0) |
+                                         (t.ordnance ? core::blocks_shots : 0)),
+                                 int16_t(-part)});
+                        }
+                    }
                     if (destructible) {
                         std::string wreck;
                         if (const auto destroyed = resolved.get("DestroyedGeometryName")) {
@@ -1130,12 +1226,54 @@ int cmd_export_map(const std::vector<std::string>& args) {
                             "\"explosion_effect\": {}, \"explosion_radius\": {:g}, \"center\": [{:.2f}, {:.2f}, {:.2f}]}}",
                             destructibles.size(), max_health, json_string(wreck), json_string(effect), outer, center.x,
                             center.y, center.z);
+                        const auto regen = regens.find(lowercase(object.name));
                         destructibles.push_back(std::format(
-                            "Destructible = {:g} {:.2f} {:.2f} {:.2f} {:.2f} {:.2f} {:.2f} {:g} {:g} {:g} {}", max_health,
-                            -center.x, center.y, center.z, std::max(0.05, half.x), std::max(0.05, half.y),
-                            std::max(0.05, half.z), damage, inner, outer, object.name));
+                            "Destructible = {:g} {:.2f} {:.2f} {:.2f} {:.2f} {:.2f} {:.2f} {:g} {:g} {:g} {:g} {}",
+                            max_health, -center.x, center.y, center.z, std::max(0.05, half.x), std::max(0.05, half.y),
+                            std::max(0.05, half.z), damage, inner, outer,
+                            regen == regens.end() ? 0.0 : regen->second, object.name));
                     }
                 }
+            }
+            // The world animations moving it: their keys in game space
+            // (positions x mirrored; rotations about x, y, z with y and z
+            // turned the other way), whether they play from the start, and
+            // the destructible that plays or stops them.
+            if (const auto it = object_animations.find(lowercase(object.name)); it != object_animations.end()) {
+                animation_json = ", \"animations\": [";
+                for (size_t i = 0; i < it->second.size(); ++i) {
+                    const ObjectAnimation& a = it->second[i];
+                    const auto keys = [](const std::vector<WorldAnimation::Key>& list, float sign_x, float sign_yz) {
+                        std::string out = "[";
+                        for (size_t k = 0; k < list.size(); ++k) {
+                            out += std::format("{}[{:g}, {:g}, {:g}, {:g}]", k ? ", " : "", list[k].time,
+                                               sign_x * list[k].value[0], sign_yz * list[k].value[1],
+                                               sign_yz * list[k].value[2]);
+                        }
+                        return out + "]";
+                    };
+                    float length = a.animation->length;
+                    for (const auto* list : {&a.animation->positions, &a.animation->rotations}) {
+                        for (const auto& key : *list) {
+                            length = std::max(length, key.time);
+                        }
+                    }
+                    // Positions: x mirrored. Rotations: y and z the other way.
+                    std::string positions = "[";
+                    for (size_t k = 0; k < a.animation->positions.size(); ++k) {
+                        const auto& key = a.animation->positions[k];
+                        positions += std::format("{}[{:g}, {:g}, {:g}, {:g}]", k ? ", " : "", key.time, -key.value[0],
+                                                 key.value[1], key.value[2]);
+                    }
+                    positions += "]";
+                    animation_json += std::format(
+                        "{}{{\"group\": {}, \"start\": {}, \"loop\": {}, \"local\": {}, \"length\": {:g}, "
+                        "\"positions\": {}, \"rotations\": {}, \"destructible\": {}, \"mode\": {}}}",
+                        i ? ", " : "", json_string(a.group->name), a.group->play_at_start ? "true" : "false",
+                        a.animation->loop ? "true" : "false", a.animation->local ? "true" : "false", length, positions,
+                        keys(a.animation->rotations, 1, -1), a.trigger, json_string(a.mode));
+                }
+                animation_json += "]";
             }
             // A command post's hologram: its owner's insignia floating over it
             // (HoloOdf, HoloImageGeometry per side), and its minimap icon.
@@ -1212,7 +1350,7 @@ int cmd_export_map(const std::vector<std::string>& args) {
             }
             json << (written++ ? ",\n" : "\n") << "    {\"layer\": " << json_string(object.layer)
                  << ", \"class\": " << json_string(object.type) << ", \"name\": " << json_string(object.name)
-                 << ", \"model\": " << json_string(model) << hologram << powerup << door_json << destructible_json
+                 << ", \"model\": " << json_string(model) << hologram << powerup << door_json << destructible_json << animation_json
                  << std::format(", \"position\": [{}, {}, {}], \"basis\": [", -object.position[0], object.position[1],
                                 object.position[2]);
             for (size_t i = 0; i < 9; ++i) {
@@ -1317,6 +1455,13 @@ int cmd_export_map(const std::vector<std::string>& args) {
         for (int row = 0; row < 3; ++row) {
             for (int column = 0; column < 3; ++column) {
                 ini << std::format(" {:.4f}", r[size_t(column * 3 + row)]);
+            }
+        }
+        // Only while the object whose destruction removes it stands.
+        for (const auto& [object, name] : kill_removes) {
+            if ((name == lowercase(region.name) || name == lowercase(region.get("Name"))) &&
+                destructible_index.contains(object)) {
+                ini << " " << destructible_index[object];
             }
         }
         ini << "\n";

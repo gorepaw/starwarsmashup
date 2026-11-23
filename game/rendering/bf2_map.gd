@@ -26,6 +26,7 @@ const DROID_TURN_TIME := 1.2       # s the health droid turns before it waits (A
 const DROID_TURN_RANGE := 1.2      # radians either way of where it was placed it looks
 const GONK_ROCK_RATE := 1.6        # rocks a second, the ammo droid shifting from foot to foot
 const DESTRUCTIBLES := &"bf2_destructibles"  # what can be destroyed (meta "bf2_destructible": export-map's; "wreck": its wreck's node or null)
+const ANIMATED := &"bf2_animated"  # objects world animations move (meta "world_animation", "rest", "phase")
 const DOORS := &"bf2_doors"  # doors' nodes (meta "bf2_door": export-map's; "player": their AnimationPlayer)
 
 
@@ -149,6 +150,21 @@ static func add_objects(parent: Node, prefix: String) -> int:
 				node.set_meta("player", player)
 				node.set_meta("open", -1.0)
 				node.add_to_group(DOORS)
+		if object.has("animations"):
+			# The one that moves it here: a destroyed object's doing (it plays,
+			# or a loop it stops), else a loop playing from the start.
+			var chosen: Dictionary = {}
+			for animation: Dictionary in object["animations"]:
+				if str(animation.get("mode", "")) != "":
+					chosen = animation
+					break
+				if bool(animation.get("start", false)) and chosen.is_empty():
+					chosen = animation
+			if not chosen.is_empty():
+				node.set_meta("world_animation", chosen)
+				node.set_meta("rest", node.transform)
+				node.set_meta("phase", 0.0)
+				node.add_to_group(ANIMATED)
 		if object.has("destructible"):
 			# Its wreck (DestroyedGeometryName) placed with it, hidden until
 			# it's destroyed; the same model: it stays; none: it just goes.
@@ -202,6 +218,53 @@ static func update_destructibles(tree: SceneTree, health: PackedFloat32Array) ->
 			explosions.append({"position": Vector3(c[0], c[1], c[2]), "effect": str(spec.get("explosion_effect", "")),
 					"radius": maxf(2.0, float(spec.get("explosion_radius", 0)))})
 	return explosions
+
+
+# Objects moved by the map's world animations, `delta` seconds on: loops
+# going round (stopped while the object that stops them is destroyed: a
+# value in `health`, as update_destructibles'), and one-off animations
+# played forward while the object whose destruction plays them is
+# destroyed, back to the start while it stands.
+static func animate_world(tree: SceneTree, delta: float, health: PackedFloat32Array) -> void:
+	for node: Node3D in tree.get_nodes_in_group(ANIMATED):
+		var animation: Dictionary = node.get_meta("world_animation")
+		var length := maxf(0.01, float(animation.get("length", 0)))
+		var trigger := int(animation.get("destructible", -1))
+		var destroyed := trigger >= 0 and trigger < health.size() and health[trigger] <= 0.0
+		var phase := float(node.get_meta("phase"))
+		match str(animation.get("mode", "")):
+			"plays":
+				phase = clampf(phase + (delta if destroyed else -delta), 0.0, length)
+			"stops":
+				if not destroyed:
+					phase = fmod(phase + delta, length)
+			_:
+				phase = fmod(phase + delta, length)
+		node.set_meta("phase", phase)
+		var rest: Transform3D = node.get_meta("rest")
+		var offset := _key_at(animation.get("positions", []), phase)
+		var turn := _key_at(animation.get("rotations", []), phase)
+		if bool(animation.get("local", false)):
+			offset = rest.basis * offset
+		# ASSUMPTION: turns about the object's own x, then y, then z.
+		node.transform = Transform3D(rest.basis * Basis.from_euler(turn, EULER_ORDER_XYZ), rest.origin + offset)
+
+
+# A world animation's keys ([time, x, y, z], in order) at `time`: linear
+# between them, held past the ends.
+static func _key_at(keys: Array, time: float) -> Vector3:
+	if keys.is_empty():
+		return Vector3.ZERO
+	var previous: Array = keys[0]
+	if time <= float(previous[0]):
+		return Vector3(previous[1], previous[2], previous[3])
+	for key: Array in keys:
+		if time <= float(key[0]):
+			var span := maxf(1e-6, float(key[0]) - float(previous[0]))
+			var t := (time - float(previous[0])) / span
+			return Vector3(previous[1], previous[2], previous[3]).lerp(Vector3(key[1], key[2], key[3]), t)
+		previous = key
+	return Vector3(previous[1], previous[2], previous[3])
 
 
 # The doors, as open as the server says (`open`: 0 shut .. 1, by the

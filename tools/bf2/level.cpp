@@ -527,6 +527,59 @@ void read_effects(const UcfbNode& chunk, std::vector<LevelEffect>& effects) {
     });
 }
 
+// The chunks in `bytes` (tag, payload), whether or not the parser took
+// them for children.
+std::vector<std::pair<std::string, std::span<const uint8_t>>> chunks_in(std::span<const uint8_t> bytes) {
+    std::vector<std::pair<std::string, std::span<const uint8_t>>> out;
+    size_t at = 0;
+    while (at + 8 <= bytes.size()) {
+        const uint32_t size = read<uint32_t>(bytes, at + 4);
+        if (at + 8 + size > bytes.size()) {
+            break;
+        }
+        out.emplace_back(std::string(reinterpret_cast<const char*>(bytes.data() + at), 4), bytes.subspan(at + 8, size));
+        at += 8 + ((size + 3) & ~size_t(3));
+    }
+    return out;
+}
+
+// "anim": INFO (name, length, loop and local flags), then POSK and ROTK
+// keys (time, x, y, z, interpolation, spline handles).
+WorldAnimation read_world_animation(const UcfbNode& node) {
+    WorldAnimation animation;
+    for (const auto& [tag, data] : chunks_in(node.data)) {
+        if (tag == "INFO") {
+            animation.name = text(data);
+            const size_t after = animation.name.size() + 1;
+            if (data.size() >= after + 4) {
+                animation.length = read<float>(data, after);
+            }
+            animation.loop = data.size() > after + 4 && data[after + 4] != 0;
+            animation.local = data.size() > after + 5 && data[after + 5] != 0;
+        } else if ((tag == "POSK" || tag == "ROTK") && data.size() >= 16) {
+            WorldAnimation::Key key{read<float>(data, 0), {read<float>(data, 4), read<float>(data, 8), read<float>(data, 12)}};
+            (tag == "POSK" ? animation.positions : animation.rotations).push_back(key);
+        }
+    }
+    return animation;
+}
+
+// "anmg": INFO (name, play at start), then ANIM (animation, object).
+WorldAnimationGroup read_world_animation_group(const UcfbNode& node) {
+    WorldAnimationGroup group;
+    for (const auto& [tag, data] : chunks_in(node.data)) {
+        if (tag == "INFO") {
+            group.name = text(data);
+            group.play_at_start = data.size() > group.name.size() + 1 && data[group.name.size() + 1] != 0;
+        } else if (tag == "ANIM") {
+            const std::string animation = text(data);
+            const std::string object = animation.size() + 1 < data.size() ? text(data.subspan(animation.size() + 1)) : "";
+            group.members.emplace_back(animation, object);
+        }
+    }
+    return group;
+}
+
 // `group` is the enclosing sublevel's name hash (0 at the top: a base
 // layer's paths are grouped under its own name's hash).
 void read_tree(const UcfbNode& node, Level& level, uint32_t group) {
@@ -558,6 +611,10 @@ void read_tree(const UcfbNode& node, Level& level, uint32_t group) {
                 } else if (item.tag == "BARR") {
                     level.barriers.push_back(read_barrier(item, layer));
                     level.barriers.back().sublevel = group;
+                } else if (item.tag == "anim") {
+                    level.animations.push_back(read_world_animation(item));
+                } else if (item.tag == "anmg") {
+                    level.animation_groups.push_back(read_world_animation_group(item));
                 }
             }
         } else if (child.tag == "path") {

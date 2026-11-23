@@ -157,9 +157,10 @@ void read_regions(Battlefield& field, const Ini::Section& section, const std::st
             std::istringstream fields(value);
             Destructible d;
             if (!(fields >> d.max_health >> d.center.x >> d.center.y >> d.center.z >> d.half_size.x >>
-                  d.half_size.y >> d.half_size.z >> d.explosion_damage >> d.explosion_inner >> d.explosion_outer) ||
-                d.max_health <= 0) {
-                throw std::runtime_error(where + ": Destructible is \"health x y z hx hy hz damage inner outer "
+                  d.half_size.y >> d.half_size.z >> d.explosion_damage >> d.explosion_inner >> d.explosion_outer >>
+                  d.regen) ||
+                d.max_health <= 0 || d.regen < 0) {
+                throw std::runtime_error(where + ": Destructible is \"health x y z hx hy hz damage inner outer regen "
                                          "name\", got \"" + value + "\"");
             }
             std::getline(fields >> std::ws, d.name);
@@ -222,6 +223,9 @@ void read_regions(Battlefield& field, const Ini::Section& section, const std::st
                 for (size_t column = 0; column < 3; ++column) {
                     region.basis[row * 3 + column] = sign[row] * sign[column] * m[row * 3 + column];
                 }
+            }
+            if (int standing = -1; !damage && fields >> standing) {
+                region.while_standing = standing;
             }
             if (damage) {
                 field.damage_regions.push_back({region, rate});
@@ -545,7 +549,18 @@ bool Conquest::damage_destructible(size_t index, double amount) {
         return false;
     }
     state_.destructibles[index] = float(std::max(0.0, double(state_.destructibles[index]) - amount));
+    if (state_.destructibles[index] <= 0.0f && battlefield_.destructibles[index].regen > 0) {
+        state_.destructibles[index] = -float(battlefield_.destructibles[index].max_health);  // grows back from here
+    }
     return state_.destructibles[index] <= 0.0f;
+}
+
+bool Conquest::deadly(Vec3 feet) const {
+    const Vec3 body = feet + Vec3{0, 0.9, 0};
+    return std::any_of(battlefield_.death_regions.begin(), battlefield_.death_regions.end(), [&](const DeathRegion& r) {
+        return (r.while_standing < 0 || destructible_alive(size_t(r.while_standing))) &&
+               (r.contains(feet) || r.contains(body));
+    });
 }
 
 bool Conquest::door_shut(size_t index) const {
@@ -562,6 +577,25 @@ std::optional<double> Conquest::door_hit(Vec3 a, Vec3 b) const {
         }
     }
     return nearest;
+}
+
+void Conquest::mend(double dt) {
+    for (size_t i = 0; i < battlefield_.destructibles.size() && i < state_.destructibles.size(); ++i) {
+        const Destructible& d = battlefield_.destructibles[i];
+        float& health = state_.destructibles[i];
+        if (d.regen <= 0 || health >= float(d.max_health)) {
+            continue;
+        }
+        if (health <= 0.0f) {
+            // Destroyed: growing back; whole, it stands again.
+            health = std::min(0.0f, health + float(d.regen * dt));
+            if (health >= 0.0f) {
+                health = float(d.max_health);
+            }
+        } else {
+            health = std::min(float(d.max_health), health + float(d.regen * dt));
+        }
+    }
 }
 
 void Conquest::move_doors(double dt, std::span<const Unit> units) {
@@ -583,6 +617,7 @@ void Conquest::killed(int team) {
 std::vector<MatchEvent> Conquest::step(double dt, std::span<const Unit> units, size_t players) {
     std::vector<MatchEvent> events;
     move_doors(dt, units);
+    mend(dt);
     switch (state_.phase) {
     case Phase::warmup:
         if (players < battlefield_.min_players) {
