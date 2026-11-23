@@ -18,11 +18,13 @@ namespace swm::core::net {
 // Every packet starts with a magic number, the protocol version and a message
 // type. Peers drop packets with another version. Bump it on any wire change.
 inline constexpr uint16_t protocol_magic = 0x4D53;  // "SM"
-inline constexpr uint16_t protocol_version = 23;
+inline constexpr uint16_t protocol_version = 24;
 inline constexpr uint8_t droid_explosion_weapon = 0xFF;  // Explosion::weapon sentinel for destroyed health/ammo droids
 // ...for a destroyed object (Battlefield::destructibles); clients draw it
 // from the object's own explosion as they see it go.
 inline constexpr uint8_t object_explosion_weapon = 0xFE;
+// ...for a destroyed vehicle (clients draw its class's explosion).
+inline constexpr uint8_t vehicle_explosion_weapon = 0xFD;
 
 // Client -> server, repeated until a Welcome or Refused arrives. The name
 // picks the saved character (there are no accounts yet). A match server
@@ -288,6 +290,25 @@ struct PickupState {
     friend bool operator==(const PickupState&, const PickupState&) = default;
 };
 
+// A vehicle in a match: where it is, its health, who drives it. A driven
+// one moves with its driver (whose state says it drives: MoveState::vehicle).
+// A destroyed one is listed (not alive) for a moment, for drawing its end.
+struct VehicleState {
+    uint32_t id = 0;
+    uint8_t vehicle = 0;  // its class: an index into the battlefield's vehicles
+    Vec3 position;
+    Vec3 velocity;
+    float yaw = 0;
+    float pitch = 0;
+    float health = 0;
+    float max_health = 0;
+    uint32_t driver = 0;  // entity; 0: empty
+    int8_t team = -1;     // whose it is: its driver's, else the side it spawned for
+    bool alive = true;
+
+    friend bool operator==(const VehicleState&, const VehicleState&) = default;
+};
+
 // Server -> client, every tick: the world as the server sees it.
 struct Snapshot {
     uint32_t server_tick = 0;
@@ -301,6 +322,7 @@ struct Snapshot {
     std::vector<Impact> impacts;        // this tick's bolt hits on surfaces and bodies
     std::vector<PickupState> pickups;   // dropped canisters on the ground
     std::vector<TargetState> targets;   // shooting-range targets in a hub
+    std::vector<VehicleState> vehicles; // in a match
     std::vector<CorpseLootState> corpses;  // nearby lootable dead creatures/bandits
     std::optional<MatchState> match;  // in a conquest match
     PlayerStatus you;                 // differs per client

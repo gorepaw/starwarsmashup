@@ -446,6 +446,74 @@ Vec3 Battlefield::center() const {
     return {(min_x + max_x) / 2, 0, (min_z + max_z) / 2};
 }
 
+// A team's Battlefront side from its name, for the vehicles its posts give it.
+std::string side_for(const std::string& name) {
+    std::string lower;
+    for (const char c : name) lower += char(std::tolower(uint8_t(c)));
+    if (lower.find("rebel") != std::string::npos || lower.find("alliance") != std::string::npos) return "all";
+    if (lower.find("empire") != std::string::npos || lower.find("imperial") != std::string::npos) return "imp";
+    if (lower.find("republic") != std::string::npos || lower.find("clone") != std::string::npos) return "rep";
+    if (lower.find("separatist") != std::string::npos || lower.find("cis") != std::string::npos) return "cis";
+    return lower.substr(0, 3);
+}
+
+// A map file's vehicle spawns ([vehicle_spawn]: Position x z y, Forward x
+// z, Post, SpawnTime, ExpireTimeField, Class = <side> <atk|def> <class>),
+// their classes read from `vehicles` (<class>/<class>.ini, as bf2tool
+// export-vehicle writes them). The first team attacks, the second defends,
+// as Battlefront's conquest scripts set them (ATT = 1, DEF = 2). A spawn
+// whose classes aren't exported is left out.
+void read_vehicle_spawns(Battlefield& field, const Ini& ini, const std::filesystem::path& vehicles,
+                         const std::string& where) {
+    for (const Ini::Section& s : ini.sections()) {
+        if (s.name != "vehicle_spawn") {
+            continue;
+        }
+        VehicleSpawn spawn;
+        spawn.name = s.get("Name").value_or("vehicle spawn");
+        std::istringstream at(s.get("Position").value_or(""));
+        double x = 0, z = 0, y = 0;
+        if (!(at >> x >> z)) {
+            throw std::runtime_error(where + ": a [vehicle_spawn] needs Position = x z [y]");
+        }
+        at >> y;
+        spawn.position = {-x, y, z};
+        std::istringstream forward(s.get("Forward").value_or("0 1"));
+        double fx = 0, fz = 1;
+        forward >> fx >> fz;
+        // Its +z, in game space (x mirrored): yaw 0 faces -z.
+        spawn.yaw = std::atan2(fx, -fz);
+        if (const auto post = s.get("Post")) {
+            for (size_t i = 0; i < field.posts.size(); ++i) {
+                if (iequals(field.posts[i].name, *post)) spawn.post = int(i);
+            }
+        }
+        spawn.respawn_time = s.number("SpawnTime", spawn.respawn_time);
+        spawn.expire_time = s.number("ExpireTimeField", spawn.expire_time);
+        for (const auto& [key, value] : s.values) {
+            if (!iequals(key, "Class")) continue;
+            std::istringstream fields(value);
+            std::string side, role, name;
+            if (!(fields >> side >> role >> name)) continue;
+            for (size_t t = 0; t < field.teams.size(); ++t) {
+                if (!iequals(field.teams[t].side, side) || !iequals(role, t == 0 ? "atk" : "def")) continue;
+                auto it = std::find_if(field.vehicles.begin(), field.vehicles.end(),
+                                       [&](const VehicleClass& v) { return iequals(v.name, name); });
+                if (it == field.vehicles.end()) {
+                    const std::filesystem::path file = vehicles / name / (name + ".ini");
+                    if (!std::filesystem::exists(file)) continue;
+                    field.vehicles.push_back(load_vehicle_class(file));
+                    it = field.vehicles.end() - 1;
+                }
+                spawn.vehicle[t] = int(it - field.vehicles.begin());
+            }
+        }
+        if (spawn.vehicle[0] >= 0 || spawn.vehicle[1] >= 0) {
+            field.vehicle_spawns.push_back(std::move(spawn));
+        }
+    }
+}
+
 Battlefield load_battlefield(const std::filesystem::path& path) {
     const Ini ini = Ini::load(path);
     const std::string where = path.string();
@@ -482,6 +550,7 @@ Battlefield load_battlefield(const std::filesystem::path& path) {
             }
             Team& team = field.teams[team_count++];
             team.name = s.get("Name").value_or("Team " + std::to_string(team_count));
+            team.side = s.get("Side").value_or(side_for(team.name));
             for (const auto& [key, value] : s.values) {
                 if (iequals(key, "Loadout")) {
                     team.loadouts.push_back(load_loadout(path.parent_path() / value));
@@ -538,6 +607,11 @@ Battlefield load_battlefield(const std::filesystem::path& path) {
             read_regions(field, *about, map_path.string());
         }
         read_posts(field, map_ini, map_path.string());
+        // Its vehicles, where bf2tool export-vehicle wrote them (Vehicles =
+        // a directory, relative to this file).
+        if (const auto vehicles = main->get("Vehicles")) {
+            read_vehicle_spawns(field, map_ini, path.parent_path() / *vehicles, map_path.string());
+        }
     }
     read_posts(field, ini, where);
     read_barriers(field, *main, where);

@@ -116,6 +116,11 @@ struct WeaponDef {
     double zoom_max = 1;
     bool zoom_first_person = false;
     double damage = 60;              // ordnance MaxDamage times PersonScale
+    // Against vehicles: ordnance MaxDamage times VehicleScale, as a factor on
+    // `damage` (VehicleScale / PersonScale), and the explosion's likewise.
+    // ASSUMPTION: a weapon that names no VehicleScale does full damage (1).
+    double vehicle_factor = 1;
+    double explosion_vehicle_factor = 1;
     double bolt_speed = 300;         // ordnance Velocity, m/s
     double bolt_gravity = 1;         // ordnance Gravity, a multiple of world gravity
     double bolt_life = 0.8;          // ordnance LifeSpan, seconds
@@ -213,6 +218,10 @@ CharacterStats stats_for(const Loadout& loadout, const CharacterStats& base = {}
 //
 // A weapon: a [weapon] section (written by `bf2tool export-loadout`).
 WeaponDef load_weapon(const std::filesystem::path& path);
+// A weapon from a [weapon] section (an item file's, or a vehicle's: see
+// load_vehicle_class); `where` names it in errors.
+WeaponDef weapon_from_section(const class Ini& ini, size_t section, const std::string& where,
+                              const std::string& fallback_name);
 // A piece of gear: a [gear] section with Name, Slot and Modifier lines.
 Gear load_gear(const std::filesystem::path& path);
 // A loadout: a [loadout] section naming its items: Primary, Sidearm,

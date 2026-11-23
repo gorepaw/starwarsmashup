@@ -975,10 +975,16 @@ void GameServer::step() {
                 continue;  // not in the world
             }
             const auto shot = simulate_character(client.state, input, client.life == Life::alive, world_,
-                                                 loadout_of(client), client.stats, dt);
+                                                 loadout_of(client), client.stats, dt, vehicle_classes());
             if (shot) {
                 fire(client, *shot, input.view_tick);
             }
+            // The use button (a press): into a vehicle or out of it.
+            const bool use = input.held(MoveInput::use);
+            if (use && !client.use_held && client.life == Life::alive && conquest_) {
+                use_vehicle(client);
+            }
+            client.use_held = use;
         }
     }
     // The server's own people, creatures, and bandits, by how they're steered.
@@ -1067,6 +1073,7 @@ void GameServer::step() {
             client.history.pop_front();
         }
     }
+    update_vehicles(1 / config_.tick_rate);
     advance_bolts();
     if (conquest_) {
         run_match();
@@ -1131,6 +1138,9 @@ void GameServer::step() {
     }
     for (const RangeTarget& t : targets_) {
         base_snapshot.targets.push_back({t.entity, t.name, t.position, float(t.health), float(t.max_health), t.alive});
+    }
+    for (const Vehicle& v : vehicles_) {
+        base_snapshot.vehicles.push_back(describe(v));
     }
     if (conquest_) {
         base_snapshot.match = conquest_->state();
@@ -1387,7 +1397,10 @@ void GameServer::spawn_at_post(Client& client, size_t loadout_index, size_t post
 }
 
 void GameServer::fire(const Client& shooter, const Shot& shot, double view_tick) {
-    const WeaponDef* def = weapon_in_slot(loadout_of(shooter), shot.weapon);
+    const auto classes = vehicle_classes();
+    const bool driving = shooter.state.vehicle >= 0 && size_t(shooter.state.vehicle) < classes.size();
+    const WeaponDef* def =
+        weapon_in_slot(driving ? classes[size_t(shooter.state.vehicle)].loadout : loadout_of(shooter), shot.weapon);
     if (def == nullptr) {
         return;
     }
@@ -1512,8 +1525,9 @@ void GameServer::advance_bolts() {
         const bool pvp_blocked = !conquest_ && !config_.pvp_enabled && bolt.team != hostile_npc_team;
         for (Client& target : clients_) {
             const bool teammate = allied(bolt.team, target.team) && !config_.friendly_fire;
-            if (bounces || harmless || pvp_blocked || target.entity == bolt.owner || target.life != Life::alive || teammate) {
-                continue;
+            if (bounces || harmless || pvp_blocked || target.entity == bolt.owner || target.life != Life::alive || teammate ||
+                target.state.vehicle >= 0) {
+                continue;  // (a driver: its vehicle takes the hit)
             }
             // Its posture now (not rewound: ASSUMPTION, close enough).
             const Vec3 feet = position_at(target, double(tick_) - bolt.rewind);
@@ -1590,6 +1604,38 @@ void GameServer::advance_bolts() {
                     }
                 }
             }
+        }
+        Vehicle* hit_vehicle = nullptr;
+        if (!bounces && !harmless) {
+            const auto classes = vehicle_classes();
+            for (Vehicle& v : vehicles_) {
+                if (v.dead_for >= 0 || (v.driver != 0 && v.driver == bolt.owner) ||
+                    (allied(bolt.team, v.team) && !config_.friendly_fire)) {
+                    continue;
+                }
+                const auto t = segment_hits_vehicle(from, to, v.state.position, v.state.yaw, classes[size_t(v.cls)]);
+                if (t && (!nearest || *t < *nearest)) {
+                    nearest = t;
+                    victim = nullptr;
+                    hit_npc = nullptr;
+                    hit_target = nullptr;
+                    hit_powerup = -1;
+                    hit_vehicle = &v;
+                    const double speed = bolt.velocity.length();
+                    normal = speed > 1e-6 ? bolt.velocity * (-1.0 / speed) : Vec3{0, 1, 0};
+                }
+            }
+        }
+        if (hit_vehicle != nullptr) {
+            const Vec3 at = from + (to - from) * *nearest;
+            damage_vehicle(*hit_vehicle, bolt_damage(def, def.bolt_life - bolt.life) * def.vehicle_factor, bolt.owner,
+                           blasts);
+            if (def.explosion_damage > 0 && def.explosion_outer > 0) {
+                blasts.push_back({bolt, at, normal, false});
+            } else {
+                impacts_.push_back({bolt.owner, bolt.weapon, at, normal, true});
+            }
+            return true;
         }
         if (victim != nullptr) {
             const Vec3 at = from + (to - from) * *nearest;
@@ -1736,6 +1782,12 @@ void GameServer::explode(const Blast& blast, std::vector<Blast>& blasts) {
         droid_def.explosion_damage = 20.0;
         droid_def.explosion_inner = 1.25;
         droid_def.explosion_outer = 2.5;
+    } else if (blast.vehicle >= 0 && size_t(blast.vehicle) < vehicle_classes().size()) {
+        // A destroyed vehicle's own explosion (its class's).
+        const VehicleClass& cls = vehicle_classes()[size_t(blast.vehicle)];
+        droid_def.explosion_damage = cls.explosion_damage;
+        droid_def.explosion_inner = cls.explosion_inner;
+        droid_def.explosion_outer = std::max(cls.explosion_outer, 0.1);
     } else if (blast.destructible >= 0 && conquest_) {
         // A destroyed object's own explosion, out from its middle.
         const Destructible& d = conquest_->battlefield().destructibles[size_t(blast.destructible)];
@@ -1743,7 +1795,12 @@ void GameServer::explode(const Blast& blast, std::vector<Blast>& blasts) {
         droid_def.explosion_inner = d.explosion_inner;
         droid_def.explosion_outer = d.explosion_outer;
     }
-    const WeaponDef& def = blast.droid || blast.destructible >= 0 ? droid_def : bolt.def;
+    const WeaponDef& def = blast.droid || blast.destructible >= 0 || blast.vehicle >= 0 ? droid_def : bolt.def;
+    if (blast.vehicle >= 0 && def.explosion_damage <= 0) {
+        // No harm, but drawn.
+        explosions_.push_back({bolt.owner, bolt.weapon, blast.at, blast.normal, float(def.explosion_outer)});
+        return;
+    }
     if (def.explosion_damage <= 0 || def.explosion_outer <= 0) {
         return;
     }
@@ -1758,8 +1815,8 @@ void GameServer::explode(const Blast& blast, std::vector<Blast>& blasts) {
     for (Client& target : clients_) {
         const bool teammate = !blast.droid && allied(bolt.team, target.team) &&
                               target.entity != bolt.owner && !config_.friendly_fire;
-        if (target.life != Life::alive) {
-            continue;
+        if (target.life != Life::alive || target.state.vehicle >= 0) {
+            continue;  // (a driver: its vehicle takes it)
         }
         const Vec3 target_pos = blast.droid ? target.state.position : position_at(target, double(tick_) - bolt.rewind);
         if (sheltered(target_pos)) {
@@ -1796,6 +1853,29 @@ void GameServer::explode(const Blast& blast, std::vector<Blast>& blasts) {
         const double amount = explosion_damage(def, blast.at, target.position);
         if (amount > 0) {
             damage_target(target, amount, DamageType::explosive, bolt.owner);
+        }
+    }
+    // Vehicles in reach: from the nearest point of their bodies, as
+    // objects' bounds (and the weapon's VehicleScale).
+    {
+        const auto classes = vehicle_classes();
+        for (Vehicle& v : vehicles_) {
+            if (v.dead_for >= 0 || (allied(bolt.team, v.team) && !config_.friendly_fire &&
+                                    v.driver != bolt.owner)) {
+                continue;
+            }
+            const double distance = distance_to_vehicle(blast.at, v.state.position, v.state.yaw, classes[size_t(v.cls)]);
+            const double full = def.explosion_damage * (blast.droid || blast.destructible >= 0 || blast.vehicle >= 0
+                                                            ? 1.0
+                                                            : def.explosion_vehicle_factor);
+            const double amount = distance <= def.explosion_inner ? full
+                                  : distance >= def.explosion_outer
+                                      ? 0.0
+                                      : full * (def.explosion_outer - distance) /
+                                            std::max(1e-6, def.explosion_outer - def.explosion_inner);
+            if (amount > 0) {
+                damage_vehicle(v, amount, bolt.owner, blasts);
+            }
         }
     }
     if (conquest_) {
@@ -1885,6 +1965,9 @@ void GameServer::damage(Client& victim, double raw, DamageType type, uint32_t at
 }
 
 void GameServer::kill(Client& victim, uint32_t attacker) {
+    if (victim.state.vehicle >= 0) {
+        leave_vehicle(victim);
+    }
     victim.health = 0;
     victim.life = Life::dead;
     victim.respawn_tick = tick_ + uint32_t(std::lround(config_.respawn_delay * config_.tick_rate));

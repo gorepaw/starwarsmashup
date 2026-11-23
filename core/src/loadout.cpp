@@ -208,13 +208,19 @@ std::string default_anim_set(std::string_view name, bool missile) {
 WeaponDef load_weapon(const std::filesystem::path& path) {
     const Ini ini = Ini::load(path);
     const std::string where = path.string();
-    const Ini::Section* section = ini.section("weapon");
-    if (section == nullptr) {
-        throw std::runtime_error(where + ": no [weapon] section");
+    for (size_t i = 0; i < ini.sections().size(); ++i) {
+        if (ini.sections()[i].name == "weapon") {
+            return weapon_from_section(ini, i, where, path.stem().string());
+        }
     }
-    const Ini::Section& s = *section;
+    throw std::runtime_error(where + ": no [weapon] section");
+}
+
+WeaponDef weapon_from_section(const Ini& ini, size_t section, const std::string& where,
+                              const std::string& fallback_name) {
+    const Ini::Section& s = ini.sections().at(section);
     WeaponDef w;
-    w.name = s.get("Name").value_or(path.stem().string());
+    w.name = s.get("Name").value_or(fallback_name);
     const std::string projectile = s.get("Projectile").value_or("bolt");
     w.projectile = projectile == "missile" ? Projectile::missile
                    : projectile == "grenade" ? Projectile::grenade
@@ -250,6 +256,10 @@ WeaponDef load_weapon(const std::filesystem::path& path) {
     w.zoom_max = std::max(w.zoom_min, s.number("ZoomMax", w.zoom_min));
     w.zoom_first_person = s.number("ZoomFirstPerson", 0) != 0;
     w.damage = s.number("MaxDamage", w.damage) * s.number("PersonScale", 1.0);
+    const double person_scale = s.number("PersonScale", 1.0);
+    w.vehicle_factor = person_scale > 0 ? s.number("VehicleScale", 1.0) / person_scale : 0;
+    const double explosion_person = s.number("ExplosionPersonScale", 1.0);
+    w.explosion_vehicle_factor = explosion_person > 0 ? s.number("ExplosionVehicleScale", 1.0) / explosion_person : 0;
     w.bolt_speed = s.number("Velocity", w.bolt_speed);
     w.bolt_gravity = s.number("Gravity", w.bolt_gravity);
     w.bolt_life = s.number("LifeSpan", w.bolt_life);

@@ -40,6 +40,7 @@ constexpr const char* usage = R"(usage:
   bf2tool anims <file.lvl> <bank> [name...]
   bf2tool odf <file.lvl> [class]
   bf2tool export-loadout <_lvl_pc dir> <side> <soldier class> -o <loadout.ini> [--items <dir>]
+  bf2tool export-vehicle <_lvl_pc dir> <side> <vehicle class> -o <out dir>
   bf2tool export-map <_lvl_pc dir> <map> -o <out dir> [--mode conquest] [--skip <layer>]...
                      [--death <region>]... [--open <object>]... [--team <post>=<n>]... [--disable <barrier>]...
                      [--drop-boundary <path>]... [--set <object>.<property>=<value>]...
@@ -208,10 +209,12 @@ OdfClass ordnance_of(const OdfClass& weapon, const OdfLibrary& library) {
 // What a weapon fires, if the game supports it: "bolt" (a cannon firing
 // bolts or bullets), "missile" (a launcher) or "grenade" (thrown or lobbed).
 std::string projectile_of(const OdfClass& weapon, const OdfClass& ordnance) {
-    if (weapon.base == "cannon" && (ordnance.base == "bolt" || ordnance.base == "bullet")) {
+    // A vehicle's guns derive from plain "weapon" (com_weap_veh_laser).
+    const bool gun = weapon.base == "cannon" || weapon.base == "weapon";
+    if (gun && (ordnance.base == "bolt" || ordnance.base == "bullet")) {
         return "bolt";
     }
-    if (weapon.base == "launcher" && ordnance.base == "missile") {
+    if ((weapon.base == "launcher" || weapon.base == "weapon") && ordnance.base == "missile") {
         return "missile";
     }
     if (weapon.base == "grenade" && (ordnance.base == "sticky" || ordnance.base == "shell" || ordnance.base == "grenade")) {
@@ -271,7 +274,7 @@ void write_weapon(std::ostream& out, const char* section, const CarriedWeapon& c
         out << "WeaponChangeSound = " << change_sound << "\n";
     }
     out << "; ordnance: " << ordnance.type << " (" << ordnance.base << ")\n";
-    for (const char* key : {"MaxDamage", "PersonScale", "Velocity", "Acceleration", "Gravity", "Rebound", "LifeSpan",
+    for (const char* key : {"MaxDamage", "PersonScale", "VehicleScale", "Velocity", "Acceleration", "Gravity", "Rebound", "LifeSpan",
                             "DamageTransitionDelay", "DamageTransitionPeriod", "DamageFinalDamage",
                             "LaserTexture", "LaserGlowColor", "LaserLength", "LaserWidth", "GlowLength", "BlurLength",
                             "LightColor", "LightRadius", "GeometryName", "TrailEffect"}) {
@@ -328,6 +331,7 @@ void write_weapon(std::ostream& out, const char* section, const CarriedWeapon& c
     for (const auto& [key, ours] : {std::pair{"DamageRadiusInner", "ExplosionRadiusInner"},
                                     std::pair{"DamageRadiusOuter", "ExplosionRadiusOuter"},
                                     std::pair{"PersonScale", "ExplosionPersonScale"},
+                                    std::pair{"VehicleScale", "ExplosionVehicleScale"},
                                     std::pair{"Push", "ExplosionPush"},
                                     std::pair{"PushRadiusInner", "ExplosionPushRadiusInner"},
                                     std::pair{"PushRadiusOuter", "ExplosionPushRadiusOuter"},
@@ -438,6 +442,113 @@ int cmd_export_loadout(const std::vector<std::string>& args) {
         throw std::runtime_error("cannot write " + out_path.string());
     }
     std::cerr << "wrote " << out_path.string() << "\n";
+    return 0;
+}
+
+// Writes a Battlefront vehicle (a "hover" or a "walker") for the game
+// (core::load_vehicle_class): its handling, health and camera from its
+// class, its pilot's weapons (those its first section, BODY, lists; the
+// ones the game supports) as weapon sections like an item file's, and its
+// model as glTF with its textures, into <out dir>/<class>.ini, .gltf.
+int cmd_export_vehicle(const std::vector<std::string>& args) {
+    if (args.size() < 5 || args[3] != "-o") {
+        std::cerr << usage;
+        return 2;
+    }
+    const std::filesystem::path dir = args[0];
+    const std::filesystem::path out_dir = args[4];
+    AssetLibrary library;
+    for (const std::filesystem::path& path : {dir / "side" / (args[1] + ".lvl"), dir / "ingame.lvl"}) {
+        library.add(read_file(path));
+    }
+    const std::string name = lowercase(args[2]);
+    if (library.classes().find(name) == nullptr) {
+        throw std::runtime_error(args[2] + " isn't in " + args[1] + ".lvl");
+    }
+    const OdfClass vehicle = library.classes().resolve(name);
+    const std::string kind = lowercase(vehicle.base);
+    if (kind != "hover" && kind != "walker") {
+        throw std::runtime_error(args[2] + " is a " + vehicle.base + ", not a hover or walker vehicle");
+    }
+    std::filesystem::create_directories(out_dir);
+    std::ofstream out(out_dir / (name + ".ini"), std::ios::binary);
+    out << "; " << name << " from Battlefront II (" << args[1] << ".lvl, ingame.lvl), written by bf2tool "
+        << "export-vehicle.\n; Game data from your own install: don't commit or share it.\n\n[vehicle]\nName = "
+        << name << "\nKind = " << kind << "\n";
+    const std::string geometry = vehicle.get("GeometryName").value_or(name);
+    for (const char* key : {"Label", "VehicleType", "MaxHealth", "MaxSpeed", "MaxStrafeSpeed", "MaxTurnSpeed",
+                            "Acceleration", "Deceleration", "Traction", "ForwardSpeed", "ReverseSpeed",
+                            "StrafeSpeed", "BoostSpeed", "BoostAcceleration", "EnergyAutoRestore",
+                            "EnergyBoostDrain", "TurnRate", "TurnFilter", "PitchRate", "SetAltitude", "LiftSpring",
+                            "LiftDamp", "GravityScale", "SpinRate", "BankAngle", "TrackCenter", "TrackOffset",
+                            "EyePointOffset", "TiltValue", "PitchLimits", "YawLimits", "LegPairCount",
+                            "MapTexture", "HealthTexture", "ExplosionName", "EngineSound", "WakeEffect"}) {
+        if (const auto value = vehicle.get(key)) {
+            const std::string text(*value);
+            out << key << " = " << (std::string_view(key) == "EngineSound" ? first_token(text) : text) << "\n";
+        }
+    }
+    // Its explosion when destroyed: damage and reach, for whoever's near.
+    if (const auto explosion_name = vehicle.get("ExplosionName")) {
+        const OdfClass explosion = library.classes().resolve(*explosion_name);
+        for (const auto& [key, ours] : {std::pair{"Damage", "ExplosionDamage"},
+                                        std::pair{"DamageRadiusInner", "ExplosionRadiusInner"},
+                                        std::pair{"DamageRadiusOuter", "ExplosionRadiusOuter"},
+                                        std::pair{"Effect", "ExplosionEffect"}}) {
+            if (const auto value = explosion.get(key)) {
+                out << ours << " = " << *value << "\n";
+            }
+        }
+    }
+    std::set<std::string> textures_written;
+    const ModelExport model = export_model(library, geometry, out_dir, out_dir / "textures", textures_written);
+    out << "Model = " << geometry << ".gltf\n";
+    // Its body, for walls and hits: the box round its collision (mesh and
+    // primitives), in game space (x mirrored).
+    const std::vector<CollisionTriangle> collision = model_collision(library, geometry);
+    if (!collision.empty()) {
+        std::array<float, 3> lo{1e9f, 1e9f, 1e9f}, hi{-1e9f, -1e9f, -1e9f};
+        for (const CollisionTriangle& triangle : collision) {
+            for (const auto& p : {triangle.a, triangle.b, triangle.c}) {
+                for (size_t k = 0; k < 3; ++k) {
+                    lo[k] = std::min(lo[k], p[k]);
+                    hi[k] = std::max(hi[k], p[k]);
+                }
+            }
+        }
+        out << std::format("Bounds = {:.3f} {:.3f} {:.3f} {:.3f} {:.3f} {:.3f}\n", -hi[0], lo[1], lo[2], -lo[0], hi[1],
+                           hi[2]);
+    }
+    // The pilot's weapons: WeaponName entries before the second section.
+    int sections = 0;
+    int weapons = 0;
+    std::vector<CarriedWeapon> carried;
+    for (const auto& [hash, value] : vehicle.properties) {
+        if (hash == odf_hash("FlyerSection") || hash == odf_hash("WalkerSection")) {
+            ++sections;
+        } else if (sections <= 1 && hash == odf_hash("WeaponName")) {
+            carried.push_back({value});
+        } else if (sections <= 1 && !carried.empty() && hash == odf_hash("WeaponAmmo")) {
+            carried.back().ammo = value;
+        }
+    }
+    for (const CarriedWeapon& weapon : carried) {
+        const OdfClass def = library.classes().resolve(weapon.name);
+        const OdfClass ordnance = ordnance_of(def, library.classes());
+        const std::string projectile = projectile_of(def, ordnance);
+        if (projectile.empty() || weapons >= 2) {
+            std::cerr << std::format("  skipped {} ({}, ordnance {})\n", weapon.name, def.base, ordnance.base);
+            continue;
+        }
+        write_weapon(out, "weapon", weapon, library.classes(), projectile);
+        std::cerr << std::format("  weapon {} ({}, {})\n", weapon.name, projectile, ordnance.type);
+        ++weapons;
+    }
+    if (!out) {
+        throw std::runtime_error("cannot write " + (out_dir / (name + ".ini")).string());
+    }
+    std::cerr << std::format("{} ({}): model {} ({} segments, {} skipped), {} weapon(s); wrote {}\n", name, kind,
+                             geometry, model.segments, model.skipped, weapons, out_dir.string());
     return 0;
 }
 
@@ -1842,6 +1953,58 @@ int cmd_export_map(const std::vector<std::string>& args) {
         }
         ++posts;
     }
+    // Vehicle spawns ("com_item_vehicle_spawn", in the mode's layers): the
+    // post whose holder gets a vehicle there (ControlZone), the class for
+    // each side and role (Class<Side><ATK|DEF>: Endor's speeder bikes for
+    // the attacker's and the defender's side alike, its AT-STs the Empire's
+    // as defender), how long a destroyed or abandoned one takes to come back
+    // (SpawnTime), how long one left empty away from it lasts
+    // (ExpireTimeField), and which way it faces (its local +z).
+    int vehicle_spawns = 0;
+    for (const WorldItem& object : level.objects) {
+        if (object.sublevel != mode_sublevel || lowercase(object.type) != "com_item_vehicle_spawn" ||
+            std::find(opened.begin(), opened.end(), lowercase(object.name)) != opened.end()) {
+            continue;
+        }
+        std::vector<std::string> classes;
+        for (const char* side : {"All", "Imp", "Rep", "Cis", "His", "Loc"}) {
+            for (const char* role : {"ATK", "DEF"}) {
+                const std::string value = object.get(std::string("Class") + side + role);
+                if (!value.empty()) {
+                    classes.push_back(std::format("Class = {} {} {}", lowercase(side), lowercase(role),
+                                                  lowercase(value)));
+                }
+            }
+        }
+        if (classes.empty()) {
+            continue;
+        }
+        // The post by the name the map file gives it (its Label, else its own).
+        std::string post = object.get("ControlZone");
+        for (const WorldItem& other : level.objects) {
+            if (other.sublevel == mode_sublevel && !other.get("CaptureRegion").empty() &&
+                lowercase(other.name) == lowercase(post)) {
+                post = other.get("Label").empty() ? other.name : other.get("Label");
+            }
+        }
+        ini << "\n[vehicle_spawn]\nName = " << object.name << "\n"
+            << std::format("Position = {:.2f} {:.2f} {:.2f}\n", object.position[0], object.position[2],
+                           object.position[1])
+            << std::format("Forward = {:.4f} {:.4f}\n", object.rotation[6], object.rotation[8]);
+        if (!post.empty()) {
+            ini << "Post = " << post << "\n";
+        }
+        for (const char* key : {"SpawnTime", "ExpireTimeField"}) {
+            if (const std::string value = object.get(key); !value.empty()) {
+                ini << key << " = " << value << "\n";
+            }
+        }
+        for (const std::string& line : classes) {
+            ini << line << "\n";
+        }
+        ++vehicle_spawns;
+    }
+    std::cerr << std::format("vehicle spawns: {}\n", vehicle_spawns);
     std::cerr << std::format("{} ({}): {} command posts\nwrote {}\n", mode, mode_layers, posts, out_dir.string());
     if (posts == 0) {
         throw std::runtime_error("no command posts in " + mode + " (" + mode_layers + ")");
@@ -2512,6 +2675,9 @@ int main(int argc, char** argv) {
         }
         if (command == "export-audio") {
             return cmd_export_audio(args);
+        }
+        if (command == "export-vehicle") {
+            return cmd_export_vehicle(args);
         }
     } catch (const std::exception& e) {
         std::cerr << "error: " << e.what() << "\n";

@@ -10,6 +10,7 @@
 
 #include "swm/core/loadout.h"
 #include "swm/core/vec3.h"
+#include "swm/core/vehicle.h"
 
 namespace swm::core {
 
@@ -195,6 +196,9 @@ struct Team {
     // Loadouts its soldiers can spawn with: a stand-in for testing until the
     // hub sends each player's own gear.
     std::vector<Loadout> loadouts;
+    // Its Battlefront side ("all", "imp", "rep", "cis"), for the vehicles
+    // its posts give it: a [team]'s Side, or from its name.
+    std::string side;
 };
 
 // The team natives play on: the third, after a battlefield's two.
@@ -216,6 +220,20 @@ struct Natives {
 
 // Where a conquest match is fought: a bounded part of a planet, two teams
 // and their test loadouts, and the command posts they fight over.
+// Where a vehicle comes from (Battlefront's vehicle spawn): whoever holds
+// its post gets one there, of their class (none for a team without one).
+// One destroyed, or abandoned away from it for `expire_time`, comes back
+// after `respawn_time`.
+struct VehicleSpawn {
+    std::string name;
+    Vec3 position;  // game space, on the ground
+    double yaw = 0;
+    int post = -1;  // an index into the posts; -1: always the first team's
+    std::array<int, 2> vehicle{-1, -1};  // per team, an index into Battlefield::vehicles
+    double respawn_time = 45;  // SpawnTime
+    double expire_time = 40;   // ExpireTimeField
+};
+
 struct Battlefield {
     std::string name;
     std::filesystem::path terrain;  // its heightfield bake prefix, if its map names one
@@ -232,6 +250,9 @@ struct Battlefield {
     std::optional<Natives> natives;
     std::vector<CommandPost> posts;
     std::vector<Barrier> barriers;
+    // Its vehicles' classes (each once), and where they spawn.
+    std::vector<VehicleClass> vehicles;
+    std::vector<VehicleSpawn> vehicle_spawns;
     double tickets = 150;          // reinforcements per team: each death costs one
     double warmup = 15;            // seconds of practice before the match goes live
     double results = 15;           // seconds the results show before the next match

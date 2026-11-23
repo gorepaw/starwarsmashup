@@ -22,6 +22,8 @@ struct MoveInput {
         // Pressed standing still: crouch or stand up. Pressed while moving:
         // roll that way (Battlefront's dive roll).
         crouch = 1 << 5,
+        // Get into the vehicle at hand, or out of the one driven (a press).
+        use = 1 << 6,
     };
 
     uint32_t sequence = 0;  // increases by one per tick
@@ -76,6 +78,10 @@ struct MoveState {
     bool crouch_held = false;  // the crouch button was down last tick (a press starts a crouch or roll)
     float roll = 0;            // seconds of rolling left
     float roll_yaw = 0;        // the way it rolls (as yaw)
+    // The vehicle it drives (an index into the battlefield's vehicle
+    // classes), -1 on foot. Driving, the state is the vehicle's: its yaw is
+    // its heading, its weapons and energy (boost) the vehicle's.
+    int8_t vehicle = -1;
     CombatState combat;
 
     bool rolling() const { return roll > 0; }

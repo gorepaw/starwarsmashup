@@ -115,6 +115,8 @@ public:
     void spawn_pickup(PickupKind kind, Vec3 position);
     // The match, if there is one.
     const Conquest* match() const { return conquest_ ? &*conquest_ : nullptr; }
+    // Its vehicles as snapshots describe them (server_vehicles.cpp).
+    std::vector<net::VehicleState> vehicles() const;
     // A single match is over once its results have shown.
     bool match_over() const;
     // Saves every connected character now. Storage errors are logged.
@@ -275,6 +277,22 @@ private:
         std::string offer_source;
         uint16_t offer_serial = 0;
         uint32_t notice_tick = UINT32_MAX;  // when the notice was last set
+        bool use_held = false;              // the use button, last input
+    };
+    // A vehicle in a match. Empty, it keeps its own state; driven, its
+    // driver's state is its state (MoveState::vehicle), and the driver's
+    // own weapons wait here.
+    struct Vehicle {
+        uint32_t id = 0;
+        int cls = 0;     // an index into the battlefield's vehicles
+        int spawn = -1;  // an index into its vehicle spawns
+        int team = -1;
+        MoveState state;
+        double health = 0;
+        uint32_t driver = 0;
+        CombatState driver_combat;
+        double away = 0;        // seconds empty away from its spawn
+        double dead_for = -1;   // seconds since destroyed; -1 alive
     };
     struct RangeTarget {
         uint32_t entity = 0;
@@ -343,6 +361,7 @@ private:
         Vec3 normal{0, 1, 0};
         bool droid = false;
         int destructible = -1;  // a destroyed object's own explosion (its index)
+        int vehicle = -1;       // a destroyed vehicle's (its class)
     };
     struct CorpseLoot {
         uint32_t npc_entity = 0;
@@ -380,6 +399,14 @@ private:
     void rebuild_client_loadouts(Client& client);
     void scrub_item_from_loadouts(Client& client, uint64_t item_id);
     void send_inventory_sync(Client& client);
+    // Vehicles (server_vehicles.cpp).
+    std::span<const VehicleClass> vehicle_classes() const;
+    void update_vehicles(double dt);
+    void use_vehicle(Client& client);
+    void leave_vehicle(Client& client);
+    Vehicle* vehicle_of(uint32_t driver);
+    void damage_vehicle(Vehicle& vehicle, double amount, uint32_t attacker, std::vector<Blast>& blasts);
+    net::VehicleState describe(const Vehicle& vehicle) const;
     // Quests (server_quests.cpp).
     void handle_quest_request(Client& client, const net::QuestRequest& request);
     void apply_quests(Client& client, QuestEffects effects);
@@ -427,6 +454,10 @@ private:
     std::vector<net::QuestNpc> quest_npcs_;
     std::vector<net::MissionTerminal> mission_terminals_;
     std::vector<CorpseLoot> corpse_loots_;
+    std::vector<Vehicle> vehicles_;
+    std::vector<double> spawn_wait_;    // per vehicle spawn: seconds until it gives another
+    std::vector<uint32_t> spawned_;     // per vehicle spawn: its vehicle (0: none)
+    Phase vehicles_phase_ = Phase::warmup;
     std::vector<RangeTarget> targets_;
     std::array<std::string, 2> factions_;
     uint32_t tick_ = 0;

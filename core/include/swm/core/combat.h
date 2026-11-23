@@ -7,6 +7,9 @@
 #include "swm/core/loadout.h"
 #include "swm/core/movement.h"
 #include "swm/core/vec3.h"
+#include "swm/core/vehicle.h"
+
+#include <span>
 
 namespace swm::core {
 
@@ -58,9 +61,12 @@ std::optional<Shot> simulate_weapons(MoveState& state, const MoveInput& input, c
 void reset_loadout(MoveState& state, const Loadout& loadout, const CharacterStats& stats);
 
 // One tick of a character: movement (with its statistics), then weapons. A
-// dead character stands still with its weapons idle.
+// dead character stands still with its weapons idle. Driving a vehicle (its
+// state's vehicle, an index into `vehicles`), the vehicle moves and its
+// guns fire instead, aimed within their limits.
 std::optional<Shot> simulate_character(MoveState& state, const MoveInput& input, bool alive, const World& world,
-                                       const Loadout& loadout, const CharacterStats& stats, double dt);
+                                       const Loadout& loadout, const CharacterStats& stats, double dt,
+                                       std::span<const VehicleClass> vehicles = {});
 
 // The unit aim direction for a yaw and pitch (radians; pitch up is positive).
 Vec3 aim_direction(double yaw, double pitch);

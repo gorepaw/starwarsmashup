@@ -118,6 +118,7 @@ void put_state(ByteWriter& out, const MoveState& state) {
     out.put(uint8_t(uint8_t(state.crouched) | uint8_t(state.crouch_held) << 1));
     out.put(state.roll);
     out.put(state.roll_yaw);
+    out.put(state.vehicle);
     const CombatState& c = state.combat;
     out.put(c.weapon);
     out.put(c.cooldown);
@@ -145,6 +146,7 @@ MoveState get_state(ByteReader& in) {
     state.crouch_held = (posture & 2) != 0;
     state.roll = in.get<float>();
     state.roll_yaw = in.get<float>();
+    state.vehicle = in.get<int8_t>();
     CombatState& c = state.combat;
     c.weapon = in.get<uint8_t>();
     c.cooldown = in.get<double>();
@@ -640,6 +642,20 @@ struct Encoder {
             out.put(t.max_health);
             out.put(uint8_t(t.alive));
         }
+        out.put(uint16_t(m.vehicles.size()));
+        for (const VehicleState& v : m.vehicles) {
+            out.put(v.id);
+            out.put(v.vehicle);
+            put_vec3(out, v.position);
+            put_vec3(out, v.velocity);
+            out.put(v.yaw);
+            out.put(v.pitch);
+            out.put(v.health);
+            out.put(v.max_health);
+            out.put(v.driver);
+            out.put(v.team);
+            out.put(uint8_t(v.alive));
+        }
         const uint8_t ccount = uint8_t(std::min<size_t>(m.corpses.size(), 255));
         out.put(ccount);
         for (size_t ci = 0; ci < ccount; ++ci) {
@@ -1006,6 +1022,22 @@ Message decode(std::span<const uint8_t> packet) {
             t.max_health = in.get<float>();
             t.alive = in.get<uint8_t>() != 0;
             m.targets.push_back(std::move(t));
+        }
+        const size_t vehicles = in.get<uint16_t>();
+        for (size_t i = 0; i < vehicles; ++i) {
+            VehicleState v;
+            v.id = in.get<uint32_t>();
+            v.vehicle = in.get<uint8_t>();
+            v.position = get_vec3(in);
+            v.velocity = get_vec3(in);
+            v.yaw = in.get<float>();
+            v.pitch = in.get<float>();
+            v.health = in.get<float>();
+            v.max_health = in.get<float>();
+            v.driver = in.get<uint32_t>();
+            v.team = in.get<int8_t>();
+            v.alive = in.get<uint8_t>() != 0;
+            m.vehicles.push_back(v);
         }
         const size_t corpses = in.get<uint8_t>();
         for (size_t ci = 0; ci < corpses; ++ci) {

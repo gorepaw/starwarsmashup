@@ -62,6 +62,23 @@ constexpr std::array known_names = {
     "SoldierHealth", "SoldierAmmo", "SoldierEnergy", "PowerupDelay", "PowerupSound", "Lighting", "Friction",
     "BuffOffenseTimer", "BuffOffenseMult", "BuffDefenseTimer", "BuffDefenseMult", "IdleRotateSpeed", "IdleWaitTime",
     "IdleWobbleFactor", "MapTexture", "MapScale",
+    // vehicles (hover, walker): names found by hashing the words Battlefront's
+    // documented keys use against its vehicle classes' hashes
+    "VehicleType", "Label", "AnimationName", "FlyerSection", "WalkerSection", "WeaponSection", "VehiclePosition",
+    "PilotPosition", "HealthTexture", "SetAltitude", "LiftSpring", "LiftDamp", "GravityScale", "Deceleration",
+    "Traction", "ForwardSpeed", "ReverseSpeed", "StrafeSpeed", "BoostSpeed", "BoostAcceleration", "BoostFOV",
+    "BoostTurnSpeed", "EnergyAutoRestore", "EnergyBoostDrain", "TurnRate", "TurnFilter", "PitchRate",
+    "PitchFilter", "PitchDamp", "SpinRate", "BankAngle", "BankFilter", "StrafeRollAngle", "ThrustPitchAngle",
+    "VelocitySpring", "VelocityDamp", "OmegaXSpring", "OmegaXDamp", "OmegaZSpring", "OmegaZDamp",
+    "BodySpringLength", "TiltValue", "TrackCenter", "TrackOffset", "EyePointOffset", "FirstPerson",
+    "FirstPersonFOV", "PitchLimits", "YawLimits", "MaxPitchSpeed", "MaxYawSpeed", "ForwardTurnSpeed",
+    "AimerNodeName", "BarrelNodeName", "TurretNodeName", "TurretYawSound", "TurretPitchSound", "BarrelLength",
+    "BarrelRecoil", "FirePoint", "EngineSound", "VehicleCollisionSound", "WakeEffect", "DamageEffect",
+    "DamageEffectScale", "ChunkSection", "ChunkGeometryName", "ChunkNodeName", "ChunkOmega", "ChunkSpeed",
+    "ChunkSmokeEffect", "ExplosionOffset", "FinalExplosion", "FinalExplosionOffset", "DeathAnimationExplosion",
+    "DeathShakeDelay", "DeathShakeRadius", "WaterDamageAmount", "NoCombatInterrupt", "AiSizeType",
+    "LegPairCount", "WalkerLegPair", "LegBoneLeft", "LegBoneRight", "FootBoneLeft", "FootBoneRight",
+    "JumpTimeMin", "JumpTimeMax", "MaxPitchSpeed",
 };
 
 const std::map<uint32_t, std::string_view>& name_table() {

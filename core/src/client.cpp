@@ -134,6 +134,13 @@ void GameClient::request_spawn(int loadout, int post) {
     last_spawn_request_ = -1e9;  // send at once
 }
 
+std::span<const VehicleClass> GameClient::vehicle_classes() const {
+    if (!config_.battlefield) {
+        return {};
+    }
+    return config_.battlefield->vehicles;
+}
+
 void GameClient::set_input(const Controls& c) {
     next_input_.forward = quantize_axis(c.forward);
     next_input_.right = quantize_axis(c.right);
@@ -142,7 +149,7 @@ void GameClient::set_input(const Controls& c) {
     next_input_.buttons = uint8_t((c.sprint ? MoveInput::sprint : 0) | (c.jump ? MoveInput::jump : 0) |
                                   (c.fire ? MoveInput::fire : 0) | (c.reload ? MoveInput::reload : 0) |
                                   (c.secondary ? MoveInput::secondary : 0) |
-                                  (c.crouch ? MoveInput::crouch : 0));
+                                  (c.crouch ? MoveInput::crouch : 0) | (c.use ? MoveInput::use : 0));
     next_input_.weapon = uint8_t(std::clamp(c.weapon, 0, hand_slots - 1));
 }
 
@@ -324,6 +331,7 @@ void GameClient::handle(const net::Datagram& datagram, double now) {
     impacts_.insert(impacts_.end(), snapshot->impacts.begin(), snapshot->impacts.end());
     pickups_ = snapshot->pickups;
     targets_ = snapshot->targets;
+    vehicles_ = snapshot->vehicles;
     corpses_ = snapshot->corpses;
     match_ = snapshot->match;
     if (match_) {
@@ -390,7 +398,8 @@ void GameClient::reconcile(uint32_t last_input, const net::EntityState& server, 
     MoveState state = server_state;
     for (Pending& p : pending_) {
         if (self_.life != Life::waiting) {
-            simulate_character(state, p.input, alive(), world_, loadout(), character_stats_, dt);  // shots were drawn already
+            simulate_character(state, p.input, alive(), world_, loadout(), character_stats_, dt,
+                               vehicle_classes());  // shots were drawn already
         }
         p.result = state;
     }
@@ -412,7 +421,8 @@ void GameClient::tick(double now) {
     input.view_tick = render_tick_;
     previous_ = current_;
     if (self_.life != Life::waiting) {
-        if (auto shot = simulate_character(current_, input, alive(), world_, loadout(), character_stats_, 1 / tick_rate_)) {
+        if (auto shot = simulate_character(current_, input, alive(), world_, loadout(), character_stats_, 1 / tick_rate_,
+                                           vehicle_classes())) {
             shots_.push_back(*shot);
         }
     }

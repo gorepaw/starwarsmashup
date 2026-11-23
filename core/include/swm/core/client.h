@@ -75,6 +75,7 @@ public:
         bool reload = false;
         bool secondary = false;  // throw a grenade
         bool crouch = false;     // crouch, stand, or roll on the move (see MoveInput::crouch)
+        bool use = false;        // get into the vehicle at hand, or out of the one driven (a press)
         int weapon = 0;
     };
     void set_input(const Controls& controls);
@@ -120,6 +121,11 @@ public:
     const std::vector<net::Quartermaster>& quartermasters() const { return quartermasters_; }
     const std::vector<net::Vendor>& vendors() const { return vendors_; }
     const std::vector<net::TargetState>& targets() const { return targets_; }
+    // A match's vehicles as of the newest snapshot (ours where we drove it
+    // then; predicted() says where it is now).
+    const std::vector<net::VehicleState>& vehicles() const { return vehicles_; }
+    // The match's vehicle classes (the battlefield's).
+    std::span<const VehicleClass> vehicle_classes() const;
     const std::vector<net::CorpseLootState>& corpses() const { return corpses_; }
     const std::array<std::string, 2>& factions() const { return factions_; }
     // How the server's people look (an entity's look - 1 indexes these).
@@ -225,6 +231,7 @@ private:
     std::vector<net::MissionTerminal> mission_terminals_;
     net::QuestSync quests_;
     std::vector<net::TargetState> targets_;
+    std::vector<net::VehicleState> vehicles_;
     std::vector<net::CorpseLootState> corpses_;
     std::array<std::string, 2> factions_;
     std::vector<std::string> looks_;

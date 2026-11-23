@@ -228,7 +228,31 @@ std::optional<Shot> simulate_weapons(MoveState& state, const MoveInput& pressed,
 }
 
 std::optional<Shot> simulate_character(MoveState& state, const MoveInput& input, bool alive, const World& world,
-                                       const Loadout& loadout, const CharacterStats& stats, double dt) {
+                                       const Loadout& loadout, const CharacterStats& stats, double dt,
+                                       std::span<const VehicleClass> vehicles) {
+    if (state.vehicle >= 0 && size_t(state.vehicle) < vehicles.size()) {
+        const VehicleClass& vehicle = vehicles[size_t(state.vehicle)];
+        MoveInput steer = input;
+        if (!alive) {
+            steer.forward = steer.right = 0;
+            steer.buttons = 0;
+            steer.yaw = state.yaw;
+        }
+        simulate_vehicle(state, steer, world, vehicle, dt);
+        if (!alive) {
+            return std::nullopt;
+        }
+        MoveInput aimed = input;
+        const auto [yaw, pitch] = vehicle_aim(state, input, vehicle);
+        aimed.yaw = float(yaw);
+        aimed.pitch = float(pitch);
+        aimed.buttons &= uint8_t(~(MoveInput::secondary | MoveInput::crouch | MoveInput::jump));
+        std::optional<Shot> shot = simulate_weapons(state, aimed, vehicle.loadout, dt);
+        if (shot) {
+            shot->origin = vehicle_muzzle(state, vehicle);
+        }
+        return shot;
+    }
     if (!alive) {
         MoveInput idle;
         idle.sequence = input.sequence;
