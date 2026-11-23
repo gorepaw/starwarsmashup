@@ -224,8 +224,19 @@ void read_regions(Battlefield& field, const Ini::Section& section, const std::st
                     region.basis[row * 3 + column] = sign[row] * sign[column] * m[row * 3 + column];
                 }
             }
-            if (int standing = -1; !damage && fields >> standing) {
-                region.while_standing = standing;
+            // Then: `standing <n>` (or a bare n), `timed <first> <on> <off>`.
+            for (std::string word; !damage && fields >> word;) {
+                if (iequals(word, "timed")) {
+                    ok = ok && bool(fields >> region.first >> region.on >> region.off) && region.on > 0 &&
+                         region.off >= 0;
+                } else if (iequals(word, "standing")) {
+                    ok = ok && bool(fields >> region.while_standing);
+                } else {
+                    std::istringstream(word) >> region.while_standing;
+                }
+            }
+            if (!ok) {
+                throw std::runtime_error(where + ": " + key + " has a bad standing or timed part: \"" + value + "\"");
             }
             if (damage) {
                 field.damage_regions.push_back({region, rate});
@@ -311,6 +322,13 @@ std::optional<double> Door::hit(Vec3 a, Vec3 b) const {
         }
     }
     return enter;
+}
+
+bool DeathRegion::on_at(double clock) const {
+    if (on <= 0) {
+        return true;
+    }
+    return clock >= first && std::fmod(clock - first, on + off) < on;
 }
 
 bool CommandPost::contains(Vec3 point) const {
@@ -558,7 +576,7 @@ bool Conquest::damage_destructible(size_t index, double amount) {
 bool Conquest::deadly(Vec3 feet) const {
     const Vec3 body = feet + Vec3{0, 0.9, 0};
     return std::any_of(battlefield_.death_regions.begin(), battlefield_.death_regions.end(), [&](const DeathRegion& r) {
-        return (r.while_standing < 0 || destructible_alive(size_t(r.while_standing))) &&
+        return (r.while_standing < 0 || destructible_alive(size_t(r.while_standing))) && r.on_at(clock_) &&
                (r.contains(feet) || r.contains(body));
     });
 }
@@ -616,6 +634,8 @@ void Conquest::killed(int team) {
 
 std::vector<MatchEvent> Conquest::step(double dt, std::span<const Unit> units, size_t players) {
     std::vector<MatchEvent> events;
+    clock_ += dt;
+    state_.clock = clock_;
     move_doors(dt, units);
     mend(dt);
     switch (state_.phase) {

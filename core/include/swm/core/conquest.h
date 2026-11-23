@@ -65,8 +65,14 @@ struct DeathRegion {
     // (Tantive IV's turbine, stopped while its console is destroyed); -1:
     // always.
     int while_standing = -1;
+    // One a timer turns on and off (the Death Star's trash compactor,
+    // deadly while its walls close): first on `first` seconds into the
+    // battle, for `on` seconds, then off for `off`, and again. on 0: always.
+    double first = 0, on = 0, off = 0;
 
     bool contains(Vec3 point) const;
+    // Whether it's on at `clock` seconds into the battle (its timer's doing).
+    bool on_at(double clock) const;
 };
 
 // A region that hurts the soldiers in it, `rate` health a second, whatever
@@ -246,8 +252,9 @@ struct Battlefield {
 // z sx sy sz` and 9 rotation numbers; see Door), and what can be destroyed
 // (`Destructible = health x y z hx hy hz damage inner outer regen name`: its
 // bounds' center and half extents, its explosion, how fast it mends, then
-// its name; see Destructible). A death region may end with a destructible's
-// index: it's there only while that stands. `Minimap = x0 z0
+// its name; see Destructible). A death region may end with `standing <n>`
+// (there only while destructible n stands) and `timed <first> <on> <off>`
+// (see DeathRegion). `Minimap = x0 z0
 // x1 z1` is where the map's minimap image lies: the coordinates under its
 // left, top, right and bottom edges (north up). Throws
 // std::runtime_error if it, a map or a loadout can't be read or makes no
@@ -282,6 +289,10 @@ struct MatchState {
     // Health per Battlefield::destructibles[i]; <= 0: destroyed (one that
     // mends grows back from minus its full health, standing again at 0).
     std::vector<float> destructibles;
+    // Seconds since the battlefield started (not since the match: through
+    // warmups and results too): timed death regions and the world animations
+    // that go with them keep to it.
+    double clock = 0;
 };
 
 struct MatchEvent {
@@ -342,6 +353,7 @@ private:
     Battlefield battlefield_;
     bool repeat_ = true;
     MatchState state_;
+    double clock_ = 0;  // seconds since the battlefield started
 };
 
 // More soldiers capture faster, up to this many (ASSUMPTION: Battlefront

@@ -312,7 +312,7 @@ func step_frame(delta: float) -> void:
 		for door_snd: Dictionary in Bf2Map.animate_doors(get_tree(), game.get("doors", PackedFloat32Array())):
 			if _audio != null:
 				_audio.play_3d(str(door_snd["sound"]), door_snd["position"], _camera.global_position)
-		Bf2Map.animate_world(get_tree(), delta, game.get("destructibles", PackedFloat32Array()))
+		Bf2Map.animate_world(get_tree(), delta, game.get("destructibles", PackedFloat32Array()), float(game.get("clock", -1.0)))
 		for blast: Dictionary in Bf2Map.update_destructibles(get_tree(), game.get("destructibles", PackedFloat32Array())):
 			if _effects != null:
 				var radius := float(blast["radius"])

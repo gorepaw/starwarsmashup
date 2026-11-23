@@ -83,7 +83,8 @@ void test_battlefield_file() {
                                                       "Powerup = 20 1 30 3 2 0 1\n"
                                                       "Door = 50 0 60 3 1 50 1.5 64 2 1.5 0.2 1 0 0 0 1 0 0 0 1\n"
                                                       "Destructible = 850 10 1 40 1.5 1.3 1.5 20 0 2 3.5 comp 5\n"
-                                                      "DeathRegion = box 70 0 70 2 2 2 1 0 0 0 1 0 0 0 1 0\n\n"
+                                                      "DeathRegion = box 70 0 70 2 2 2 1 0 0 0 1 0 0 0 1 standing 0\n"
+                                                      "DeathRegion = box 90 0 90 2 2 2 1 0 0 0 1 0 0 0 1 timed 7 5 15\n\n"
                                                       "[post]\nName = CP1\nPosition = 10 10\nOwner = 1\n"
                                                       "Altitude = -6 -1\nSpawnPoint = 12 12 -5\nSpawnPoint = 8 8 -5\n\n"
                                                       "[post]\nName = CP2\nPosition = 30 30\nOwner = 2\n";
@@ -95,7 +96,7 @@ void test_battlefield_file() {
     CHECK(bounded.boundaries.size() == 1 && bounded.min_x == -100 && bounded.max_x == 0 && bounded.min_z == 0 &&
           bounded.max_z == 100);
     CHECK(bounded.contains({-10, 0, 10}) && bounded.contains({-49, 0, 49}) && !bounded.contains({-60, 0, 60}));
-    CHECK(bounded.death_regions.size() == 2 && bounded.death_regions[0].center == Vec3(-10, 0, 20));
+    CHECK(bounded.death_regions.size() == 3 && bounded.death_regions[0].center == Vec3(-10, 0, 20));
     CHECK(bounded.deadly({-13.5, 0, 20}) && !bounded.deadly({-10, 0, 23.5}) && bounded.deadly({-10, 0, 21.5}));
     // Feet below it, or the body in it; not standing on top of it.
     CHECK(bounded.deadly({-10, -1.5, 20}) && !bounded.deadly({-10, 1.5, 20}));
@@ -126,8 +127,12 @@ void test_battlefield_file() {
           bounded.destructibles[0].explosion_outer == 2 && bounded.destructibles[0].regen == 3.5 &&
           bounded.destructibles[0].name == "comp 5");
     // A death region there only while it stands.
-    CHECK(bounded.death_regions.size() == 2 && bounded.death_regions[0].while_standing == -1 &&
+    CHECK(bounded.death_regions.size() == 3 && bounded.death_regions[0].while_standing == -1 &&
           bounded.death_regions[1].while_standing == 0);
+    // One on a timer: on 7 s in for 5 s, off 15 s, and again.
+    const DeathRegion& timed = bounded.death_regions[2];
+    CHECK(timed.first == 7 && timed.on == 5 && timed.off == 15 && !timed.on_at(6.9) && timed.on_at(7.1) &&
+          timed.on_at(11.9) && !timed.on_at(12.1) && !timed.on_at(26.9) && timed.on_at(27.1));
     {
         Conquest match(bounded);
         CHECK(match.deadly({-70, 0, 70}) && match.destructible_alive(0));

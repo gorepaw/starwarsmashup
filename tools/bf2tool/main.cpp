@@ -1032,7 +1032,11 @@ int cmd_export_map(const std::vector<std::string>& args) {
         std::string mode;  // "plays" or "stops", with a trigger; "start": played at the start (stands at its end)
     };
     std::map<std::string, std::vector<ObjectAnimation>> object_animations;
+    std::set<std::string> groups_seen;  // the same group in several included layers: once
     for (const WorldAnimationGroup& group : level.animation_groups) {
+        if (!included(group) || !groups_seen.insert(lowercase(group.name)).second) {
+            continue;
+        }
         ObjectAnimation found{&group, nullptr};
         if (std::find(start_plays.begin(), start_plays.end(), lowercase(group.name)) != start_plays.end()) {
             found.mode = "start";
@@ -1050,6 +1054,7 @@ int cmd_export_map(const std::vector<std::string>& args) {
                 if (lowercase(animation.name) == lowercase(animation_name)) {
                     found.animation = &animation;
                     object_animations[lowercase(object)].push_back(found);
+                    break;  // the same animation in several layers: the first
                 }
             }
         }
@@ -1222,7 +1227,6 @@ int cmd_export_map(const std::vector<std::string>& args) {
                     if (shape == shapes.end()) {
                         shape = shapes.emplace(key, model_collision(library, *geometry, use)).first;
                     }
-                    const auto place = [&](const std::array<float, 3>& p) { return posed(p, rest); };
                     // Doors (class "door": Polis Massa's) open as soldiers
                     // come (core::Door); soldiers pass them, so their
                     // collision is left out, and a shut one stops shots
@@ -1406,8 +1410,12 @@ int cmd_export_map(const std::vector<std::string>& args) {
             // the destructible that plays or stops them.
             if (const auto it = object_animations.find(lowercase(object.name)); it != object_animations.end()) {
                 animation_json = ", \"animations\": [";
+                size_t listed = 0;
                 for (size_t i = 0; i < it->second.size(); ++i) {
                     const ObjectAnimation& a = it->second[i];
+                    if (a.mode == "start") {
+                        continue;  // played at the start: it stands where that leaves it
+                    }
                     const auto keys = [](const std::vector<WorldAnimation::Key>& list, float sign_x, float sign_yz) {
                         std::string out = "[";
                         for (size_t k = 0; k < list.size(); ++k) {
@@ -1434,7 +1442,7 @@ int cmd_export_map(const std::vector<std::string>& args) {
                     animation_json += std::format(
                         "{}{{\"group\": {}, \"start\": {}, \"loop\": {}, \"local\": {}, \"length\": {:g}, "
                         "\"positions\": {}, \"rotations\": {}, \"destructible\": {}, \"mode\": {}}}",
-                        i ? ", " : "", json_string(a.group->name), a.group->play_at_start ? "true" : "false",
+                        listed++ ? ", " : "", json_string(a.group->name), a.group->play_at_start ? "true" : "false",
                         a.animation->loop ? "true" : "false", a.animation->local ? "true" : "false", length, positions,
                         keys(a.animation->rotations, 1, -1), a.trigger, json_string(a.mode));
                 }

@@ -204,6 +204,8 @@ struct WorldAnimationGroup {
     std::string name;
     bool play_at_start = false;
     std::vector<std::pair<std::string, std::string>> members;  // animation, object
+    std::string layer;      // the world layer it's in
+    uint32_t sublevel = 0;  // its sublevel's name hash (0: none)
 };
 
 struct Level {

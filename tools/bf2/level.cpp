@@ -615,6 +615,8 @@ void read_tree(const UcfbNode& node, Level& level, uint32_t group) {
                     level.animations.push_back(read_world_animation(item));
                 } else if (item.tag == "anmg") {
                     level.animation_groups.push_back(read_world_animation_group(item));
+                    level.animation_groups.back().layer = layer;
+                    level.animation_groups.back().sublevel = group;
                 }
             }
         } else if (child.tag == "path") {

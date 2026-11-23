@@ -374,6 +374,7 @@ godot::Dictionary SwmClient::get_match() const {
         destructibles.push_back(health);
     }
     out["destructibles"] = destructibles;  // health of each of the battlefield's destructibles; <= 0: destroyed
+    out["clock"] = match.clock;  // seconds since the battlefield started: world animations keep to it
     return out;
 }
 

@@ -211,7 +211,7 @@ static func update_destructibles(tree: SceneTree, health: PackedFloat32Array) ->
 			continue
 		node.set_meta("standing", standing)
 		node.visible = standing == 1 or bool(node.get_meta("keep"))
-		var wreck: Node3D = node.get_meta("wreck")
+		var wreck: Node3D = node.get_meta("wreck") if node.has_meta("wreck") else null  # (a null meta is no meta)
 		if wreck != null:
 			wreck.visible = standing == 0
 		if was == 1 and standing == 0:
@@ -222,12 +222,13 @@ static func update_destructibles(tree: SceneTree, health: PackedFloat32Array) ->
 	return explosions
 
 
-# Objects moved by the map's world animations, `delta` seconds on: loops
+# Objects moved by the map's world animations, `delta` seconds on (or at the
+# battle's `clock`, the server's, for loops that play from the start): loops
 # going round (stopped while the object that stops them is destroyed: a
 # value in `health`, as update_destructibles'), and one-off animations
 # played forward while the object whose destruction plays them is
 # destroyed, back to the start while it stands.
-static func animate_world(tree: SceneTree, delta: float, health: PackedFloat32Array) -> void:
+static func animate_world(tree: SceneTree, delta: float, health: PackedFloat32Array, clock := -1.0) -> void:
 	for node: Node3D in tree.get_nodes_in_group(ANIMATED):
 		var animation: Dictionary = node.get_meta("world_animation")
 		var length := maxf(0.01, float(animation.get("length", 0)))
@@ -241,7 +242,9 @@ static func animate_world(tree: SceneTree, delta: float, health: PackedFloat32Ar
 				if not destroyed:
 					phase = fmod(phase + delta, length)
 			_:
-				phase = fmod(phase + delta, length)
+				# Loops from the start keep to the battle's clock (the Death
+				# Star's compactor walls with its timed death region).
+				phase = fmod(clock, length) if clock >= 0.0 else fmod(phase + delta, length)
 		node.set_meta("phase", phase)
 		var rest: Transform3D = node.get_meta("rest")
 		var offset := _key_at(animation.get("positions", []), phase)

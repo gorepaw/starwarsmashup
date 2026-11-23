@@ -835,14 +835,14 @@ void BotPlayers::set_skill(BotSkill skill) {
 }
 
 void BotPlayers::update(double now) {
-    // Routes past what's been destroyed (or stands again), worked out anew.
+    // Routes past what's been destroyed (or stands again), worked out anew:
+    // all of them, since what its destruction moves (a gate, a bridge) may
+    // be far from it.
     for (size_t i = 0; i < destructibles_.size() && navigation_; ++i) {
         const uint8_t gone = world_.destroyed(i) ? 1 : 0;
         if (gone != destroyed_[i]) {
             destroyed_[i] = gone;
-            const Destructible& d = destructibles_[i];
-            navigation_->forget(d.center.x - d.half_size.x, d.center.x + d.half_size.x, d.center.z - d.half_size.z,
-                                d.center.z + d.half_size.z);
+            navigation_->forget(-1e9, 1e9, -1e9, 1e9);
         }
     }
     for (auto& player : players_) {

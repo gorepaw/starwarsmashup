@@ -137,6 +137,7 @@ void put_match(ByteWriter& out, const MatchState& m) {
     for (const float health : m.destructibles) {
         out.put(health);
     }
+    out.put(m.clock);
 }
 
 int8_t get_team(ByteReader& in) {
@@ -184,6 +185,7 @@ MatchState get_match(ByteReader& in) {
     for (size_t i = 0; i < destructibles; ++i) {
         m.destructibles.push_back(in.get<float>());
     }
+    m.clock = in.get<double>();
     return m;
 }
 
