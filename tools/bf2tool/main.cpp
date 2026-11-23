@@ -484,7 +484,10 @@ int cmd_export_vehicle(const std::vector<std::string>& args) {
     const OdfClass vehicle = library.classes().resolve(name);
     // A map's turret (side/tur.lvl's armedbuildings) is a vehicle that
     // stays put: its operator's section (TURRET1) has its limits and guns.
-    const std::string kind = lowercase(vehicle.base) == "armedbuilding" ? "turret" : lowercase(vehicle.base);
+    // A command walker (the AT-AT, the AT-TE: Battlefront's mobile command
+    // posts) is a walker here (ASSUMPTION: not yet somewhere to spawn).
+    const std::string base = lowercase(vehicle.base);
+    const std::string kind = base == "armedbuilding" ? "turret" : base == "commandwalker" ? "walker" : base;
     if (kind != "hover" && kind != "walker" && kind != "turret") {
         throw std::runtime_error(args[2] + " is a " + vehicle.base + ", not a hover or walker vehicle or a turret");
     }
@@ -502,7 +505,9 @@ int cmd_export_vehicle(const std::vector<std::string>& args) {
             {"barcspeeder", "BARC Speeder"},      {"aat", "AAT"},
             {"stap", "STAP"},                     {"atat", "AT-AT"},
             {"atte", "AT-TE"},                    {"oneman_atst", "AT-RT"},
-            {"spider", "Spider Walker"},          {"tauntaun", "Tauntaun"}};
+            {"spider", "Spider Walker"},          {"tauntaun", "Tauntaun"},
+            {"recoilless_kas", "Recoilless Cannon"}, {"recoilless_lg", "Recoilless Cannon"},
+            {"tat_barge", "Barge Turret"},        {"beam", "Beam Turret"}};
         const std::string tail = name.substr(std::min(name.size(), name.find('_', name.find('_') + 1) + 1));
         const auto it = known.find(tail);
         std::string label = it != known.end() ? it->second : tail;
@@ -612,6 +617,46 @@ int cmd_export_vehicle(const std::vector<std::string>& args) {
                 }
                 std::cerr << std::format("  clip {} ({} frames, {:.2f} m over the ground)\n", clip_name,
                                          clip.frame_count, drift);
+                // A walker on more than one pair of legs (the AT-AT) has a
+                // clip of each step for each pair, after the named one, as
+                // long as it: Battlefront plays them together, so they're
+                // played as one (each bone moved by whichever clip moves it).
+                const bool unnamed = known == names.end();
+                if (unnamed && !clips.empty() && clips.back().animation.frame_count == clip.frame_count &&
+                    !std::all_of(clips.back().name.begin(), clips.back().name.end(),
+                                 [](char c) { return std::isxdigit(static_cast<unsigned char>(c)); })) {
+                    const auto moving = [](const AnimationTrack& t) {
+                        for (size_t f = 1; f < t.rotations.size(); ++f) {
+                            const Quat& a = t.rotations[0];
+                            const Quat& b = t.rotations[f];
+                            if (std::abs(a.x - b.x) + std::abs(a.y - b.y) + std::abs(a.z - b.z) + std::abs(a.w - b.w) >
+                                1e-4f) {
+                                return true;
+                            }
+                        }
+                        for (size_t f = 1; f < t.translations.size(); ++f) {
+                            const Vec3 d = t.translations[f] - t.translations[0];
+                            if (std::abs(d.x) + std::abs(d.y) + std::abs(d.z) > 1e-4f) return true;
+                        }
+                        return false;
+                    };
+                    Animation& into = clips.back().animation;
+                    int merged = 0;
+                    for (const AnimationTrack& track : clip.tracks) {
+                        if (!moving(track)) continue;
+                        auto it = std::find_if(into.tracks.begin(), into.tracks.end(),
+                                               [&](const AnimationTrack& t) { return t.bone_hash == track.bone_hash; });
+                        if (it == into.tracks.end()) {
+                            into.tracks.push_back(track);
+                            ++merged;
+                        } else if (!moving(*it)) {
+                            *it = track;
+                            ++merged;
+                        }
+                    }
+                    std::cerr << std::format("    merged into {} ({} bones)\n", clips.back().name, merged);
+                    continue;
+                }
                 clips.push_back({std::move(clip_name), std::move(clip)});
             }
             if (stride_speed > 0) {

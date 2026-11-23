@@ -1028,6 +1028,13 @@ void Bot::choose_vehicle(const GameClient& client, double now) {
     // Still there, and still free for it.
     const auto free_seat = [&](const net::VehicleState& v) {
         if (!v.alive || v.vehicle >= classes.size()) return false;
+        // Nothing to fight with (a turret whose guns aren't read yet): no use.
+        const VehicleClass& cls = classes[v.vehicle];
+        const bool armed = weapon_in_slot(cls.loadout, 0) != nullptr ||
+                           std::any_of(cls.seats.begin(), cls.seats.end(), [](const VehicleSeat& s) {
+                               return weapon_in_slot(s.loadout, 0) != nullptr;
+                           });
+        if (!armed && cls.kind == VehicleKind::turret) return false;
         const bool aboard = v.driver != 0 || std::any_of(v.gunners.begin(), v.gunners.end(),
                                                          [](uint32_t g) { return g != 0; });
         if (aboard && !field.allied(v.team, team)) return false;
