@@ -53,6 +53,9 @@ struct ServerConfig {
     // The profession roster (outliving the server): experience is earned and
     // loadouts' Active Specialization Slots apply with one.
     const ProfessionBook* professions = nullptr;
+    // Outside a match: the world's vehicle classes (game/vehicles/), called
+    // by their owners from items (ItemKind::vehicle).
+    std::vector<VehicleClass> world_vehicles;
     const CraftingBook* crafting = nullptr;
     bool friendly_fire = false;  // in a match
     bool single_match = false;   // one match, no next one (a hub's match: see match_over())
@@ -329,6 +332,7 @@ private:
         CombatState driver_combat;
         std::vector<uint32_t> gunners;            // per seat: who sits there (0: no one)
         std::vector<CombatState> gunner_combat;   // per seat: its gunner's own weapons, waiting
+        uint32_t owner = 0;                       // in the world: who called it (only they ride it)
         double away = 0;        // seconds empty away from its spawn
         double dead_for = -1;   // seconds since destroyed; -1 alive
     };
@@ -444,6 +448,9 @@ private:
     void leave_vehicle(Client& client);
     Vehicle* vehicle_of(uint32_t driver);
     Vehicle* vehicle_gunned_by(uint32_t gunner);  // the one it sits in as a gunner
+    // In the world: an owned vehicle item used: its vehicle called beside
+    // its owner, or (called already) put away.
+    void call_vehicle(Client& client, const ItemDef& def);
     void damage_vehicle(Vehicle& vehicle, double amount, uint32_t attacker, std::vector<Blast>& blasts);
     net::VehicleState describe(const Vehicle& vehicle) const;
     // Professions (server_professions.cpp).

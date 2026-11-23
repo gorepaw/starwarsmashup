@@ -178,6 +178,12 @@ public:
     godot::Dictionary get_quests() const;
     // Our experience in each profession we have any in: [{id, xp}].
     godot::Array get_professions() const;
+    // Outside a match: the world's vehicle classes (game/vehicles/, an OS
+    // path), as the server has them; call before start().
+    godot::Error set_world_vehicles(const godot::String& dir);
+    // The vehicle classes in play (the battlefield's in a match, else the
+    // world's), as get_battlefield()["vehicles"] gives them.
+    godot::Array get_vehicle_classes() const;
     godot::Array get_workbenches() const;
     godot::Array get_materials() const;
     godot::Array get_presets() const;
@@ -231,6 +237,7 @@ private:
     std::vector<std::pair<core::BuildingCollision, core::Placement>> buildings_;
     core::Loadout loadout_;
     std::optional<core::Battlefield> battlefield_;
+    std::vector<core::VehicleClass> world_vehicles_;
     std::string battlefield_dir_;
     std::unique_ptr<core::Bot> bot_;
     int bot_generation_ = 0;
@@ -272,6 +279,9 @@ public:
     // Loads the profession roster (game/professions/professions.ini): players
     // earn experience and their loadouts' specialization slots apply.
     godot::Error set_professions(const godot::String& path);
+    // The world's vehicle classes (game/vehicles/), for a server without a
+    // battlefield: players call them from their items.
+    godot::Error set_world_vehicles(const godot::String& dir);
     godot::Error set_crafting(const godot::String& resources_path, const godot::String& schematics_path);
     // `spawn` is where new characters start, in Galaxies coordinates (x, z).
     godot::Error start(int64_t port, const godot::String& bake_prefix, const godot::Vector2& spawn);
@@ -303,6 +313,7 @@ private:
     bool has_catalog_ = false;
     core::ProfessionBook professions_;
     bool has_professions_ = false;
+    std::vector<core::VehicleClass> world_vehicles_;
     core::CraftingBook crafting_;
     bool has_crafting_ = false;
     core::UdpHubNetwork hub_network_;

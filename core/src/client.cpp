@@ -201,7 +201,7 @@ void GameClient::request_spawn(int loadout, int post) {
 
 std::span<const VehicleClass> GameClient::vehicle_classes() const {
     if (!config_.battlefield) {
-        return {};
+        return config_.world_vehicles;
     }
     return config_.battlefield->vehicles;
 }

@@ -13,6 +13,8 @@
 #include "swm/core/client.h"
 #include "swm/core/combat.h"
 #include "swm/core/heightfield.h"
+#include "swm/core/items.h"
+#include "swm/core/persistence.h"
 #include "swm/core/net/link.h"
 #include "swm/core/server.h"
 #include "swm/core/vehicle.h"
@@ -506,6 +508,92 @@ void test_flyer() {
     CHECK(state.grounded && near(state.position.y, 0.5) && state.velocity.length() == 0);
 }
 
+std::filesystem::path repo_root() {
+    auto p = std::filesystem::current_path();
+    while (!p.empty() && !std::filesystem::exists(p / "game" / "vehicles")) {
+        const auto parent = p.parent_path();
+        if (parent == p) break;
+        p = parent;
+    }
+    return p;
+}
+
+// In the world: Galaxies' personal vehicles. Using the item calls the
+// vehicle beside its owner; only they ride it; it goes as fast as its class
+// says; using the item again puts it away.
+void test_world_vehicles() {
+    const auto root = repo_root();
+    ItemCatalog catalog;
+    catalog.load(root / "game" / "items" / "swg_catalog.ini");
+    const ItemDef* bike_item = catalog.find("vehicle_speeder_bike");
+    CHECK(bike_item != nullptr && bike_item->kind == ItemKind::vehicle && bike_item->vehicle == "swg_speeder_bike");
+    const std::vector<VehicleClass> classes = load_vehicle_classes(root / "game" / "vehicles");
+    CHECK(classes.size() >= 6);
+    const auto bike_class = std::find_if(classes.begin(), classes.end(),
+                                         [](const VehicleClass& c) { return c.name == "swg_speeder_bike"; });
+    CHECK(bike_class != classes.end() && bike_class->kind == VehicleKind::hover && bike_class->label == "Speeder Bike");
+
+    MemoryCharacterStore store;
+    const PersistentId owner = store.create("Rider", {0, 0, 0}, 0).id;
+    const ItemInstance item = store.grant_item({0, owner, "vehicle_speeder_bike", 0.5, "", "{}"});
+    Heightfield flat{401, 1.0, -200, -200, std::vector<float>(401 * 401, 0.0f)};
+    World world(flat);
+    net::LoopbackHub hub;
+    net::LoopbackLink server_link{hub, {1, 1}};
+    ServerConfig config;
+    config.catalog = &catalog;
+    config.world_vehicles = classes;
+    config.pvp_enabled = false;
+    GameServer server(server_link, world, config, &store);
+    std::vector<std::unique_ptr<net::LoopbackLink>> links;
+    std::vector<std::unique_ptr<GameClient>> clients;
+    const auto join = [&](const std::string& name) -> GameClient& {
+        links.push_back(std::make_unique<net::LoopbackLink>(hub, net::Endpoint{uint32_t(10 + links.size()), 1}));
+        ClientConfig cc{.server = {1, 1}, .name = name};
+        cc.world_vehicles = classes;
+        clients.push_back(std::make_unique<GameClient>(*links.back(), world, cc));
+        return *clients.back();
+    };
+    GameClient& rider = join("Rider");
+    GameClient& other = join("Other");
+    double now = 0;
+    const auto run = [&](double seconds, auto steer) {
+        for (const double end = now + seconds; now < end; now += 1.0 / 60) {
+            steer();
+            server.update(now);
+            for (auto& c : clients) c->update(now);
+        }
+    };
+    run(0.5, [] {});
+    CHECK(rider.status() == GameClient::Status::connected && rider.vehicle_classes().size() == classes.size());
+    // Called: beside its owner, theirs.
+    rider.use_item(item.id);
+    run(0.3, [] {});
+    CHECK(rider.vehicles().size() == 1 && rider.vehicles()[0].owner == rider.entity_id());
+    const Vec3 at = rider.vehicles().empty() ? Vec3{} : rider.vehicles()[0].position;
+    CHECK((at - rider.predicted().position).length() < 4);
+    // Someone else beside it can't get in.
+    const auto walk_to = [&](GameClient& c, Vec3 to) {
+        const Vec3 d = to - c.predicted().position;
+        return GameClient::Controls{.forward = std::hypot(d.x, d.z) > 1.2 ? 1.0 : 0.0, .yaw = std::atan2(-d.x, -d.z)};
+    };
+    run(3, [&] { other.set_input(walk_to(other, at)); });
+    run(0.1, [&] { other.set_input({.use = true}); });
+    run(0.3, [&] { other.set_input({}); });
+    CHECK(other.predicted().vehicle == -1 && !rider.vehicles().empty() && rider.vehicles()[0].driver == 0);
+    // Its owner gets in and rides off at its speed.
+    run(0.1, [&] { rider.set_input({.use = true}); });
+    run(0.3, [&] { rider.set_input({}); });
+    CHECK(rider.predicted().vehicle >= 0 && rider.vehicles()[0].driver == rider.entity_id());
+    const Vec3 start = rider.predicted().position;
+    run(3, [&] { rider.set_input({.forward = 1, .yaw = 0}); });
+    CHECK((rider.predicted().position - start).length() > 40);
+    // The item again: out, and the bike put away.
+    rider.use_item(item.id);
+    run(0.3, [&] { rider.set_input({}); });
+    CHECK(rider.predicted().vehicle == -1 && rider.vehicles().empty());
+}
+
 // A bot by an empty bike gets in and drives it toward the post it wants;
 // stuck against nothing, it keeps going.
 void test_bot_drives() {
@@ -553,5 +641,6 @@ int main() {
     test_bot_drives();
     test_turret();
     test_flyer();
+    test_world_vehicles();
     return swm::test::finish("vehicle_test");
 }

@@ -146,6 +146,7 @@ VehicleClass load_vehicle_class(const std::filesystem::path& path) {
     v.explosion_effect = s.get("ExplosionEffect").value_or("");
     v.engine_sound = s.get("EngineSound").value_or("");
     v.stride_speed = s.number("StrideSpeed", 0);
+    v.rider_seat = read_vec3(s, "RiderSeat", v.rider_seat);
     v.map_texture = s.get("MapTexture").value_or("");
     v.health_texture = s.get("HealthTexture").value_or("");
     v.loadout.name = v.name;
@@ -182,6 +183,21 @@ VehicleClass load_vehicle_class(const std::filesystem::path& path) {
 // up, back slows; BoostSpeed on energy), never into the ground: low, slow
 // and level with the throttle back, it settles and lands (ASSUMPTION).
 // Hitting the ground or a wall stops it (the server reckons the damage).
+std::vector<VehicleClass> load_vehicle_classes(const std::filesystem::path& dir) {
+    std::vector<std::filesystem::path> files;
+    if (std::filesystem::is_directory(dir)) {
+        for (const auto& entry : std::filesystem::directory_iterator(dir)) {
+            if (entry.is_regular_file() && entry.path().extension() == ".ini") files.push_back(entry.path());
+        }
+    }
+    std::sort(files.begin(), files.end());
+    std::vector<VehicleClass> out;
+    for (const auto& file : files) {
+        out.push_back(load_vehicle_class(file));
+    }
+    return out;
+}
+
 void simulate_flyer(MoveState& state, const MoveState& before, const MoveInput& input, const World& world,
                     const VehicleClass& vehicle, double dt) {
     const double f = input.forward / 127.0;

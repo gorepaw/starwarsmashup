@@ -14,7 +14,7 @@
 
 namespace swm::core {
 
-enum class ItemKind : uint8_t { weapon, armor, deflector_shield, clothing, junk, supply, quest, enhancement };
+enum class ItemKind : uint8_t { weapon, armor, deflector_shield, clothing, junk, supply, quest, enhancement, vehicle };
 
 enum class QueueMode : uint8_t { standard = 0, gear = 1 };
 
@@ -70,6 +70,7 @@ struct ItemDef {
     int64_t sell_value = 0;
     double heal_amount = 0.0;
     std::string armor_class;  // armor: light, medium or heavy (its armor profession's)
+    std::string vehicle;      // a vehicle: its class (a world vehicle class file's Name), called by using it
     std::string model_path;  // relative to game/imported_assets/, may contain {g} for m/f
     std::string bf2_base;    // overrides archetype's default BF2 weapon .ini if non-empty
 

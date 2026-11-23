@@ -18,6 +18,7 @@ const BUY_CATEGORIES := [
 	["deflector_shield", "Shields"],
 	["clothing", "Clothing"],
 	["supply", "Supplies"],
+	["vehicle", "Vehicles"],
 ]
 
 var title := "Vendor"

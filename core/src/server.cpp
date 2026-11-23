@@ -843,7 +843,9 @@ void GameServer::handle(const net::Endpoint& from, const net::Datagram& datagram
                                          [&](const ItemInstance& inst) { return inst.id == use->item_id; });
             if (it != client->items.end()) {
                 const ItemDef* def = config_.catalog->find(it->def_id);
-                if (def != nullptr && def->kind == ItemKind::supply && def->heal_amount > 0 &&
+                if (def != nullptr && def->kind == ItemKind::vehicle) {
+                    call_vehicle(*client, *def);
+                } else if (def != nullptr && def->kind == ItemKind::supply && def->heal_amount > 0 &&
                     client->health < client->stats.max_health && store_->remove_item(use->item_id)) {
                     const double before = client->health;
                     client->health = std::min(client->stats.max_health, client->health + def->heal_amount);
@@ -1034,7 +1036,7 @@ void GameServer::step() {
             }
             // The use button (a press): into a vehicle or out of it.
             const bool use = input.held(MoveInput::use);
-            if (use && !client.use_held && client.life == Life::alive && conquest_) {
+            if (use && !client.use_held && client.life == Life::alive && !vehicle_classes().empty()) {
                 use_vehicle(client);
             }
             client.use_held = use;

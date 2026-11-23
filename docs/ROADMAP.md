@@ -347,7 +347,10 @@ Battlefront's vehicles in matches, and Galaxies' vehicles for getting around Tat
   - [ ] The snowspeeder's tow cable and rear gunner; starfighters over the ground maps that have them.
 
 **In the world**
-- [ ] Galaxies' personal vehicles (speeder bikes, swoops, landspeeders) as items you call and ride across Tatooine. Creature mounts later.
+- [x] Galaxies' personal vehicles (speeder bikes, swoops, landspeeders) as items you call and ride across Tatooine. Creature mounts later.
+  - [x] Their models from Galaxies (`swgtool export-vehicles`: the speeder bike, the swoop, the X-34, XP-34 and AV-21 landspeeders, the BARC speeder) and their classes in `game/vehicles/` (hover; Galaxies' handling lives on its servers, so their speeds are ASSUMPTIONs by kind; the rider sits by the model's "player" hardpoint, `RiderSeat`). Items of a new kind (`Kind = vehicle`, `Vehicle =` its class), sold by Mos Eisley's outfitter (a Vehicles tab).
+  - [x] In the world (a server without a battlefield has the world's vehicle classes, its clients too): using the item calls the vehicle beside its owner, and using it again puts it away; only its owner rides it (E, as in a match); it goes when they leave.
+  - [ ] Creature mounts; Galaxies' riding poses (its `all_b_mnt_ride_*` clips) for riders.
 
 ---
 

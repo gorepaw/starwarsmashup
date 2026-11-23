@@ -704,6 +704,7 @@ struct Encoder {
             for (size_t g = 0; g < v.gunners.size() && g < 8; ++g) {
                 out.put(v.gunners[g]);
             }
+            out.put(v.owner);
         }
         const uint8_t ccount = uint8_t(std::min<size_t>(m.corpses.size(), 255));
         out.put(ccount);
@@ -1170,6 +1171,7 @@ Message decode(std::span<const uint8_t> packet) {
             for (size_t g = 0; g < gunners; ++g) {
                 v.gunners.push_back(in.get<uint32_t>());
             }
+            v.owner = in.get<uint32_t>();
             m.vehicles.push_back(v);
         }
         const size_t corpses = in.get<uint8_t>();

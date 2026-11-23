@@ -210,6 +210,8 @@ func start_session(config: Dictionary) -> bool:
 		var catalog_path := _os_path("items/swg_catalog.ini")
 		if FileAccess.file_exists(catalog_path):
 			_server.set_catalog(catalog_path, _os_path("imported_assets/items"))
+		if DirAccess.dir_exists_absolute(_os_path("vehicles")):
+			_server.set_world_vehicles(_os_path("vehicles"))
 		if FileAccess.file_exists(_os_path("professions/professions.ini")):
 			_server.set_professions(_os_path("professions/professions.ini"))
 		if FileAccess.file_exists(_os_path("crafting/resources.ini")) \
@@ -237,6 +239,9 @@ func start_session(config: Dictionary) -> bool:
 		return false
 	_client.set_bot(_bot == "conquest")
 	_client.set_battlefield_dir(_os_path("battlefields"))
+	# Outside a match, the world's vehicles (Galaxies' personal ones), as the server has them.
+	if DirAccess.dir_exists_absolute(_os_path("vehicles")):
+		_client.set_world_vehicles(_os_path("vehicles"))
 	_weapons = _client.get_weapons()
 	var player_name := str(_config.get("name", "player"))
 	if _client.start(server_addr, bake_path, player_name) != OK:
@@ -264,7 +269,7 @@ func start_session(config: Dictionary) -> bool:
 	_battle_ui.set_world_context(_world_bake, _map_meta, _battlefield)
 	_battle_ui.add_posts()
 	_bind_powerups()
-	_vehicles.setup(_world, _battlefield.get("vehicles", []))
+	_vehicles.setup(_world, _vehicle_classes())
 	if _bot == "" and not DisplayServer.get_name().to_lower().contains("headless"):
 		DisplayServer.window_set_size(Vector2i(1280, 720))
 		_capture_mouse(true)
@@ -647,9 +652,15 @@ func _controls() -> Dictionary:
 			"fire": Input.is_action_pressed("fire") and can_fire, "reload": Input.is_action_pressed("reload"),
 			"secondary": false if blocking else Input.is_action_pressed("grenade"),
 			"crouch": Input.is_action_pressed("crouch"),
-			"use": Input.is_action_pressed("interact") and not _client.get_match().is_empty(),
+			"use": Input.is_action_pressed("interact"),  # in or out of a vehicle (in the world, one's own)
 			"block": blocking,
 			"weapon": _weapon}
+
+
+# The vehicle classes in play: the battlefield's in a match, else the world's.
+func _vehicle_classes() -> Array:
+	var classes: Array = _battlefield.get("vehicles", [])
+	return classes if not classes.is_empty() or _client == null else _client.get_vehicle_classes()
 
 
 # The vehicle we drive: {label, health, max_health, ...} or {}.
@@ -672,18 +683,22 @@ func _driven_vehicle() -> Dictionary:
 
 # On foot by an empty vehicle: how to get in.
 func _show_vehicle_prompt() -> void:
-	if _client == null or not _client.is_spawned() or _client.get_match().is_empty():
+	if _client == null or not _client.is_spawned():
 		return
 	var own: Dictionary = _client.get_presented()
 	var label := _battle_ui.center_label()
 	if int(own.get("vehicle", -1)) >= 0 or not bool(own["alive"]) or label == null or label.text != "":
 		return
-	var found := _vehicles.enterable(_client.get_vehicles(), own["position"], int(own["team"]))
+	var found := _vehicles.enterable(_client.get_vehicles(), own["position"], int(own["team"]),
+			_client.get_entity_id())
 	if not found.is_empty():
 		var key := Settings.binding_name(_settings.bindings["interact"]) if _settings.bindings.has("interact") else "E"
 		var label_text := str(_vehicles.class_of(int(found["vehicle"]["vehicle"])).get("label", "vehicle"))
-		label.text = ("Press %s to get in the %s" if int(found["seat"]) == 0 else "Press %s to man the %s's gun") \
-				% [key, label_text]
+		if int(found["vehicle"].get("owner", 0)) != 0:
+			label.text = "Press %s to ride your %s" % [key, label_text]
+		else:
+			label.text = ("Press %s to get in the %s" if int(found["seat"]) == 0 else "Press %s to man the %s's gun") \
+					% [key, label_text]
 
 
 func _aim() -> Vector2:
@@ -971,7 +986,8 @@ func _pose(character: Dictionary, state: Dictionary) -> void:
 			seated["crouched"] = true
 			seated["sprinting"] = false
 			seated["velocity"] = Vector3.ZERO
-			seated["position"] = Vehicles.to_world(state["position"], float(state["yaw"]), RIDER_SEAT)
+			seated["position"] = Vehicles.to_world(state["position"], float(state["yaw"]),
+					_vehicles.class_of(vehicle).get("rider_seat", RIDER_SEAT))
 			soldier.set_weapon("")
 			soldier.pose(seated, _delta)
 		return
@@ -1586,7 +1602,7 @@ func _arrive() -> void:
 	_battle_ui.set_world_context(_world_bake, _map_meta, _battlefield)
 	_battle_ui.add_posts()
 	_bind_powerups()
-	_vehicles.setup(_world, _battlefield.get("vehicles", []))
+	_vehicles.setup(_world, _vehicle_classes())
 	_was_alive = false
 	print("transferred to ", "the battle on " + str(_battlefield["name"]) if not _battlefield.is_empty() else "the hub")
 

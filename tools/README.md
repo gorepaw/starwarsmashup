@@ -27,6 +27,7 @@ swgtool export-character <dir> <out_dir> --name <name> --sat <path.sat>... [--we
                          [--bf2-lvl <ingame.lvl> --bf2-bank <bank> --anim <name>...]
 swgtool export-species <dir> <out_dir> [--bf2-lvl <ingame.lvl>] [--species <id>] [--max-hairs <n>]
 swgtool export-items <dir> <out_dir>
+swgtool export-vehicles <dir> <out_dir>
 swgtool bake-terrain <dir> <out_prefix> --trn <path.trn> --center <x> <z> --samples <n> --spacing <m>
                      [--snapshot <path.ws>]
 swgtool terrain-trace <dir> --trn <path.trn> --at <x> <z>
@@ -43,6 +44,8 @@ swgtool export-city <dir> <bake_prefix> --snapshot <path.ws> --center <x> <z> --
 - **groups**: count a manifest's unique files per content group (`base`, `jtl`, `rotw`, `tow`), or list one group's paths with `--list`. `coverage` also reports matches per group.
 - **iff**: print the chunk tree of one IFF file inside an archive (or, given a directory, in whichever of its archives has it), with a hex preview of each chunk's data, and its text where it's mostly text (template parameters, file names).
 - **iff-check**: parse every IFF file in every archive under `<dir>` and print per-extension counts, failures, and root form names. On the Total Experience set, all 130,954 IFF files parse with no failures.
+
+- **export-vehicles**: Galaxies' personal vehicles (the speeder bike, the swoop, the X-34, XP-34 and AV-21 landspeeders, the BARC speeder), each its most detailed mesh as a glTF with its hardpoints (`hp_player`, where its rider sits; `hp_engine_*`), into `<out_dir>/<id>/<id>.gltf`; the world's vehicle classes (`game/vehicles/*.ini`) use them from `game\imported_assets\swg_vehicles`.
 
 - **export-character**: build a glTF character from Galaxies files in every `.tre` under `<dir>`. The first `.sat` (e.g. a species body) defines the skeleton. Every further `.sat` (armor, clothing) is skinned to it. An optional weapon `.lod` attaches to the `hold_r` joint, with its hardpoints as child nodes (`hp_muzzle`, `hp_scope`, ...). Writes `<name>.gltf`, `<name>.bin`, and one PNG per texture (decoded from DDS) into `<out_dir>`. Write output only to gitignored folders such as `game/imported_assets/`. Example: a human male in stormtrooper armor with an E-11:
 

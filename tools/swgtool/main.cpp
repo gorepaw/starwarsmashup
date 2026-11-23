@@ -57,6 +57,7 @@ constexpr const char* usage = R"(usage:
                            [--bf2-lvl <ingame.lvl> --bf2-bank <bank>... --anim <name>...] [--swg-anim <path.ans>...]
   swgtool export-species <dir> <out_dir> [--bf2-lvl <ingame.lvl>] [--species <id>] [--max-hairs <n>]
   swgtool export-items <dir> <out_dir>
+  swgtool export-vehicles <dir> <out_dir>
   swgtool bake-terrain <dir> <out_prefix> --trn <path.trn> --center <x> <z> --samples <n> --spacing <m>
                        [--snapshot <path.ws>]
   swgtool terrain-trace <dir> --trn <path.trn> --at <x> <z>
@@ -1224,6 +1225,68 @@ int cmd_export_species(const std::vector<std::string>& args) {
     return 0;
 }
 
+// Galaxies' personal vehicles (the speeder bike, the swoop, the
+// landspeeders, the BARC speeder): each one's most detailed mesh as a glTF
+// with its hardpoints, into <out_dir>/<id>/<id>.gltf, and its box printed
+// (min, max: game space) for its class file's Bounds.
+int cmd_export_vehicles(const std::vector<std::string>& args) {
+    if (args.size() < 2) {
+        std::cerr << "usage: swgtool export-vehicles <dir> <out_dir>\n";
+        return 2;
+    }
+    TreLibrary lib(args[0]);
+    const std::filesystem::path out_root(args[1]);
+    struct VehicleEntry {
+        const char* id;
+        const char* lod;
+    };
+    const VehicleEntry vehicles[] = {
+        {"swg_speeder_bike", "appearance/lod/speeder_bike.lod"},
+        {"swg_swoop_bike", "appearance/lod/swoop_bike.lod"},
+        {"swg_landspeeder_x34", "appearance/lod/landspeeder_luke.lod"},
+        {"swg_landspeeder_av21", "appearance/lod/landspeeder_av21.lod"},
+        {"swg_landspeeder_xp34", "appearance/lod/landspeeder_xp34_convertible.lod"},
+        {"swg_barc_speeder", "appearance/lod/clone_barc_speeder.lod"},
+    };
+    size_t count = 0;
+    for (const auto& v : vehicles) {
+        if (!lib.contains(v.lod)) {
+            std::cerr << "no " << v.lod << "\n";
+            continue;
+        }
+        try {
+            const std::string mesh_path = "appearance/" + lod_highest_detail(lib.read(v.lod));
+            const StaticMesh sm = parse_static_mesh(lib.read(mesh_path));
+            const std::filesystem::path dir = out_root / v.id;
+            std::filesystem::create_directories(dir);
+            Gltf gltf;
+            std::ostringstream log;
+            GltfAssets assets(lib, gltf, dir, log);
+            const int mesh_idx = assets.add_static_mesh(sm, v.id);
+            Gltf::Node root_node{.name = v.id, .mesh = mesh_idx};
+            std::string hardpoints;
+            for (const Hardpoint& hp : sm.hardpoints) {
+                const Mat4 m = to_gltf(hp.transform);
+                const int hp_node = int(gltf.nodes.size());
+                gltf.nodes.push_back({.name = "hp_" + hp.name,
+                                      .translation = Vec3{m.at(0, 3), m.at(1, 3), m.at(2, 3)}});
+                root_node.children.push_back(hp_node);
+                hardpoints += std::format(" {} ({:.2f} {:.2f} {:.2f})", hp.name, m.at(0, 3), m.at(1, 3), m.at(2, 3));
+            }
+            const int root_idx = int(gltf.nodes.size());
+            gltf.nodes.push_back(std::move(root_node));
+            gltf.scene_nodes = {root_idx};
+            gltf.write(dir / (std::string(v.id) + ".gltf"));
+            std::cout << std::format("{}: {}{}\n", v.id, mesh_path, hardpoints);
+            ++count;
+        } catch (const std::exception& e) {
+            std::cerr << "skipping vehicle " << v.id << ": " << e.what() << "\n";
+        }
+    }
+    std::cout << count << " vehicles\n";
+    return count > 0 ? 0 : 1;
+}
+
 int cmd_export_items(const std::vector<std::string>& args) {
     if (args.size() < 2) {
         std::cerr << "usage: swgtool export-items <dir> <out_dir>\n";
@@ -1394,6 +1457,9 @@ int main(int argc, char** argv) {
         }
         if (command == "export-items") {
             return cmd_export_items(args);
+        }
+        if (command == "export-vehicles") {
+            return cmd_export_vehicles(args);
         }
         if (command == "bake-terrain") {
             return cmd_bake_terrain(args);

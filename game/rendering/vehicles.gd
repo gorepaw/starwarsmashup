@@ -191,14 +191,17 @@ func riding(entity: int) -> Dictionary:
 # The seat a soldier of `team` would get in the nearest vehicle within reach
 # (as the server reckons it: 2.5 m from its body, ASSUMPTION a little less
 # to be sure): {vehicle: its state, seat: 0 the driver's, 1.. a gunner's},
-# or {}. A gunner's seat only beside one's own side.
-func enterable(vehicles: Array, position: Vector3, team := -1) -> Dictionary:
+# or {}. A gunner's seat only beside one's own side; in the world, only
+# one's own (`me`).
+func enterable(vehicles: Array, position: Vector3, team := -1, me := 0) -> Dictionary:
 	var best := {}
 	var best_d := 2.2
 	var chest := position + Vector3.UP
 	for v: Dictionary in vehicles:
 		if not bool(v["alive"]):
 			continue
+		if int(v.get("owner", 0)) != 0 and int(v["owner"]) != me:
+			continue  # in the world, someone else's
 		var seat := -1
 		var gunners: Array = v.get("gunners", [])
 		var aboard := int(v["driver"]) != 0 or gunners.any(func(g: int) -> bool: return g != 0)

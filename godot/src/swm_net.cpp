@@ -187,6 +187,23 @@ godot::Error SwmClient::set_battlefield(const godot::String& path) {
     return load_battlefield_file(battlefield_, path);
 }
 
+godot::Array vehicle_class_dicts(std::span<const core::VehicleClass> classes);
+
+godot::Error SwmClient::set_world_vehicles(const godot::String& dir) {
+    try {
+        world_vehicles_ = core::load_vehicle_classes(to_std(dir));
+    } catch (const std::exception& error) {
+        godot::UtilityFunctions::push_error("set_world_vehicles: ", error.what());
+        return godot::ERR_CANT_OPEN;
+    }
+    return godot::OK;
+}
+
+godot::Array SwmClient::get_vehicle_classes() const {
+    return vehicle_class_dicts(client() ? client()->vehicle_classes()
+                                        : std::span<const core::VehicleClass>(world_vehicles_));
+}
+
 void SwmClient::set_bot(bool enabled) {
     if (!enabled) {
         bot_.reset();
@@ -345,6 +362,7 @@ godot::Array SwmClient::get_vehicles() const {
                 gunners.push_back(int64_t(g));
             }
             entry["gunners"] = gunners;
+            entry["owner"] = int64_t(v.owner);  // in the world: whose it is (0 in a match)
             out.push_back(entry);
         }
     }
@@ -757,6 +775,44 @@ void SwmClient::abandon_quest(const godot::String& id) {
     }
 }
 
+// Vehicle classes (a battlefield's, or the world's) as the client shows them.
+godot::Array vehicle_class_dicts(std::span<const core::VehicleClass> classes) {
+    godot::Array vehicles;
+    for (const core::VehicleClass& v : classes) {
+        godot::Dictionary entry;
+        entry["name"] = godot::String::utf8(v.name.c_str());
+        entry["label"] = godot::String::utf8(v.label.c_str());
+        entry["kind"] = v.kind == core::VehicleKind::walker   ? "walker"
+                        : v.kind == core::VehicleKind::turret ? "turret"
+                        : v.kind == core::VehicleKind::flyer  ? "flyer"
+                                                              : "hover";
+        entry["model"] = godot::String::utf8(v.model.generic_string().c_str());  // absolute or game-relative path
+        entry["max_health"] = v.max_health;
+        entry["altitude"] = v.altitude;
+        entry["eye"] = to_godot(v.eye);
+        godot::Array seats;
+        for (const core::VehicleSeat& seat : v.seats) {
+            godot::Dictionary s;
+            s["name"] = godot::String::utf8(seat.name.c_str());
+            s["eye"] = to_godot(seat.eye);
+            seats.push_back(s);
+        }
+        entry["seats"] = seats;
+        entry["track_center"] = to_godot(v.track_center);
+        entry["track_offset"] = to_godot(v.track_offset);
+        entry["bounds_min"] = to_godot(v.bounds_min);
+        entry["bounds_max"] = to_godot(v.bounds_max);
+        entry["explosion_effect"] = godot::String::utf8(v.explosion_effect.c_str());
+        entry["engine_sound"] = godot::String::utf8(v.engine_sound.c_str());
+        entry["stride_speed"] = v.stride_speed;
+        entry["rider_seat"] = to_godot(v.rider_seat);
+        entry["map_texture"] = godot::String::utf8(v.map_texture.c_str());
+        entry["health_texture"] = godot::String::utf8(v.health_texture.c_str());
+        vehicles.push_back(entry);
+    }
+    return vehicles;
+}
+
 godot::Dictionary SwmClient::get_battlefield() const {
     godot::Dictionary out;
     if (!battlefield()) {
@@ -821,38 +877,7 @@ godot::Dictionary SwmClient::get_battlefield() const {
     }
     out["posts"] = posts;
     // Its vehicles' classes: what they look like and how they're seen.
-    godot::Array vehicles;
-    for (const core::VehicleClass& v : field.vehicles) {
-        godot::Dictionary entry;
-        entry["name"] = godot::String::utf8(v.name.c_str());
-        entry["label"] = godot::String::utf8(v.label.c_str());
-        entry["kind"] = v.kind == core::VehicleKind::walker   ? "walker"
-                        : v.kind == core::VehicleKind::turret ? "turret"
-                        : v.kind == core::VehicleKind::flyer  ? "flyer"
-                                                              : "hover";
-        entry["model"] = godot::String::utf8(v.model.generic_string().c_str());  // absolute or game-relative path
-        entry["max_health"] = v.max_health;
-        entry["altitude"] = v.altitude;
-        entry["eye"] = to_godot(v.eye);
-        godot::Array seats;
-        for (const core::VehicleSeat& seat : v.seats) {
-            godot::Dictionary s;
-            s["name"] = godot::String::utf8(seat.name.c_str());
-            s["eye"] = to_godot(seat.eye);
-            seats.push_back(s);
-        }
-        entry["seats"] = seats;
-        entry["track_center"] = to_godot(v.track_center);
-        entry["track_offset"] = to_godot(v.track_offset);
-        entry["bounds_min"] = to_godot(v.bounds_min);
-        entry["bounds_max"] = to_godot(v.bounds_max);
-        entry["explosion_effect"] = godot::String::utf8(v.explosion_effect.c_str());
-        entry["engine_sound"] = godot::String::utf8(v.engine_sound.c_str());
-        entry["stride_speed"] = v.stride_speed;
-        entry["map_texture"] = godot::String::utf8(v.map_texture.c_str());
-        entry["health_texture"] = godot::String::utf8(v.health_texture.c_str());
-        vehicles.push_back(entry);
-    }
+    const godot::Array vehicles = vehicle_class_dicts(field.vehicles);
     out["vehicles"] = vehicles;
     godot::Array powerups;
     for (const core::PowerupStation& station : field.powerups) {
@@ -973,6 +998,7 @@ godot::Error SwmClient::start(const godot::String& server, const godot::String& 
     }
     core::ClientConfig config{.server = *endpoint, .name = to_std(name), .loadout = loadout_};
     config.battlefield = battlefield_;
+    config.world_vehicles = world_vehicles_;
     // Battles a hub sends us to: their battlefield file, by name.
     auto find_battlefield = [dir = battlefield_dir_](const std::string& id) -> std::optional<core::Battlefield> {
         if (dir.empty() || id.find_first_of("/\\.") != std::string::npos) {
@@ -1461,6 +1487,8 @@ void SwmClient::_bind_methods() {
     ClassDB::bind_method(D_METHOD("start", "server", "bake_prefix", "name"), &SwmClient::start);
     ClassDB::bind_method(D_METHOD("set_loadout", "path"), &SwmClient::set_loadout);
     ClassDB::bind_method(D_METHOD("set_battlefield", "path"), &SwmClient::set_battlefield);
+    ClassDB::bind_method(D_METHOD("set_world_vehicles", "dir"), &SwmClient::set_world_vehicles);
+    ClassDB::bind_method(D_METHOD("get_vehicle_classes"), &SwmClient::get_vehicle_classes);
     ClassDB::bind_method(D_METHOD("set_bot", "enabled"), &SwmClient::set_bot);
     ClassDB::bind_method(D_METHOD("set_battlefield_dir", "path"), &SwmClient::set_battlefield_dir);
     ClassDB::bind_method(D_METHOD("get_generation"), &SwmClient::get_generation);
@@ -1596,6 +1624,16 @@ godot::Error SwmServer::set_catalog(const godot::String& catalog_ini, const godo
     return godot::OK;
 }
 
+godot::Error SwmServer::set_world_vehicles(const godot::String& dir) {
+    try {
+        world_vehicles_ = core::load_vehicle_classes(to_std(dir));
+    } catch (const std::exception& error) {
+        godot::UtilityFunctions::push_error("set_world_vehicles: ", error.what());
+        return godot::ERR_CANT_OPEN;
+    }
+    return godot::OK;
+}
+
 godot::Error SwmServer::set_professions(const godot::String& path) {
     try {
         professions_.load(to_std(path));
@@ -1637,6 +1675,9 @@ godot::Error SwmServer::start(int64_t port, const godot::String& bake_prefix, co
     config.battlefield = battlefield_;
     config.catalog = has_catalog_ ? &catalog_ : nullptr;
     config.professions = has_professions_ ? &professions_ : nullptr;
+    if (!battlefield_) {
+        config.world_vehicles = world_vehicles_;
+    }
     config.crafting = has_crafting_ ? &crafting_ : nullptr;
     config.spawn = {-spawn.x, 0, spawn.y};  // Galaxies to game coordinates
     server_ = std::make_unique<core::GameServer>(*udp_, *world_, config, store_.get());
@@ -1705,6 +1746,7 @@ void SwmServer::_bind_methods() {
     ClassDB::bind_method(D_METHOD("set_hub", "path"), &SwmServer::set_hub);
     ClassDB::bind_method(D_METHOD("set_catalog", "catalog_ini", "bf2_items_dir"), &SwmServer::set_catalog);
     ClassDB::bind_method(D_METHOD("set_professions", "path"), &SwmServer::set_professions);
+    ClassDB::bind_method(D_METHOD("set_world_vehicles", "dir"), &SwmServer::set_world_vehicles);
     ClassDB::bind_method(D_METHOD("set_crafting", "resources_path", "schematics_path"), &SwmServer::set_crafting);
     ClassDB::bind_method(D_METHOD("add_building", "collision_path", "position", "yaw_degrees"),
                          &SwmServer::add_building);

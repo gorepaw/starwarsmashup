@@ -20,7 +20,7 @@ constexpr double eject_hop = 4;       // m/s up, thrown clear (ASSUMPTION)
 
 std::span<const VehicleClass> GameServer::vehicle_classes() const {
     if (!config_.battlefield) {
-        return {};
+        return config_.world_vehicles;
     }
     return config_.battlefield->vehicles;
 }
@@ -47,6 +47,7 @@ net::VehicleState GameServer::describe(const Vehicle& v) const {
     s.team = int8_t(v.team);
     s.alive = v.dead_for < 0;
     s.gunners = v.gunners;
+    s.owner = v.owner;
     return s;
 }
 
@@ -66,26 +67,33 @@ GameServer::Vehicle* GameServer::vehicle_gunned_by(uint32_t gunner) {
 
 void GameServer::update_vehicles(double dt) {
     const auto classes = vehicle_classes();
-    if (!conquest_ || classes.empty()) {
+    if (classes.empty()) {
         return;
     }
-    const Battlefield& field = conquest_->battlefield();
-    const MatchState& match = conquest_->state();
-    // A new match: none left over.
-    if (vehicles_phase_ == Phase::ended && match.phase == Phase::warmup) {
-        for (Client& client : clients_) {
-            if (client.state.vehicle >= 0) leave_vehicle(client);
+    if (conquest_) {
+        const Battlefield& field = conquest_->battlefield();
+        const MatchState& match = conquest_->state();
+        // A new match: none left over.
+        if (vehicles_phase_ == Phase::ended && match.phase == Phase::warmup) {
+            for (Client& client : clients_) {
+                if (client.state.vehicle >= 0) leave_vehicle(client);
+            }
+            vehicles_.clear();
+            spawned_.clear();
         }
-        vehicles_.clear();
-        spawned_.clear();
+        vehicles_phase_ = match.phase;
+        spawn_wait_.resize(field.vehicle_spawns.size(), 0);
+        spawned_.resize(field.vehicle_spawns.size(), 0);
     }
-    vehicles_phase_ = match.phase;
-    spawn_wait_.resize(field.vehicle_spawns.size(), 0);
-    spawned_.resize(field.vehicle_spawns.size(), 0);
 
     for (Vehicle& v : vehicles_) {
         if (v.dead_for >= 0) {
             v.dead_for += dt;
+            continue;
+        }
+        // In the world, one whose owner has gone goes too.
+        if (v.owner != 0 && find(v.owner) == nullptr) {
+            v.dead_for = wreck_time;
             continue;
         }
         const VehicleClass& cls = classes[size_t(v.cls)];
@@ -151,8 +159,8 @@ void GameServer::update_vehicles(double dt) {
             v.away = 0;
         }
         // Left away from home, it expires.
-        if (v.spawn >= 0) {
-            const VehicleSpawn& spawn = field.vehicle_spawns[size_t(v.spawn)];
+        if (v.spawn >= 0 && conquest_) {
+            const VehicleSpawn& spawn = conquest_->battlefield().vehicle_spawns[size_t(v.spawn)];
             const Vec3 d = v.state.position - spawn.position;
             v.away = std::hypot(d.x, d.z) > home_reach ? v.away + dt : 0;
             if (v.away > spawn.expire_time) {
@@ -163,9 +171,16 @@ void GameServer::update_vehicles(double dt) {
     }
     std::erase_if(vehicles_, [&](const Vehicle& v) {
         const bool gone = v.dead_for >= wreck_time;
-        if (gone && v.spawn >= 0 && spawned_[size_t(v.spawn)] == v.id) spawned_[size_t(v.spawn)] = 0;
+        if (gone && v.spawn >= 0 && size_t(v.spawn) < spawned_.size() && spawned_[size_t(v.spawn)] == v.id) {
+            spawned_[size_t(v.spawn)] = 0;
+        }
         return gone;
     });
+    if (!conquest_) {
+        return;  // the world's are called by their owners
+    }
+    const Battlefield& field = conquest_->battlefield();
+    const MatchState& match = conquest_->state();
 
     // Spawns: a vehicle for whoever holds the post, once the wait is over;
     // an unused one at home goes over to a new holder.
@@ -228,7 +243,7 @@ void GameServer::use_vehicle(Client& client) {
     double best_distance = enter_reach;
     const Vec3 chest = client.state.position + Vec3{0, 1.0, 0};
     for (Vehicle& v : vehicles_) {
-        if (v.dead_for >= 0) continue;
+        if (v.dead_for >= 0 || (v.owner != 0 && v.owner != client.entity)) continue;
         int seat = -1;
         const bool aboard = v.driver != 0 || std::any_of(v.gunners.begin(), v.gunners.end(),
                                                          [](uint32_t g) { return g != 0; });
@@ -278,6 +293,53 @@ void GameServer::use_vehicle(Client& client) {
     client.state = state;
     client.switching_to = -1;
     say(std::format("{} got into a {}", client.name, classes[size_t(best->cls)].label));
+}
+
+void GameServer::call_vehicle(Client& client, const ItemDef& def) {
+    const auto classes = vehicle_classes();
+    if (conquest_) {
+        return;
+    }
+    // Called already: put away (got out of first).
+    for (auto it = vehicles_.begin(); it != vehicles_.end(); ++it) {
+        if (it->owner != client.entity) continue;
+        if (client.state.vehicle >= 0) leave_vehicle(client);
+        const std::string label = size_t(it->cls) < classes.size() ? classes[size_t(it->cls)].label : "vehicle";
+        vehicles_.erase(it);
+        notify(client.entity, std::format("{} put away", label));
+        return;
+    }
+    const auto cls = std::find_if(classes.begin(), classes.end(),
+                                  [&](const VehicleClass& c) { return c.name == def.vehicle; });
+    if (cls == classes.end()) {
+        notify(client.entity, std::format("{} can't be called here", def.display_name));
+        return;
+    }
+    if (client.state.vehicle >= 0) {
+        return;
+    }
+    // Beside its owner, on their right, facing their way.
+    const VehicleClass& vehicle = *cls;
+    Vehicle v;
+    v.id = next_entity_++;
+    v.cls = int(cls - classes.begin());
+    v.owner = client.entity;
+    v.team = client.team;
+    v.health = vehicle.max_health;
+    Vec3 at = vehicle_to_world(client.state.position, client.state.yaw, {-(vehicle.bounds_max.x + 1.2), 0, 0});
+    if (world_.raycast(client.state.position + Vec3{0, 1, 0}, at + Vec3{0, 1, 0})) {
+        at = vehicle_to_world(client.state.position, client.state.yaw, {-vehicle.bounds_min.x + 1.2, 0, 0});
+    }
+    at = world_.clamp(at);
+    at.y = world_.ground_at(at.x, at.z, client.state.position.y + 1, 2).height +
+           (vehicle.kind == VehicleKind::hover ? vehicle.altitude : 0);
+    v.state.position = at;
+    v.state.yaw = client.state.yaw;
+    v.state.vehicle = int8_t(v.cls);
+    v.state.grounded = true;
+    reset_loadout(v.state, vehicle.loadout, CharacterStats{});
+    vehicles_.push_back(v);
+    notify(client.entity, std::format("{} called", vehicle.label));
 }
 
 // Out of the vehicle it rides in: beside it, on the ground, with its own

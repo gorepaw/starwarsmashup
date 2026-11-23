@@ -84,6 +84,9 @@ struct VehicleClass {
     std::string explosion_effect;
     std::string engine_sound;
     double stride_speed = 0;  // a walker's steps' own pace (m/s), to play them at its speed
+    // Where a rider on an open vehicle (a speeder bike) has their feet,
+    // sitting, in its model's space (RiderSeat; ASSUMPTION for Battlefront's).
+    Vec3 rider_seat{0, -0.5, -0.25};
     // A flyer: its speeds in the air (MinSpeed .. MaxSpeed, BoostSpeed on
     // energy), how fast it pitches (PitchRate, radians a second), and its
     // takeoff and landing: off the ground to TakeoffHeight in TakeoffTime,
@@ -98,6 +101,9 @@ struct VehicleClass {
 };
 
 // Reads a vehicle file. Throws std::runtime_error if it can't be read.
+// Every class file (*.ini) in `dir`, by file name (the world's vehicles:
+// game/vehicles/). Server and clients load the same, so indices agree.
+std::vector<VehicleClass> load_vehicle_classes(const std::filesystem::path& dir);
 VehicleClass load_vehicle_class(const std::filesystem::path& path);
 
 // One tick of a vehicle under its pilot's input: it turns toward the

@@ -475,6 +475,8 @@ func _paint_inventory(box: Rect2) -> void:
 			sub_txt = "Supply | +%d HP" % roundi(float(def.get("heal_amount", 0.0)))
 		elif kind == "quest":
 			sub_txt = "Quest item"
+		elif kind == "vehicle":
+			sub_txt = "Vehicle | Use to call it, again to put it away"
 		else:
 			sub_txt = "%s | Q %d%% %s" % [str(def.get("slot", "")).capitalize(),
 					roundi(float(inst.get("quality", 0.5)) * 100), used_in]
@@ -489,6 +491,8 @@ func _paint_inventory(box: Rect2) -> void:
 		var sel_def: Dictionary = _def_by_id.get(str(sel_inst.get("def_id", "")), {})
 		if str(sel_def.get("kind", "")) == "supply":
 			button(Rect2(x + 142 * u, foot_y, 112 * u, 26 * u), "Use Supply", "use_supply")
+		elif str(sel_def.get("kind", "")) == "vehicle":
+			button(Rect2(x + 142 * u, foot_y, 150 * u, 26 * u), "Call / Put Away", "use_supply")
 	if _filtered.size() > _rows_visible:
 		text("gamefont_tiny", "%d-%d of %d" % [_scroll + 1, mini(_scroll + _rows_visible, _filtered.size()), _filtered.size()],
 				Vector2(box.end.x - 16 * u, foot_y + 6 * u), "Right", DIM)
@@ -574,7 +578,7 @@ func _quick_equip(inst: Dictionary) -> void:
 		return
 	var kind := str(def.get("kind", ""))
 	var slot := str(def.get("slot", ""))
-	if kind == "supply":
+	if kind == "supply" or kind == "vehicle":
 		item_used.emit(int(inst.get("id", 0)))
 		return
 	if kind == "junk" or kind == "quest":

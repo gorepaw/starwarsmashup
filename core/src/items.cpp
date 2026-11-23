@@ -186,6 +186,7 @@ std::optional<ItemKind> item_kind_from_name(std::string_view name) {
     if (name == "junk") return ItemKind::junk;
     if (name == "supply") return ItemKind::supply;
     if (name == "quest") return ItemKind::quest;
+    if (name == "vehicle") return ItemKind::vehicle;
     if (name == "enhancement") return ItemKind::enhancement;
     return std::nullopt;
 }
@@ -199,6 +200,7 @@ std::string_view item_kind_name(ItemKind k) {
     case ItemKind::junk: return "junk";
     case ItemKind::supply: return "supply";
     case ItemKind::quest: return "quest";
+    case ItemKind::vehicle: return "vehicle";
     case ItemKind::enhancement: return "enhancement";
     }
     return "weapon";
@@ -248,6 +250,7 @@ void ItemCatalog::load(const std::filesystem::path& catalog_ini, const std::file
             else if (def.kind == ItemKind::supply) default_slot = "supply";
             else if (def.kind == ItemKind::quest) default_slot = "quest";
             else if (def.kind == ItemKind::enhancement) default_slot = "enhancement";
+            else if (def.kind == ItemKind::vehicle) default_slot = "vehicle";
             def.slot = s.get("Slot").value_or(default_slot);
             def.anim_set.clear();
         }
@@ -261,6 +264,10 @@ void ItemCatalog::load(const std::filesystem::path& catalog_ini, const std::file
             def.sell_value = def.cost_credits > 0 ? std::max<int64_t>(1, def.cost_credits / 4) : 0;
         }
         def.heal_amount = s.number("HealAmount", 0.0);
+        def.vehicle = s.get("Vehicle").value_or("");
+        if (def.kind == ItemKind::vehicle && def.vehicle.empty()) {
+            throw std::runtime_error(where + " (" + def.id + "): a vehicle needs Vehicle = its class");
+        }
         if (def.kind == ItemKind::armor) {
             def.armor_class = s.get("ArmorClass").value_or("medium");  // a soldier's, unless it says
             if (def.armor_class != "light" && def.armor_class != "medium" && def.armor_class != "heavy") {
