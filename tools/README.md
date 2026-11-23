@@ -63,7 +63,7 @@ swgtool export-city <dir> <bake_prefix> --snapshot <path.ws> --center <x> <z> --
 
   Not handled yet: occlusion zones (hiding body triangles under armor), and LOD levels below the most detailed. Blend shapes (`BLTS`/`BLT `) are exported as glTF morph targets (`targetNames` in mesh extras).
 
-- **export-species**: export all 10 playable Galaxies species (male and female) into `<out_dir>/<species>_<gender>/` with their body/face blend shapes, `.colors.json` palettes and texture renderers, up to `--max-hairs` (default 12) hair attachment glTFs under `hairs/`, `<species>_<gender>.species.json` customization metadata from `datatables/customization/customization_data.iff` and `allow_bald.iff`, and Battlefront II's 19 soldier animation clips retargeted onto each species' skeleton (`--bf2-lvl`).
+- **export-species**: export all 10 playable Galaxies species (male and female) into `<out_dir>/<species>_<gender>/` with their body/face blend shapes, `.colors.json` palettes and texture renderers, up to `--max-hairs` (default 12) hair attachment glTFs under `hairs/`, `<species>_<gender>.species.json` customization metadata from `datatables/customization/customization_data.iff` and `allow_bald.iff`, and Battlefront II's 35 soldier animation clips retargeted onto each species' skeleton (`--bf2-lvl`): the rifle's 19 (`human_0`, `human_1`), the pistol's 6 (`human_3`: run, shoot and reload standing, walk, shoot and reload crouched) and the bazooka's 10 (`human_2`).
 
 - **bake-terrain**: evaluate a planet's procedural terrain (`.trn`) over a square region. Heights, ground textures and roads are evaluated; flora, colors, environments and rivers aren't. It writes:
   - `<out_prefix>.r32`: float32 heights, row-major, rows along +Z.

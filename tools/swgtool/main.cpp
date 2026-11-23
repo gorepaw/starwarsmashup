@@ -943,6 +943,24 @@ int cmd_export_species(const std::vector<std::string>& args) {
         "human_rifle_jump",
         "human_rifle_fall",
         "human_rifle_landsoft",
+        // human_3: the pistol's (Battlefront has no idle or run backward for it).
+        "human_pistol_stand_runforward",
+        "human_pistol_stand_shoot",
+        "human_pistol_stand_reload",
+        "human_pistol_crouch_walkforward",
+        "human_pistol_crouch_shoot",
+        "human_pistol_crouch_reload",
+        // human_2: the bazooka's.
+        "human_bazooka_stand_idle_emote",
+        "human_bazooka_stand_runforward",
+        "human_bazooka_stand_runbackward",
+        "human_bazooka_stand_shoot_full",
+        "human_bazooka_stand_reload_full",
+        "human_bazooka_crouch_idle_emote",
+        "human_bazooka_crouch_walkforward",
+        "human_bazooka_crouch_walkbackward",
+        "human_bazooka_crouch_shoot",
+        "human_bazooka_crouch_reload",
     };
     if (!bf2_lvl.empty()) {
         std::ifstream lvl_file(bf2_lvl, std::ios::binary);
@@ -951,7 +969,7 @@ int cmd_export_species(const std::vector<std::string>& args) {
         }
         const std::vector<uint8_t> lvl(std::istreambuf_iterator<char>(lvl_file), {});
         const bf2::UcfbNode root = bf2::parse_ucfb(lvl);
-        for (const char* bank : {"human_0", "human_1"}) {
+        for (const char* bank : {"human_0", "human_1", "human_2", "human_3"}) {
             const bf2::UcfbNode* zaf = bf2::find_named_chunk(root, "zaf_", bank);
             const bf2::UcfbNode* zaa = bf2::find_named_chunk(root, "zaa_", bank);
             if (!bf2_skeleton && zaf && zaf->child("BIN_")) {

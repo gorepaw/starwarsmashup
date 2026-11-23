@@ -32,6 +32,31 @@ const CROUCH_BACK := &"human_rifle_crouch_walkbackward"
 const CROUCH_SHOOT := &"human_rifle_crouch_shoot_full"
 const CROUCH_RELOAD := &"human_rifle_crouch_reload_full"
 const ROLL := &"human_rifle_diveforward"  # Battlefront's roll (human_1)
+# Battlefront's other animation sets, by the rifle clip each stands in for
+# (human_3's pistol, human_2's bazooka); a clip a set doesn't have (the
+# pistol's idle, its run backward) is the rifle's, as Battlefront falls back.
+const ANIM_SETS := {
+	"pistol": {
+		RUN: &"human_pistol_stand_runforward",
+		SHOOT: &"human_pistol_stand_shoot",
+		RELOAD: &"human_pistol_stand_reload",
+		CROUCH_WALK: &"human_pistol_crouch_walkforward",
+		CROUCH_SHOOT: &"human_pistol_crouch_shoot",
+		CROUCH_RELOAD: &"human_pistol_crouch_reload",
+	},
+	"bazooka": {
+		IDLE: &"human_bazooka_stand_idle_emote",
+		RUN: &"human_bazooka_stand_runforward",
+		RUN_BACK: &"human_bazooka_stand_runbackward",
+		SHOOT: &"human_bazooka_stand_shoot_full",
+		RELOAD: &"human_bazooka_stand_reload_full",
+		CROUCH_IDLE: &"human_bazooka_crouch_idle_emote",
+		CROUCH_WALK: &"human_bazooka_crouch_walkforward",
+		CROUCH_BACK: &"human_bazooka_crouch_walkbackward",
+		CROUCH_SHOOT: &"human_bazooka_crouch_shoot",
+		CROUCH_RELOAD: &"human_bazooka_crouch_reload",
+	},
+}
 const CROUCH_WALK_SPEED := 3.5  # m/s the crouch walk plays at its own pace (ASSUMPTION, by eye)
 const CROUCH_BLEND := 6.0       # per second, getting down or up
 const ROLL_TIME := 0.75         # s a roll lasts (core MoveParams::roll_time)
@@ -83,6 +108,8 @@ var _head := -1
 var _tree: AnimationTree
 var _aimer: Aimer
 var _muzzle: Node3D
+var _clip_nodes: Array[Dictionary] = []  # {node, role (the rifle clip), fallback}: what set_anim_set changes
+var _anim_set := "rifle"
 var _aim := 0.0             # 0 relaxed .. 1 rifle raised
 var _since_shot := 1e9
 var _reloading := false
@@ -305,7 +332,27 @@ func _build_tree(upper: Array[NodePath]) -> AnimationNodeBlendTree:
 func _clip(animation: StringName, fallback: StringName = IDLE) -> AnimationNodeAnimation:
 	var node := AnimationNodeAnimation.new()
 	node.animation = animation if _player.has_animation(animation) else fallback
+	_clip_nodes.append({"node": node, "role": animation, "fallback": fallback})
 	return node
+
+
+# Holds its weapon as Battlefront's animation set for its kind says
+# ("rifle", "pistol", "bazooka"; a WeaponDef's anim_set): its clips where the
+# export has them, the rifle's otherwise. A pistol is held raised (its set
+# has no idle of its own).
+func set_anim_set(anim_set: String) -> void:
+	if anim_set == _anim_set or _tree == null:
+		return
+	_anim_set = anim_set
+	var clips: Dictionary = ANIM_SETS.get(anim_set, {})
+	for entry: Dictionary in _clip_nodes:
+		var role: StringName = entry["role"]
+		var wanted: StringName = clips.get(role, role)
+		if not _player.has_animation(wanted):
+			wanted = role if _player.has_animation(role) else entry["fallback"]
+		(entry["node"] as AnimationNodeAnimation).animation = wanted
+		if role in [IDLE, RUN, RUN_BACK, CROUCH_IDLE, CROUCH_WALK, CROUCH_BACK] and _player.has_animation(wanted):
+			_player.get_animation(wanted).loop_mode = Animation.LOOP_LINEAR
 
 
 static func _filter(node: AnimationNode, paths: Array[NodePath]) -> void:
@@ -390,7 +437,7 @@ func pose(state: Dictionary, delta: float) -> void:
 	if first_person:
 		_tree.set("parameters/shoot_seek/seek_request", 0.0)  # the raised pose, without the recoil clip
 		_first_person_motion(state, speed, delta)
-	var target := 1.0 if _since_shot < AIM_HOLD or first_person else 0.0
+	var target := 1.0 if _since_shot < AIM_HOLD or first_person or _anim_set == "pistol" else 0.0
 	_aim = move_toward(_aim, target, AIM_BLEND * delta)
 	_tree.set("parameters/aim/blend_amount", _aim)
 

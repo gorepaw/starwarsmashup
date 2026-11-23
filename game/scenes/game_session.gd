@@ -782,6 +782,7 @@ func _load_person(look: int) -> Node3D:
 func _pose(character: Dictionary, state: Dictionary) -> void:
 	var soldier := character["soldier"] as Soldier
 	soldier.set_weapon(str(state.get("weapon_model", "")))  # its own weapon's model
+	soldier.set_anim_set(str(state.get("anim_set", "rifle")))  # held as its kind is
 	soldier.pose(state, _delta)
 
 
