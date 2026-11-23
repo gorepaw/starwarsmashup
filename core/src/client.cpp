@@ -149,7 +149,8 @@ void GameClient::set_input(const Controls& c) {
     next_input_.buttons = uint8_t((c.sprint ? MoveInput::sprint : 0) | (c.jump ? MoveInput::jump : 0) |
                                   (c.fire ? MoveInput::fire : 0) | (c.reload ? MoveInput::reload : 0) |
                                   (c.secondary ? MoveInput::secondary : 0) |
-                                  (c.crouch ? MoveInput::crouch : 0) | (c.use ? MoveInput::use : 0));
+                                  (c.crouch ? MoveInput::crouch : 0) | (c.use ? MoveInput::use : 0) |
+                                  (c.block ? MoveInput::block : 0));
     next_input_.weapon = uint8_t(std::clamp(c.weapon, 0, hand_slots - 1));
 }
 
@@ -281,6 +282,15 @@ void GameClient::handle(const net::Datagram& datagram, double now) {
                 }
             }
             link_.send(config_.server, net::encode(net::InventoryAck{sync->revision}));
+        }
+        return;
+    }
+    if (const auto* sync = std::get_if<net::ProfessionSync>(&message)) {
+        if (status_ == Status::connected) {
+            if (sync->revision >= professions_.revision) {
+                professions_ = *sync;
+            }
+            link_.send(config_.server, net::encode(net::ProfessionAck{sync->revision}));
         }
         return;
     }

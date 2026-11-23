@@ -7,11 +7,12 @@
 #include <stdexcept>
 
 #include "swm/core/ini.h"
+#include "swm/core/profession.h"
 
 namespace swm::core {
 namespace {
 
-const std::array<WeaponArchetypeInfo, 7> archetype_table{{
+const std::array<WeaponArchetypeInfo, 8> archetype_table{{
     {WeaponArchetype::rifle_auto, "rifle_auto", "imp_weap_inf_rifle", "rifle", "primary"},
     {WeaponArchetype::carbine_burst, "carbine_burst", "all_weap_inf_rifle", "rifle", "primary"},
     {WeaponArchetype::sniper, "sniper", "imp_weap_inf_sniper_rifle", "rifle", "primary"},
@@ -19,6 +20,7 @@ const std::array<WeaponArchetypeInfo, 7> archetype_table{{
     {WeaponArchetype::pistol, "pistol", "imp_weap_inf_pistol", "pistol", "sidearm"},
     {WeaponArchetype::heavy_launcher, "heavy_launcher", "imp_weap_inf_rocket_launcher", "bazooka", "primary"},
     {WeaponArchetype::grenade, "grenade", "imp_weap_inf_thermaldetonator", "grenade", "secondary"},
+    {WeaponArchetype::melee, "melee", "", "melee", "primary"},
 }};
 
 WeaponDef default_archetype_weapon(WeaponArchetype a) {
@@ -119,6 +121,23 @@ WeaponDef default_archetype_weapon(WeaponArchetype a) {
         w.explosion_push = 10.0;
         w.push_inner = 2.5;
         w.push_outer = 6.5;
+        break;
+    case WeaponArchetype::melee:
+        w.name = "swg_melee";
+        w.projectile = Projectile::melee;
+        w.damage_type = DamageType::melee;
+        w.anim_set = "melee";
+        w.shot_delay = 0.55;
+        w.rounds_per_clip = 0;
+        w.damage = 115;
+        w.melee_range = 2.6;
+        w.melee_arc = 70.0;
+        w.melee_lunge = 5.0;
+        w.melee_stagger = 0.35;
+        w.shield_disrupt = 2.5;
+        w.fire_sound = "com_weap_throw";
+        w.impact_effect = "com_sfx_ord_exp";
+        w.muzzle_flash.clear();
         break;
     }
     return w;
@@ -239,6 +258,12 @@ void ItemCatalog::load(const std::filesystem::path& catalog_ini, const std::file
             def.sell_value = def.cost_credits > 0 ? std::max<int64_t>(1, def.cost_credits / 4) : 0;
         }
         def.heal_amount = s.number("HealAmount", 0.0);
+        if (def.kind == ItemKind::armor) {
+            def.armor_class = s.get("ArmorClass").value_or("medium");  // a soldier's, unless it says
+            if (def.armor_class != "light" && def.armor_class != "medium" && def.armor_class != "heavy") {
+                throw std::runtime_error(where + " (" + def.id + "): ArmorClass is light, medium or heavy");
+            }
+        }
         def.model_path = s.get("Model").value_or("");
         def.damage_mult = s.number("DamageMult", 1.0);
         def.rate_mult = s.number("RateMult", 1.0);
@@ -247,6 +272,11 @@ void ItemCatalog::load(const std::filesystem::path& catalog_ini, const std::file
         def.range_mult = s.number("RangeMult", 1.0);
         def.clip_mult = s.number("ClipMult", 1.0);
         def.reload_mult = s.number("ReloadMult", 1.0);
+        def.melee_range = s.number("MeleeRange", 0.0);
+        def.melee_arc = s.number("MeleeArc", 0.0);
+        def.melee_lunge = s.number("MeleeLunge", 0.0);
+        def.melee_stagger = s.number("MeleeStagger", 0.0);
+        def.shield_disrupt = s.number("ShieldDisrupt", 0.0);
         if (const auto dt = s.get("DamageType")) {
             def.damage_type = damage_type_from_name(*dt);
         }
@@ -283,6 +313,7 @@ WeaponDef ItemCatalog::resolve_weapon(const ItemDef& def, double quality, bool a
     w.name = def.id;
     w.model = def.model_path;
     w.anim_set = def.anim_set;
+    w.archetype = weapon_archetype_info(def.archetype).id;
 
     // Quality scales combat power within a narrow ±8% band in Gear queue;
     // Standard queue flattens quality to 0.5 (multiplier 1.0).
@@ -305,6 +336,14 @@ WeaponDef ItemCatalog::resolve_weapon(const ItemDef& def, double quality, bool a
         w.rounds_per_clip = std::max(1, int(std::lround(w.rounds_per_clip * def.clip_mult)));
     }
     w.reload_time *= def.reload_mult;
+    if (def.melee_range > 0.0) w.melee_range = def.melee_range;
+    if (def.melee_arc > 0.0) w.melee_arc = def.melee_arc;
+    if (def.melee_lunge > 0.0) w.melee_lunge = def.melee_lunge;
+    if (def.melee_stagger > 0.0) w.melee_stagger = def.melee_stagger;
+    if (def.shield_disrupt > 0.0) w.shield_disrupt = def.shield_disrupt;
+    if (w.projectile == Projectile::melee) {
+        w.melee_range *= def.range_mult;
+    }
     if (def.damage_type) {
         w.damage_type = *def.damage_type;
     }
@@ -363,6 +402,7 @@ Loadout ItemCatalog::build_loadout(const CharacterLoadout& cl, std::span<const I
         }
     }
 
+    std::vector<std::string> armor_classes;
     for (const auto& [slot, item_id] : cl.gear_ids) {
         if (!species_can_wear_slot(species, slot)) {
             continue;
@@ -372,9 +412,13 @@ Loadout ItemCatalog::build_loadout(const CharacterLoadout& cl, std::span<const I
                 if (def->kind == ItemKind::armor || def->kind == ItemKind::deflector_shield) {
                     out.gear.push_back(resolve_gear(*def, inst->quality, apply_quality));
                 }
+                if (def->kind == ItemKind::armor) {
+                    armor_classes.push_back(def->armor_class);
+                }
             }
         }
     }
+    out.armor_class = loadout_armor_class(armor_classes);
 
     if (!out.weapons[primary_slot] && !out.weapons[sidearm_slot]) {
         out.weapons[primary_slot] = WeaponDef{};

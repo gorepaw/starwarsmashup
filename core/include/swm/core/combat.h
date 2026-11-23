@@ -99,4 +99,17 @@ double explosion_push(const WeaponDef& weapon, Vec3 center, Vec3 feet);
 
 double explosion_damage(const WeaponDef& weapon, Vec3 center, Vec3 feet);
 
+// Deflector Shield (PSG) damage resolution: absorbs mitigated damage before
+// health, with electro overload (1.75x drain + 3s lockout on break) and melee
+// pierce/disruption (50% bypass + recharge disruption).
+struct ShieldHitResult {
+    double shield_damage = 0;
+    double health_damage = 0;
+    double disrupt_seconds = 0;
+    bool overloaded = false;
+};
+
+ShieldHitResult apply_shield_damage(double& shield, double mitigated_amount, DamageType type,
+                                    double extra_shield_disrupt = 0.0);
+
 } // namespace swm::core

@@ -13,6 +13,7 @@ const LootScreen = preload("res://ui/loot_screen.gd")
 const VendorScreen = preload("res://ui/vendor_screen.gd")
 const HubHud = preload("res://ui/hub_hud.gd")
 const QuestScreen = preload("res://ui/quest_screen.gd")
+const ProfessionScreen = preload("res://ui/profession_screen.gd")
 
 const TALK_REACH := 4.5     # meters from a quest NPC to talk to them (the server allows 6)
 const OFFER_REACH := 8.0    # an offer closes when you walk further than this from it
@@ -39,6 +40,8 @@ var _inv_screen: InventoryScreen
 var _loot_screen: LootScreen
 var _vendor_screen: VendorScreen
 var _quest_screen: QuestScreen
+var _profession_screen: ProfessionScreen
+var _shown_loadouts: Array = []    # the loadouts the profession screen was last given
 var _settings: Settings
 var _world_root: Node3D
 var _recruiter_nodes: Array = []
@@ -117,6 +120,12 @@ func setup(layer: CanvasLayer, world_root: Node3D, art: RefCounted, settings: Se
 	_quest_screen.closed.connect(close_all_screens)
 	layer.add_child(_quest_screen)
 
+	_profession_screen = ProfessionScreen.new(art)
+	_profession_screen.visible = false
+	_profession_screen.loadout_saved.connect(func(slot: int, lo: Dictionary) -> void: loadout_saved.emit(slot, lo))
+	_profession_screen.closed.connect(close_all_screens)
+	layer.add_child(_profession_screen)
+
 
 func set_catalog(catalog: Array, store: Object, species: String, gender: String, appearance: String) -> void:
 	_catalog = catalog
@@ -140,6 +149,15 @@ func set_catalog(catalog: Array, store: Object, species: String, gender: String,
 		_quest_screen.catalog = catalog
 
 
+# The profession roster (SwmCharacterStore.get_professions()) and the store
+# that knows its level curve.
+func set_professions(professions: Array, store: Object) -> void:
+	if _profession_screen != null:
+		_profession_screen.professions = professions
+		_profession_screen.store = store
+		_profession_screen.slots = int(store.get_specialization_slots())
+
+
 func has_ui() -> bool:
 	return _terminal_screen != null
 
@@ -154,7 +172,8 @@ func is_any_screen_open() -> bool:
 			or (_inv_screen != null and _inv_screen.visible) \
 			or (_loot_screen != null and _loot_screen.visible) \
 			or (_vendor_screen != null and _vendor_screen.visible) \
-			or (_quest_screen != null and _quest_screen.visible)
+			or (_quest_screen != null and _quest_screen.visible) \
+			or (_profession_screen != null and _profession_screen.visible)
 
 
 func try_open_terminal(client: Object) -> bool:
@@ -219,6 +238,20 @@ func toggle_quest_log(client: Object) -> bool:
 	return true
 
 
+# Opens or closes the profession planner; true if it's open now.
+func toggle_professions(client: Object) -> bool:
+	if _profession_screen == null or client == null or not client.is_spawned():
+		return false
+	if _profession_screen.visible:
+		close_all_screens()
+		return false
+	close_all_screens()
+	_shown_loadouts = []
+	_sync_screen_data(client)
+	_profession_screen.open_screen()
+	return true
+
+
 func toggle_inventory(client: Object) -> bool:
 	if _inv_screen == null or client == null or not client.is_spawned():
 		return false
@@ -249,6 +282,8 @@ func close_all_screens() -> void:
 		_vendor_screen.visible = false
 	if _quest_screen != null:
 		_quest_screen.visible = false
+	if _profession_screen != null:
+		_profession_screen.visible = false
 	_offer_serial = -1
 	if was_open:
 		terminal_closed.emit()
@@ -667,6 +702,18 @@ func _sync_screen_data(client: Object) -> void:
 		_vendor_screen.active_loadout = cur_lo
 		if _vendor_screen.visible:
 			_vendor_screen.queue_redraw()
+	if _profession_screen != null:
+		var progress := {}
+		for p: Dictionary in client.get_professions():
+			progress[str(p["id"])] = int(p["xp"])
+		_profession_screen.progress = progress
+		_profession_screen.active_loadout = active
+		# What the server last said; the screen keeps its own change until the answer.
+		if los != _shown_loadouts:
+			_shown_loadouts = los
+			_profession_screen.loadouts = los.duplicate(true)
+		if _profession_screen.visible:
+			_profession_screen.queue_redraw()
 
 
 func _update_targets(client: Object, delta: float) -> void:

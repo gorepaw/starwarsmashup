@@ -57,6 +57,7 @@ const TABLE_INPUT := "cce718ed"
 const TABLE_OUTPUT := "6903ed32"
 
 var bindings := {}        # event -> bool, float, String, Color, Array
+var shield_fraction := -1.0  # 0..1 when wearing a Deflector Shield (PSG), < 0 when none
 var minimap := {}         # {texture, left_x, top_z, right_x, bottom_z} (game space), or empty
 var map_range := MAP_RANGE  # meters to the small map's edge (a hub's open world shows further)
 var map_markers: Array = []  # [{position: Vector2 (game x, z), color, kind: "post" | "soldier" | "droid", label, icon}]
@@ -131,6 +132,19 @@ func _draw() -> void:
 	for entry: Dictionary in _draws:
 		(entry["call"] as Callable).call()
 	draw_set_transform_matrix(Transform2D())
+	if shield_fraction >= 0.0:
+		_draw_shield_bar(screen)
+
+
+func _draw_shield_bar(screen: Vector2) -> void:
+	var h := screen.y
+	var bar := Rect2(Vector2(screen.x * 0.042, h * 0.775), Vector2(h * 0.17, h * 0.014))
+	draw_rect(bar, Color(0.05, 0.09, 0.14, 0.78))
+	var frac := clampf(shield_fraction, 0.0, 1.0)
+	if frac > 0.0:
+		var fill := Rect2(bar.position + Vector2(1, 1), Vector2((bar.size.x - 2) * frac, bar.size.y - 2))
+		draw_rect(fill, Color(0.28, 0.85, 1.0, 0.92))
+	draw_rect(bar, Color(0.65, 0.9, 1.0, 0.65), false, 1.0)
 
 
 # --- the tree ---------------------------------------------------------------

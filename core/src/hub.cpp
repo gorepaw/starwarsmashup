@@ -665,6 +665,7 @@ void Hub::start_battle(QueueMode mode) {
     ServerConfig config;
     config.battlefield = b->field.field;
     config.single_match = true;
+    config.professions = server_.profession_book();
     b->server = std::make_unique<GameServer>(*b->link, world, config);
     b->server->log = [this, id = b->id](const std::string& line) { say(std::format("battle {}: {}", id, line)); };
     b->server->on_join = [b](uint32_t entity, const std::string& name) {
@@ -704,6 +705,7 @@ void Hub::start_battle(QueueMode mode) {
             const BattleReward reward = compute_battle_reward(
                 result.winner == player.team, result.winner < 0, player.kills, player.captures, b->mode);
             server_.award_battle_rewards(player.name, reward);
+            server_.award_profession_xp(player.name, player.profession_xp, reward.xp);
             const auto count = [](int n, const char* one, const char* many) {
                 return std::format("{} {}", n, n == 1 ? one : many);
             };

@@ -32,6 +32,8 @@ enum class Type : uint8_t {
     quest_sync,
     quest_ack,
     quest_request,
+    profession_sync,
+    profession_ack,
 };
 
 void put_vec3(ByteWriter& out, Vec3 v) {
@@ -115,9 +117,11 @@ void put_state(ByteWriter& out, const MoveState& state) {
     out.put(uint8_t(state.grounded));
     out.put(state.energy);
     out.put(uint8_t(state.sprinting));
-    out.put(uint8_t(uint8_t(state.crouched) | uint8_t(state.crouch_held) << 1));
+    out.put(uint8_t(uint8_t(state.crouched) | (uint8_t(state.crouch_held) << 1) | (uint8_t(state.blocking) << 2)));
     out.put(state.roll);
     out.put(state.roll_yaw);
+    out.put(state.parry_window);
+    out.put(state.stagger);
     out.put(state.vehicle);
     const CombatState& c = state.combat;
     out.put(c.weapon);
@@ -144,8 +148,11 @@ MoveState get_state(ByteReader& in) {
     const uint8_t posture = in.get<uint8_t>();
     state.crouched = (posture & 1) != 0;
     state.crouch_held = (posture & 2) != 0;
+    state.blocking = (posture & 4) != 0;
     state.roll = in.get<float>();
     state.roll_yaw = in.get<float>();
+    state.parry_window = in.get<float>();
+    state.stagger = in.get<float>();
     state.vehicle = in.get<int8_t>();
     CombatState& c = state.combat;
     c.weapon = in.get<uint8_t>();
@@ -291,7 +298,7 @@ std::vector<StatModifier> get_modifiers(ByteReader& in) {
     mods.reserve(n);
     for (size_t i = 0; i < n; ++i) {
         const uint8_t s = in.get<uint8_t>();
-        if (s > uint8_t(Stat::mitigation_melee)) {
+        if (s > uint8_t(Stat::explosion_push_resist)) {
             throw PacketError("bad stat");
         }
         StatModifier m;
@@ -307,6 +314,7 @@ void put_weapon_def(ByteWriter& out, const WeaponDef& w) {
     out.put_string(w.name);
     out.put_string(w.model);
     out.put_string(w.anim_set);
+    out.put_string(w.archetype);
     out.put(uint8_t(w.damage_type));
     out.put(uint8_t(w.projectile));
     out.put(int16_t(w.ammo));
@@ -345,6 +353,11 @@ void put_weapon_def(ByteWriter& out, const WeaponDef& w) {
     out.put(float(w.explosion_push));
     out.put(float(w.push_inner));
     out.put(float(w.push_outer));
+    out.put(float(w.melee_range));
+    out.put(float(w.melee_arc));
+    out.put(float(w.melee_lunge));
+    out.put(float(w.melee_stagger));
+    out.put(float(w.shield_disrupt));
     for (double c : w.bolt_color) out.put(float(c));
     out.put(float(w.bolt_length));
     out.put(float(w.bolt_width));
@@ -380,11 +393,12 @@ WeaponDef get_weapon_def(ByteReader& in) {
     w.name = in.get_string();
     w.model = in.get_string();
     w.anim_set = in.get_string();
+    w.archetype = in.get_string();
     const uint8_t dt = in.get<uint8_t>();
     if (dt >= damage_type_count) throw PacketError("bad damage type");
     w.damage_type = DamageType(dt);
     const uint8_t proj = in.get<uint8_t>();
-    if (proj > uint8_t(Projectile::grenade)) throw PacketError("bad projectile");
+    if (proj > uint8_t(Projectile::melee)) throw PacketError("bad projectile");
     w.projectile = Projectile(proj);
     w.ammo = in.get<int16_t>();
     w.shot_delay = in.get<float>();
@@ -422,6 +436,11 @@ WeaponDef get_weapon_def(ByteReader& in) {
     w.explosion_push = in.get<float>();
     w.push_inner = in.get<float>();
     w.push_outer = in.get<float>();
+    w.melee_range = in.get<float>();
+    w.melee_arc = in.get<float>();
+    w.melee_lunge = in.get<float>();
+    w.melee_stagger = in.get<float>();
+    w.shield_disrupt = in.get<float>();
     for (double& c : w.bolt_color) c = in.get<float>();
     w.bolt_length = in.get<float>();
     w.bolt_width = in.get<float>();
@@ -469,6 +488,11 @@ void put_char_loadout(ByteWriter& out, const CharacterLoadout& lo) {
         out.put_string(k);
         out.put(v);
     }
+    out.put(uint8_t(std::min<size_t>(lo.specializations.size(), 8)));
+    for (size_t i = 0; i < lo.specializations.size() && i < 8; ++i) {
+        out.put_string(lo.specializations[i]);
+    }
+    out.put_string(lo.companion);
 }
 
 CharacterLoadout get_char_loadout(ByteReader& in) {
@@ -491,6 +515,12 @@ CharacterLoadout get_char_loadout(ByteReader& in) {
         const std::string k = in.get_string();
         lo.appearance_ids[k] = in.get<uint64_t>();
     }
+    const size_t sn = in.get<uint8_t>();
+    if (sn > 8) throw PacketError("too many specializations");
+    for (size_t i = 0; i < sn; ++i) {
+        lo.specializations.push_back(in.get_string());
+    }
+    lo.companion = in.get_string();
     return lo;
 }
 
@@ -575,6 +605,8 @@ struct Encoder {
             put_state(out, entity.state);
             out.put(entity.health);
             out.put(entity.max_health);
+            out.put(entity.shield);
+            out.put(entity.max_shield);
             out.put(uint8_t(entity.life));
             out.put(entity.spawn_count);
             out.put(entity.team);
@@ -742,6 +774,7 @@ struct Encoder {
                 out.put_string(lo.gear[gi].slot);
                 put_modifiers(out, lo.gear[gi].modifiers);
             }
+            out.put_string(lo.armor_class);
         }
     }
     void operator()(const InventoryAck& m) {
@@ -806,6 +839,19 @@ struct Encoder {
         out.put(uint8_t(m.action));
         out.put(m.target);
         out.put_string(m.quest_id);
+    }
+    void operator()(const ProfessionSync& m) {
+        out.put(uint8_t(Type::profession_sync));
+        out.put(m.revision);
+        out.put(uint8_t(std::min<size_t>(m.professions.size(), 255)));
+        for (size_t i = 0; i < m.professions.size() && i < 255; ++i) {
+            out.put_string(m.professions[i].id);
+            out.put(m.professions[i].xp);
+        }
+    }
+    void operator()(const ProfessionAck& m) {
+        out.put(uint8_t(Type::profession_ack));
+        out.put(m.revision);
     }
 };
 
@@ -921,6 +967,8 @@ Message decode(std::span<const uint8_t> packet) {
             entity.state = get_state(in);
             entity.health = in.get<float>();
             entity.max_health = in.get<float>();
+            entity.shield = in.get<float>();
+            entity.max_shield = in.get<float>();
             const uint8_t life = in.get<uint8_t>();
             if (life > uint8_t(Life::dead)) {
                 throw PacketError("bad life state");
@@ -958,7 +1006,7 @@ Message decode(std::span<const uint8_t> packet) {
             bolt.owner = in.get<uint32_t>();
             bolt.weapon = in.get<uint8_t>();
             const uint8_t kind = in.get<uint8_t>();
-            if (kind > uint8_t(Projectile::grenade)) {
+            if (kind > uint8_t(Projectile::melee)) {
                 throw PacketError("bad projectile");
             }
             bolt.kind = Projectile(kind);
@@ -1155,6 +1203,7 @@ Message decode(std::span<const uint8_t> packet) {
                 g.modifiers = get_modifiers(in);
                 lo.gear.push_back(std::move(g));
             }
+            lo.armor_class = in.get_string();
             m.resolved_loadouts.push_back(std::move(lo));
         }
         message = std::move(m);
@@ -1234,6 +1283,22 @@ Message decode(std::span<const uint8_t> packet) {
         message = std::move(m);
         break;
     }
+    case Type::profession_sync: {
+        ProfessionSync m;
+        m.revision = in.get<uint32_t>();
+        const size_t count = in.get<uint8_t>();
+        for (size_t i = 0; i < count; ++i) {
+            ProfessionProgress p;
+            p.id = in.get_string();
+            p.xp = in.get<int64_t>();
+            m.professions.push_back(std::move(p));
+        }
+        message = std::move(m);
+        break;
+    }
+    case Type::profession_ack:
+        message = ProfessionAck{in.get<uint32_t>()};
+        break;
     default:
         throw PacketError("unknown message type");
     }

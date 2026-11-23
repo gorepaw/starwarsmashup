@@ -359,13 +359,13 @@ Streamlined 1–100 Galaxies professions that widen your tactical options, gear,
 ### Tasks
 
 **Core profession framework**
-- [ ] Data-driven profession definitions, 1–100 milestone tables, and XP routing in `core/` (no 30 fragmented XP pools).
-- [ ] Uncapped profession XP/level persistence in `core::CharacterStore`, plus Active Specialization Slots and 1 Companion Slot per loadout.
-- [ ] In-game profession & loadout planner showing exact milestone unlocks, stat weights, and active slot usage.
+- [x] Data-driven profession definitions, 1–100 milestone tables, and XP routing in `core/` (`core/profession.h`, `core/src/profession.cpp`, `core/src/server_professions.cpp`, `game/professions/professions.ini` with all 31 professions and 1/25/50/75/100 milestones).
+- [x] Uncapped profession XP/level persistence in `core::CharacterStore` (`sqlite_store.cpp` `professions` table and `specializations` / `companion` loadout columns), plus Active Specialization Slots (`specialization_slots = 3`) and 1 Companion Slot per loadout.
+- [x] In-game profession & loadout planner (`game/ui/profession_screen.gd`, `K` keybind) showing exact milestone unlocks, stat weights, and active slot usage.
 
 **Wave 7A: Foundation (17 professions)**
-- [ ] 4 decoupled armor professions (Unarmored, Light/Recon, Medium/Battle, Heavy/Assault) plus universal Deflector Shield (PSG) mechanics (`electro` overload, `melee` pierce/disrupt).
-- [ ] 5 weapon professions: Pistols, Carbines, Rifles, Heavy Weapons, and consolidated Melee.
+- [x] 4 decoupled armor professions (Unarmored, Light/Recon, Medium/Battle, Heavy/Assault with `explosion_push_resist`) plus universal Deflector Shield (PSG) mechanics (recharging buffer, `electro` 1.75× overload + lockout, `melee` 50% pierce + recharge disruption, HUD shield bar).
+- [x] 5 weapon professions: Pistols, Carbines, Rifles, Heavy Weapons, and consolidated Melee (`WeaponArchetype::melee`, lunge, arc sweep, block & timed parry, stagger, and 4 SWG melee weapons).
 - [ ] 3 gathering professions: Surveying & Mining, Foraging & Harvesting, and Salvaging.
 - [ ] 5 core crafting professions: Weaponsmith, Armorsmith, Tailor, Chef, and Architect (field camps/cover/furniture; housing in Stage 10+).
 

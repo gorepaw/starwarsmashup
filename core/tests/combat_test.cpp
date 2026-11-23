@@ -644,6 +644,156 @@ void test_armor_in_combat() {
     CHECK(killed && hits == 14);
 }
 
+void test_deflector_shield() {
+    // 1. Unit tests for apply_shield_damage: standard, electro overload, melee pierce.
+    {
+        double shield = 100.0;
+        const auto h1 = apply_shield_damage(shield, 60.0, DamageType::laser);
+        CHECK(near(shield, 40.0) && near(h1.shield_damage, 60.0) && near(h1.health_damage, 0.0) && !h1.overloaded);
+        const auto h2 = apply_shield_damage(shield, 70.0, DamageType::ballistic);
+        CHECK(near(shield, 0.0) && near(h2.shield_damage, 40.0) && near(h2.health_damage, 30.0));
+    }
+    {
+        double shield = 100.0;
+        const auto e1 = apply_shield_damage(shield, 40.0, DamageType::electro);
+        CHECK(near(shield, 30.0) && near(e1.shield_damage, 70.0) && near(e1.health_damage, 0.0) && !e1.overloaded);
+        const auto e2 = apply_shield_damage(shield, 40.0, DamageType::electro);
+        CHECK(near(shield, 0.0) && e2.overloaded && near(e2.disrupt_seconds, 3.0) && e2.health_damage > 0.0);
+    }
+    {
+        double shield = 100.0;
+        const auto m1 = apply_shield_damage(shield, 80.0, DamageType::melee);
+        CHECK(near(shield, 60.0) && near(m1.shield_damage, 40.0) && near(m1.health_damage, 40.0) &&
+              near(m1.disrupt_seconds, 2.5));
+    }
+
+    // 2. Server shield recharge after delay.
+    {
+        Loadout shielded;
+        shielded.gear.push_back({"psg", "deflector_shield", {{Stat::shield_capacity, 100}, {Stat::shield_recharge, 40}, {Stat::shield_delay, -4.0}}});
+        Arena arena(0, 0.5, {}, shielded);
+        arena.run(0.5, [] {});
+        CHECK(near(arena.b.self().shield, 100.0) && near(arena.b.self().max_shield, 100.0));
+        arena.run(1.0 / 30, [&] { arena.a.set_input(arena.a_aims_at_b(true)); });
+        arena.run(0.3, [&] { arena.a.set_input(arena.a_aims_at_b(false)); });
+        CHECK(arena.b.self().shield < 100.0 && near(arena.b.self().health, 400.0));
+        const double after_hit = arena.b.self().shield;
+        arena.run(0.4, [] {});
+        CHECK(near(arena.b.self().shield, after_hit));  // still within 1.0s recharge delay
+        arena.run(1.2, [] {});
+        CHECK(arena.b.self().shield > after_hit + 10.0);
+    }
+
+    // 3. Heavy armor explosion_push_resist reduces blast knockback.
+    {
+        Loadout braced = thermal_thrower(1);
+        braced.gear.push_back({"heavy", "chest", {{Stat::explosion_push_resist, 0.8}}});
+        Arena arena(0, 0.5, {}, braced);
+        arena.run(0.5, [] {});
+        const double pitch = *ballistic_pitch(25, 1.25 * 9.8, 11.0, -eye_height) - 0.21;
+        bool thrown = false;
+        double fastest = 0;
+        arena.run(3.0, [&] {
+            GameClient::Controls controls;
+            controls.yaw = -std::numbers::pi / 2;
+            controls.pitch = pitch;
+            controls.secondary = !thrown;
+            thrown = true;
+            arena.a.set_input(controls);
+            arena.b.set_input({});
+            fastest = std::max(fastest, arena.b.predicted().velocity.length());
+        });
+        CHECK(fastest < 2.5);
+    }
+}
+
+void test_melee_combat() {
+    WeaponDef blade;
+    blade.name = "vibroblade";
+    blade.projectile = Projectile::melee;
+    blade.damage_type = DamageType::melee;
+    blade.damage = 100;
+    blade.shot_delay = 0.5;
+    blade.rounds_per_clip = 0;
+    blade.melee_range = 2.6;
+    blade.melee_arc = 70.0;
+    blade.melee_lunge = 5.0;
+    blade.melee_stagger = 0.35;
+    blade.shield_disrupt = 2.5;
+    Loadout melee_lo;
+    melee_lo.weapons = {blade, std::nullopt, std::nullopt};
+    Arena arena(0, 0.5, {}, melee_lo);
+    arena.run(0.3, [] {});
+    const uint32_t b_id = arena.b.entity_id();
+
+    // Walk A into melee range (within 2 m of B).
+    arena.run(1.8, [&] {
+        const Vec3 delta = arena.b.predicted().position - arena.a.predicted().position;
+        const double dist = std::hypot(delta.x, delta.z);
+        GameClient::Controls c;
+        c.yaw = std::atan2(-delta.x, -delta.z);
+        c.forward = dist > 1.7 ? 1.0 : 0.0;
+        arena.a.set_input(c);
+        arena.b.set_input({.yaw = std::atan2(delta.x, delta.z)});
+    });
+
+    // Unblocked swing hits and staggers B.
+    arena.run(0.08, [&] {
+        const Vec3 delta = arena.b.predicted().position - arena.a.predicted().position;
+        arena.a.set_input({.yaw = std::atan2(-delta.x, -delta.z), .fire = true});
+        arena.b.set_input({.yaw = std::atan2(delta.x, delta.z)});
+    });
+    arena.run(0.2, [&] {
+        const Vec3 delta = arena.b.predicted().position - arena.a.predicted().position;
+        arena.a.set_input({.yaw = std::atan2(-delta.x, -delta.z)});
+        arena.b.set_input({.yaw = std::atan2(delta.x, delta.z)});
+    });
+    CHECK(near(arena.server.health_of(b_id), 300.0));
+    CHECK(arena.b.predicted().stagger > 0.0f);
+
+    // Wait out cooldown and parry window while B holds block: regular block reduces damage to 45%.
+    arena.run(0.55, [&] {
+        const Vec3 delta = arena.b.predicted().position - arena.a.predicted().position;
+        arena.a.set_input({.yaw = std::atan2(-delta.x, -delta.z)});
+        arena.b.set_input({.yaw = std::atan2(delta.x, delta.z), .block = true});
+    });
+    arena.run(0.08, [&] {
+        const Vec3 delta = arena.b.predicted().position - arena.a.predicted().position;
+        arena.a.set_input({.yaw = std::atan2(-delta.x, -delta.z), .fire = true});
+        arena.b.set_input({.yaw = std::atan2(delta.x, delta.z), .block = true});
+    });
+    arena.run(0.15, [&] {
+        const Vec3 delta = arena.b.predicted().position - arena.a.predicted().position;
+        arena.a.set_input({.yaw = std::atan2(-delta.x, -delta.z)});
+        arena.b.set_input({.yaw = std::atan2(delta.x, delta.z), .block = true});
+    });
+    CHECK(near(arena.server.health_of(b_id), 255.0));
+
+    // Release block, wait out cooldown, then start a fresh block (parry window) right before A swings.
+    arena.run(0.55, [&] {
+        const Vec3 delta = arena.b.predicted().position - arena.a.predicted().position;
+        arena.a.set_input({.yaw = std::atan2(-delta.x, -delta.z)});
+        arena.b.set_input({.yaw = std::atan2(delta.x, delta.z), .block = false});
+    });
+    arena.run(0.05, [&] {
+        const Vec3 delta = arena.b.predicted().position - arena.a.predicted().position;
+        arena.a.set_input({.yaw = std::atan2(-delta.x, -delta.z)});
+        arena.b.set_input({.yaw = std::atan2(delta.x, delta.z), .block = true});
+    });
+    arena.run(0.08, [&] {
+        const Vec3 delta = arena.b.predicted().position - arena.a.predicted().position;
+        arena.a.set_input({.yaw = std::atan2(-delta.x, -delta.z), .fire = true});
+        arena.b.set_input({.yaw = std::atan2(delta.x, delta.z), .block = true});
+    });
+    arena.run(0.15, [&] {
+        const Vec3 delta = arena.b.predicted().position - arena.a.predicted().position;
+        arena.a.set_input({.yaw = std::atan2(-delta.x, -delta.z)});
+        arena.b.set_input({.yaw = std::atan2(delta.x, delta.z), .block = true});
+    });
+    CHECK(near(arena.server.health_of(b_id), 240.0));
+    CHECK(arena.a.predicted().stagger > 0.0f);
+}
+
 } // namespace
 
 int main() {
@@ -664,5 +814,7 @@ int main() {
     test_grenade_and_rocket_kills();
     test_rocket_splash();
     test_armor_in_combat();
+    test_deflector_shield();
+    test_melee_combat();
     return swm::test::finish("combat_test");
 }

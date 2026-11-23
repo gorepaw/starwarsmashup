@@ -54,6 +54,8 @@ void MemoryCharacterStore::save(std::span<const CharacterRecord> characters) {
 
 bool MemoryCharacterStore::remove(PersistentId id) {
     loadouts_.erase(id);
+    quests_.erase(id);
+    professions_.erase(id);
     std::erase_if(items_, [id](const auto& kv) { return kv.second.owner_id == id; });
     return characters_.erase(id) > 0;
 }
@@ -113,6 +115,15 @@ std::vector<QuestProgress> MemoryCharacterStore::list_quests(PersistentId owner_
 
 void MemoryCharacterStore::save_quests(PersistentId owner_id, std::span<const QuestProgress> quests) {
     quests_[owner_id].assign(quests.begin(), quests.end());
+}
+
+std::vector<ProfessionProgress> MemoryCharacterStore::list_professions(PersistentId owner_id) {
+    const auto it = professions_.find(owner_id);
+    return it == professions_.end() ? std::vector<ProfessionProgress>{} : it->second;
+}
+
+void MemoryCharacterStore::save_professions(PersistentId owner_id, std::span<const ProfessionProgress> professions) {
+    professions_[owner_id].assign(professions.begin(), professions.end());
 }
 
 void ensure_starter_kit(CharacterStore& store, PersistentId char_id) {

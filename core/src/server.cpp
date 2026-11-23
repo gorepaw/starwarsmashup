@@ -3,11 +3,22 @@
 #include <algorithm>
 #include <cmath>
 #include <format>
+#include <numbers>
 
 #include "swm/core/net/bytes.h"
 #include "swm/core/net/protocol.h"
 
 namespace swm::core {
+
+namespace {
+
+// Professions: a point of armor experience for each 10 damage taken
+// (ASSUMPTION), and 25 for a weapon's kill of a soldier in a match (as a
+// battle's reward counts a kill).
+constexpr double armor_damage_per_xp = 10;
+constexpr int64_t match_kill_profession_xp = 25;
+
+} // namespace
 
 GameServer::GameServer(net::Link& link, const World& world, ServerConfig config, CharacterStore* store)
     : link_(link), world_(world), config_(std::move(config)), store_(config_.battlefield ? nullptr : store) {
@@ -81,6 +92,7 @@ std::vector<Loadout> GameServer::build_player_loadouts(uint32_t entity, bool app
     if (out_worn) out_worn->clear();
     for (const CharacterLoadout& cl : client->char_loadouts) {
         out.push_back(config_.catalog->build_loadout(cl, client->items, client->species, apply_quality));
+        apply_professions(*client, cl, out.back());
         if (out_worn) {
             out_worn->push_back(resolve_worn_models(*config_.catalog, cl, client->items, client->species, client->gender));
         }
@@ -354,6 +366,11 @@ void GameServer::award_xp(uint32_t entity, int64_t xp) {
     Client* client = find(entity);
     if (!client || xp <= 0) return;
     client->experience += xp;
+    if (const std::string held = held_profession(*client); !held.empty()) {
+        earn_profession_xp(*client, held, xp);
+    } else {
+        route_xp(*client, xp);
+    }
     if (store_ != nullptr && client->character != 0) {
         try {
             store_->update_economy(client->character, client->credits, client->faction_points,
@@ -433,6 +450,8 @@ net::EntityState GameServer::describe(const Client& c) const {
     out.state = c.state;
     out.health = float(c.health);
     out.max_health = float(c.stats.max_health);
+    out.shield = float(c.shield);
+    out.max_shield = float(c.stats.shield_capacity);
     out.life = c.life;
     out.spawn_count = c.spawn_count;
     out.team = int8_t(c.team);
@@ -497,6 +516,7 @@ void GameServer::rebuild_client_loadouts(Client& client) {
     for (const CharacterLoadout& cl : client.char_loadouts) {
         client.custom_loadouts.push_back(
             config_.catalog->build_loadout(cl, client.items, client.species, true));
+        apply_professions(client, cl, client.custom_loadouts.back());
         client.worn_per_loadout.push_back(
             resolve_worn_models(*config_.catalog, cl, client.items, client.species, client.gender));
     }
@@ -598,6 +618,10 @@ void GameServer::handle(const net::Endpoint& from, const net::Datagram& datagram
         if (ack->revision == client->inventory_rev) {
             client->acked_inventory_rev = ack->revision;
         }
+    } else if (const auto* profession_ack = std::get_if<net::ProfessionAck>(&message)) {
+        if (profession_ack->revision == client->profession_rev) {
+            client->acked_profession_rev = profession_ack->revision;
+        }
     } else if (const auto* quest_ack = std::get_if<net::QuestAck>(&message)) {
         if (quest_ack->revision == client->quest_rev) {
             client->acked_quest_rev = quest_ack->revision;
@@ -613,6 +637,10 @@ void GameServer::handle(const net::Endpoint& from, const net::Datagram& datagram
                                    [id](const ItemInstance& inst) { return inst.id == id; });
             };
             CharacterLoadout clean = save_lo->loadout;
+            clean.specializations = config_.professions
+                                        ? clean_specializations(*config_.professions, clean.specializations)
+                                        : std::vector<std::string>{};
+            clean.companion.clear();
             if (!owns(clean.primary_id)) clean.primary_id = 0;
             if (!owns(clean.sidearm_id)) clean.sidearm_id = 0;
             if (!owns(clean.secondary_id)) clean.secondary_id = 0;
@@ -927,6 +955,9 @@ GameServer::Client* GameServer::join(const net::Endpoint& from, const std::strin
             joined.inventory_rev = 1;
             joined.quests = store_->list_quests(joined.character);
             joined.quest_rev = 1;
+            joined.professions = store_->list_professions(joined.character);
+            joined.profession_rev = 1;
+            rebuild_client_loadouts(joined);  // with their professions' perks
         } catch (const std::exception& error) {
             say(std::format("inventory load error for {}: {}", name, error.what()));
         }
@@ -937,6 +968,7 @@ GameServer::Client* GameServer::join(const net::Endpoint& from, const std::strin
     joined.state.position = spawn;
     reset_loadout(joined.state, initial_lo, joined.stats);
     joined.health = joined.stats.max_health;
+    joined.shield = joined.stats.shield_capacity;
     clients_.push_back(joined);
     say(std::format("{} joined from {} as entity {} ({} character {}) at ({:.2f}, {:.2f}, {:.2f})", name,
                     from.to_string(), joined.entity, where, joined.character, spawn.x, spawn.y, spawn.z));
@@ -961,6 +993,16 @@ void GameServer::save(std::span<const Client> clients) {
         store_->save(records);
     } catch (const std::exception& error) {
         say(std::format("storage error, {} character(s) not saved: {}", records.size(), error.what()));
+    }
+    for (const Client& client : clients) {
+        if (client.professions_dirty && client.character != 0) {
+            try {
+                store_->save_professions(client.character, client.professions);
+                client.professions_dirty = false;
+            } catch (const std::exception& error) {
+                say(std::format("profession save error for {}: {}", client.name, error.what()));
+            }
+        }
     }
 }
 
@@ -1049,6 +1091,9 @@ void GameServer::step() {
                         client.switch_remaining = 0.0;
                         client.stats = stats_for(loadout_of(client), client.species, config_.base_stats);
                         client.health = std::min(client.health, client.stats.max_health);
+                        client.shield = client.stats.shield_capacity;
+                        client.shield_recharge_timer = 0;
+                        client.shield_disrupt_timer = 0;
                         reset_loadout(client.state, loadout_of(client), client.stats);
                         if (store_ != nullptr && client.character != 0) {
                             try {
@@ -1064,6 +1109,18 @@ void GameServer::step() {
         }
     }
     ++tick_;
+
+    for (Client& client : clients_) {
+        if (client.life != Life::alive) {
+            continue;
+        }
+        client.shield_recharge_timer = std::max(0.0, client.shield_recharge_timer - dt);
+        client.shield_disrupt_timer = std::max(0.0, client.shield_disrupt_timer - dt);
+        if (client.shield_recharge_timer <= 0 && client.shield_disrupt_timer <= 0 &&
+            client.shield < client.stats.shield_capacity && client.stats.shield_recharge > 0) {
+            client.shield = std::min(client.stats.shield_capacity, client.shield + client.stats.shield_recharge * dt);
+        }
+    }
 
     // Where everyone is this tick, kept for a second for rewinding.
     const size_t keep = size_t(config_.tick_rate) + 2;
@@ -1202,6 +1259,10 @@ void GameServer::step() {
             (client.quest_sync_tick == 0 || tick_ - client.quest_sync_tick >= 8)) {
             send_quest_sync(client);
         }
+        if (config_.professions != nullptr && client.profession_rev != client.acked_profession_rev &&
+            (client.profession_sync_tick == 0 || tick_ - client.profession_sync_tick >= 8)) {
+            send_profession_sync(client);
+        }
         if (client.transfer) {
             send(client.endpoint, *client.transfer);
         }
@@ -1290,6 +1351,7 @@ void GameServer::run_match() {
             pickups_.clear();
             for (Client& client : clients_) {
                 client.kills = client.deaths = client.captures = 0;
+                client.battle_profession_xp.clear();
                 return_to_waiting(client);
             }
             break;
@@ -1307,7 +1369,8 @@ void GameServer::run_match() {
             for (const Client& client : clients_) {
                 say(std::format("  {:<16} {:<12} {} kills, {} deaths, {} captures", client.name,
                                 field.team(client.team).name, client.kills, client.deaths, client.captures));
-                result.players.push_back({client.name, client.team, client.kills, client.deaths, client.captures});
+                result.players.push_back({client.name, client.team, client.kills, client.deaths, client.captures,
+                                          client.battle_profession_xp});
             }
             if (on_match_ended) {
                 on_match_ended(result);
@@ -1349,6 +1412,7 @@ void GameServer::run_match() {
 void GameServer::return_to_waiting(Client& client) {
     client.life = Life::waiting;
     client.health = 0;
+    client.shield = 0;
     client.outside = 0;
     client.wants_spawn.reset();
     client.state.velocity = {};
@@ -1388,6 +1452,9 @@ void GameServer::spawn_at_post(Client& client, size_t loadout_index, size_t post
     client.state.yaw = float(std::atan2(-(position.x - post.position.x), -(position.z - post.position.z)));
     reset_loadout(client.state, loadout, client.stats);
     client.health = client.stats.max_health;
+    client.shield = client.stats.shield_capacity;
+    client.shield_recharge_timer = 0;
+    client.shield_disrupt_timer = 0;
     client.life = Life::alive;
     client.outside = 0;
     client.history.clear();
@@ -1396,7 +1463,7 @@ void GameServer::spawn_at_post(Client& client, size_t loadout_index, size_t post
     say(std::format("{} spawned with {} at {}", client.name, loadout.name, post.name));
 }
 
-void GameServer::fire(const Client& shooter, const Shot& shot, double view_tick) {
+void GameServer::fire(Client& shooter, const Shot& shot, double view_tick) {
     const auto classes = vehicle_classes();
     const bool driving = shooter.state.vehicle >= 0 && size_t(shooter.state.vehicle) < classes.size();
     const WeaponDef* def =
@@ -1407,6 +1474,106 @@ void GameServer::fire(const Client& shooter, const Shot& shot, double view_tick)
     const WeaponDef& weapon = *def;
     // The tick being simulated is tick_ + 1; the shooter saw others at view_tick.
     const double rewind = std::clamp(double(tick_ + 1) - view_tick, 0.0, config_.max_rewind * config_.tick_rate);
+    if (weapon.projectile == Projectile::melee) {
+        const bool harmless = conquest_ && conquest_->state().phase == Phase::ended;
+        const bool pvp_blocked = !conquest_ && !config_.pvp_enabled && shooter.team != hostile_npc_team;
+        if (harmless) {
+            return;
+        }
+        const Vec3 fwd{-std::sin(double(shooter.state.yaw)), 0, -std::cos(double(shooter.state.yaw))};
+        const double cos_half = std::cos(weapon.melee_arc * std::numbers::pi / 180.0);
+        const auto in_arc = [&](Vec3 target_pos, double radius, double& out_dist) {
+            const Vec3 delta = target_pos - shooter.state.position;
+            if (delta.y < -1.2 || delta.y > 2.0) return false;
+            const double horiz = std::hypot(delta.x, delta.z);
+            if (horiz > weapon.melee_range + radius) return false;
+            if (horiz > 1e-4) {
+                const double dot = (delta.x * fwd.x + delta.z * fwd.z) / horiz;
+                if (dot < cos_half) return false;
+            }
+            out_dist = horiz;
+            return !shot_hit(shot.origin, target_pos + Vec3{0, 1.0, 0});
+        };
+        if (!pvp_blocked) {
+            for (Client& target : clients_) {
+                const bool teammate = allied(shooter.team, target.team) && !config_.friendly_fire;
+                if (target.entity == shooter.entity || target.life != Life::alive || teammate ||
+                    target.state.vehicle >= 0) {
+                    continue;
+                }
+                const Vec3 target_pos = position_at(target, double(tick_) - rewind);
+                double dist = 0;
+                if (!in_arc(target_pos, hit_radius, dist)) {
+                    continue;
+                }
+                bool facing_block = false;
+                if (target.state.blocking) {
+                    const Vec3 to_shooter = shooter.state.position - target_pos;
+                    const double len = std::hypot(to_shooter.x, to_shooter.z);
+                    if (len > 1e-4) {
+                        const Vec3 t_fwd{-std::sin(double(target.state.yaw)), 0, -std::cos(double(target.state.yaw))};
+                        facing_block = (to_shooter.x * t_fwd.x + to_shooter.z * t_fwd.z) / len >= 0.0;
+                    } else {
+                        facing_block = true;
+                    }
+                }
+                if (facing_block && target.state.parry_window > 0) {
+                    damage(target, weapon.damage * 0.15, DamageType::melee, shooter.entity, 0.0);
+                    shooter.state.stagger = std::max(shooter.state.stagger, 0.6f);
+                } else if (facing_block) {
+                    damage(target, weapon.damage * 0.45, DamageType::melee, shooter.entity, 0.0);
+                    target.state.energy = std::max(0.0, target.state.energy - 15.0);
+                } else {
+                    damage(target, weapon.damage, DamageType::melee, shooter.entity, weapon.shield_disrupt);
+                    target.state.stagger = std::max(target.state.stagger, float(weapon.melee_stagger));
+                }
+                impacts_.push_back({shooter.entity, uint8_t(shot.weapon), target_pos + Vec3{0, 1.1, 0}, {0, 1, 0}, true});
+            }
+        }
+        if (shooter.team != hostile_npc_team) {
+            for (Npc& npc : npcs_) {
+                if (npc.hidden || npc.actor_kind < 2 || npc.life != Life::alive) continue;
+                double dist = 0;
+                if (in_arc(npc.state.position, npc.hit_radius, dist)) {
+                    damage_npc(npc, weapon.damage, DamageType::melee, shooter.entity);
+                    impacts_.push_back(
+                        {shooter.entity, uint8_t(shot.weapon), npc.state.position + Vec3{0, 1.0, 0}, {0, 1, 0}, true});
+                }
+            }
+        }
+        for (RangeTarget& target : targets_) {
+            if (!target.alive) continue;
+            double dist = 0;
+            if (in_arc(target.position, hit_radius, dist)) {
+                damage_target(target, weapon.damage, DamageType::melee, shooter.entity);
+                impacts_.push_back(
+                    {shooter.entity, uint8_t(shot.weapon), target.position + Vec3{0, 1.0, 0}, {0, 1, 0}, true});
+            }
+        }
+        if (conquest_) {
+            std::vector<Blast> blasts;
+            const auto& stations = conquest_->battlefield().powerups;
+            for (size_t i = 0; i < stations.size(); ++i) {
+                if (!conquest_->powerup_alive(i)) continue;
+                double dist = 0;
+                if (in_arc(stations[i].position, PowerupStation::hit_radius + 0.6, dist)) {
+                    damage_powerup(i, weapon.damage, shooter.entity, blasts);
+                }
+            }
+            const auto& objects = conquest_->battlefield().destructibles;
+            for (size_t i = 0; i < objects.size(); ++i) {
+                if (!conquest_->destructible_alive(i)) continue;
+                double dist = 0;
+                if (in_arc(objects[i].nearest(shooter.state.position), 1.0, dist)) {
+                    damage_destructible(i, weapon.damage, shooter.entity, blasts);
+                }
+            }
+            for (size_t i = 0; i < blasts.size(); ++i) {
+                explode(blasts[i], blasts);
+            }
+        }
+        return;
+    }
     for (const Vec3& direction : shot.directions) {
         Bolt bolt;
         bolt.id = next_bolt_++;
@@ -1823,7 +1990,8 @@ void GameServer::explode(const Blast& blast, std::vector<Blast>& blasts) {
             continue;
         }
         // Thrown away from it (teammates too: a blast doesn't take sides).
-        const double push = explosion_push(def, blast.at, target.state.position);
+        const double push = explosion_push(def, blast.at, target.state.position) *
+                            (1.0 - std::clamp(target.stats.explosion_push_resist, 0.0, max_mitigation));
         if (push > 0 && !(pvp_blocked && target.entity != bolt.owner)) {
             Vec3 away = target.state.position + Vec3{0, 1.0, 0} - blast.at;
             away = away.length() > 1e-3 ? away * (1 / away.length()) : Vec3{0, 1, 0};
@@ -1836,7 +2004,8 @@ void GameServer::explode(const Blast& blast, std::vector<Blast>& blasts) {
         }
         const double amount = explosion_damage(def, blast.at, target_pos);
         if (amount > 0) {
-            damage(target, amount, DamageType::explosive, bolt.owner);
+            const DamageType blast_type = def.damage_type == DamageType::electro ? DamageType::electro : DamageType::explosive;
+            damage(target, amount, blast_type, bolt.owner);
         }
     }
     if (bolt.team != hostile_npc_team) {
@@ -1946,8 +2115,9 @@ void GameServer::damage_target(RangeTarget& target, double raw, DamageType, uint
     }
 }
 
-// Damage after the victim's mitigation (its armor, mostly).
-void GameServer::damage(Client& victim, double raw, DamageType type, uint32_t attacker) {
+// Damage after the victim's mitigation (its armor, mostly), absorbed by any
+// active Deflector Shield before reaching health.
+void GameServer::damage(Client& victim, double raw, DamageType type, uint32_t attacker, double shield_disrupt) {
     const double amount = mitigated_damage(victim.stats, raw, type);
     if (victim.life != Life::alive || amount <= 0) {
         return;
@@ -1957,8 +2127,23 @@ void GameServer::damage(Client& victim, double raw, DamageType type, uint32_t at
         victim.switch_remaining = 0.0;
         notify(victim.entity, "Loadout switch interrupted!");
     }
-    victim.health = std::max(0.0, victim.health - amount);
+    const ShieldHitResult hit = apply_shield_damage(victim.shield, amount, type, shield_disrupt);
+    victim.shield_recharge_timer = std::max(victim.shield_recharge_timer, victim.stats.shield_delay);
+    if (hit.disrupt_seconds > 0) {
+        victim.shield_disrupt_timer = std::max(victim.shield_disrupt_timer, hit.disrupt_seconds);
+    }
+    victim.health = std::max(0.0, victim.health - hit.health_damage);
     events_.push_back({net::CombatEvent::hit, attacker, victim.entity, float(amount)});
+    if (attacker != 0 && attacker != victim.entity) {
+        if (const std::string armor = armor_profession(victim); !armor.empty()) {
+            victim.armor_xp += raw / armor_damage_per_xp;
+            if (victim.armor_xp >= 1) {
+                const auto points = int64_t(victim.armor_xp);
+                victim.armor_xp -= double(points);
+                earn_profession_xp(victim, armor, points);
+            }
+        }
+    }
     if (victim.health <= 0) {
         kill(victim, attacker);
     }
@@ -1969,6 +2154,7 @@ void GameServer::kill(Client& victim, uint32_t attacker) {
         leave_vehicle(victim);
     }
     victim.health = 0;
+    victim.shield = 0;
     victim.life = Life::dead;
     victim.respawn_tick = tick_ + uint32_t(std::lround(config_.respawn_delay * config_.tick_rate));
     ++victim.deaths;
@@ -1976,6 +2162,11 @@ void GameServer::kill(Client& victim, uint32_t attacker) {
     Client* killer = attacker != 0 ? find(attacker) : nullptr;
     if (killer != nullptr && killer != &victim) {
         ++killer->kills;
+        if (conquest_ && !allied(killer->team, victim.team)) {
+            if (const std::string held = held_profession(*killer); !held.empty()) {
+                earn_profession_xp(*killer, held, match_kill_profession_xp);
+            }
+        }
     }
     if (conquest_) {
         conquest_->killed(victim.team);
@@ -2077,6 +2268,9 @@ Vec3 GameServer::spawn_point(uint32_t index) const {
 void GameServer::respawn(Client& client) {
     client.life = Life::alive;
     client.health = client.stats.max_health;
+    client.shield = client.stats.shield_capacity;
+    client.shield_recharge_timer = 0;
+    client.shield_disrupt_timer = 0;
     const float yaw = client.state.yaw;
     client.state = MoveState{};
     if (!conquest_ && cloning_facility_) {

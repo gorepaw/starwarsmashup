@@ -35,9 +35,11 @@ public:
                         int active_loadout) override;
     std::vector<QuestProgress> list_quests(PersistentId owner_id) override;
     void save_quests(PersistentId owner_id, std::span<const QuestProgress> quests) override;
+    std::vector<ProfessionProgress> list_professions(PersistentId owner_id) override;
+    void save_professions(PersistentId owner_id, std::span<const ProfessionProgress> professions) override;
 
     // The schema version this build writes (PRAGMA user_version).
-    static constexpr int schema_version = 4;
+    static constexpr int schema_version = 5;
 
 private:
     void close();
@@ -63,6 +65,9 @@ private:
     sqlite3_stmt* list_quests_ = nullptr;
     sqlite3_stmt* insert_quest_ = nullptr;
     sqlite3_stmt* remove_quests_by_owner_ = nullptr;
+    sqlite3_stmt* list_professions_ = nullptr;
+    sqlite3_stmt* insert_profession_ = nullptr;
+    sqlite3_stmt* remove_professions_by_owner_ = nullptr;
 };
 
 } // namespace swm::core

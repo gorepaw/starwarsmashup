@@ -44,16 +44,33 @@ MoveState simulate_move(const MoveState& state, const MoveInput& input, const Wo
         r /= stick;
     }
 
-    // Sprinting (forward only) drains energy; it takes some energy to start,
-    // and stops when it runs out. Otherwise energy comes back, faster at rest.
-    const bool wants_sprint = input.held(MoveInput::sprint) && f > 0;
+    // Stagger and melee block/parry timers.
+    next.stagger = float(std::max(0.0, double(state.stagger) - dt));
+    next.parry_window = float(std::max(0.0, double(state.parry_window) - dt));
+
+    const bool wants_block = input.held(MoveInput::block) && !state.rolling() && next.stagger <= 0;
+    const bool can_block = wants_block && (state.blocking ? state.energy > 0 : state.energy >= 8.0);
+
+    // Sprinting (forward only) drains energy; blocking drains energy; otherwise
+    // energy comes back, faster at rest.
+    const bool wants_sprint = input.held(MoveInput::sprint) && f > 0 && next.stagger <= 0 && !can_block;
     next.sprinting = wants_sprint && state.energy > 0 &&
                      (state.sprinting || state.energy >= params.energy_min_sprint);
-    if (next.sprinting) {
-        next.energy = std::max(0.0, state.energy - params.energy_drain_sprint * dt);
+    if (can_block) {
+        next.blocking = true;
+        if (!state.blocking) {
+            next.parry_window = 0.25f;
+        }
+        next.energy = std::max(0.0, state.energy - 8.0 * dt);
     } else {
-        const double restore = (f == 0 && r == 0) ? params.energy_restore_idle : params.energy_restore;
-        next.energy = std::min(params.max_energy, state.energy + restore * dt);
+        next.blocking = false;
+        next.parry_window = 0;
+        if (next.sprinting) {
+            next.energy = std::max(0.0, state.energy - params.energy_drain_sprint * dt);
+        } else {
+            const double restore = (f == 0 && r == 0) ? params.energy_restore_idle : params.energy_restore;
+            next.energy = std::min(params.max_energy, state.energy + restore * dt);
+        }
     }
     // Crouch: a press standing still crouches or stands up; a press on the
     // move rolls that way, if there's the energy. Sprinting or jumping
@@ -61,14 +78,16 @@ MoveState simulate_move(const MoveState& state, const MoveInput& input, const Wo
     const bool pressed = input.held(MoveInput::crouch) && !state.crouch_held;
     next.crouch_held = input.held(MoveInput::crouch);
     next.roll = float(std::max(0.0, double(state.roll) - dt));
-    bool jump = input.held(MoveInput::jump) && !state.rolling();
-    if (pressed && state.grounded && !state.rolling()) {
+    bool jump = input.held(MoveInput::jump) && !state.rolling() && next.stagger <= 0;
+    if (pressed && state.grounded && !state.rolling() && next.stagger <= 0) {
         if (f * f + r * r > 0.09 && state.energy >= params.energy_cost_roll) {
             const Vec3 way = forward * f + right * r;
             next.roll = float(params.roll_time);
             next.roll_yaw = float(std::atan2(-way.x, -way.z));
             next.energy = std::max(0.0, next.energy - params.energy_cost_roll);
             next.crouched = false;
+            next.blocking = false;
+            next.parry_window = 0;
         } else {
             next.crouched = !state.crouched;
         }
@@ -79,12 +98,20 @@ MoveState simulate_move(const MoveState& state, const MoveInput& input, const Wo
     }
     if (next.rolling()) {
         next.sprinting = false;
+        next.blocking = false;
+        next.parry_window = 0;
         jump = false;
     }
 
     double forward_speed = f > 0 ? params.run_speed : params.strafe_speed;
     double side_speed = params.strafe_speed;
-    if (next.sprinting) {
+    if (next.stagger > 0) {
+        forward_speed *= 0.45;
+        side_speed *= 0.45;
+    } else if (next.blocking) {
+        forward_speed *= 0.60;
+        side_speed *= 0.60;
+    } else if (next.sprinting) {
         forward_speed *= params.sprint_factor;
         side_speed *= params.sprint_strafe;
     } else if (next.crouched) {

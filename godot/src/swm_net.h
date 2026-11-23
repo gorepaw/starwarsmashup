@@ -109,6 +109,7 @@ public:
     // bolt_speed, bolt_life, bolt_color, bolt_length, bolt_width}].
     godot::Array get_weapons() const;
     double get_max_health() const;
+    double get_max_shield() const;
     // The battlefield: {name, min_x, min_z, max_x, max_z (game space),
     // boundaries: [PackedVector2Array of (x, z)], teams:
     // [{name, loadouts: [{name, max_health, weapons: [names], secondary}]}], posts: [{name,
@@ -175,6 +176,8 @@ public:
     godot::Array get_quest_npcs() const;
     godot::Array get_mission_terminals() const;
     godot::Dictionary get_quests() const;
+    // Our experience in each profession we have any in: [{id, xp}].
+    godot::Array get_professions() const;
     void talk_to(int64_t npc_entity);
     void use_mission_terminal(int64_t index);
     void accept_quest(const godot::String& id);
@@ -253,6 +256,9 @@ public:
     godot::Error set_hub(const godot::String& path);
     // Loads the item catalog for hub inventory, quartermasters, and loadouts.
     godot::Error set_catalog(const godot::String& catalog_ini, const godot::String& bf2_items_dir);
+    // Loads the profession roster (game/professions/professions.ini): players
+    // earn experience and their loadouts' specialization slots apply.
+    godot::Error set_professions(const godot::String& path);
     // `spawn` is where new characters start, in Galaxies coordinates (x, z).
     godot::Error start(int64_t port, const godot::String& bake_prefix, const godot::Vector2& spawn);
     void update();
@@ -281,6 +287,8 @@ private:
     std::optional<core::HubConfig> hub_config_;
     core::ItemCatalog catalog_;
     bool has_catalog_ = false;
+    core::ProfessionBook professions_;
+    bool has_professions_ = false;
     core::UdpHubNetwork hub_network_;
     std::unique_ptr<core::Hub> hub_;
 };

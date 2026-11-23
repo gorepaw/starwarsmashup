@@ -120,6 +120,8 @@ SqliteCharacterStore::SqliteCharacterStore(const std::filesystem::path& path) {
                  " secondary_id INTEGER NOT NULL DEFAULT 0,"
                  " gear_json TEXT NOT NULL DEFAULT '{}',"
                  " appearance_json TEXT NOT NULL DEFAULT '{}',"
+                 " specializations TEXT NOT NULL DEFAULT '',"
+                 " companion TEXT NOT NULL DEFAULT '',"
                  " PRIMARY KEY (owner_id, slot_index)"
                  ") STRICT");
             exec("CREATE TABLE IF NOT EXISTS quests ("
@@ -129,6 +131,12 @@ SqliteCharacterStore::SqliteCharacterStore(const std::filesystem::path& path) {
                  " count INTEGER NOT NULL DEFAULT 0,"
                  " done INTEGER NOT NULL DEFAULT 0,"
                  " PRIMARY KEY (owner_id, quest_id)"
+                 ") STRICT");
+            exec("CREATE TABLE IF NOT EXISTS professions ("
+                 " owner_id INTEGER NOT NULL,"
+                 " profession_id TEXT NOT NULL,"
+                 " xp INTEGER NOT NULL DEFAULT 0,"
+                 " PRIMARY KEY (owner_id, profession_id)"
                  ") STRICT");
             exec(("PRAGMA user_version = " + std::to_string(schema_version)).c_str());
             exec("COMMIT");
@@ -171,6 +179,15 @@ SqliteCharacterStore::SqliteCharacterStore(const std::filesystem::path& path) {
                  " done INTEGER NOT NULL DEFAULT 0,"
                  " PRIMARY KEY (owner_id, quest_id)"
                  ") STRICT");
+            // Version 5: loadouts' Active Specialization and Companion Slots, and professions.
+            exec("ALTER TABLE loadouts ADD COLUMN specializations TEXT NOT NULL DEFAULT ''");
+            exec("ALTER TABLE loadouts ADD COLUMN companion TEXT NOT NULL DEFAULT ''");
+            exec("CREATE TABLE IF NOT EXISTS professions ("
+                 " owner_id INTEGER NOT NULL,"
+                 " profession_id TEXT NOT NULL,"
+                 " xp INTEGER NOT NULL DEFAULT 0,"
+                 " PRIMARY KEY (owner_id, profession_id)"
+                 ") STRICT");
             exec(("PRAGMA user_version = " + std::to_string(schema_version)).c_str());
             exec("COMMIT");
         } else if (version == 3) {
@@ -182,6 +199,28 @@ SqliteCharacterStore::SqliteCharacterStore(const std::filesystem::path& path) {
                  " count INTEGER NOT NULL DEFAULT 0,"
                  " done INTEGER NOT NULL DEFAULT 0,"
                  " PRIMARY KEY (owner_id, quest_id)"
+                 ") STRICT");
+            // Version 5: loadouts' Active Specialization and Companion Slots, and professions.
+            exec("ALTER TABLE loadouts ADD COLUMN specializations TEXT NOT NULL DEFAULT ''");
+            exec("ALTER TABLE loadouts ADD COLUMN companion TEXT NOT NULL DEFAULT ''");
+            exec("CREATE TABLE IF NOT EXISTS professions ("
+                 " owner_id INTEGER NOT NULL,"
+                 " profession_id TEXT NOT NULL,"
+                 " xp INTEGER NOT NULL DEFAULT 0,"
+                 " PRIMARY KEY (owner_id, profession_id)"
+                 ") STRICT");
+            exec(("PRAGMA user_version = " + std::to_string(schema_version)).c_str());
+            exec("COMMIT");
+        } else if (version == 4) {
+            exec("BEGIN");
+            // Version 5: loadouts' Active Specialization and Companion Slots, and professions.
+            exec("ALTER TABLE loadouts ADD COLUMN specializations TEXT NOT NULL DEFAULT ''");
+            exec("ALTER TABLE loadouts ADD COLUMN companion TEXT NOT NULL DEFAULT ''");
+            exec("CREATE TABLE IF NOT EXISTS professions ("
+                 " owner_id INTEGER NOT NULL,"
+                 " profession_id TEXT NOT NULL,"
+                 " xp INTEGER NOT NULL DEFAULT 0,"
+                 " PRIMARY KEY (owner_id, profession_id)"
                  ") STRICT");
             exec(("PRAGMA user_version = " + std::to_string(schema_version)).c_str());
             exec("COMMIT");
@@ -204,18 +243,23 @@ SqliteCharacterStore::SqliteCharacterStore(const std::filesystem::path& path) {
         grant_item_ = prepare(db_, "INSERT INTO items (owner_id, def_id, quality, custom_name, color_json) VALUES (?, ?, ?, ?, ?)");
         remove_item_ = prepare(db_, "DELETE FROM items WHERE id = ?");
         remove_items_by_owner_ = prepare(db_, "DELETE FROM items WHERE owner_id = ?");
-        list_loadouts_ = prepare(db_, "SELECT slot_index, name, primary_id, sidearm_id, secondary_id, gear_json, appearance_json "
-                                      "FROM loadouts WHERE owner_id = ? ORDER BY slot_index ASC");
-        save_loadout_ = prepare(db_, "INSERT INTO loadouts (owner_id, slot_index, name, primary_id, sidearm_id, secondary_id, gear_json, appearance_json) "
-                                     "VALUES (?, ?, ?, ?, ?, ?, ?, ?) "
+        list_loadouts_ = prepare(db_, "SELECT slot_index, name, primary_id, sidearm_id, secondary_id, gear_json, appearance_json, "
+                                      "specializations, companion FROM loadouts WHERE owner_id = ? ORDER BY slot_index ASC");
+        save_loadout_ = prepare(db_, "INSERT INTO loadouts (owner_id, slot_index, name, primary_id, sidearm_id, secondary_id, gear_json, "
+                                     "appearance_json, specializations, companion) "
+                                     "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
                                      "ON CONFLICT(owner_id, slot_index) DO UPDATE SET "
                                      "name = excluded.name, primary_id = excluded.primary_id, sidearm_id = excluded.sidearm_id, "
-                                     "secondary_id = excluded.secondary_id, gear_json = excluded.gear_json, appearance_json = excluded.appearance_json");
+                                     "secondary_id = excluded.secondary_id, gear_json = excluded.gear_json, appearance_json = excluded.appearance_json, "
+                                     "specializations = excluded.specializations, companion = excluded.companion");
         remove_loadouts_by_owner_ = prepare(db_, "DELETE FROM loadouts WHERE owner_id = ?");
         update_economy_ = prepare(db_, "UPDATE characters SET credits = ?, faction_points = ?, experience = ?, active_loadout = ? WHERE id = ?");
         list_quests_ = prepare(db_, "SELECT quest_id, step, count, done FROM quests WHERE owner_id = ? ORDER BY rowid ASC");
         insert_quest_ = prepare(db_, "INSERT INTO quests (owner_id, quest_id, step, count, done) VALUES (?, ?, ?, ?, ?)");
         remove_quests_by_owner_ = prepare(db_, "DELETE FROM quests WHERE owner_id = ?");
+        list_professions_ = prepare(db_, "SELECT profession_id, xp FROM professions WHERE owner_id = ? ORDER BY rowid ASC");
+        insert_profession_ = prepare(db_, "INSERT INTO professions (owner_id, profession_id, xp) VALUES (?, ?, ?)");
+        remove_professions_by_owner_ = prepare(db_, "DELETE FROM professions WHERE owner_id = ?");
     } catch (...) {
         close();
         throw;
@@ -230,13 +274,15 @@ void SqliteCharacterStore::close() {
     for (sqlite3_stmt* statement :
          {find_, find_by_name_, list_all_, insert_, update_, delete_, list_items_, grant_item_, remove_item_,
           remove_items_by_owner_, list_loadouts_, save_loadout_, remove_loadouts_by_owner_, update_economy_,
-          list_quests_, insert_quest_, remove_quests_by_owner_}) {
+          list_quests_, insert_quest_, remove_quests_by_owner_, list_professions_, insert_profession_,
+          remove_professions_by_owner_}) {
         sqlite3_finalize(statement);
     }
     find_ = find_by_name_ = list_all_ = insert_ = update_ = delete_ = nullptr;
     list_items_ = grant_item_ = remove_item_ = remove_items_by_owner_ = nullptr;
     list_loadouts_ = save_loadout_ = remove_loadouts_by_owner_ = update_economy_ = nullptr;
     list_quests_ = insert_quest_ = remove_quests_by_owner_ = nullptr;
+    list_professions_ = insert_profession_ = remove_professions_by_owner_ = nullptr;
     sqlite3_close(db_);
     db_ = nullptr;
 }
@@ -384,6 +430,13 @@ bool SqliteCharacterStore::remove(PersistentId id) {
             fail(db_, "delete character quests");
         }
     }
+    {
+        Reset r4{remove_professions_by_owner_};
+        sqlite3_bind_int64(remove_professions_by_owner_, 1, sqlite3_int64(id));
+        if (sqlite3_step(remove_professions_by_owner_) != SQLITE_DONE) {
+            fail(db_, "delete character professions");
+        }
+    }
     Reset reset{delete_};
     sqlite3_bind_int64(delete_, 1, sqlite3_int64(id));
     if (sqlite3_step(delete_) != SQLITE_DONE) {
@@ -461,6 +514,17 @@ std::vector<CharacterLoadout> SqliteCharacterStore::list_loadouts(PersistentId o
         lo.secondary_id = PersistentId(sqlite3_column_int64(list_loadouts_, 4));
         lo.gear_ids = decode_id_map(col_str(5));
         lo.appearance_ids = decode_id_map(col_str(6));
+        std::string item;
+        for (const char c : col_str(7)) {
+            if (c == ',') {
+                if (!item.empty()) lo.specializations.push_back(std::move(item));
+                item.clear();
+            } else {
+                item += c;
+            }
+        }
+        if (!item.empty()) lo.specializations.push_back(std::move(item));
+        lo.companion = col_str(8);
         out.push_back(std::move(lo));
     }
     return out;
@@ -469,6 +533,11 @@ std::vector<CharacterLoadout> SqliteCharacterStore::list_loadouts(PersistentId o
 void SqliteCharacterStore::save_loadout(PersistentId owner_id, const CharacterLoadout& loadout) {
     const std::string gear_json = encode_id_map(loadout.gear_ids);
     const std::string app_json = encode_id_map(loadout.appearance_ids);
+    std::string specializations;
+    for (const std::string& id : loadout.specializations) {
+        if (!specializations.empty()) specializations += ',';
+        specializations += id;
+    }
     Reset reset{save_loadout_};
     sqlite3_bind_int64(save_loadout_, 1, sqlite3_int64(owner_id));
     sqlite3_bind_int(save_loadout_, 2, loadout.slot_index);
@@ -478,6 +547,8 @@ void SqliteCharacterStore::save_loadout(PersistentId owner_id, const CharacterLo
     sqlite3_bind_int64(save_loadout_, 6, sqlite3_int64(loadout.secondary_id));
     sqlite3_bind_text(save_loadout_, 7, gear_json.c_str(), int(gear_json.size()), SQLITE_TRANSIENT);
     sqlite3_bind_text(save_loadout_, 8, app_json.c_str(), int(app_json.size()), SQLITE_TRANSIENT);
+    sqlite3_bind_text(save_loadout_, 9, specializations.c_str(), int(specializations.size()), SQLITE_TRANSIENT);
+    sqlite3_bind_text(save_loadout_, 10, loadout.companion.c_str(), int(loadout.companion.size()), SQLITE_TRANSIENT);
     if (sqlite3_step(save_loadout_) != SQLITE_DONE) {
         fail(db_, "save_loadout");
     }
@@ -530,6 +601,42 @@ void SqliteCharacterStore::save_quests(PersistentId owner_id, std::span<const Qu
             sqlite3_bind_int(insert_quest_, 4, q.count);
             sqlite3_bind_int(insert_quest_, 5, q.done ? 1 : 0);
             if (sqlite3_step(insert_quest_) != SQLITE_DONE) fail(db_, "save_quests");
+        }
+        exec("COMMIT");
+    } catch (...) {
+        sqlite3_exec(db_, "ROLLBACK", nullptr, nullptr, nullptr);
+        throw;
+    }
+}
+
+std::vector<ProfessionProgress> SqliteCharacterStore::list_professions(PersistentId owner_id) {
+    Reset reset{list_professions_};
+    sqlite3_bind_int64(list_professions_, 1, sqlite3_int64(owner_id));
+    std::vector<ProfessionProgress> out;
+    for (;;) {
+        const int step = sqlite3_step(list_professions_);
+        if (step == SQLITE_DONE) break;
+        if (step != SQLITE_ROW) fail(db_, "list_professions");
+        const auto* id = reinterpret_cast<const char*>(sqlite3_column_text(list_professions_, 0));
+        out.push_back({id ? id : "", sqlite3_column_int64(list_professions_, 1)});
+    }
+    return out;
+}
+
+void SqliteCharacterStore::save_professions(PersistentId owner_id, std::span<const ProfessionProgress> professions) {
+    exec("BEGIN");
+    try {
+        {
+            Reset reset{remove_professions_by_owner_};
+            sqlite3_bind_int64(remove_professions_by_owner_, 1, sqlite3_int64(owner_id));
+            if (sqlite3_step(remove_professions_by_owner_) != SQLITE_DONE) fail(db_, "save_professions");
+        }
+        for (const ProfessionProgress& p : professions) {
+            Reset reset{insert_profession_};
+            sqlite3_bind_int64(insert_profession_, 1, sqlite3_int64(owner_id));
+            sqlite3_bind_text(insert_profession_, 2, p.id.c_str(), int(p.id.size()), SQLITE_TRANSIENT);
+            sqlite3_bind_int64(insert_profession_, 3, p.xp);
+            if (sqlite3_step(insert_profession_) != SQLITE_DONE) fail(db_, "save_professions");
         }
         exec("COMMIT");
     } catch (...) {

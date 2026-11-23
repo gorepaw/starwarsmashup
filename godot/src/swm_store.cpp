@@ -1,5 +1,7 @@
 #include "swm_store.h"
 
+#include <cmath>
+#include <cstdio>
 #include <exception>
 
 #include <godot_cpp/core/class_db.hpp>
@@ -58,6 +60,68 @@ godot::Dictionary to_dict(const core::CharacterLoadout& lo) {
     }
     out["gear_ids"] = gear;
     out["appearance_ids"] = app;
+    godot::Array specializations;
+    for (const std::string& id : lo.specializations) {
+        specializations.push_back(godot::String::utf8(id.c_str()));
+    }
+    out["specializations"] = specializations;
+    out["companion"] = godot::String::utf8(lo.companion.c_str());
+    return out;
+}
+
+// A perk in words: "+2% run speed", "5% tighter spread".
+godot::String perk_line(const core::StatModifier& m) {
+    std::string name(core::stat_name(m.stat));
+    std::string what = name;
+    if (name.rfind("mitigation", 0) == 0) {
+        what = name == "mitigation" ? "resistance to everything" : name.substr(11) + " resistance";
+    } else if (name == "explosion_push_resist") {
+        what = "blast knockback resistance";
+    } else {
+        for (char& c : what) {
+            if (c == '_') c = ' ';
+        }
+    }
+    char text[96];
+    if (m.add != 0) {
+        const bool share = name.rfind("mitigation", 0) == 0 || name == "explosion_push_resist";
+        if (share) {
+            std::snprintf(text, sizeof text, "%+.1f%% %s", m.add * 100, what.c_str());
+        } else {
+            const char* unit = name == "shield_delay" ? "s" : "";
+            std::snprintf(text, sizeof text, "%+.0f%s %s", m.add, unit, what.c_str());
+        }
+    } else {
+        std::snprintf(text, sizeof text, "%+.0f%% %s", (m.multiply - 1) * 100, what.c_str());
+    }
+    std::string s = text;
+    if (s.find(".0%") != std::string::npos) s.erase(s.find(".0%"), 2);
+    return godot::String::utf8(s.c_str());
+}
+
+godot::String perk_line(const core::WeaponModifier& m) {
+    const double pct = std::abs(m.multiply - 1) * 100;
+    const bool less = m.multiply < 1;
+    const char* what = "";
+    switch (m.field) {
+    case core::WeaponModifier::spread: what = less ? "tighter spread" : "wider spread"; break;
+    case core::WeaponModifier::heat: what = less ? "less heat" : "more heat"; break;
+    case core::WeaponModifier::reload: what = less ? "faster reload" : "slower reload"; break;
+    case core::WeaponModifier::recovery: what = less ? "slower bloom recovery" : "faster bloom recovery"; break;
+    case core::WeaponModifier::range: what = less ? "shorter full-damage range" : "longer full-damage range"; break;
+    case core::WeaponModifier::speed: what = less ? "faster swings" : "slower swings"; break;
+    case core::WeaponModifier::lunge: what = less ? "shorter lunge" : "stronger lunge"; break;
+    case core::WeaponModifier::disrupt: what = less ? "weaker shield disruption" : "stronger shield disruption"; break;
+    }
+    char text[96];
+    std::snprintf(text, sizeof text, "%.0f%% %s", pct, what);
+    return godot::String::utf8(text);
+}
+
+godot::Array perk_lines(const core::ProfessionPerk& perk) {
+    godot::Array out;
+    for (const core::StatModifier& m : perk.stats) out.push_back(perk_line(m));
+    for (const core::WeaponModifier& m : perk.weapons) out.push_back(perk_line(m));
     return out;
 }
 
@@ -262,6 +326,56 @@ godot::Array SwmCharacterStore::list_loadouts(int64_t char_id) {
     return out;
 }
 
+godot::Error SwmCharacterStore::load_professions(const godot::String& path) {
+    last_error_.clear();
+    try {
+        professions_.load(to_std(path));
+        return godot::OK;
+    } catch (const std::exception& e) {
+        last_error_ = e.what();
+        return godot::ERR_CANT_OPEN;
+    }
+}
+
+godot::Array SwmCharacterStore::get_professions() const {
+    godot::Array out;
+    for (const core::ProfessionDef& def : professions_.all()) {
+        godot::Dictionary entry;
+        entry["id"] = godot::String::utf8(def.id.c_str());
+        entry["name"] = godot::String::utf8(def.name.c_str());
+        entry["description"] = godot::String::utf8(def.description.c_str());
+        entry["category"] = godot::String::utf8(std::string(core::profession_category_name(def.category)).c_str());
+        entry["wave"] = godot::String::utf8(def.wave.c_str());
+        entry["available"] = def.available;
+        entry["slotted"] = def.slotted;
+        entry["armor_class"] = godot::String::utf8(def.armor_class.c_str());
+        entry["earns"] = godot::String::utf8(def.earns.c_str());
+        entry["rank_every"] = int64_t(def.rank_every);
+        entry["rank"] = perk_lines(def.rank);
+        godot::Array milestones;
+        for (const core::ProfessionMilestone& m : def.milestones) {
+            godot::Dictionary ms;
+            ms["level"] = int64_t(m.level);
+            ms["name"] = godot::String::utf8(m.name.c_str());
+            ms["description"] = godot::String::utf8(m.description.c_str());
+            ms["perks"] = perk_lines(m.perk);
+            milestones.push_back(ms);
+        }
+        entry["milestones"] = milestones;
+        out.push_back(entry);
+    }
+    return out;
+}
+
+godot::Dictionary SwmCharacterStore::profession_level(int64_t xp) const {
+    const int level = professions_.level_for(xp);
+    godot::Dictionary out;
+    out["level"] = int64_t(level);
+    out["into"] = xp - professions_.xp_for_level(level);
+    out["needed"] = professions_.xp_to_next(level);
+    return out;
+}
+
 godot::Error SwmCharacterStore::save_loadout(int64_t char_id, int64_t slot_index, const godot::Dictionary& loadout) {
     last_error_.clear();
     if (!store_) {
@@ -289,7 +403,16 @@ godot::Error SwmCharacterStore::save_loadout(int64_t char_id, int64_t slot_index
                 lo.appearance_ids[to_std(keys[i])] = uint64_t(int64_t(app[keys[i]]));
             }
         }
-        store_->save_loadout(core::PersistentId(char_id), lo);
+        if (loadout.has("specializations")) {
+            const godot::Array ids = loadout["specializations"];
+            for (int i = 0; i < ids.size(); ++i) {
+                lo.specializations.push_back(to_std(ids[i]));
+            }
+        }
+        if (loadout.has("companion")) {
+            lo.companion = to_std(loadout["companion"]);
+        }
+    store_->save_loadout(core::PersistentId(char_id), lo);
         return godot::OK;
     } catch (const std::exception& e) {
         last_error_ = e.what();
@@ -336,6 +459,15 @@ godot::Dictionary SwmCharacterStore::resolve_item_stats(const godot::String& def
         out["zoom_max"] = w.zoom_max;
         out["explosion_damage"] = w.explosion_damage;
         out["explosion_outer"] = w.explosion_outer;
+        out["projectile"] = w.projectile == core::Projectile::bolt      ? "bolt"
+                            : w.projectile == core::Projectile::missile ? "missile"
+                            : w.projectile == core::Projectile::grenade ? "grenade"
+                                                                        : "melee";
+        out["melee_range"] = w.melee_range;
+        out["melee_arc"] = w.melee_arc;
+        out["melee_lunge"] = w.melee_lunge;
+        out["melee_stagger"] = w.melee_stagger;
+        out["shield_disrupt"] = w.shield_disrupt;
         const std::string_view dt_name = core::damage_type_name(w.damage_type);
         out["damage_type"] = godot::String::utf8(dt_name.data(), int(dt_name.size()));
     }
@@ -532,6 +664,10 @@ void SwmCharacterStore::_bind_methods() {
                          &SwmCharacterStore::resolve_item_stats, DEFVAL(0.5), DEFVAL(true));
     ClassDB::bind_method(D_METHOD("compute_loadout_stats", "species", "loadout", "items", "apply_quality"),
                          &SwmCharacterStore::compute_loadout_stats, DEFVAL(true));
+    ClassDB::bind_method(D_METHOD("load_professions", "path"), &SwmCharacterStore::load_professions);
+    ClassDB::bind_method(D_METHOD("get_professions"), &SwmCharacterStore::get_professions);
+    ClassDB::bind_method(D_METHOD("profession_level", "xp"), &SwmCharacterStore::profession_level);
+    ClassDB::bind_method(D_METHOD("get_specialization_slots"), &SwmCharacterStore::get_specialization_slots);
     ClassDB::bind_static_method("SwmCharacterStore", D_METHOD("get_species_list"),
                                 &SwmCharacterStore::get_species_list);
 }

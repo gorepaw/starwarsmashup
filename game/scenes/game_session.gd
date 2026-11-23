@@ -210,6 +210,8 @@ func start_session(config: Dictionary) -> bool:
 		var catalog_path := _os_path("items/swg_catalog.ini")
 		if FileAccess.file_exists(catalog_path):
 			_server.set_catalog(catalog_path, _os_path("imported_assets/items"))
+		if FileAccess.file_exists(_os_path("professions/professions.ini")):
+			_server.set_professions(_os_path("professions/professions.ini"))
 		var spawn := _resolve_spawn(meta as Dictionary)
 		if _server.start(int(host_val), bake_path, spawn) != OK:
 			_emit_or_menu(1)
@@ -445,7 +447,8 @@ func _input(event: InputEvent) -> void:
 			_resume()
 		return
 	if _hub_ui != null and _hub_ui.is_terminal_open():
-		if escape or event.is_action_pressed("interact") or event.is_action_pressed("quest_log"):
+		if escape or event.is_action_pressed("interact") or event.is_action_pressed("quest_log") \
+				or event.is_action_pressed("professions"):
 			_hub_ui.close_terminal()
 		elif event.is_action_pressed("leave_queue"):
 			_client.queue(-1)
@@ -493,6 +496,9 @@ func _input(event: InputEvent) -> void:
 	elif event.is_action_pressed("quest_log") and not event.is_echo() and _hub_ui != null \
 			and _client.get_match().is_empty() and not _client.get_recruiters().is_empty():
 		_capture_mouse(not _hub_ui.toggle_quest_log(_client))
+	elif event.is_action_pressed("professions") and not event.is_echo() and _hub_ui != null \
+			and _client.get_match().is_empty() and not _client.get_recruiters().is_empty():
+		_capture_mouse(not _hub_ui.toggle_professions(_client))
 	elif event.is_action_pressed("loadout_1") and not event.is_echo() and _client.get_match().is_empty():
 		_client.switch_loadout(0)
 	elif event.is_action_pressed("loadout_2") and not event.is_echo() and _client.get_match().is_empty():
@@ -618,11 +624,15 @@ func _controls() -> Dictionary:
 	var right := Input.get_action_strength("move_right") - Input.get_action_strength("move_left")
 	var aim := _aim()
 	var can_fire := _fire_lockout <= 0.0 and not _wait_fire_release
+	var is_melee := _weapon < _weapons.size() and str((_weapons[_weapon] as Dictionary).get("projectile", "")) == "melee"
+	var blocking := is_melee and (Input.is_action_pressed("block") or Input.is_action_pressed("grenade"))
 	return {"forward": forward, "right": right, "yaw": aim.x, "pitch": aim.y,
 			"sprint": Input.is_action_pressed("sprint"), "jump": Input.is_action_pressed("jump"),
 			"fire": Input.is_action_pressed("fire") and can_fire, "reload": Input.is_action_pressed("reload"),
-			"secondary": Input.is_action_pressed("grenade"), "crouch": Input.is_action_pressed("crouch"),
+			"secondary": false if blocking else Input.is_action_pressed("grenade"),
+			"crouch": Input.is_action_pressed("crouch"),
 			"use": Input.is_action_pressed("interact") and not _client.get_match().is_empty(),
+			"block": blocking,
 			"weapon": _weapon}
 
 
@@ -1207,6 +1217,10 @@ func _update_bolts(delta: float) -> void:
 			else:
 				own_soldier.fire()
 			offset = own_soldier.muzzle() - origin
+		if str(shot.get("projectile", "")) == "melee":
+			if _audio != null:
+				_audio.play_2d(str(shot.get("fire_sound", "")))
+			continue
 		var dirs: Array = shot["directions"]
 		if not dirs.is_empty():
 			_effects.spawn_muzzle_flash(origin + offset, dirs[0], shot)
@@ -1481,6 +1495,9 @@ func _setup_scene() -> void:
 			_capture_mouse(true))
 	if ClassDB.class_exists("SwmCharacterStore") and FileAccess.file_exists(_os_path("items/swg_catalog.ini")):
 		_catalog_store = ClassDB.instantiate("SwmCharacterStore")
+		if FileAccess.file_exists(_os_path("professions/professions.ini")) \
+				and _catalog_store.load_professions(_os_path("professions/professions.ini")) == OK:
+			_hub_ui.set_professions(_catalog_store.get_professions(), _catalog_store)
 		if _catalog_store.load_catalog(_os_path("items/swg_catalog.ini"), _os_path("imported_assets/items")) == OK:
 			_catalog = _catalog_store.get_catalog()
 			_battle_ui.set_catalog_names(_catalog)

@@ -18,7 +18,7 @@ namespace swm::core::net {
 // Every packet starts with a magic number, the protocol version and a message
 // type. Peers drop packets with another version. Bump it on any wire change.
 inline constexpr uint16_t protocol_magic = 0x4D53;  // "SM"
-inline constexpr uint16_t protocol_version = 24;
+inline constexpr uint16_t protocol_version = 26;
 inline constexpr uint8_t droid_explosion_weapon = 0xFF;  // Explosion::weapon sentinel for destroyed health/ammo droids
 // ...for a destroyed object (Battlefield::destructibles); clients draw it
 // from the object's own explosion as they see it go.
@@ -215,6 +215,8 @@ struct EntityState {
     MoveState state;
     float health = 0;
     float max_health = 0;
+    float shield = 0;
+    float max_shield = 0;
     Life life = Life::alive;
     uint8_t spawn_count = 0;  // changes on every respawn: clients jump there instead of easing
     int8_t team = -1;         // -1: no teams (outside a match)
@@ -411,10 +413,24 @@ struct QuestRequest {
     std::string quest_id;
 };
 
+// Server -> client, repeated until acknowledged: the character's experience
+// in each profession it has any in (levels follow from the roster's curve).
+struct ProfessionSync {
+    uint32_t revision = 0;
+    std::vector<ProfessionProgress> professions;
+
+    friend bool operator==(const ProfessionSync&, const ProfessionSync&) = default;
+};
+
+// Client -> server: acknowledges ProfessionSync `revision`.
+struct ProfessionAck {
+    uint32_t revision = 0;
+};
+
 using Message = std::variant<Hello, Welcome, Refused, InputBatch, Snapshot, Goodbye, SpawnRequest, QueueRequest,
                              Transfer, InventorySync, InventoryAck, SaveLoadoutRequest, SwitchLoadoutRequest,
                              ShopBuyRequest, DestroyItemRequest, LootTakeRequest, VendorSellRequest, UseItemRequest,
-                             QuestSync, QuestAck, QuestRequest>;
+                             QuestSync, QuestAck, QuestRequest, ProfessionSync, ProfessionAck>;
 
 std::vector<uint8_t> encode(const Message& message);
 // Throws PacketError on malformed packets or another protocol version.

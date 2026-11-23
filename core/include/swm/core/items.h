@@ -39,6 +39,7 @@ enum class WeaponArchetype : uint8_t {
     pistol,
     heavy_launcher,
     grenade,
+    melee,
 };
 
 struct WeaponArchetypeInfo {
@@ -68,6 +69,7 @@ struct ItemDef {
     int64_t cost_credits = 0;
     int64_t sell_value = 0;
     double heal_amount = 0.0;
+    std::string armor_class;  // armor: light, medium or heavy (its armor profession's)
     std::string model_path;  // relative to game/imported_assets/, may contain {g} for m/f
     std::string bf2_base;    // overrides archetype's default BF2 weapon .ini if non-empty
 
@@ -79,6 +81,11 @@ struct ItemDef {
     double range_mult = 1.0;   // >1 longer bolt_life / transition delay
     double clip_mult = 1.0;    // >1 more rounds_per_clip
     double reload_mult = 1.0;  // >1 longer reload_time
+    double melee_range = 0.0;
+    double melee_arc = 0.0;
+    double melee_lunge = 0.0;
+    double melee_stagger = 0.0;
+    double shield_disrupt = 0.0;
     std::optional<DamageType> damage_type;
     std::string bolt_color_name;  // optional red/blue/green/yellow
 
@@ -107,6 +114,10 @@ struct CharacterLoadout {
     uint64_t secondary_id = 0;
     std::map<std::string, uint64_t> gear_ids;        // armor slots + deflector_shield
     std::map<std::string, uint64_t> appearance_ids;  // separate cosmetic clothing/armor layer
+    // Its Active Specialization Slots: profession ids, at most
+    // specialization_slots (profession.h), and its Companion Slot (none yet).
+    std::vector<std::string> specializations;
+    std::string companion;
 
     friend bool operator==(const CharacterLoadout&, const CharacterLoadout&) = default;
 };

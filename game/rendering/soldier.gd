@@ -127,6 +127,7 @@ var _crouch := 0.0           # 0 standing .. 1 crouched
 var _rolling := false
 var _dip := 0.0              # first person: 0 .. 1 the gun dipped to reload or throw
 var _throwing := 0.0         # s left of a first-person throw's dip
+var _swing := 0.0            # s left of a melee swing
 
 
 # Bends the spine with the aim pitch and turns the legs, after the animation.
@@ -151,10 +152,14 @@ class Aimer extends SkeletonModifier3D:
 	# hold point's space (the weapon's: +Z along the barrel), or none (a
 	# pistol's, a launcher's set holds it its own way).
 	var grip: Variant = null
+	var melee_swing := 0.0
+	var melee_block := false
 	var _spine: Array[int] = []
 	var _left_arm := -1
 	var _left_forearm := -1
 	var _left_wrist := -1
+	var _right_arm := -1
+	var _right_forearm := -1
 	var _hold_left := -1
 	var _hold_right := -1
 	var _root := -1
@@ -177,6 +182,8 @@ class Aimer extends SkeletonModifier3D:
 		_left_arm = skeleton.find_bone("lArm")
 		_left_forearm = skeleton.find_bone("lForeArm")
 		_left_wrist = skeleton.find_bone("lWrist")
+		_right_arm = skeleton.find_bone("rArm")
+		_right_forearm = skeleton.find_bone("rForeArm")
 		_hold_left = skeleton.find_bone("hold_l")
 		_hold_right = skeleton.find_bone("hold_r")
 
@@ -220,6 +227,13 @@ class Aimer extends SkeletonModifier3D:
 			for bone in _clavicles:
 				_set_global(skeleton, bone, move * skeleton.get_bone_global_pose(bone))
 		_grip(skeleton)
+		if melee_block and _right_arm >= 0:
+			_rotate_global(skeleton, _right_arm, Basis(Vector3.UP, 0.7) * Basis(Vector3.RIGHT, -0.55))
+			if _right_forearm >= 0:
+				_rotate_global(skeleton, _right_forearm, Basis(Vector3.UP, 0.45))
+		elif melee_swing > 0.0 and _right_arm >= 0:
+			var arc := sin(melee_swing * PI)
+			_rotate_global(skeleton, _right_arm, Basis(Vector3.RIGHT, -0.9 * arc) * Basis(Vector3.UP, 0.85 * arc))
 		# Shrinks the head and whatever is worn on it (helmet, hair).
 		if _head >= 0:
 			skeleton.set_bone_pose_scale(_head, Vector3.ONE * (0.001 if first_person else 1.0))
@@ -398,7 +412,7 @@ func set_anim_set(anim_set: String) -> void:
 		return
 	_anim_set = anim_set
 	_set_grip()
-	var clips: Dictionary = ANIM_SETS.get(anim_set, {})
+	var clips: Dictionary = ANIM_SETS.get("pistol" if anim_set == "melee" else anim_set, {})
 	for entry: Dictionary in _clip_nodes:
 		var role: StringName = entry["role"]
 		var wanted: StringName = clips.get(role, role)
@@ -488,10 +502,11 @@ func pose(state: Dictionary, delta: float) -> void:
 		_leg_yaw = 0.0
 
 	_since_shot += delta
+	_swing = maxf(0.0, _swing - delta)
 	if first_person:
 		_tree.set("parameters/shoot_seek/seek_request", 0.0)  # the raised pose, without the recoil clip
 		_first_person_motion(state, speed, delta)
-	var target := 1.0 if _since_shot < AIM_HOLD or first_person or _anim_set == "pistol" else 0.0
+	var target := 1.0 if _since_shot < AIM_HOLD or first_person or _anim_set in ["pistol", "melee"] else 0.0
 	_aim = move_toward(_aim, target, AIM_BLEND * delta)
 	_tree.set("parameters/aim/blend_amount", _aim)
 
@@ -504,6 +519,8 @@ func pose(state: Dictionary, delta: float) -> void:
 		# Relaxed, the rifle points down; raised, the whole aim shows.
 		_aimer.pitch = float(state.get("pitch", 0.0)) * lerpf(0.5, 1.0, _aim)
 		_aimer.leg_yaw = _leg_yaw
+		_aimer.melee_block = bool(state.get("blocking", false))
+		_aimer.melee_swing = clampf(_swing / 0.28, 0.0, 1.0) if _anim_set == "melee" else 0.0
 
 
 # First person: the arms kick on a shot, bob with the stride and lag behind a
@@ -553,6 +570,8 @@ func _pose_simple(state: Dictionary) -> void:
 func fire() -> void:
 	_since_shot = 0.0
 	_kick = 1.0
+	if _anim_set == "melee":
+		_swing = 0.28
 	if _tree != null:
 		_tree.set("parameters/shoot_seek/seek_request", 0.0)
 
@@ -614,7 +633,11 @@ func set_weapon(path: String) -> void:
 		_weapon.queue_free()
 		_weapon = null
 	var template: Node3D = null
-	if path != "":
+	if path.begins_with("procedural:"):
+		if not _weapon_models.has(path):
+			_weapon_models[path] = _make_procedural_weapon(path)
+		template = _weapon_models[path]
+	elif path != "":
 		var full := "res://imported_assets/" + path
 		if not _weapon_models.has(full):
 			_weapon_models[full] = null
@@ -665,6 +688,47 @@ func muzzle() -> Vector3:
 	if _muzzle != null and model.visible:
 		return _muzzle.global_position
 	return model.global_position + Vector3.UP * 1.4
+
+
+static func _make_procedural_weapon(kind: String) -> Node3D:
+	var root := Node3D.new()
+	var metal := StandardMaterial3D.new()
+	metal.albedo_color = Color(0.24, 0.26, 0.3)
+	metal.metallic = 0.85
+	metal.roughness = 0.3
+	var edge := StandardMaterial3D.new()
+	edge.albedo_color = Color(0.45, 0.9, 1.0) if kind != "procedural:melee_baton" else Color(1.0, 0.72, 0.25)
+	edge.emission_enabled = true
+	edge.emission = edge.albedo_color
+	edge.emission_energy_multiplier = 0.9
+	var hilt := MeshInstance3D.new()
+	var hilt_mesh := CylinderMesh.new()
+	hilt_mesh.top_radius = 0.018
+	hilt_mesh.bottom_radius = 0.018
+	hilt_mesh.height = 0.16
+	hilt.mesh = hilt_mesh
+	hilt.material_override = metal
+	hilt.rotation.x = PI * 0.5
+	root.add_child(hilt)
+	var blade := MeshInstance3D.new()
+	var box := BoxMesh.new()
+	if kind == "procedural:melee_lance":
+		hilt_mesh.height = 1.1
+		box.size = Vector3(0.025, 0.06, 0.55)
+		blade.position = Vector3(0.0, 0.0, 0.75)
+	elif kind == "procedural:melee_knuckler":
+		box.size = Vector3(0.08, 0.07, 0.16)
+		blade.position = Vector3(0.0, 0.0, 0.06)
+	elif kind == "procedural:melee_baton":
+		box.size = Vector3(0.032, 0.032, 0.52)
+		blade.position = Vector3(0.0, 0.0, 0.32)
+	else:
+		box.size = Vector3(0.016, 0.045, 0.55)
+		blade.position = Vector3(0.0, 0.0, 0.34)
+	blade.mesh = box
+	blade.material_override = edge
+	root.add_child(blade)
+	return root
 
 
 static func _signed_angle(from: Vector2, to: Vector2) -> float:

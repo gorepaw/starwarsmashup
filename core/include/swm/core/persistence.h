@@ -8,6 +8,7 @@
 #include <vector>
 
 #include "swm/core/items.h"
+#include "swm/core/profession.h"
 #include "swm/core/quest.h"
 #include "swm/core/vec3.h"
 
@@ -68,6 +69,10 @@ public:
     virtual std::vector<QuestProgress> list_quests(PersistentId owner_id) = 0;
     // Replaces the character's journal.
     virtual void save_quests(PersistentId owner_id, std::span<const QuestProgress> quests) = 0;
+    // The character's experience in each profession it has any in.
+    virtual std::vector<ProfessionProgress> list_professions(PersistentId owner_id) = 0;
+    // Replaces it.
+    virtual void save_professions(PersistentId owner_id, std::span<const ProfessionProgress> professions) = 0;
 };
 
 // Keeps everything in memory, for tests.
@@ -89,6 +94,8 @@ public:
                         int active_loadout) override;
     std::vector<QuestProgress> list_quests(PersistentId owner_id) override;
     void save_quests(PersistentId owner_id, std::span<const QuestProgress> quests) override;
+    std::vector<ProfessionProgress> list_professions(PersistentId owner_id) override;
+    void save_professions(PersistentId owner_id, std::span<const ProfessionProgress> professions) override;
 
 private:
     std::map<PersistentId, CharacterRecord> characters_;
@@ -97,6 +104,7 @@ private:
     PersistentId next_item_id_ = 1;
     std::map<PersistentId, std::map<int, CharacterLoadout>> loadouts_;
     std::map<PersistentId, std::vector<QuestProgress>> quests_;
+    std::map<PersistentId, std::vector<ProfessionProgress>> professions_;
 };
 
 // Grants the standard-issue starter kit and Loadout 0 if the character has no items yet.

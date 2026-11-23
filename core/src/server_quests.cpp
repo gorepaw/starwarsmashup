@@ -125,6 +125,7 @@ void GameServer::apply_quests(Client& client, QuestEffects effects) {
             if (def == nullptr) continue;
             client.credits += def->reward.credits;
             client.experience += def->reward.experience;
+            route_xp(client, def->reward.experience);
             client.faction_points += def->reward.faction_points;
             save_economy(client);
             for (const std::string& item : def->reward.items) {

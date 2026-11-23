@@ -24,6 +24,8 @@ struct MoveInput {
         crouch = 1 << 5,
         // Get into the vehicle at hand, or out of the one driven (a press).
         use = 1 << 6,
+        // Melee block / timed parry.
+        block = 1 << 7,
     };
 
     uint32_t sequence = 0;  // increases by one per tick
@@ -78,6 +80,9 @@ struct MoveState {
     bool crouch_held = false;  // the crouch button was down last tick (a press starts a crouch or roll)
     float roll = 0;            // seconds of rolling left
     float roll_yaw = 0;        // the way it rolls (as yaw)
+    bool blocking = false;
+    float parry_window = 0;    // seconds of timed parry left
+    float stagger = 0;         // seconds of melee stagger left
     // The vehicle it drives (an index into the battlefield's vehicle
     // classes), -1 on foot. Driving, the state is the vehicle's: its yaw is
     // its heading, its weapons and energy (boost) the vehicle's.

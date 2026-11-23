@@ -126,9 +126,9 @@ bool resupply_clips(MoveState& state, const Loadout& loadout, int clips) {
 }
 
 std::optional<Shot> simulate_weapons(MoveState& state, const MoveInput& pressed, const Loadout& loadout, double dt) {
-    // Rolling, it can't fire, throw or reload.
+    // Rolling, staggered, or blocking: cannot fire, throw or reload.
     MoveInput input = pressed;
-    if (state.rolling()) {
+    if (state.rolling() || state.stagger > 0 || state.blocking) {
         input.buttons &= uint8_t(~(MoveInput::fire | MoveInput::secondary | MoveInput::reload));
     }
     CombatState& c = state.combat;
@@ -204,9 +204,22 @@ std::optional<Shot> simulate_weapons(MoveState& state, const MoveInput& pressed,
         return std::nullopt;
     }
 
-    // Fire: every pellet uses a round (ASSUMPTION: a 40-round shotgun clip
-    // holding 8-pellet shots fires 5 times).
+    // Fire: melee swings lunge forward and sweep; ranged shots fire pellets.
     c.cooldown += def.shot_delay;
+    if (def.projectile == Projectile::melee) {
+        if (def.melee_lunge > 0) {
+            const Vec3 fwd{-std::sin(double(input.yaw)), 0, -std::cos(double(input.yaw))};
+            state.velocity.x += fwd.x * def.melee_lunge;
+            state.velocity.z += fwd.z * def.melee_lunge;
+            const double horiz = std::hypot(state.velocity.x, state.velocity.z);
+            const double cap = std::max(12.0, def.melee_lunge * 1.4);
+            if (horiz > cap) {
+                state.velocity.x *= cap / horiz;
+                state.velocity.z *= cap / horiz;
+            }
+        }
+        return Shot{state.position + Vec3{0, eye_height_of(state), 0}, {aim_direction(input.yaw, input.pitch)}, c.weapon};
+    }
     const int pellets = uses_clip ? std::min<int>(def.shots_per_salvo, weapon.rounds) : def.shots_per_salvo;
     if (uses_clip) {
         weapon.rounds = int16_t(weapon.rounds - pellets);
@@ -260,8 +273,13 @@ std::optional<Shot> simulate_character(MoveState& state, const MoveInput& input,
         state = simulate_move(state, idle, world, stats.move, dt);
         return std::nullopt;
     }
-    state = simulate_move(state, input, world, stats.move, dt);
-    return simulate_weapons(state, input, loadout, dt);
+    MoveInput char_input = input;
+    const WeaponDef* active_w = weapon_in_slot(loadout, state.combat.weapon);
+    if (active_w == nullptr || active_w->projectile != Projectile::melee) {
+        char_input.buttons &= uint8_t(~MoveInput::block);
+    }
+    state = simulate_move(state, char_input, world, stats.move, dt);
+    return simulate_weapons(state, char_input, loadout, dt);
 }
 
 double explosion_push(const WeaponDef& weapon, Vec3 center, Vec3 feet) {
@@ -338,6 +356,50 @@ std::optional<double> segment_hits_cylinder(Vec3 a, Vec3 b, Vec3 feet, double ra
         return std::nullopt;
     }
     return t0;
+}
+
+ShieldHitResult apply_shield_damage(double& shield, double mitigated_amount, DamageType type,
+                                    double extra_shield_disrupt) {
+    ShieldHitResult out;
+    if (mitigated_amount <= 0) {
+        return out;
+    }
+    if (type == DamageType::electro) {
+        const double drain = mitigated_amount * 1.75;
+        if (shield <= 0) {
+            out.health_damage = mitigated_amount;
+        } else if (shield >= drain) {
+            shield -= drain;
+            out.shield_damage = drain;
+        } else {
+            out.overloaded = true;
+            out.shield_damage = shield;
+            out.disrupt_seconds = 3.0;
+            out.health_damage = mitigated_amount * (1.0 - shield / drain);
+            shield = 0;
+        }
+        return out;
+    }
+    if (type == DamageType::melee) {
+        const double pierce = mitigated_amount * 0.5;
+        const double shield_portion = mitigated_amount - pierce;
+        const double absorbed = std::min(shield, shield_portion);
+        shield -= absorbed;
+        double extra = 0;
+        if (extra_shield_disrupt > 2.5 && shield > 0) {
+            extra = std::min(shield, shield_portion * 0.5);
+            shield -= extra;
+        }
+        out.shield_damage = absorbed + extra;
+        out.health_damage = pierce + (shield_portion - absorbed);
+        out.disrupt_seconds = std::max(2.5, extra_shield_disrupt);
+        return out;
+    }
+    const double absorbed = std::min(shield, mitigated_amount);
+    shield -= absorbed;
+    out.shield_damage = absorbed;
+    out.health_damage = mitigated_amount - absorbed;
+    return out;
 }
 
 } // namespace swm::core

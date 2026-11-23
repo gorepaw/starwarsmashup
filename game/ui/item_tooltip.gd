@@ -28,17 +28,24 @@ static func stat_label(stat_name: String) -> String:
 		"mitigation_bio": return "Bio Resist"
 		"mitigation_explosive": return "Explosive Resist"
 		"mitigation_melee": return "Melee Resist"
+		"shield_capacity": return "Shield Capacity"
+		"shield_recharge": return "Shield Recharge /s"
+		"shield_delay": return "Shield Delay"
+		"explosion_push_resist": return "Blast Knockback Resist"
 	return stat_name.replace("_", " ").capitalize()
 
 
 static func format_modifier(m: Dictionary) -> String:
-	var sname := stat_label(str(m.get("stat_name", "")))
+	var raw_name := str(m.get("stat_name", ""))
+	var sname := stat_label(raw_name)
 	var add := float(m.get("add", 0.0))
 	var mult := float(m.get("multiply", 1.0))
 	var parts: PackedStringArray = []
 	if absf(add) > 1e-4:
-		if str(m.get("stat_name", "")).begins_with("mitigation"):
+		if raw_name.begins_with("mitigation") or raw_name == "explosion_push_resist":
 			parts.append("%s%d%%" % ["+" if add > 0 else "", roundi(add * 100.0)])
+		elif raw_name == "shield_delay":
+			parts.append("%s%.1fs" % ["+" if add > 0 else "", add])
 		else:
 			parts.append("%s%.0f" % ["+" if add > 0 else "", add])
 	if absf(mult - 1.0) > 1e-4:
@@ -80,30 +87,42 @@ static func build_lines(def: Dictionary, inst: Dictionary, store: Object, equipp
 		var dmg := float(stats.get("damage", 0.0))
 		var delay := maxf(0.01, float(stats.get("shot_delay", 0.2)))
 		var rof := 1.0 / delay
-		var clip := int(stats.get("rounds_per_clip", 0))
-		var heat := float(stats.get("heat_per_shot", 0.0))
-		var spread := float(stats.get("yaw_spread", 0.0))
-		var speed := float(stats.get("bolt_speed", 0.0))
-		var range_m := speed * float(stats.get("bolt_life", 0.0))
-		var salvo := int(stats.get("shots_per_salvo", 1))
 		var dtype := str(stats.get("damage_type", "laser")).capitalize()
-		var exp_dmg := float(stats.get("explosion_damage", 0.0))
+		if str(stats.get("projectile", "")) == "melee":
+			var eq_dmg := float(eq_stats.get("damage", dmg)) if not eq_stats.is_empty() else dmg
+			var eq_rof := 1.0 / maxf(0.01, float(eq_stats.get("shot_delay", delay))) if not eq_stats.is_empty() else rof
+			var reach := float(stats.get("melee_range", 2.6))
+			var eq_reach := float(eq_stats.get("melee_range", reach)) if not eq_stats.is_empty() else reach
+			lines.append(_cmp_line("Damage (%s)" % dtype, dmg, eq_dmg, "%.0f" % dmg, true, not eq_stats.is_empty()))
+			lines.append(_cmp_line("Swing Rate", rof, eq_rof, "%.1f /s" % rof, true, not eq_stats.is_empty()))
+			lines.append(_cmp_line("Reach", reach, eq_reach, "%.1f m" % reach, true, not eq_stats.is_empty()))
+			lines.append({"text": "Lunge: %.1f m/s   Stagger: %.2fs" % [float(stats.get("melee_lunge", 5.0)),
+					float(stats.get("melee_stagger", 0.35))], "color": Bf2Screen.TEXT})
+			lines.append({"text": "Shield Disrupt: %.1fs" % float(stats.get("shield_disrupt", 2.5)), "color": Bf2Screen.TEXT})
+		else:
+			var clip := int(stats.get("rounds_per_clip", 0))
+			var heat := float(stats.get("heat_per_shot", 0.0))
+			var spread := float(stats.get("yaw_spread", 0.0))
+			var speed := float(stats.get("bolt_speed", 0.0))
+			var range_m := speed * float(stats.get("bolt_life", 0.0))
+			var salvo := int(stats.get("shots_per_salvo", 1))
+			var exp_dmg := float(stats.get("explosion_damage", 0.0))
 
-		var eq_dmg := float(eq_stats.get("damage", dmg)) if not eq_stats.is_empty() else dmg
-		var eq_rof := 1.0 / maxf(0.01, float(eq_stats.get("shot_delay", delay))) if not eq_stats.is_empty() else rof
-		var eq_spread := float(eq_stats.get("yaw_spread", spread)) if not eq_stats.is_empty() else spread
-		var eq_range := float(eq_stats.get("bolt_speed", speed)) * float(eq_stats.get("bolt_life", float(stats.get("bolt_life", 0.0)))) if not eq_stats.is_empty() else range_m
+			var eq_dmg := float(eq_stats.get("damage", dmg)) if not eq_stats.is_empty() else dmg
+			var eq_rof := 1.0 / maxf(0.01, float(eq_stats.get("shot_delay", delay))) if not eq_stats.is_empty() else rof
+			var eq_spread := float(eq_stats.get("yaw_spread", spread)) if not eq_stats.is_empty() else spread
+			var eq_range := float(eq_stats.get("bolt_speed", speed)) * float(eq_stats.get("bolt_life", float(stats.get("bolt_life", 0.0)))) if not eq_stats.is_empty() else range_m
 
-		lines.append(_cmp_line("Damage (%s)" % dtype, dmg, eq_dmg, "%.0f" % dmg + (" x%d" % salvo if salvo > 1 else ""), true, not eq_stats.is_empty()))
-		if exp_dmg > 0:
-			lines.append({"text": "Blast: %.0f dmg (%.1f m)" % [exp_dmg, float(stats.get("explosion_outer", 0.0))], "color": Bf2Screen.TEXT})
-		lines.append(_cmp_line("Fire Rate", rof, eq_rof, "%.1f /s" % rof, true, not eq_stats.is_empty()))
-		lines.append(_cmp_line("Spread", spread, eq_spread, "%.2f deg" % spread, false, not eq_stats.is_empty()))
-		lines.append(_cmp_line("Range", range_m, eq_range, "%.0f m" % range_m, true, not eq_stats.is_empty()))
-		if clip > 0:
-			lines.append({"text": "Clip: %d  (Reload %.1f s)" % [clip, float(stats.get("reload_time", 1.5))], "color": Bf2Screen.TEXT})
-		elif heat > 0:
-			lines.append({"text": "Heat / shot: %d%%" % roundi(heat * 100.0), "color": Bf2Screen.TEXT})
+			lines.append(_cmp_line("Damage (%s)" % dtype, dmg, eq_dmg, "%.0f" % dmg + (" x%d" % salvo if salvo > 1 else ""), true, not eq_stats.is_empty()))
+			if exp_dmg > 0:
+				lines.append({"text": "Blast: %.0f dmg (%.1f m)" % [exp_dmg, float(stats.get("explosion_outer", 0.0))], "color": Bf2Screen.TEXT})
+			lines.append(_cmp_line("Fire Rate", rof, eq_rof, "%.1f /s" % rof, true, not eq_stats.is_empty()))
+			lines.append(_cmp_line("Spread", spread, eq_spread, "%.2f deg" % spread, false, not eq_stats.is_empty()))
+			lines.append(_cmp_line("Range", range_m, eq_range, "%.0f m" % range_m, true, not eq_stats.is_empty()))
+			if clip > 0:
+				lines.append({"text": "Clip: %d  (Reload %.1f s)" % [clip, float(stats.get("reload_time", 1.5))], "color": Bf2Screen.TEXT})
+			elif heat > 0:
+				lines.append({"text": "Heat / shot: %d%%" % roundi(heat * 100.0), "color": Bf2Screen.TEXT})
 
 	var mods: Array = stats.get("modifiers", def.get("modifiers", []))
 	var eq_map := {}

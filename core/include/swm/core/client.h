@@ -76,6 +76,7 @@ public:
         bool secondary = false;  // throw a grenade
         bool crouch = false;     // crouch, stand, or roll on the move (see MoveInput::crouch)
         bool use = false;        // get into the vehicle at hand, or out of the one driven (a press)
+        bool block = false;      // melee block / timed parry
         int weapon = 0;
     };
     void set_input(const Controls& controls);
@@ -105,6 +106,7 @@ public:
     // loadout, score); its state is the server's, not the prediction.
     const net::EntityState& self() const { return self_; }
     double health() const { return self_.health; }
+    double max_shield() const { return character_stats_.shield_capacity; }
     bool alive() const { return self_.life == Life::alive; }
     // What we carry, and our statistics with it.
     const Loadout& loadout() const;
@@ -152,6 +154,8 @@ public:
     const std::vector<net::QuestNpc>& quest_npcs() const { return quest_npcs_; }
     const std::vector<net::MissionTerminal>& mission_terminals() const { return mission_terminals_; }
     const net::QuestSync& quests() const { return quests_; }
+    // Our experience in each profession (ProfessionSync).
+    const net::ProfessionSync& professions() const { return professions_; }
     void talk_to(uint32_t npc_entity);
     void use_mission_terminal(int index);
     void accept_quest(const std::string& id);
@@ -230,6 +234,7 @@ private:
     std::vector<net::QuestNpc> quest_npcs_;
     std::vector<net::MissionTerminal> mission_terminals_;
     net::QuestSync quests_;
+    net::ProfessionSync professions_;
     std::vector<net::TargetState> targets_;
     std::vector<net::VehicleState> vehicles_;
     std::vector<net::CorpseLootState> corpses_;

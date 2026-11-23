@@ -37,6 +37,10 @@ enum class Stat : uint8_t {
     mitigation_bio,
     mitigation_explosive,
     mitigation_melee,
+    shield_capacity,
+    shield_recharge,
+    shield_delay,
+    explosion_push_resist,
 };
 
 std::optional<Stat> stat_from_name(std::string_view name);
@@ -60,6 +64,10 @@ struct CharacterStats {
     MoveParams move;
     double mitigation = 0;  // 0..max_mitigation: share of all damage absorbed
     std::array<double, damage_type_count> mitigation_by_type{};  // then this share of each type
+    double shield_capacity = 0;
+    double shield_recharge = 0;
+    double shield_delay = 5.0;
+    double explosion_push_resist = 0;
 };
 
 // The most of any damage mitigation can absorb.
@@ -71,7 +79,7 @@ double mitigated_damage(const CharacterStats& stats, double amount, DamageType t
 // A weapon: how it fires, what it fires (a Battlefront weapon class, its
 // ordnance and its explosion, via `bf2tool export-loadout`), and the stats it
 // changes while carried. Defaults are the Imperial E-11's.
-enum class Projectile : uint8_t { bolt, missile, grenade };
+enum class Projectile : uint8_t { bolt, missile, grenade, melee };
 
 // For a Battlefront weapon (by its class name), the Galaxies weapon of the
 // same kind soldiers hold for it, game/imported_assets/-relative ("" none):
@@ -91,6 +99,10 @@ struct WeaponDef {
     // hold it: Battlefront's animation set ("rifle", "pistol", "bazooka").
     std::string model;
     std::string anim_set = "rifle";
+    // An item's weapon archetype (WeaponArchetypeInfo::id: "pistol",
+    // "rifle_auto", ...), which says what profession it levels; empty for
+    // Battlefront's own weapons.
+    std::string archetype;
     DamageType damage_type = DamageType::laser;  // of a direct hit; explosions are explosive
     // What it fires: a bolt (blasters; bullets too), a missile (rockets:
     // accelerating), or a grenade (thrown or lobbed: bounces, and explodes on
@@ -150,6 +162,11 @@ struct WeaponDef {
     double explosion_push = 0;
     double push_inner = 0;
     double push_outer = 0;
+    double melee_range = 2.6;
+    double melee_arc = 70.0;
+    double melee_lunge = 5.0;
+    double melee_stagger = 0.35;
+    double shield_disrupt = 2.5;
     // Looks only (clients draw bolts, models and effects however their settings allow).
     std::array<double, 4> bolt_color{253 / 255.0, 43 / 255.0, 43 / 255.0, 100 / 255.0};  // LaserGlowColor
     double bolt_length = 1.0;        // LaserLength, m
@@ -204,6 +221,9 @@ struct Loadout {
     std::string name = "default";
     std::array<std::optional<WeaponDef>, weapon_slots> weapons{WeaponDef{}, std::nullopt, std::nullopt};
     std::vector<Gear> gear;
+    // What its armor makes it: none, light, medium or heavy (empty: not
+    // known, Battlefront's own). Says which armor profession it levels.
+    std::string armor_class;
 };
 
 // The weapon in a slot, if the loadout has one.
@@ -212,6 +232,10 @@ const WeaponDef* weapon_in_slot(const Loadout& loadout, int slot);
 // The base statistics with every weapon's and gear's modifiers applied:
 // each statistic plus all additions, times all multipliers.
 CharacterStats stats_for(const Loadout& loadout, const CharacterStats& base = {});
+
+// "run_speed * 0.9", "mitigation_laser + 0.15", "max_health - 50"; throws
+// std::runtime_error naming `where` if it isn't one.
+StatModifier parse_stat_modifier(const std::string& text, const std::string& where);
 
 // Data files (INI). Each throws std::runtime_error if it can't be read or
 // makes no sense.

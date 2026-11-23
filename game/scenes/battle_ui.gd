@@ -486,6 +486,9 @@ func _update_bf2_hud(client: Object, weapons: Array, max_health: float, delta: f
 			b["player1.healthFraction"] = clampf(float(driving["health"]) / maxf(1.0, float(driving["max_health"])),
 					0.0, 1.0)
 		b["player1.energyFraction"] = clampf(float(own["energy"]) / 100.0, 0.0, 1.0)
+		var max_shield := maxf(float(own.get("max_shield", 0.0)), float(client.get_max_shield()))
+		_bf2_hud.shield_fraction = clampf(float(own.get("shield", 0.0)) / max_shield, 0.0, 1.0) \
+				if max_shield > 0.0 and driving.is_empty() else -1.0
 		var target := _aimed_at(client, camera)
 		var tint := Color8(220, 220, 220)
 		if not target.is_empty():
@@ -509,6 +512,9 @@ func _update_bf2_hud(client: Object, weapons: Array, max_health: float, delta: f
 					b["player1.weapon1.totalAmmoBullets"] = str(own["rounds"])
 				else:
 					b["player1.weapon1.totalAmmoBullets"] = "%d/%d" % [own["rounds"], own["reserve"]]
+			elif str(weapon.get("projectile", "")) == "melee":
+				b["player1.weapon1.totalAmmoBullets"] = "MELEE"
+				b["player1.weapon1.ammoInfinite"] = true
 			else:
 				b["player1.weapon1.heat"] = clampf(float(own["heat"]), 0.0, 1.0)
 				b["player1.weapon1.ammoInfinite"] = true
@@ -521,6 +527,8 @@ func _update_bf2_hud(client: Object, weapons: Array, max_health: float, delta: f
 			b["player1.weapon2.totalAmmoBullets"] = str(own["grenades"])
 		var position: Vector3 = own["position"]
 		_bf2_hud.map_player = {"position": Vector2(position.x, position.z), "yaw": yaw}
+	else:
+		_bf2_hud.shield_fraction = -1.0
 	if not game.is_empty() and team >= 0:
 		for side in 2:
 			var slot := "player1.team%d" % (1 if side == team else 2)

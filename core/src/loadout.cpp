@@ -12,7 +12,7 @@ namespace swm::core {
 
 namespace {
 
-constexpr std::array<std::pair<std::string_view, Stat>, 18> stat_names{{
+constexpr std::array<std::pair<std::string_view, Stat>, 22> stat_names{{
     {"max_health", Stat::max_health},
     {"run_speed", Stat::run_speed},
     {"strafe_speed", Stat::strafe_speed},
@@ -31,6 +31,10 @@ constexpr std::array<std::pair<std::string_view, Stat>, 18> stat_names{{
     {"mitigation_bio", Stat::mitigation_bio},
     {"mitigation_explosive", Stat::mitigation_explosive},
     {"mitigation_melee", Stat::mitigation_melee},
+    {"shield_capacity", Stat::shield_capacity},
+    {"shield_recharge", Stat::shield_recharge},
+    {"shield_delay", Stat::shield_delay},
+    {"explosion_push_resist", Stat::explosion_push_resist},
 }};
 
 constexpr std::array<std::string_view, damage_type_count> damage_type_names{"ballistic", "laser",     "electro",
@@ -51,6 +55,10 @@ double& stat_value(CharacterStats& stats, Stat stat, double& jump_height) {
     case Stat::energy_restore_idle: return m.energy_restore_idle;
     case Stat::energy_drain_sprint: return m.energy_drain_sprint;
     case Stat::mitigation: return stats.mitigation;
+    case Stat::shield_capacity: return stats.shield_capacity;
+    case Stat::shield_recharge: return stats.shield_recharge;
+    case Stat::shield_delay: return stats.shield_delay;
+    case Stat::explosion_push_resist: return stats.explosion_push_resist;
     default: return stats.mitigation_by_type[size_t(stat) - size_t(Stat::mitigation_ballistic)];
     }
 }
@@ -91,6 +99,10 @@ std::vector<StatModifier> read_modifiers(const Ini::Section& section, const std:
 }
 
 } // namespace
+
+StatModifier parse_stat_modifier(const std::string& text, const std::string& where) {
+    return parse_modifier(text, where);
+}
 
 std::optional<Stat> stat_from_name(std::string_view name) {
     for (const auto& [text, stat] : stat_names) {
@@ -167,6 +179,8 @@ CharacterStats stats_for(const Loadout& loadout, const CharacterStats& base) {
     }
     move.jump_speed = std::sqrt(2 * move.gravity * jump_height);
     stats.max_health = std::max(1.0, stats.max_health);
+    stats.shield_delay = std::max(0.5, stats.shield_delay);
+    stats.explosion_push_resist = std::clamp(stats.explosion_push_resist, 0.0, max_mitigation);
     return stats;
 }
 
@@ -224,6 +238,7 @@ WeaponDef weapon_from_section(const Ini& ini, size_t section, const std::string&
     const std::string projectile = s.get("Projectile").value_or("bolt");
     w.projectile = projectile == "missile" ? Projectile::missile
                    : projectile == "grenade" ? Projectile::grenade
+                   : projectile == "melee"   ? Projectile::melee
                                              : Projectile::bolt;
     w.model = s.get("Model").value_or(default_weapon_model(w.name));
     w.anim_set = s.get("AnimSet").value_or(default_anim_set(w.name, w.projectile == Projectile::missile));
@@ -281,6 +296,11 @@ WeaponDef weapon_from_section(const Ini& ini, size_t section, const std::string&
     w.explosion_push = s.number("ExplosionPush", 0);
     w.push_inner = s.number("ExplosionPushRadiusInner", 0);
     w.push_outer = std::max(w.push_inner, s.number("ExplosionPushRadiusOuter", 0));
+    w.melee_range = s.number("MeleeRange", w.melee_range);
+    w.melee_arc = s.number("MeleeArc", w.melee_arc);
+    w.melee_lunge = s.number("MeleeLunge", w.melee_lunge);
+    w.melee_stagger = s.number("MeleeStagger", w.melee_stagger);
+    w.shield_disrupt = s.number("ShieldDisrupt", w.shield_disrupt);
     const auto read_color = [&](const char* key, std::array<double, 4>& out) {
         if (const auto color = s.get(key)) {
             std::istringstream fields(*color);

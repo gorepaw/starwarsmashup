@@ -34,6 +34,8 @@ godot::Dictionary to_dictionary(const core::MoveState& state) {
     out["crouched"] = state.crouched;
     out["roll"] = double(state.roll);          // seconds of rolling left (0: not rolling)
     out["roll_yaw"] = double(state.roll_yaw);  // the way it rolls
+    out["blocking"] = state.blocking;
+    out["stagger"] = double(state.stagger);
     out["vehicle"] = int64_t(state.vehicle);    // the vehicle class it drives; -1 on foot
     const core::CombatState& c = state.combat;
     out["weapon"] = int64_t(c.weapon);
@@ -63,6 +65,8 @@ const char* life_name(core::Life life) {
 void describe(godot::Dictionary& out, const core::net::EntityState& entity) {
     out["health"] = double(entity.health);
     out["max_health"] = double(entity.max_health);
+    out["shield"] = double(entity.shield);
+    out["max_shield"] = double(entity.max_shield);
     out["alive"] = entity.alive();
     out["life"] = life_name(entity.life);
     out["team"] = int64_t(entity.team);
@@ -411,6 +415,12 @@ godot::Array SwmClient::get_character_loadouts() const {
             }
             entry["gear_ids"] = gear;
             entry["appearance_ids"] = app;
+            godot::Array specializations;
+            for (const std::string& id : lo.specializations) {
+                specializations.push_back(godot::String::utf8(id.c_str()));
+            }
+            entry["specializations"] = specializations;
+            entry["companion"] = godot::String::utf8(lo.companion.c_str());
             out.push_back(entry);
         }
     }
@@ -461,6 +471,15 @@ void SwmClient::save_loadout(int64_t slot_index, const godot::Dictionary& loadou
         for (int i = 0; i < keys.size(); ++i) {
             lo.appearance_ids[to_std(keys[i])] = uint64_t(int64_t(app[keys[i]]));
         }
+    }
+    if (loadout.has("specializations")) {
+        const godot::Array ids = loadout["specializations"];
+        for (int i = 0; i < ids.size(); ++i) {
+            lo.specializations.push_back(to_std(ids[i]));
+        }
+    }
+    if (loadout.has("companion")) {
+        lo.companion = to_std(loadout["companion"]);
     }
     client()->save_loadout(lo);
 }
@@ -565,6 +584,19 @@ godot::Array SwmClient::get_mission_terminals() const {
             entry["name"] = godot::String::utf8(terminals[i].name.c_str());
             entry["position"] = to_godot(terminals[i].position);
             entry["radius"] = terminals[i].radius;
+            out.push_back(entry);
+        }
+    }
+    return out;
+}
+
+godot::Array SwmClient::get_professions() const {
+    godot::Array out;
+    if (client()) {
+        for (const core::ProfessionProgress& p : client()->professions().professions) {
+            godot::Dictionary entry;
+            entry["id"] = godot::String::utf8(p.id.c_str());
+            entry["xp"] = p.xp;
             out.push_back(entry);
         }
     }
@@ -857,6 +889,7 @@ void SwmClient::set_input(const godot::Dictionary& c) {
     controls.secondary = bool(c.get("secondary", false));
     controls.crouch = bool(c.get("crouch", false));
     controls.use = bool(c.get("use", false));
+    controls.block = bool(c.get("block", false));
     controls.weapon = int(int64_t(c.get("weapon", 0)));
     client()->set_input(controls);
 }
@@ -975,7 +1008,8 @@ godot::Array SwmClient::take_shots() {
         const core::Loadout& own = loadout();
         for (const core::Shot& shot : client()->take_shots()) {
             const core::WeaponDef* weapon = core::weapon_in_slot(own, shot.weapon);
-            if (weapon == nullptr || weapon->projectile != core::Projectile::bolt) {
+            if (weapon == nullptr ||
+                (weapon->projectile != core::Projectile::bolt && weapon->projectile != core::Projectile::melee)) {
                 continue;  // drawn from the server's snapshots
             }
             godot::Dictionary entry;
@@ -986,6 +1020,10 @@ godot::Array SwmClient::take_shots() {
             }
             entry["directions"] = directions;
             entry["weapon"] = int64_t(shot.weapon);
+            entry["projectile"] = weapon->projectile == core::Projectile::melee ? "melee" : "bolt";
+            entry["melee_range"] = weapon->melee_range;
+            entry["melee_lunge"] = weapon->melee_lunge;
+            entry["melee_stagger"] = weapon->melee_stagger;
             add_bolt_look(entry, *weapon);
             out.push_back(entry);
         }
@@ -1181,7 +1219,11 @@ godot::Array SwmClient::get_weapons() const {
         entry["zoom_first_person"] = w.zoom_first_person;
         entry["projectile"] = w.projectile == core::Projectile::bolt      ? "bolt"
                               : w.projectile == core::Projectile::missile ? "missile"
-                                                                          : "grenade";
+                              : w.projectile == core::Projectile::grenade ? "grenade"
+                                                                          : "melee";
+        entry["melee_range"] = w.melee_range;
+        entry["melee_lunge"] = w.melee_lunge;
+        entry["melee_stagger"] = w.melee_stagger;
         entry["heat_per_shot"] = w.heat_per_shot;
         entry["bolt_speed"] = w.bolt_speed;
         entry["bolt_life"] = w.bolt_life;
@@ -1202,6 +1244,10 @@ godot::Array SwmClient::get_weapons() const {
 
 double SwmClient::get_max_health() const {
     return client() ? client()->character_stats().max_health : core::stats_for(loadout_).max_health;
+}
+
+double SwmClient::get_max_shield() const {
+    return client() ? client()->max_shield() : core::stats_for(loadout_).shield_capacity;
 }
 
 godot::PackedStringArray SwmClient::get_looks() const {
@@ -1319,6 +1365,7 @@ void SwmClient::_bind_methods() {
     ClassDB::bind_method(D_METHOD("get_quest_npcs"), &SwmClient::get_quest_npcs);
     ClassDB::bind_method(D_METHOD("get_mission_terminals"), &SwmClient::get_mission_terminals);
     ClassDB::bind_method(D_METHOD("get_quests"), &SwmClient::get_quests);
+    ClassDB::bind_method(D_METHOD("get_professions"), &SwmClient::get_professions);
     ClassDB::bind_method(D_METHOD("talk_to", "npc_entity"), &SwmClient::talk_to);
     ClassDB::bind_method(D_METHOD("use_mission_terminal", "index"), &SwmClient::use_mission_terminal);
     ClassDB::bind_method(D_METHOD("accept_quest", "id"), &SwmClient::accept_quest);
@@ -1337,6 +1384,7 @@ void SwmClient::_bind_methods() {
     ClassDB::bind_method(D_METHOD("get_secondary"), &SwmClient::get_secondary);
     ClassDB::bind_method(D_METHOD("get_weapons"), &SwmClient::get_weapons);
     ClassDB::bind_method(D_METHOD("get_max_health"), &SwmClient::get_max_health);
+    ClassDB::bind_method(D_METHOD("get_max_shield"), &SwmClient::get_max_shield);
     ClassDB::bind_method(D_METHOD("update"), &SwmClient::update);
     ClassDB::bind_method(D_METHOD("leave"), &SwmClient::leave);
     ClassDB::bind_method(D_METHOD("get_status"), &SwmClient::get_status);
@@ -1412,6 +1460,17 @@ godot::Error SwmServer::set_catalog(const godot::String& catalog_ini, const godo
     return godot::OK;
 }
 
+godot::Error SwmServer::set_professions(const godot::String& path) {
+    try {
+        professions_.load(to_std(path));
+        has_professions_ = true;
+    } catch (const std::exception& error) {
+        godot::UtilityFunctions::push_error("set_professions: ", error.what());
+        return godot::ERR_CANT_OPEN;
+    }
+    return godot::OK;
+}
+
 godot::Error SwmServer::start(int64_t port, const godot::String& bake_prefix, const godot::Vector2& spawn) {
     stop();  // the server refers to the ground, store and link replaced below
     try {
@@ -1429,6 +1488,7 @@ godot::Error SwmServer::start(int64_t port, const godot::String& bake_prefix, co
     config.loadout = loadout_;
     config.battlefield = battlefield_;
     config.catalog = has_catalog_ ? &catalog_ : nullptr;
+    config.professions = has_professions_ ? &professions_ : nullptr;
     config.spawn = {-spawn.x, 0, spawn.y};  // Galaxies to game coordinates
     server_ = std::make_unique<core::GameServer>(*udp_, *world_, config, store_.get());
     server_->log = [](const std::string& line) { godot::UtilityFunctions::print("server: ", line.c_str()); };
@@ -1495,6 +1555,7 @@ void SwmServer::_bind_methods() {
     ClassDB::bind_method(D_METHOD("set_bot_difficulty", "difficulty"), &SwmServer::set_bot_difficulty);
     ClassDB::bind_method(D_METHOD("set_hub", "path"), &SwmServer::set_hub);
     ClassDB::bind_method(D_METHOD("set_catalog", "catalog_ini", "bf2_items_dir"), &SwmServer::set_catalog);
+    ClassDB::bind_method(D_METHOD("set_professions", "path"), &SwmServer::set_professions);
     ClassDB::bind_method(D_METHOD("add_building", "collision_path", "position", "yaw_degrees"),
                          &SwmServer::add_building);
     ClassDB::bind_method(D_METHOD("start", "port", "bake_prefix", "spawn"), &SwmServer::start);

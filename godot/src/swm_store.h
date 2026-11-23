@@ -10,6 +10,7 @@
 #include <godot_cpp/variant/vector3.hpp>
 
 #include "swm/core/items.h"
+#include "swm/core/profession.h"
 #include "swm/core/sqlite_store.h"
 
 namespace swm::godot_bindings {
@@ -47,6 +48,14 @@ public:
     godot::Dictionary compute_loadout_stats(const godot::String& species, const godot::Dictionary& loadout,
                                               const godot::Array& items, bool apply_quality = true) const;
 
+    // The profession roster, for the planner: load it, then its professions
+    // (each with its milestones and what their perks do, in words), and where
+    // an amount of experience stands on the curve: {level, into, needed}.
+    godot::Error load_professions(const godot::String& path);
+    godot::Array get_professions() const;
+    godot::Dictionary profession_level(int64_t xp) const;
+    int64_t get_specialization_slots() const { return core::specialization_slots; }
+
     static godot::Array get_species_list();
 
 protected:
@@ -55,6 +64,7 @@ protected:
 private:
     std::unique_ptr<core::SqliteCharacterStore> store_;
     core::ItemCatalog catalog_;
+    core::ProfessionBook professions_;
     std::string last_error_;
 };
 

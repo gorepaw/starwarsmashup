@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <deque>
 #include <functional>
+#include <map>
 #include <optional>
 #include <span>
 #include <string>
@@ -16,6 +17,7 @@
 #include "swm/core/net/link.h"
 #include "swm/core/net/protocol.h"
 #include "swm/core/persistence.h"
+#include "swm/core/profession.h"
 #include "swm/core/quest.h"
 #include "swm/core/species.h"
 #include "swm/core/world.h"
@@ -46,6 +48,9 @@ struct ServerConfig {
     // Characters aren't saved in a match.
     std::optional<Battlefield> battlefield;
     const ItemCatalog* catalog = nullptr;
+    // The profession roster (outliving the server): experience is earned and
+    // loadouts' Active Specialization Slots apply with one.
+    const ProfessionBook* professions = nullptr;
     bool friendly_fire = false;  // in a match
     bool single_match = false;   // one match, no next one (a hub's match: see match_over())
     bool pvp_enabled = true;     // false in open-world hubs (no player-vs-player harm outside matches)
@@ -57,6 +62,7 @@ struct PlayerResult {
     std::string name;
     int team = -1;
     uint16_t kills = 0, deaths = 0, captures = 0;
+    std::map<std::string, int64_t> profession_xp;  // earned in the match, by profession
 };
 
 struct MatchResult {
@@ -149,6 +155,13 @@ public:
                                                std::vector<std::string>* out_worn = nullptr) const;
     // Persists battle rewards for a player by name and updates live balance if connected.
     void award_battle_rewards(const std::string& name, const BattleReward& reward);
+    // Professions: experience a player earned in a match (by profession), and
+    // `routed` more for the professions their active loadout routes it to
+    // (routed_professions); saved, and shown if they're here.
+    void award_profession_xp(const std::string& name, const std::map<std::string, int64_t>& earned, int64_t routed);
+    const ProfessionBook* profession_book() const { return config_.professions; }
+    // A connected player's experience in each profession; nullptr if not connected.
+    const std::vector<ProfessionProgress>* professions_of(uint32_t entity) const;
     // What this client's snapshots say about it; nullptr if not connected.
     net::PlayerStatus* status(uint32_t entity);
     // Shows a client a message.
@@ -278,6 +291,16 @@ private:
         uint16_t offer_serial = 0;
         uint32_t notice_tick = UINT32_MAX;  // when the notice was last set
         bool use_held = false;              // the use button, last input
+        std::vector<ProfessionProgress> professions;
+        uint32_t profession_rev = 0;
+        uint32_t acked_profession_rev = 0;
+        uint32_t profession_sync_tick = 0;
+        mutable bool professions_dirty = false;  // not saved since it last changed
+        std::map<std::string, int64_t> battle_profession_xp;  // in a match: for the hub to save
+        double armor_xp = 0;  // toward the armor profession's next point, from hits taken
+        double shield = 0;
+        double shield_recharge_timer = 0;
+        double shield_disrupt_timer = 0;
     };
     // A vehicle in a match. Empty, it keeps its own state; driven, its
     // driver's state is its state (MoveState::vehicle), and the driver's
@@ -380,13 +403,13 @@ private:
     void save(std::span<const Client> clients);
     void step();
     void run_match();
-    void fire(const Client& shooter, const Shot& shot, double view_tick);
+    void fire(Client& shooter, const Shot& shot, double view_tick);
     void fire_npc(const Npc& shooter, const Shot& shot);
     void advance_bolts();
     void advance_pickups();
     void drop_pickup(Vec3 at);
     double random_unit();
-    void damage(Client& victim, double raw, DamageType type, uint32_t attacker);
+    void damage(Client& victim, double raw, DamageType type, uint32_t attacker, double shield_disrupt = 0.0);
     void damage_npc(Npc& npc, double raw, DamageType type, uint32_t attacker);
     Npc* find_npc(uint32_t entity);
     const Npc* find_npc(uint32_t entity) const;
@@ -407,6 +430,15 @@ private:
     Vehicle* vehicle_of(uint32_t driver);
     void damage_vehicle(Vehicle& vehicle, double amount, uint32_t attacker, std::vector<Blast>& blasts);
     net::VehicleState describe(const Vehicle& vehicle) const;
+    // Professions (server_professions.cpp).
+    std::string held_profession(const Client& client) const;   // the weapon in hand's
+    std::string armor_profession(const Client& client) const;  // the loadout's armor's
+    void earn_profession_xp(Client& client, const std::string& id, int64_t xp);
+    // Experience for what isn't one profession's: to the active loadout's routed professions.
+    void route_xp(Client& client, int64_t xp);
+    void save_professions(Client& client);
+    void send_profession_sync(Client& client);
+    void apply_professions(const Client& client, const CharacterLoadout& cl, Loadout& loadout) const;
     // Quests (server_quests.cpp).
     void handle_quest_request(Client& client, const net::QuestRequest& request);
     void apply_quests(Client& client, QuestEffects effects);
