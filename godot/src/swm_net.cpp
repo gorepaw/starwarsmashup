@@ -762,7 +762,7 @@ godot::Array SwmClient::get_weapons() const {
         }
         const core::WeaponDef& w = *held;
         entry["name"] = godot::String::utf8(w.name.c_str());
-        entry["model"] = godot::String::utf8(w.model.c_str());        // what's held: imported_assets/-relative
+        entry["held_model"] = godot::String::utf8(w.model.c_str());  // what's held: imported_assets/-relative (not "model": the ordnance's)
         entry["anim_set"] = godot::String::utf8(w.anim_set.c_str());  // rifle, pistol or bazooka
         entry["rounds_per_clip"] = int64_t(w.rounds_per_clip);
         entry["zoom_min"] = w.zoom_min;

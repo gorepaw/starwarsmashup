@@ -29,6 +29,8 @@ extends Control
 const Bf2Art = preload("res://ui/bf2_art.gd")
 
 const MESH_UNIT := 0.2
+const WEAPON_PROFILE_WIDTH := 2.6  # HUD units a held weapon's profile spans in its panel (ASSUMPTION, by eye)
+const WEAPON_PANEL_SHARE := 0.42   # of its panel's backdrop's width a held weapon's profile spans (ASSUMPTION, by eye)
 const ASPECT := 4.0 / 3.0
 const FONT_REFERENCE := 600.0
 const PIXEL_REFERENCE := 480.0   # "Pixels" positions (ASSUMPTION: a 640x480 screen)
@@ -68,6 +70,7 @@ var _dir := ""
 var _layout: Array = []
 var _tables: Array = []   # color tables from hudtransforms
 var _meshes := {}
+var _panels := {}  # weapon panel ("player1weapon1") -> its backdrop's screen rect, where its held weapon goes
 var _draws: Array = []    # collected each redraw: [{z, order, call}]
 
 
@@ -261,6 +264,23 @@ func _model(node: Dictionary, xf: Transform2D, color: Color, z: float, screen: V
 		return
 	var unit := MESH_UNIT * screen.y
 	var placed := xf * Transform2D(0.0, Vector2(unit, unit), 0.0, Vector2.ZERO)
+	var text := str(node.get("text", ""))
+	if text.ends_with("backdrop"):
+		# A weapon panel's backdrop: where a held weapon's profile goes.
+		var box: AABB = (model["mesh"] as ArrayMesh).get_aabb()
+		var corner := placed * Vector2(box.position.x, box.position.y)
+		var far := placed * Vector2(box.end.x, box.end.y)
+		_panels[text.trim_suffix("backdrop")] = Rect2(corner, far - corner).abs()
+	elif name.ends_with(".gltf"):
+		# A held weapon's profile (Battlefront places its own weapons' meshes by
+		# a per-weapon table this doesn't read): over its panel's backdrop,
+		# toward its right, a WEAPON_PANEL_SHARE of its width.
+		var panel: Rect2 = _panels.get(text.trim_suffix("mesh"), Rect2())
+		if panel.size.x <= 0.0:
+			return
+		var size := panel.size.x * WEAPON_PANEL_SHARE / WEAPON_PROFILE_WIDTH
+		var at := panel.get_center() + Vector2(panel.size.x * 0.18, 0.0)
+		placed = Transform2D(0.0, Vector2(size, size), 0.0, at)
 	_add(z, func() -> void:
 		draw_set_transform_matrix(placed)
 		draw_mesh(model["mesh"], model["texture"], Transform2D(), color))
@@ -515,6 +535,9 @@ func _mesh(name: String) -> Dictionary:
 	if _meshes.has(key):
 		return _meshes[key]
 	_meshes[key] = {}
+	if key.ends_with(".gltf"):
+		_meshes[key] = _weapon_profile(name)
+		return _meshes[key]
 	var path := _dir.path_join("models").path_join(key + ".gltf")
 	if not FileAccess.file_exists(path):
 		return {}
@@ -549,6 +572,79 @@ func _mesh(name: String) -> Dictionary:
 	scene.free()
 	_meshes[key] = {"mesh": mesh, "texture": texture}
 	return _meshes[key]
+
+
+# A held weapon's model (imported_assets/-relative glTF, as a WeaponDef's) in
+# the weapon panel, as Battlefront shows its weapons' own models there: seen
+# from its right side, barrel to the right, flattened (its far side's
+# triangles drawn first), centered on its bounds, in meters as HUD models
+# are in their units.
+func _weapon_profile(path: String) -> Dictionary:
+	var full := "res://imported_assets/" + path
+	if not FileAccess.file_exists(full):
+		return {}
+	var document := GLTFDocument.new()
+	var state := GLTFState.new()
+	if document.append_from_file(ProjectSettings.globalize_path(full), state) != OK:
+		return {}
+	var scene := document.generate_scene(state)
+	var mesh := ArrayMesh.new()
+	var texture: Texture2D = null
+	var bounds := Rect2()
+	var first := true
+	var surfaces: Array[Dictionary] = []
+	for instance: Node in scene.find_children("*", "MeshInstance3D", true, false):
+		var source: Mesh = (instance as MeshInstance3D).mesh
+		var to_scene := (instance as Node3D).transform  # under the weapon's root
+		for surface in source.get_surface_count():
+			var arrays := source.surface_get_arrays(surface)
+			var verts: PackedVector3Array = arrays[Mesh.ARRAY_VERTEX]
+			var flat := PackedVector2Array()
+			var depth := PackedFloat32Array()
+			for v: Vector3 in verts:
+				var p := to_scene * v
+				var point := Vector2(p.z, -p.y)
+				flat.append(point)
+				depth.append(p.x)
+				bounds = Rect2(point, Vector2.ZERO) if first else bounds.expand(point)
+				first = false
+			var indices: PackedInt32Array = arrays[Mesh.ARRAY_INDEX]
+			if indices.is_empty():
+				indices.resize(verts.size())
+				for i in verts.size():
+					indices[i] = i
+			# The far side (-x) first, the near side over it.
+			var order: Array[Vector2] = []
+			for t in range(0, indices.size() - 2, 3):
+				order.append(Vector2((depth[indices[t]] + depth[indices[t + 1]] + depth[indices[t + 2]]) / 3.0, t))
+			order.sort_custom(func(a: Vector2, b: Vector2) -> bool: return a.x < b.x)
+			var sorted := PackedInt32Array()
+			for o in order:
+				var t := int(o.y)
+				sorted.append_array([indices[t], indices[t + 1], indices[t + 2]])
+			surfaces.append({"flat": flat, "uv": arrays[Mesh.ARRAY_TEX_UV], "index": sorted})
+			var material := source.surface_get_material(surface) as BaseMaterial3D
+			if texture == null and material != null:
+				texture = material.albedo_texture
+	scene.free()
+	if surfaces.is_empty():
+		return {}
+	# Every weapon as wide in its panel (WEAPON_PROFILE_WIDTH HUD units before
+	# the panel's own scale), a pistol as a rifle, as Battlefront's own
+	# weapon meshes fill theirs.
+	var center := bounds.get_center()
+	var fit := WEAPON_PROFILE_WIDTH / maxf(0.01, bounds.size.x)
+	for s: Dictionary in surfaces:
+		var flat: PackedVector2Array = s["flat"]
+		for i in flat.size():
+			flat[i] = (flat[i] - center) * fit
+		var out := []
+		out.resize(Mesh.ARRAY_MAX)
+		out[Mesh.ARRAY_VERTEX] = flat
+		out[Mesh.ARRAY_TEX_UV] = s["uv"]
+		out[Mesh.ARRAY_INDEX] = s["index"]
+		mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, out)
+	return {"mesh": mesh, "texture": texture}
 
 
 func _collect_tables(node: Dictionary) -> void:

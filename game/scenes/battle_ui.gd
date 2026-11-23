@@ -486,7 +486,9 @@ func _update_bf2_hud(client: Object, weapons: Array, max_health: float, delta: f
 		if not weapon.is_empty():
 			b["player1.weapon1.name"] = _display_name(str(weapon["name"]))
 			b["player1.weapon1.change"] = true
-			b["player1.weapon1.mesh"] = str(weapon["name"])
+			# Its own model, where it has one (Battlefront's weapons' HUD meshes otherwise).
+			b["player1.weapon1.mesh"] = str(weapon.get("held_model", "")) if str(weapon.get("held_model", "")) != "" \
+					else str(weapon["name"])
 			if int(weapon.get("rounds_per_clip", 0)) > 0:
 				b["player1.weapon1.totalClipFraction"] = float(own["rounds"]) / float(weapon["rounds_per_clip"])
 				if int(own["reserve"]) < 0:
@@ -500,7 +502,8 @@ func _update_bf2_hud(client: Object, weapons: Array, max_health: float, delta: f
 		if not secondary.is_empty():
 			b["player1.weapon2.name"] = _display_name(str(secondary["name"]))
 			b["player1.weapon2.change"] = true
-			b["player1.weapon2.mesh"] = str(secondary["name"])
+			b["player1.weapon2.mesh"] = str(secondary.get("held_model", "")) if str(secondary.get("held_model", "")) != "" \
+					else str(secondary["name"])
 			b["player1.weapon2.totalAmmoBullets"] = str(own["grenades"])
 		var position: Vector3 = own["position"]
 		_bf2_hud.map_player = {"position": Vector2(position.x, position.z), "yaw": yaw}
