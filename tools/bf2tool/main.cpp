@@ -45,6 +45,7 @@ constexpr const char* usage = R"(usage:
                      [--drop-boundary <path>]... [--set <object>.<property>=<value>]...
                      [--regen <object>=<health a second>]... [--kill-plays <object>=<animation group>]...
                      [--kill-stops <object>=<animation group>]... [--kill-removes <object>=<death region>]...
+                     [--start-plays <animation group>]... [--timed-death <region>=<first>,<on>,<off>]...
   bf2tool export-hud <_lvl_pc dir> -o <out dir>
   bf2tool export-effects <_lvl_pc dir> -o <out dir>
   bf2tool export-audio <_lvl_pc dir> -o <out dir>
@@ -484,6 +485,11 @@ int cmd_export_map(const std::vector<std::string>& args) {
     // pauses, a death region it removes; and how fast the object mends.
     std::map<std::string, double> regens;
     std::map<std::string, std::string> kill_plays, kill_stops, kill_removes;
+    // Groups the script plays at the start (lowercase): what they move stands
+    // where they leave it. Death regions it turns on and off on a timer:
+    // first on after `first` s, for `on` s, then off for `off` s, and again.
+    std::vector<std::string> start_plays;
+    std::map<std::string, std::array<double, 3>> timed_deaths;
     std::map<std::string, std::string> teams;  // post name (lowercase) -> team
     // object name (lowercase) -> property, value: the mission script's
     // SetProperty (a door's IsLocked, a post's SpawnPath or CaptureRegion)
@@ -508,6 +514,21 @@ int cmd_export_map(const std::vector<std::string>& args) {
                 return 2;
             }
             teams[lowercase(args[i + 1].substr(0, eq))] = args[i + 1].substr(eq + 1);
+        } else if (args[i] == "--start-plays") {
+            start_plays.push_back(lowercase(args[i + 1]));
+        } else if (args[i] == "--timed-death") {
+            const std::string& value = args[i + 1];
+            const size_t eq = value.find('=');
+            std::array<double, 3> timing{};
+            char comma1 = 0, comma2 = 0;
+            if (eq == std::string::npos ||
+                !(std::istringstream(value.substr(eq + 1)) >> timing[0] >> comma1 >> timing[1] >> comma2 >> timing[2]) ||
+                comma1 != ',' || comma2 != ',') {
+                std::cerr << usage;
+                return 2;
+            }
+            timed_deaths[lowercase(value.substr(0, eq))] = timing;
+            deaths.push_back(value.substr(0, eq));
         } else if (args[i] == "--regen" || args[i] == "--kill-plays" || args[i] == "--kill-stops" ||
                    args[i] == "--kill-removes") {
             const size_t eq = args[i + 1].find('=');
@@ -1008,11 +1029,14 @@ int cmd_export_map(const std::vector<std::string>& args) {
         const WorldAnimationGroup* group;
         const WorldAnimation* animation;
         int trigger = -1;
-        std::string mode;  // "plays" or "stops", with a trigger
+        std::string mode;  // "plays" or "stops", with a trigger; "start": played at the start (stands at its end)
     };
     std::map<std::string, std::vector<ObjectAnimation>> object_animations;
     for (const WorldAnimationGroup& group : level.animation_groups) {
         ObjectAnimation found{&group, nullptr};
+        if (std::find(start_plays.begin(), start_plays.end(), lowercase(group.name)) != start_plays.end()) {
+            found.mode = "start";
+        }
         for (const auto& [table, how] : {std::pair{&kill_plays, "plays"}, std::pair{&kill_stops, "stops"}}) {
             for (const auto& [object, name] : *table) {
                 if (name == lowercase(group.name) && destructible_index.contains(object)) {
@@ -1055,6 +1079,104 @@ int cmd_export_map(const std::vector<std::string>& args) {
             // the entries that mix x with y or z. `basis` is row-major.
             const auto& r = object.rotation;
             const std::array<float, 9> basis{r[0], -r[3], -r[6], -r[1], r[4], r[7], -r[2], r[5], r[8]};
+            // Where a world animation leaves it at a time: moved (game space)
+            // and turned in its own axes (game space, row-major). Keys are
+            // linear between, held past the ends; a rotation key's angles
+            // turn about x, then y, then z (ASSUMPTION, as the client has it).
+            struct Pose {
+                core::Vec3 offset;
+                std::array<double, 9> turn{1, 0, 0, 0, 1, 0, 0, 0, 1};
+            };
+            const auto pose_at = [&](const WorldAnimation& animation, float time) {
+                const auto sample = [&](const std::vector<WorldAnimation::Key>& keys) {
+                    std::array<float, 3> v{};
+                    for (size_t k = 0; k < keys.size(); ++k) {
+                        if (k == 0 || time >= keys[k].time) {
+                            v = keys[k].value;
+                        }
+                        if (k > 0 && time > keys[k - 1].time && time < keys[k].time) {
+                            const float t = (time - keys[k - 1].time) / (keys[k].time - keys[k - 1].time);
+                            for (size_t i = 0; i < 3; ++i) {
+                                v[i] = keys[k - 1].value[i] + (keys[k].value[i] - keys[k - 1].value[i]) * t;
+                            }
+                            break;
+                        }
+                    }
+                    return v;
+                };
+                Pose pose;
+                const auto o = sample(animation.positions);
+                const core::Vec3 m{-o[0], o[1], o[2]};
+                pose.offset = animation.local ? core::Vec3{basis[0] * m.x + basis[1] * m.y + basis[2] * m.z,
+                                                           basis[3] * m.x + basis[4] * m.y + basis[5] * m.z,
+                                                           basis[6] * m.x + basis[7] * m.y + basis[8] * m.z}
+                                              : m;
+                const auto e = sample(animation.rotations);
+                const double ax = e[0], ay = -e[1], az = -e[2];  // mirrored
+                const std::array<double, 9> rx{1, 0, 0, 0, std::cos(ax), -std::sin(ax), 0, std::sin(ax), std::cos(ax)};
+                const std::array<double, 9> ry{std::cos(ay), 0, std::sin(ay), 0, 1, 0, -std::sin(ay), 0, std::cos(ay)};
+                const std::array<double, 9> rz{std::cos(az), -std::sin(az), 0, std::sin(az), std::cos(az), 0, 0, 0, 1};
+                const auto mul = [](const std::array<double, 9>& a, const std::array<double, 9>& b) {
+                    std::array<double, 9> c{};
+                    for (int i = 0; i < 3; ++i) {
+                        for (int j = 0; j < 3; ++j) {
+                            for (int k = 0; k < 3; ++k) {
+                                c[size_t(i * 3 + j)] += a[size_t(i * 3 + k)] * b[size_t(k * 3 + j)];
+                            }
+                        }
+                    }
+                    return c;
+                };
+                pose.turn = mul(rz, mul(ry, rx));
+                return pose;
+            };
+            const auto last_time = [](const WorldAnimation& animation) {
+                float last = 0;
+                for (const auto* keys : {&animation.positions, &animation.rotations}) {
+                    for (const auto& key : *keys) {
+                        last = std::max(last, key.time);
+                    }
+                }
+                return last;
+            };
+            // Where it stands: where a group the script plays at the start
+            // leaves it (unless something destroyed moves it too: its keys
+            // say where it stands then).
+            Pose rest;
+            const ObjectAnimation* kill_moves = nullptr;
+            if (const auto it = object_animations.find(lowercase(object.name)); it != object_animations.end()) {
+                for (const ObjectAnimation& a : it->second) {
+                    if (a.mode == "plays") {
+                        kill_moves = &a;
+                    }
+                }
+                for (const ObjectAnimation& a : it->second) {
+                    if (a.mode == "start" && kill_moves == nullptr) {
+                        rest = pose_at(*a.animation, last_time(*a.animation));
+                    }
+                }
+            }
+            // ...its game-space basis and position, so posed.
+            std::array<double, 9> rest_basis{};
+            for (int i = 0; i < 3; ++i) {
+                for (int j = 0; j < 3; ++j) {
+                    for (int k = 0; k < 3; ++k) {
+                        rest_basis[size_t(i * 3 + j)] += basis[size_t(i * 3 + k)] * rest.turn[size_t(k * 3 + j)];
+                    }
+                }
+            }
+            const core::Vec3 rest_position = core::Vec3{-object.position[0], object.position[1], object.position[2]} + rest.offset;
+            // A model point (Battlefront's) in game space, posed.
+            const auto posed = [&](const std::array<float, 3>& p, const Pose& pose) {
+                const double x = -p[0], y = p[1], z = p[2];
+                const auto& t = pose.turn;
+                const double tx = t[0] * x + t[1] * y + t[2] * z, ty = t[3] * x + t[4] * y + t[5] * z,
+                             tz = t[6] * x + t[7] * y + t[8] * z;
+                return core::Vec3{basis[0] * tx + basis[1] * ty + basis[2] * tz - object.position[0],
+                                  basis[3] * tx + basis[4] * ty + basis[5] * tz + object.position[1],
+                                  basis[6] * tx + basis[7] * ty + basis[8] * tz + object.position[2]} +
+                       pose.offset;
+            };
             // The class's model (GeometryName), if it has one, and its
             // collision, placed in game space.
             std::string model;
@@ -1100,12 +1222,7 @@ int cmd_export_map(const std::vector<std::string>& args) {
                     if (shape == shapes.end()) {
                         shape = shapes.emplace(key, model_collision(library, *geometry, use)).first;
                     }
-                    const auto place = [&](const std::array<float, 3>& p) {
-                        const double x = -p[0], y = p[1], z = p[2];
-                        return core::Vec3{basis[0] * x + basis[1] * y + basis[2] * z - object.position[0],
-                                          basis[3] * x + basis[4] * y + basis[5] * z + object.position[1],
-                                          basis[6] * x + basis[7] * y + basis[8] * z + object.position[2]};
-                    };
+                    const auto place = [&](const std::array<float, 3>& p) { return posed(p, rest); };
                     // Doors (class "door": Polis Massa's) open as soldiers
                     // come (core::Door); soldiers pass them, so their
                     // collision is left out, and a shut one stops shots
@@ -1196,7 +1313,10 @@ int cmd_export_map(const std::vector<std::string>& args) {
                     // stands; its wreck's (DestroyedGeometryName) there once
                     // it's destroyed. Its bounds (game space) and explosion
                     // (ExplosionName's) go in the map file.
-                    const double max_health = std::atof(resolved.get("MaxHealth").value_or("0").c_str());
+                    // Its MaxHealth: the mission script's (--set), over its class's.
+                    const std::string set_health = object.get("MaxHealth");
+                    const double max_health =
+                        std::atof((set_health.empty() ? resolved.get("MaxHealth").value_or("0") : set_health).c_str());
                     const bool destructible = lowercase(resolved.base) == "destructablebuilding" && max_health > 0;
                     int16_t part = destructible ? int16_t(destructibles.size() + 1) : int16_t(0);
                     // Moved by a world animation that a destroyed object
@@ -1204,26 +1324,22 @@ int cmd_export_map(const std::vector<std::string>& args) {
                     // animation leaves it once it's destroyed (its last
                     // position key; ASSUMPTION: rotation keys don't move its
                     // collision).
-                    std::optional<core::Vec3> moved;
-                    if (const auto it = object_animations.find(lowercase(object.name)); it != object_animations.end()) {
-                        for (const ObjectAnimation& a : it->second) {
-                            if (a.mode == "plays" && !destructible && !a.animation->positions.empty()) {
-                                part = int16_t(a.trigger + 1);
-                                const auto& o = a.animation->positions.back().value;
-                                const core::Vec3 m{-o[0], o[1], o[2]};
-                                moved = a.animation->local
-                                            ? core::Vec3{basis[0] * m.x + basis[1] * m.y + basis[2] * m.z,
-                                                         basis[3] * m.x + basis[4] * m.y + basis[5] * m.z,
-                                                         basis[6] * m.x + basis[7] * m.y + basis[8] * m.z}
-                                            : m;
-                            }
-                        }
+                    // Moved by a world animation a destroyed object plays: where
+                    // its first keys have it while that stands, its last once
+                    // it's destroyed.
+                    Pose standing = rest;
+                    std::optional<Pose> moved;
+                    if (kill_moves != nullptr && !destructible) {
+                        part = int16_t(kill_moves->trigger + 1);
+                        standing = pose_at(*kill_moves->animation, 0);
+                        moved = pose_at(*kill_moves->animation, last_time(*kill_moves->animation));
                     }
                     core::Vec3 low{1e9, 1e9, 1e9}, high{-1e9, -1e9, -1e9};
-                    const auto add = [&](const std::vector<CollisionTriangle>& triangles, int16_t as) {
+                    const auto add = [&](const std::vector<CollisionTriangle>& triangles, int16_t as,
+                                         const Pose& pose) {
                         for (const CollisionTriangle& t : triangles) {
                             core::MapCollision::Triangle placed{
-                                place(t.a), place(t.b), place(t.c),
+                                posed(t.a, pose), posed(t.b, pose), posed(t.c, pose),
                                 uint8_t((t.soldiers ? core::blocks_characters : 0) |
                                         (t.ordnance ? core::blocks_shots : 0)),
                                 as};
@@ -1236,22 +1352,16 @@ int cmd_export_map(const std::vector<std::string>& args) {
                             collision.triangles.push_back(placed);
                         }
                     };
-                    add(door && !locked ? std::vector<CollisionTriangle>{} : shape->second, part);
+                    add(door && !locked ? std::vector<CollisionTriangle>{} : shape->second, part, standing);
                     if (moved) {
-                        for (const CollisionTriangle& t : shape->second) {
-                            collision.triangles.push_back(
-                                {place(t.a) + *moved, place(t.b) + *moved, place(t.c) + *moved,
-                                 uint8_t((t.soldiers ? core::blocks_characters : 0) |
-                                         (t.ordnance ? core::blocks_shots : 0)),
-                                 int16_t(-part)});
-                        }
+                        add(shape->second, int16_t(-part), *moved);
                     }
                     if (destructible) {
                         std::string wreck;
                         if (const auto destroyed = resolved.get("DestroyedGeometryName")) {
                             wreck = model_file(*destroyed);
                             if (library.model(*destroyed) != nullptr) {
-                                add(model_collision(library, *destroyed, collision_use(resolved)), int16_t(-part));
+                                add(model_collision(library, *destroyed, collision_use(resolved)), int16_t(-part), rest);
                             }
                         }
                         if (low.x > high.x) {
@@ -1406,10 +1516,10 @@ int cmd_export_map(const std::vector<std::string>& args) {
             json << (written++ ? ",\n" : "\n") << "    {\"layer\": " << json_string(object.layer)
                  << ", \"class\": " << json_string(object.type) << ", \"name\": " << json_string(object.name)
                  << ", \"model\": " << json_string(model) << hologram << powerup << door_json << destructible_json << animation_json
-                 << std::format(", \"position\": [{}, {}, {}], \"basis\": [", -object.position[0], object.position[1],
-                                object.position[2]);
+                 << std::format(", \"position\": [{}, {}, {}], \"basis\": [", rest_position.x, rest_position.y,
+                                rest_position.z);
             for (size_t i = 0; i < 9; ++i) {
-                json << (i ? ", " : "") << basis[i];
+                json << (i ? ", " : "") << float(rest_basis[i]);
             }
             json << "]}";
         }
@@ -1512,11 +1622,17 @@ int cmd_export_map(const std::vector<std::string>& args) {
                 ini << std::format(" {:.4f}", r[size_t(column * 3 + row)]);
             }
         }
-        // Only while the object whose destruction removes it stands.
+        // Only while the object whose destruction removes it stands; on a
+        // timer.
         for (const auto& [object, name] : kill_removes) {
             if ((name == lowercase(region.name) || name == lowercase(region.get("Name"))) &&
                 destructible_index.contains(object)) {
-                ini << " " << destructible_index[object];
+                ini << " standing " << destructible_index[object];
+            }
+        }
+        for (const auto& [name, timing] : timed_deaths) {
+            if (name == lowercase(region.name) || name == lowercase(region.get("Name"))) {
+                ini << std::format(" timed {:g} {:g} {:g}", timing[0], timing[1], timing[2]);
             }
         }
         ini << "\n";

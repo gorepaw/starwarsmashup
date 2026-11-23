@@ -21,22 +21,27 @@ public:
 
     std::optional<CharacterRecord> find(PersistentId id) override;
     std::optional<CharacterRecord> find_by_name(const std::string& name) override;
-    CharacterRecord create(const std::string& name, Vec3 position, float yaw) override;
+    std::vector<CharacterRecord> list_all() override;
+    CharacterRecord create_character(const CharacterRecord& record) override;
     void save(std::span<const CharacterRecord> characters) override;
+    bool remove(PersistentId id) override;
 
     // The schema version this build writes (PRAGMA user_version).
-    static constexpr int schema_version = 1;
+    static constexpr int schema_version = 2;
 
 private:
     void close();
     void exec(const char* sql);
     std::optional<CharacterRecord> find_one(sqlite3_stmt* statement);
+    static CharacterRecord read_row(sqlite3_stmt* statement);
 
     sqlite3* db_ = nullptr;
     sqlite3_stmt* find_ = nullptr;
     sqlite3_stmt* find_by_name_ = nullptr;
+    sqlite3_stmt* list_all_ = nullptr;
     sqlite3_stmt* insert_ = nullptr;
     sqlite3_stmt* update_ = nullptr;
+    sqlite3_stmt* delete_ = nullptr;
 };
 
 } // namespace swm::core

@@ -47,12 +47,14 @@ public:
             }
         }
 
-        for (size_t a = 0; a < appearances.size(); ++a) {
-            for (const std::string& generator : appearances[a].mesh_generators) {
-                const std::string mgn_path = highest_detail_mgn(generator);
-                log_ << "  " << request.appearances[a] << " -> " << mgn_path << "\n";
-                const int mesh_node = add_skinned_mesh(mgn_path, true);
-                gltf_.nodes[size_t(root)].children.push_back(mesh_node);
+        if (request.export_appearance_meshes) {
+            for (size_t a = 0; a < appearances.size(); ++a) {
+                for (const std::string& generator : appearances[a].mesh_generators) {
+                    const std::string mgn_path = highest_detail_mgn(generator);
+                    log_ << "  " << request.appearances[a] << " -> " << mgn_path << "\n";
+                    const int mesh_node = add_skinned_mesh(mgn_path, true);
+                    gltf_.nodes[size_t(root)].children.push_back(mesh_node);
+                }
             }
         }
 
@@ -142,7 +144,34 @@ private:
             bone_to_joint.push_back(joint);
         }
 
+        // Filter blend targets to those that actually affect at least one vertex in this mesh.
+        std::vector<const SkinnedMesh::BlendTarget*> active_targets;
+        std::vector<std::map<uint32_t, Vec3>> target_maps;
+        for (const SkinnedMesh::BlendTarget& bt : mesh.blend_targets) {
+            std::map<uint32_t, Vec3> by_pos;
+            for (const auto& [idx, delta] : bt.position_deltas) {
+                by_pos[idx] = delta;
+            }
+            bool hits_any = false;
+            for (const SkinnedMesh::Part& part : mesh.parts) {
+                for (const uint32_t p : part.position_index) {
+                    if (by_pos.contains(p)) {
+                        hits_any = true;
+                        break;
+                    }
+                }
+                if (hits_any) break;
+            }
+            if (hits_any) {
+                active_targets.push_back(&bt);
+                target_maps.push_back(std::move(by_pos));
+            }
+        }
+
         Gltf::Mesh gltf_mesh{.name = std::filesystem::path(path).stem().string()};
+        for (const auto* bt : active_targets) {
+            gltf_mesh.target_names.push_back(bt->name);
+        }
         for (const SkinnedMesh::Part& part : mesh.parts) {
             std::vector<Vec3> positions, normals;
             std::vector<std::array<uint16_t, 4>> joints;
@@ -175,6 +204,16 @@ private:
             }
             primitive.attributes["JOINTS_0"] = gltf_.add_joints(joints);
             primitive.attributes["WEIGHTS_0"] = gltf_.add_vec4(weights);
+            for (size_t t = 0; t < active_targets.size(); ++t) {
+                std::vector<Vec3> deltas(part.position_index.size(), Vec3{0, 0, 0});
+                const auto& by_pos = target_maps[t];
+                for (size_t v = 0; v < part.position_index.size(); ++v) {
+                    if (const auto it = by_pos.find(part.position_index[v]); it != by_pos.end()) {
+                        deltas[v] = to_gltf(it->second);
+                    }
+                }
+                primitive.targets.push_back({{"POSITION", gltf_.add_vec3(deltas, true, true)}});
+            }
             primitive.indices = gltf_.add_indices(indices);
             primitive.material = assets_.material_for(part.shader);
             gltf_mesh.primitives.push_back(std::move(primitive));

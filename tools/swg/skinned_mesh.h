@@ -39,6 +39,12 @@ struct SkinnedMesh {
         std::vector<std::pair<int, std::string>> targets;  // (part, texture tag)
     };
     std::vector<TextureRenderer> texture_renderers;
+
+    struct BlendTarget {
+        std::string name;
+        std::vector<std::pair<uint32_t, Vec3>> position_deltas;  // (position_index, delta)
+    };
+    std::vector<BlendTarget> blend_targets;
 };
 
 // Throws std::runtime_error on unsupported or malformed data.

@@ -5,6 +5,7 @@
 #include <optional>
 #include <span>
 #include <string>
+#include <vector>
 
 #include "swm/core/vec3.h"
 
@@ -14,12 +15,16 @@ namespace swm::core {
 // resource spawns later). Never reused, and never 0.
 using PersistentId = uint64_t;
 
-// A saved character. Only what spike 5 needs so far: where it stands.
+// A saved character.
 struct CharacterRecord {
     PersistentId id = 0;
     std::string name;  // unique; stands in for an account login until there are accounts
     Vec3 position;     // game space
     float yaw = 0;
+    std::string species = "human";
+    std::string gender = "male";
+    std::string location = "Mos Eisley";
+    std::string appearance = "{}";
 
     friend bool operator==(const CharacterRecord&, const CharacterRecord&) = default;
 };
@@ -34,11 +39,16 @@ public:
 
     virtual std::optional<CharacterRecord> find(PersistentId id) = 0;
     virtual std::optional<CharacterRecord> find_by_name(const std::string& name) = 0;
+    virtual std::vector<CharacterRecord> list_all() = 0;
     // Saves a new character and returns it with its newly assigned id.
     // Throws std::runtime_error if the name is taken.
-    virtual CharacterRecord create(const std::string& name, Vec3 position, float yaw) = 0;
+    virtual CharacterRecord create_character(const CharacterRecord& record) = 0;
+    virtual CharacterRecord create(const std::string& name, Vec3 position, float yaw) {
+        return create_character({.name = name, .position = position, .yaw = yaw});
+    }
     // Updates existing characters, all or none.
     virtual void save(std::span<const CharacterRecord> characters) = 0;
+    virtual bool remove(PersistentId id) = 0;
 };
 
 // Keeps everything in memory, for tests.
@@ -46,8 +56,10 @@ class MemoryCharacterStore : public CharacterStore {
 public:
     std::optional<CharacterRecord> find(PersistentId id) override;
     std::optional<CharacterRecord> find_by_name(const std::string& name) override;
-    CharacterRecord create(const std::string& name, Vec3 position, float yaw) override;
+    std::vector<CharacterRecord> list_all() override;
+    CharacterRecord create_character(const CharacterRecord& record) override;
     void save(std::span<const CharacterRecord> characters) override;
+    bool remove(PersistentId id) override;
 
 private:
     std::map<PersistentId, CharacterRecord> characters_;

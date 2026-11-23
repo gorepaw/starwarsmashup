@@ -45,6 +45,16 @@ static func load_colors(model_path: String) -> Dictionary:
 # Colors a model (an instance of the character): its look's own colors for
 # seed 0, else varied by the seed.
 static func apply(model: Node, colors: Dictionary, seed: int) -> void:
+	_apply_impl(model, colors, seed, {})
+
+
+# Colors a model using explicit customization variable overrides
+# ({variable_name: int_index}), falling back to each factor's default index.
+static func apply_custom(model: Node, colors: Dictionary, overrides: Dictionary) -> void:
+	_apply_impl(model, colors, 0, overrides)
+
+
+static func _apply_impl(model: Node, colors: Dictionary, seed: int, overrides: Dictionary) -> void:
 	if colors.is_empty():
 		return
 	var materials: Dictionary = colors["materials"]
@@ -61,7 +71,7 @@ static func apply(model: Node, colors: Dictionary, seed: int) -> void:
 			var entry: Dictionary = materials[original.resource_name]
 			if entry.has("layers"):
 				mesh_instance.set_surface_override_material(surface,
-						_face(entry["layers"], original, seed, colors))
+						_face(entry["layers"], original, seed, colors, overrides))
 				continue
 			var material := ShaderMaterial.new()
 			material.shader = SHADER  # as the material's effect draws (glTF's alpha modes)
@@ -72,10 +82,10 @@ static func apply(model: Node, colors: Dictionary, seed: int) -> void:
 			material.set_shader_parameter("albedo_texture", original.albedo_texture)
 			material.set_shader_parameter("roughness", original.roughness)
 			material.set_shader_parameter("metallic", original.metallic)
-			material.set_shader_parameter("main_color", _color(entry.get("MAIN", "ffffff"), item, seed, palettes))
+			material.set_shader_parameter("main_color", _color(entry.get("MAIN", "ffffff"), item, seed, palettes, overrides))
 			if entry.has("HUEB"):
 				material.set_shader_parameter("two_colors", true)
-				material.set_shader_parameter("hueb_color", _color(entry["HUEB"], item, seed, palettes))
+				material.set_shader_parameter("hueb_color", _color(entry["HUEB"], item, seed, palettes, overrides))
 			mesh_instance.set_surface_override_material(surface, material)
 
 
@@ -83,7 +93,8 @@ static func apply(model: Node, colors: Dictionary, seed: int) -> void:
 # (swg_face.gdshader): each layer's texture (a style variable's choice, or
 # its one) and color. A style's default is its first (ASSUMPTION: Galaxies'
 # renderers give none; its first is a plain one, e.g. a Zabrak's no tattoo).
-static func _face(layers: Array, original: BaseMaterial3D, seed: int, colors: Dictionary) -> ShaderMaterial:
+static func _face(layers: Array, original: BaseMaterial3D, seed: int, colors: Dictionary,
+		overrides: Dictionary = {}) -> ShaderMaterial:
 	var textures: Array[Texture2D] = []
 	var rects := PackedVector4Array()
 	var uvs := PackedVector4Array()
@@ -93,14 +104,17 @@ static func _face(layers: Array, original: BaseMaterial3D, seed: int, colors: Di
 		var choices: Array = layer["textures"]
 		var index := 0
 		var style := String(layer.get("style", ""))
-		if seed != 0 and not style.is_empty():
-			index = hash("%d/%s" % [seed, style]) % choices.size()
+		if not style.is_empty():
+			if overrides.has(style):
+				index = clampi(int(overrides[style]), 0, maxi(0, choices.size() - 1))
+			elif seed != 0:
+				index = hash("%d/%s" % [seed, style]) % choices.size()
 		textures.append(_texture(colors, String(choices[index])))
 		var r: Array = layer["rect"]
 		var u: Array = layer["uv"]
 		rects.append(Vector4(r[0], r[1], r[2], r[3]))
 		uvs.append(Vector4(u[0], u[1], u[2], u[3]))
-		var color := _color(layer["color"], "face", seed, colors["palettes"]).srgb_to_linear()
+		var color := _color(layer["color"], "face", seed, colors["palettes"], overrides).srgb_to_linear()
 		layer_colors.append(Vector3(color.r, color.g, color.b))
 		blends.append(1 if bool(layer["blend"]) else 0)
 	var count := textures.size()
@@ -140,16 +154,19 @@ static func _texture(colors: Dictionary, file: String) -> Texture2D:
 
 
 # A factor's color: fixed ("rrggbb"), or a palette's entry by its variable.
-static func _color(factor: Variant, item: String, seed: int, palettes: Dictionary) -> Color:
+static func _color(factor: Variant, item: String, seed: int, palettes: Dictionary,
+		overrides: Dictionary = {}) -> Color:
 	if factor is String:
 		return Color.html(factor)
 	var palette: PackedByteArray = palettes.get(factor["palette"], PackedByteArray())
 	var count := palette.size() / 3
 	if count == 0:
 		return Color.WHITE
+	var variable := String(factor["variable"])
 	var index := int(factor["index"])
-	if seed != 0 and count >= SMALLEST_VARIED:
-		var variable := String(factor["variable"])
+	if overrides.has(variable):
+		index = int(overrides[variable])
+	elif seed != 0 and count >= SMALLEST_VARIED:
 		var key := variable if bool(factor["shared"]) else item + "/" + variable
 		index = hash("%d/%s" % [seed, key]) % mini(count, VARIED_ENTRIES)
 	index = clampi(index, 0, count - 1)

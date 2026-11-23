@@ -25,6 +25,7 @@ swgtool datatable <dir> <path.iff> [--match <text>]
 swgtool extract <dir> <path> <out_file>
 swgtool export-character <dir> <out_dir> --name <name> --sat <path.sat>... [--weapon <path.lod>]
                          [--bf2-lvl <ingame.lvl> --bf2-bank <bank> --anim <name>...]
+swgtool export-species <dir> <out_dir> [--bf2-lvl <ingame.lvl>] [--species <id>] [--max-hairs <n>]
 swgtool bake-terrain <dir> <out_prefix> --trn <path.trn> --center <x> <z> --samples <n> --spacing <m>
                      [--snapshot <path.ws>]
 swgtool terrain-trace <dir> --trn <path.trn> --at <x> <z>
@@ -58,7 +59,9 @@ swgtool export-city <dir> <bake_prefix> --snapshot <path.ws> --center <x> <z> --
 
   Colors: Galaxies' customizable shaders (`CSHD`) tint their texture by palette colors (`TFAC`: a customization variable, a palette, a default index), one (`MAIN`) or, for a "color2" effect, two (`MAIN` and `HUEB`) blended by the texture's alpha. The character's materials keep their textures with the default `MAIN` color as their base color, and `<name>.colors.json` describes each one's colors and palettes for the client to choose (`game/rendering/swg_colors.gd`). A garment's bare skin (an owner proxy shader, `OPST` "body") is drawn with the body's own material. A face is a texture Galaxies composites at runtime (a mesh's `TRTS`: a texture renderer, `.trt`): layers of skin, highlights, brows, makeup, freckles or tattoos, each a texture (a style variable's choice) times a palette's color, copied or blended into its rectangle of the face's texture; the colors file lists them (`"layers"`) and the client composites them as it draws (`game/rendering/swg_face.gdshader`). Transparency is the shader's effect's (hair blends): blended, cut out at alpha 0.5 (a "punchout" pixel program), or added to what's behind (blend factors one and one: glowing panels, screens), which glTF has no mode for, so such a material is BLEND, unlit, with extras `{"blend": "add"}`, and the client draws it so (`game/rendering/swg_add.gdshader`).
 
-  Not handled yet: occlusion zones (hiding body triangles under armor), blend shapes, and LOD levels below the most detailed.
+  Not handled yet: occlusion zones (hiding body triangles under armor), and LOD levels below the most detailed. Blend shapes (`BLTS`/`BLT `) are exported as glTF morph targets (`targetNames` in mesh extras).
+
+- **export-species**: export all 10 playable Galaxies species (male and female) into `<out_dir>/<species>_<gender>/` with their body/face blend shapes, `.colors.json` palettes and texture renderers, up to `--max-hairs` (default 12) hair attachment glTFs under `hairs/`, `<species>_<gender>.species.json` customization metadata from `datatables/customization/customization_data.iff` and `allow_bald.iff`, and Battlefront II's 19 soldier animation clips retargeted onto each species' skeleton (`--bf2-lvl`).
 
 - **bake-terrain**: evaluate a planet's procedural terrain (`.trn`) over a square region. Heights, ground textures and roads are evaluated; flora, colors, environments and rivers aren't. It writes:
   - `<out_prefix>.r32`: float32 heights, row-major, rows along +Z.

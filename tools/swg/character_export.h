@@ -18,6 +18,7 @@ struct CharacterExport {
     std::vector<std::string> meshes;       // further meshes worn (.lmg or .mgn: clothes, hair)
     std::string weapon_lod;                // optional .lod path, attached to "hold_r"
     std::vector<AnimationClip> clips;      // optional, for the skeleton of appearances[0]
+    bool export_appearance_meshes = true;  // false for standalone attachments (e.g. hair)
 };
 
 // The combined skeleton of a .sat (its root skeleton plus attached ones, such

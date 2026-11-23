@@ -37,6 +37,9 @@ ObjectTemplates::Read ObjectTemplates::read(const std::string& path) {
     Read out;
     scan(root, parameters, out.base);
     for (const IffNode* parameter : parameters) {
+        if (parameter->data.empty()) {
+            continue;
+        }
         IffReader r(parameter->data);
         const std::string name = r.cstring();
         if (name != "appearanceFilename" && name != "portalLayoutFilename" && name != "clientDataFile" &&

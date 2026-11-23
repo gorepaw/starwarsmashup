@@ -18,11 +18,25 @@ std::optional<CharacterRecord> MemoryCharacterStore::find_by_name(const std::str
     return std::nullopt;
 }
 
-CharacterRecord MemoryCharacterStore::create(const std::string& name, Vec3 position, float yaw) {
-    if (find_by_name(name)) {
-        throw std::runtime_error("character name taken: " + name);
+std::vector<CharacterRecord> MemoryCharacterStore::list_all() {
+    std::vector<CharacterRecord> out;
+    out.reserve(characters_.size());
+    for (const auto& [id, character] : characters_) {
+        out.push_back(character);
     }
-    CharacterRecord record{next_id_++, name, position, yaw};
+    return out;
+}
+
+CharacterRecord MemoryCharacterStore::create_character(const CharacterRecord& input) {
+    if (find_by_name(input.name)) {
+        throw std::runtime_error("character name taken: " + input.name);
+    }
+    CharacterRecord record = input;
+    record.id = next_id_++;
+    if (record.species.empty()) record.species = "human";
+    if (record.gender.empty()) record.gender = "male";
+    if (record.location.empty()) record.location = "Mos Eisley";
+    if (record.appearance.empty()) record.appearance = "{}";
     characters_[record.id] = record;
     return record;
 }
@@ -36,6 +50,10 @@ void MemoryCharacterStore::save(std::span<const CharacterRecord> characters) {
     for (const CharacterRecord& character : characters) {
         characters_[character.id] = character;
     }
+}
+
+bool MemoryCharacterStore::remove(PersistentId id) {
+    return characters_.erase(id) > 0;
 }
 
 } // namespace swm::core

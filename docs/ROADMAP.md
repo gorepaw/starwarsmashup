@@ -191,31 +191,31 @@ Start the game from a main menu, make a character of any Galaxies species, and c
 ### Tasks
 
 **Main menu**
-- [ ] A main menu scene, set as the project's main scene so opening the game starts there: New Character, Load Character, Settings, Quit. Battlefront's menu style (`bf2_screen.gd`) over a Galaxies backdrop.
-- [ ] Load Character: the characters saved in the world database (name, species, where they are). Choose one to enter the hub where they left, as `net_demo.gd`'s arguments do now.
-- [ ] Settings: the pause menu's options as their own screen.
+- [x] A main menu scene, set as the project's main scene so opening the game starts there: New Character, Load Character, Settings, Quit. Battlefront's menu style (`bf2_screen.gd`) over a Galaxies backdrop.
+- [x] Load Character: the characters saved in the world database (name, species, where they are). Choose one to enter the hub where they left, as `net_demo.gd`'s arguments do now.
+- [x] Settings: the pause menu's options as their own screen.
 - [ ] `net_demo.gd` (2,000 lines) split into scenes the menu can start: the game client, the hub's HUD and screens, the battle's. Solo play still hosts its own hub. Joining a server by address comes when there's one to join.
 
 **Species and rigging**
-- [ ] Galaxies' ten playable species, male and female: Human, Twi'lek, Zabrak, Rodian, Bothan, Sullustan, Mon Calamari, Trandoshan, Wookiee and Ithorian. Each comes with its body, heads, hair and customization data.
+- [x] Galaxies' ten playable species, male and female: Human, Twi'lek, Zabrak, Rodian, Bothan, Sullustan, Mon Calamari, Trandoshan, Wookiee and Ithorian. Each comes with its body, heads, hair and customization data.
 - [ ] Battlefront's clips on every species. The humanoid skeleton the soldier uses now covers most of them. Those with their own skeleton or proportions (Wookiees' long limbs, Ithorians' head and neck, and any the data shows) need their own retarget. Each is checked in the pose tools (`pose_soldier.gd`, `pose_clips.gd`). Meshes that need fixing are fixed in Blender, the results kept with the other imported assets (never committed).
-- [ ] Bodies per species: radius and height from the species' template, as the hub's creatures do, and the eye height for first person.
+- [x] Bodies per species: radius and height from the species' template, as the hub's creatures do, and the eye height for first person.
 
 **Character creator**
-- [ ] Species and gender picker, the model turning on a stand.
-- [ ] Customization as Galaxies does it, read from each species' data:
+- [x] Species and gender picker, the model turning on a stand.
+- [x] Customization as Galaxies does it, read from each species' data:
   - body sliders (height, build) and face sliders (blend shapes);
   - skin, hair and eye palettes;
   - hair styles;
   - markings (a Zabrak's tattoos, a Twi'lek's lekku patterns).
   
   These are the same palettes and texture renderers the hub's crowd already uses.
-- [ ] Name, with a random option, and a starting outfit.
+- [x] Name, with a random option, and a starting outfit.
 - [ ] Saved with the character. Every client draws other players from it: snapshots carry species and customization values (the crowd's color seed, made explicit).
 
 **Species traits**
-- [ ] Some species can't wear some gear, as in Galaxies: Wookiees and Ithorians most armor (Wookiees footwear too), Trandoshans footwear. The exact rules get checked online before they're built.
-- [ ] In return, built-in traits through the stat model. A species becomes one more stat source in `core::stats_for`. For example: a Wookiee's health and melee mitigation, a Trandoshan's mitigation and regeneration. A Wookiee with empty slots should come out about even with an armored human. The values are tuned in Stage 4, once armor has values.
+- [x] Some species can't wear some gear, as in Galaxies: Wookiees and Ithorians most armor (Wookiees footwear too), Trandoshans footwear. The exact rules get checked online before they're built.
+- [x] In return, built-in traits through the stat model. A species becomes one more stat source in `core::stats_for`. For example: a Wookiee's health and melee mitigation, a Trandoshan's mitigation and regeneration. A Wookiee with empty slots should come out about even with an armored human. The values are tuned in Stage 4, once armor has values.
 
 ### Exit criteria
 

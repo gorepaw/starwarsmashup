@@ -154,9 +154,34 @@ void Gltf::write(const std::filesystem::path& path) const {
             if (primitive.material >= 0) {
                 json += std::format(R"(,"material":{})", primitive.material);
             }
+            if (!primitive.targets.empty()) {
+                json += R"(,"targets":[)";
+                for (size_t t = 0; t < primitive.targets.size(); ++t) {
+                    json += t ? ",{" : "{";
+                    bool tfirst = true;
+                    for (const auto& [attr, acc] : primitive.targets[t]) {
+                        json += std::format(R"({}"{}":{})", tfirst ? "" : ",", attr, acc);
+                        tfirst = false;
+                    }
+                    json += "}";
+                }
+                json += "]";
+            }
             json += "}";
         }
-        json += "]}";
+        json += "]";
+        if (!meshes[i].target_names.empty()) {
+            json += R"(,"weights":[)";
+            for (size_t t = 0; t < meshes[i].target_names.size(); ++t) {
+                json += t ? ",0" : "0";
+            }
+            json += R"(],"extras":{"targetNames":[)";
+            for (size_t t = 0; t < meshes[i].target_names.size(); ++t) {
+                json += (t ? "," : "") + json_string(meshes[i].target_names[t]);
+            }
+            json += "]}";
+        }
+        json += "}";
     }
     json += "],";
 

@@ -32,8 +32,10 @@
 #include "swg/world_snapshot.h"
 #include "swg/manifest.h"
 #include "swg/portal_layout.h"
+#include "swg/skinned_mesh.h"
 #include "swg/tre_archive.h"
 #include "swg/tre_scan.h"
+#include "swm/core/species.h"
 
 namespace {
 
@@ -52,6 +54,7 @@ constexpr const char* usage = R"(usage:
   swgtool export-character <dir> <out_dir> (--name <name> --sat <path.sat>... | --template <object/mobile/...iff>)
                            [--weapon <path.lod>]
                            [--bf2-lvl <ingame.lvl> --bf2-bank <bank>... --anim <name>...] [--swg-anim <path.ans>...]
+  swgtool export-species <dir> <out_dir> [--bf2-lvl <ingame.lvl>] [--species <id>] [--max-hairs <n>]
   swgtool bake-terrain <dir> <out_prefix> --trn <path.trn> --center <x> <z> --samples <n> --spacing <m>
                        [--snapshot <path.ws>]
   swgtool terrain-trace <dir> --trn <path.trn> --at <x> <z>
@@ -877,6 +880,244 @@ int cmd_snapshot(const std::vector<std::string>& args) {
     return 0;
 }
 
+std::string json_escape(std::string_view s) {
+    std::string out = "\"";
+    for (const char c : s) {
+        if (c == '"' || c == '\\') out += '\\';
+        out += c;
+    }
+    return out + "\"";
+}
+
+int cmd_export_species(const std::vector<std::string>& args) {
+    if (args.size() < 2) {
+        std::cerr << usage;
+        return 2;
+    }
+    const std::filesystem::path out_root = args[1];
+    const std::string bf2_lvl = option(args, "--bf2-lvl");
+    const std::string only_species = option(args, "--species");
+    const std::string max_hairs_opt = option(args, "--max-hairs");
+    const size_t max_hairs = max_hairs_opt.empty() ? 12 : size_t(std::max(0, std::stoi(max_hairs_opt)));
+
+    TreLibrary library(args[0]);
+    ObjectTemplates templates(library);
+
+    // Customization metadata & bald rules.
+    DataTable cust_table;
+    if (library.contains("datatables/customization/customization_data.iff")) {
+        cust_table = parse_datatable(library.read("datatables/customization/customization_data.iff"));
+    }
+    std::map<std::string, bool> allow_bald_map;
+    if (library.contains("datatables/customization/allow_bald.iff")) {
+        const DataTable bald_table = parse_datatable(library.read("datatables/customization/allow_bald.iff"));
+        for (size_t r = 0; r < bald_table.rows.size(); ++r) {
+            if (bald_table.rows[r].size() >= 2) {
+                allow_bald_map[bald_table.text(r, 0)] = (bald_table.number(r, 1) != 0.0f);
+            }
+        }
+    }
+
+    // Load Battlefront II soldier animations once if requested.
+    std::optional<bf2::AnimationSkeleton> bf2_skeleton;
+    std::vector<bf2::Animation> bf2_anims;
+    const std::vector<std::string> soldier_clips = {
+        "human_rifle_stand_idle_emote_full",
+        "human_rifle_stand_runforward",
+        "human_rifle_stand_runbackward",
+        "human_rifle_stand_shoot_full",
+        "human_rifle_stand_reload_full",
+        "human_rifle_stand_shoot_secondary_full",
+        "human_rifle_stand_hitfront",
+        "human_rifle_stand_death_forward",
+        "human_rifle_stand_death_backward",
+        "human_rifle_crouch_idle_emote_full",
+        "human_rifle_crouch_walkforward",
+        "human_rifle_crouch_walkbackward",
+        "human_rifle_crouch_shoot_full",
+        "human_rifle_crouch_reload_full",
+        "human_rifle_crouch_hitfront",
+        "human_rifle_diveforward",
+        "human_rifle_jump",
+        "human_rifle_fall",
+        "human_rifle_landsoft",
+    };
+    if (!bf2_lvl.empty()) {
+        std::ifstream lvl_file(bf2_lvl, std::ios::binary);
+        if (!lvl_file) {
+            throw std::runtime_error("cannot open " + bf2_lvl);
+        }
+        const std::vector<uint8_t> lvl(std::istreambuf_iterator<char>(lvl_file), {});
+        const bf2::UcfbNode root = bf2::parse_ucfb(lvl);
+        for (const char* bank : {"human_0", "human_1"}) {
+            const bf2::UcfbNode* zaf = bf2::find_named_chunk(root, "zaf_", bank);
+            const bf2::UcfbNode* zaa = bf2::find_named_chunk(root, "zaa_", bank);
+            if (!bf2_skeleton && zaf && zaf->child("BIN_")) {
+                bf2_skeleton = bf2::parse_animation_skeleton(zaf->child("BIN_")->data);
+            }
+            if (zaa && zaa->child("BIN_")) {
+                auto bank_anims = bf2::parse_animation_bank(zaa->child("BIN_")->data);
+                bf2_anims.insert(bf2_anims.end(), std::make_move_iterator(bank_anims.begin()),
+                                 std::make_move_iterator(bank_anims.end()));
+            }
+        }
+    }
+
+    const int c_sp = cust_table.column("SPECIES_GENDER");
+    const int c_grp = cust_table.column("CUSTOMIZATION_GROUP");
+    const int c_type = cust_table.column("TYPE");
+    const int c_name = cust_table.column("CUSTOMIZATION_NAME");
+    const int c_vars = cust_table.column("VARIABLES");
+    const int c_scale = cust_table.column("IS_SCALE");
+    const int c_rev = cust_table.column("REVERSE");
+    const int c_disc = cust_table.column("DISCRETE");
+
+    const std::string weapon_lod = library.contains("appearance/lod/wp_carbine_e11.lod")
+                                       ? "appearance/lod/wp_carbine_e11.lod"
+                                       : std::string();
+    const std::vector<retarget::BoneMapping> mapping = retarget::humanoid_mapping();
+    size_t exported_count = 0;
+
+    for (const core::SpeciesDef& sp : core::all_species()) {
+        if (!only_species.empty() && sp.id != only_species && sp.code != only_species) {
+            continue;
+        }
+        for (const char* gender : {"male", "female"}) {
+            const std::string sg = sp.id + "_" + gender;
+            const std::string tpl_path = "object/creature/player/shared_" + sg + ".iff";
+            if (!library.contains(tpl_path)) {
+                std::cerr << "skipping missing template " << tpl_path << "\n";
+                continue;
+            }
+            const SharedObjectTemplate& tpl = templates.shared(tpl_path);
+            const std::filesystem::path sp_dir = out_root / sg;
+
+            CharacterExport req;
+            req.name = sg;
+            req.appearances = {tpl.appearance};
+            req.weapon_lod = weapon_lod;
+
+            const Skeleton skel = load_appearance_skeleton(library, tpl.appearance);
+            if (bf2_skeleton) {
+                for (const std::string& clip_name : soldier_clips) {
+                    const uint32_t h = bf2::name_hash(clip_name);
+                    for (const bf2::Animation& a : bf2_anims) {
+                        if (a.name_hash == h) {
+                            req.clips.push_back(retarget::retarget_animation(skel, *bf2_skeleton, a, mapping, clip_name));
+                            break;
+                        }
+                    }
+                }
+            }
+
+            std::ostringstream dummy_log;
+            const CharacterBounds bounds = export_character(library, req, sp_dir, dummy_log);
+
+            // Collect blend shape names from the species' body/head meshes.
+            std::set<std::string> blend_names;
+            const SkeletalAppearance app = parse_skeletal_appearance(library.read(tpl.appearance));
+            for (const std::string& gen : app.mesh_generators) {
+                const std::string mgn = gen.ends_with(".lmg") ? parse_mesh_lod_list(library.read(gen)).at(0) : gen;
+                const SkinnedMesh sm = parse_skinned_mesh(library.read(mgn));
+                for (const auto& bt : sm.blend_targets) {
+                    blend_names.insert(bt.name);
+                }
+            }
+
+            // Find & export hair SATs for this species/gender.
+            const char g_char = gender[0];
+            std::vector<std::string> hair_sats;
+            for (int i = 1; i <= 50; ++i) {
+                const std::string p1 = std::format("appearance/{}_{}_hair_s{:02d}.sat", sp.code, g_char, i);
+                const std::string p2 = std::format("appearance/{}_hair_s{:02d}_{}.sat", sp.code, i, g_char);
+                if (library.contains(p1)) hair_sats.push_back(p1);
+                else if (library.contains(p2)) hair_sats.push_back(p2);
+            }
+            if (hair_sats.size() > max_hairs && max_hairs > 0) {
+                std::vector<std::string> sampled;
+                for (size_t i = 0; i < max_hairs; ++i) {
+                    sampled.push_back(hair_sats[(i * hair_sats.size()) / max_hairs]);
+                }
+                hair_sats = std::move(sampled);
+            }
+
+            struct HairInfo {
+                std::string id;
+                std::string name;
+                std::string gltf;
+            };
+            std::vector<HairInfo> hairs;
+            const std::filesystem::path hair_dir = sp_dir / "hairs";
+            for (size_t hi = 0; hi < hair_sats.size(); ++hi) {
+                const SkeletalAppearance hair_app = parse_skeletal_appearance(library.read(hair_sats[hi]));
+                if (hair_app.mesh_generators.empty()) continue;
+                const std::string stem = std::filesystem::path(hair_sats[hi]).stem().string();
+                CharacterExport hreq;
+                hreq.name = stem;
+                hreq.appearances = {tpl.appearance};
+                hreq.meshes = hair_app.mesh_generators;
+                hreq.export_appearance_meshes = false;
+                export_character(library, hreq, hair_dir, dummy_log);
+                hairs.push_back({stem, std::format("Style {}", hi + 1), "hairs/" + stem + ".gltf"});
+            }
+
+            // Compute eye height from Head joint global Y if present.
+            double eye_y = bounds.max.y * 0.90;
+            const int head_idx = skel.find("Head");
+            if (head_idx >= 0) {
+                const auto globals = skel.global_transforms();
+                eye_y = double(to_gltf(globals[size_t(head_idx)]).at(1, 3)) + 0.08;
+            }
+            const bool allow_bald = allow_bald_map.contains(sg) ? allow_bald_map[sg] : hairs.empty();
+
+            std::ofstream meta(sp_dir / (sg + ".species.json"), std::ios::binary);
+            meta << "{\n";
+            meta << "  \"species\": " << json_escape(sp.id) << ",\n";
+            meta << "  \"gender\": " << json_escape(gender) << ",\n";
+            meta << "  \"code\": " << json_escape(sp.code) << ",\n";
+            meta << "  \"allow_bald\": " << (allow_bald ? "true" : "false") << ",\n";
+            meta << std::format("  \"collision_radius\": {:g}, \"collision_height\": {:g}, \"eye_height\": {:.3f},\n",
+                                tpl.collision_radius, tpl.collision_height, eye_y);
+            meta << std::format("  \"bounds\": {{\"min\": [{:.3f}, {:.3f}, {:.3f}], \"max\": [{:.3f}, {:.3f}, {:.3f}]}},\n",
+                                bounds.min.x, bounds.min.y, bounds.min.z, bounds.max.x, bounds.max.y, bounds.max.z);
+            meta << "  \"blend_shapes\": [";
+            size_t bi = 0;
+            for (const std::string& b : blend_names) {
+                meta << (bi++ ? ", " : "") << json_escape(b);
+            }
+            meta << "],\n  \"hairs\": [";
+            for (size_t hi = 0; hi < hairs.size(); ++hi) {
+                meta << (hi ? ", " : "")
+                     << std::format("{{\"id\": {}, \"name\": {}, \"gltf\": {}}}", json_escape(hairs[hi].id),
+                                    json_escape(hairs[hi].name), json_escape(hairs[hi].gltf));
+            }
+            meta << "],\n  \"customizations\": [\n";
+            size_t ci = 0;
+            if (c_sp >= 0 && c_grp >= 0 && c_type >= 0 && c_name >= 0 && c_vars >= 0) {
+                for (size_t r = 0; r < cust_table.rows.size(); ++r) {
+                    if (cust_table.text(r, c_sp) != sg) continue;
+                    const bool is_scale = c_scale >= 0 && cust_table.number(r, c_scale) != 0.0f;
+                    const bool reverse = c_rev >= 0 && cust_table.number(r, c_rev) != 0.0f;
+                    const bool discrete = c_disc >= 0 && cust_table.number(r, c_disc) != 0.0f;
+                    meta << (ci++ ? ",\n" : "")
+                         << std::format("    {{\"group\": {}, \"type\": {}, \"name\": {}, \"variables\": {}, "
+                                        "\"is_scale\": {}, \"reverse\": {}, \"discrete\": {}}}",
+                                        json_escape(cust_table.text(r, c_grp)), json_escape(cust_table.text(r, c_type)),
+                                        json_escape(cust_table.text(r, c_name)), json_escape(cust_table.text(r, c_vars)),
+                                        is_scale ? "true" : "false", reverse ? "true" : "false",
+                                        discrete ? "true" : "false");
+                }
+            }
+            meta << "\n  ]\n}\n";
+            std::cout << std::format("exported {} ({} hairs, {} blend shapes, {} clips)\n", sg, hairs.size(),
+                                     blend_names.size(), req.clips.size());
+            ++exported_count;
+        }
+    }
+    std::cout << exported_count << " species/gender models exported\n";
+    return 0;
+}
+
 } // namespace
 
 int main(int argc, char** argv) {
@@ -907,6 +1148,9 @@ int main(int argc, char** argv) {
         }
         if (command == "export-character") {
             return cmd_export_character(args);
+        }
+        if (command == "export-species") {
+            return cmd_export_species(args);
         }
         if (command == "bake-terrain") {
             return cmd_bake_terrain(args);

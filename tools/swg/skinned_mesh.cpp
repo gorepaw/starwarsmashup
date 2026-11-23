@@ -88,7 +88,11 @@ SkinnedMesh parse_skinned_mesh(std::span<const uint8_t> bytes) {
     if (root.tag != "SKMG") {
         throw std::runtime_error("not a skinned mesh (" + root.tag + ")");
     }
-    const IffNode& version = root.expect("0004");
+    const IffNode* v = root.child("0004");
+    if (!v) {
+        v = root.child("0003");
+    }
+    const IffNode& version = v ? *v : root.expect("0004");
 
     IffReader info(version.expect("INFO").data);
     for (int i = 0; i < 9; ++i) {
@@ -154,6 +158,37 @@ SkinnedMesh parse_skinned_mesh(std::span<const uint8_t> bytes) {
                 renderer.targets.push_back({int(part), std::string{t[3], t[2], t[1], t[0]}});
             }
             mesh.texture_renderers.push_back(std::move(renderer));
+        }
+    }
+
+    // BLTS: blend shapes (morph targets), each a `FORM BLT ` with INFO
+    // (position delta count, normal delta count, name) and POSN (index + vec3).
+    if (const IffNode* blts = version.child("BLTS")) {
+        for (const IffNode* blt : blts->children_with("BLT ")) {
+            const IffNode* info_node = blt->child("INFO");
+            if (info_node == nullptr) {
+                continue;
+            }
+            IffReader r(info_node->data);
+            const uint32_t pos_count = r.u32();
+            r.u32();  // normal delta count
+            SkinnedMesh::BlendTarget target;
+            target.name = r.cstring();
+            if (const IffNode* posn = blt->child("POSN")) {
+                IffReader pr(posn->data);
+                for (uint32_t i = 0; i < pos_count && pr.remaining() >= 16; ++i) {
+                    const uint32_t idx = pr.u32();
+                    const float dx = pr.f32();
+                    const float dy = pr.f32();
+                    const float dz = pr.f32();
+                    if (idx < mesh.positions.size()) {
+                        target.position_deltas.push_back({idx, {dx, dy, dz}});
+                    }
+                }
+            }
+            if (!target.name.empty() && !target.position_deltas.empty()) {
+                mesh.blend_targets.push_back(std::move(target));
+            }
         }
     }
     return mesh;

@@ -26,12 +26,14 @@ public:
     };
     struct Primitive {
         std::map<std::string, int> attributes;  // attribute name -> accessor
+        std::vector<std::map<std::string, int>> targets;  // morph targets
         int indices = -1;
         int material = -1;
     };
     struct Mesh {
         std::string name;
         std::vector<Primitive> primitives;
+        std::vector<std::string> target_names;
     };
     struct Skin {
         std::vector<int> joints;

@@ -59,6 +59,24 @@ void test_store(CharacterStore& store) {
     store.save(std::span(&moved, 1));
     CHECK(store.find(a.id) == moved);
 
+    // Rich character fields, list_all, and remove.
+    CharacterRecord wookiee;
+    wookiee.name = "chewie";
+    wookiee.position = {10, 0, -20};
+    wookiee.yaw = 0.75f;
+    wookiee.species = "wookiee";
+    wookiee.gender = "male";
+    wookiee.location = "Mos Eisley";
+    wookiee.appearance = R"({"height":0.9,"hair":-1})";
+    const CharacterRecord created_wke = store.create_character(wookiee);
+    CHECK(created_wke.id > b.id);
+    CHECK(store.find(created_wke.id) == created_wke);
+    const auto all = store.list_all();
+    CHECK(all.size() == 3);
+    CHECK(store.remove(created_wke.id));
+    CHECK(!store.remove(created_wke.id));
+    CHECK(!store.find(created_wke.id));
+
     // A batch with an unknown character saves nothing.
     CharacterRecord ghost = b;
     ghost.id = b.id + 100;
@@ -91,6 +109,26 @@ void test_sqlite_file() {
         sqlite3_exec(db, "PRAGMA user_version = 99", nullptr, nullptr, nullptr);
         sqlite3_close(db);
         CHECK(throws([&] { SqliteCharacterStore store(database.path); }));
+    }
+    // A v1 database migrates cleanly to v2, preserving existing characters.
+    {
+        TempDatabase v1;
+        sqlite3* db = nullptr;
+        CHECK(sqlite3_open(v1.path.string().c_str(), &db) == SQLITE_OK);
+        CHECK(sqlite3_exec(db,
+                           "CREATE TABLE characters ("
+                           " id INTEGER PRIMARY KEY AUTOINCREMENT,"
+                           " name TEXT NOT NULL UNIQUE,"
+                           " x REAL NOT NULL, y REAL NOT NULL, z REAL NOT NULL,"
+                           " yaw REAL NOT NULL) STRICT;"
+                           "INSERT INTO characters (name, x, y, z, yaw) VALUES ('legacy', 1.5, 2.0, -3.5, 0.5);"
+                           "PRAGMA user_version = 1;",
+                           nullptr, nullptr, nullptr) == SQLITE_OK);
+        sqlite3_close(db);
+
+        SqliteCharacterStore migrated(v1.path);
+        const auto legacy = migrated.find_by_name("legacy");
+        CHECK(legacy && legacy->species == "human" && legacy->gender == "male" && legacy->location == "Mos Eisley");
     }
 }
 

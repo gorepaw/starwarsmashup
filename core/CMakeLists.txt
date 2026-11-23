@@ -16,6 +16,7 @@ add_library(swm_core STATIC
   src/net/udp.cpp
   src/persistence.cpp
   src/server.cpp
+  src/species.cpp
   src/world.cpp)
 target_include_directories(swm_core PUBLIC include)
 target_compile_definitions(swm_core PRIVATE SWM_VERSION="${PROJECT_VERSION}")
@@ -29,7 +30,7 @@ add_library(swm_sqlite_store STATIC src/sqlite_store.cpp)
 target_link_libraries(swm_sqlite_store PUBLIC swm_core PRIVATE swm::sqlite3)
 swm_target_warnings(swm_sqlite_store)
 
-foreach(test core_test movement_test nav_test net_test persistence_test combat_test match_test hub_test)
+foreach(test core_test movement_test nav_test net_test persistence_test combat_test match_test hub_test species_test)
   add_executable(${test} tests/${test}.cpp)
   target_link_libraries(${test} PRIVATE swm_core swm_sqlite_store)
   swm_target_warnings(${test})
