@@ -365,6 +365,7 @@ func _process(delta: float) -> bool:
 		var game: Dictionary = _client.get_match()
 		_update_posts(game, int(own["team"]))
 		_update_powerups(game, delta)
+		Bf2Map.animate_doors(self, game.get("doors", PackedFloat32Array()))
 		if own["life"] == "waiting" and not game.is_empty():
 			_choose_spawn(game, own)
 		else:

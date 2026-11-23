@@ -80,7 +80,8 @@ void test_battlefield_file() {
                                                       "Boundary = 0 0 100 0 0 100\n"
                                                       "DeathRegion = box 10 0 20 2 1 4 0 0 1 0 1 0 -1 0 0\n"
                                                       "DamageRegion = 50 sphere 40 0 40 3 3 3 1 0 0 0 1 0 0 0 1\n"
-                                                      "Powerup = 20 1 30 3 2 0 1\n\n"
+                                                      "Powerup = 20 1 30 3 2 0 1\n"
+                                                      "Door = 50 0 60 3 1 50 1.5 64 2 1.5 0.2 1 0 0 0 1 0 0 0 1\n\n"
                                                       "[post]\nName = CP1\nPosition = 10 10\nOwner = 1\n"
                                                       "Altitude = -6 -1\nSpawnPoint = 12 12 -5\nSpawnPoint = 8 8 -5\n\n"
                                                       "[post]\nName = CP2\nPosition = 30 30\nOwner = 2\n";
@@ -109,6 +110,13 @@ void test_battlefield_file() {
           bounded.powerups[0].delay == 2 && bounded.powerups[0].health == 0 && bounded.powerups[0].ammo == 1);
     CHECK(bounded.powerups[0].reaches({-22, 0, 31}) && !bounded.powerups[0].reaches({-24, 1, 30}) &&
           !bounded.powerups[0].reaches({-20, 4, 30}));
+    // A door: its trigger and box, x the other way; a shot through the box
+    // meets it where it enters, one over it doesn't.
+    CHECK(bounded.doors.size() == 1 && bounded.doors[0].trigger == Vec3(-50, 0, 60) &&
+          bounded.doors[0].box.center == Vec3(-50, 1.5, 64) && bounded.doors[0].open_time == 1);
+    const auto through = bounded.doors[0].hit({-50, 1.5, 60}, {-50, 1.5, 70});
+    CHECK(through && near(*through, 0.38, 1e-6) && !bounded.doors[0].hit({-50, 3.5, 60}, {-50, 3.5, 70}));
+    CHECK(bounded.doors[0].triggered_by({-51, 0, 61}) && !bounded.doors[0].triggered_by({-50, 0, 56}));
     // A post in a cellar: its middle height, taken from within it and not
     // from the ground over it; its spawn points' heights.
     const CommandPost& cellar = bounded.posts[0];
@@ -628,6 +636,57 @@ void test_destructible_droids() {
     CHECK(near(h.health(), hp_after, 0.5));  // broken droid gives no health
 }
 
+// A door between a soldier and a health droid: shut, it stops the soldier's
+// shots; it opens while someone stands by it (its trigger, off to the side
+// here), and then they go through; it shuts again once they've gone. Clients
+// hear how open it is.
+void test_doors() {
+    Battlefield battlefield = three_posts();
+    battlefield.warmup = 60;
+    battlefield.powerups.push_back({.position = {-50, 0, 0}, .radius = 1, .delay = 1, .health = 1});
+    battlefield.doors.push_back(
+        {.trigger = {-53, 0, 10}, .radius = 3, .open_time = 1, .box = {.center = {-53, 1.5, 0}, .size = {0.2, 1.5, 2}}});
+    Field field(battlefield);
+    GameClient& a = field.join("a");
+    GameClient& b = field.join("b");
+    field.run(0.4);
+    a.request_spawn(0, 0);
+    b.request_spawn(0, 2);
+    field.run(0.4);
+    CHECK(a.alive() && b.alive() && a.match() && a.match()->doors.size() == 1 && a.match()->doors[0] == 0.0f);
+    MoveState placed = *field.server->state_of(a.entity_id());
+    placed.position = {-60, 0, 0};
+    field.server->set_state(a.entity_id(), placed);
+    field.run(0.2);
+    const Vec3 to_droid = Vec3{-50, 0.8, 0} - (a.predicted().position + Vec3{0, eye_height, 0});
+    const GameClient::Controls aim{.yaw = float(std::atan2(-to_droid.x, -to_droid.z)),
+                    .pitch = float(std::atan2(to_droid.y, std::hypot(to_droid.x, to_droid.z)))};
+    GameClient::Controls firing = aim;
+    firing.fire = true;
+    field.run(1, [&] { a.set_input(firing); });
+    const float full = a.match()->powerup_health[0];
+    CHECK(full == float(PowerupStation::default_max_health) && a.match()->doors[0] == 0.0f);
+
+    // B by the trigger: it opens within its open time, and shots get through.
+    MoveState by_door = *field.server->state_of(b.entity_id());
+    by_door.position = {-53, 0, 11};
+    field.server->set_state(b.entity_id(), by_door);
+    field.run(0.5, [&] { a.set_input(aim); });
+    CHECK(a.match()->doors[0] > 0.3f && a.match()->doors[0] < 0.7f);
+    field.run(0.7, [&] { a.set_input(aim); });
+    CHECK(a.match()->doors[0] == 1.0f);
+    field.run(0.5, [&] { a.set_input(firing); });
+    std::printf("door: droid at %.0f of %.0f after shooting through the open door\n", a.match()->powerup_health[0],
+                full);
+    CHECK(a.match()->powerup_health[0] < full);
+
+    // B gone: it shuts.
+    by_door.position = {-53, 0, 30};
+    field.server->set_state(b.entity_id(), by_door);
+    field.run(1.2, [&] { a.set_input(aim); });
+    CHECK(a.match()->doors[0] == 0.0f);
+}
+
 void test_bots_play_a_match() {
     Battlefield battlefield = three_posts();
     battlefield.posts.insert(battlefield.posts.begin() + 1, CommandPost{.name = "Inner west", .position = {-30, 0, 10}});
@@ -716,6 +775,7 @@ void test_drop_pace() {
 }
 
 int main() {
+    test_doors();
     test_drop_pace();
     test_battlefield_file();
     test_capture();

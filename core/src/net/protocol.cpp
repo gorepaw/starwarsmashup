@@ -1,6 +1,7 @@
 #include "swm/core/net/protocol.h"
 
 #include <algorithm>
+#include <cmath>
 #include <format>
 
 #include "swm/core/net/bytes.h"
@@ -128,6 +129,10 @@ void put_match(ByteWriter& out, const MatchState& m) {
     for (const float health : m.powerup_health) {
         out.put(health);
     }
+    out.put(uint16_t(m.doors.size()));
+    for (const float open : m.doors) {
+        out.put(uint8_t(std::lround(std::clamp(open, 0.0f, 1.0f) * 255)));
+    }
 }
 
 int8_t get_team(ByteReader& in) {
@@ -164,6 +169,11 @@ MatchState get_match(ByteReader& in) {
     m.powerup_health.reserve(powerups);
     for (size_t i = 0; i < powerups; ++i) {
         m.powerup_health.push_back(in.get<float>());
+    }
+    const size_t doors = in.get<uint16_t>();
+    m.doors.reserve(doors);
+    for (size_t i = 0; i < doors; ++i) {
+        m.doors.push_back(in.get<uint8_t>() / 255.0f);
     }
     return m;
 }

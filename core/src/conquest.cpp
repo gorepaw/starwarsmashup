@@ -153,6 +153,30 @@ void read_regions(Battlefield& field, const Ini::Section& section, const std::st
             }
             station.position.x = -station.position.x;
             field.powerups.push_back(station);
+        } else if (iequals(key, "Door")) {
+            std::istringstream fields(value);
+            Door door;
+            door.box.shape = DeathRegion::Shape::box;
+            std::array<double, 9> m{};
+            bool ok = bool(fields >> door.trigger.x >> door.trigger.y >> door.trigger.z >> door.radius >>
+                           door.open_time >> door.box.center.x >> door.box.center.y >> door.box.center.z >>
+                           door.box.size.x >> door.box.size.y >> door.box.size.z);
+            for (double& entry : m) {
+                ok = ok && bool(fields >> entry);
+            }
+            if (!ok || door.radius <= 0 || door.open_time <= 0) {
+                throw std::runtime_error(where + ": Door is \"x y z radius open_time\" and a box, \"x y z sx sy sz\" "
+                                         "and 9 rotation numbers, got \"" + value + "\"");
+            }
+            door.trigger.x = -door.trigger.x;
+            door.box.center.x = -door.box.center.x;
+            const double sign[3] = {-1, 1, 1};
+            for (size_t row = 0; row < 3; ++row) {
+                for (size_t column = 0; column < 3; ++column) {
+                    door.box.basis[row * 3 + column] = sign[row] * sign[column] * m[row * 3 + column];
+                }
+            }
+            field.doors.push_back(door);
         } else if (iequals(key, "DeathRegion") || iequals(key, "DamageRegion")) {
             std::istringstream fields(value);
             const bool damage = iequals(key, "DamageRegion");
@@ -225,6 +249,46 @@ bool DeathRegion::contains(Vec3 point) const {
         break;
     }
     return std::abs(x) <= size.x && std::abs(y) <= size.y && std::abs(z) <= size.z;
+}
+
+bool Door::triggered_by(Vec3 feet) const {
+    // From the nearest point of the soldier's body (feet to head): triggers
+    // are mostly on the floor, some a storey up, some only 1 m across.
+    constexpr double body = 1.8;
+    const Vec3 nearest{feet.x, std::clamp(trigger.y, feet.y, feet.y + body), feet.z};
+    return (nearest - trigger).length() <= radius;
+}
+
+std::optional<double> Door::hit(Vec3 a, Vec3 b) const {
+    // Into the box's axes (the basis's columns), then through its slabs.
+    const auto local = [&](Vec3 p) {
+        const Vec3 d = p - box.center;
+        const auto& m = box.basis;
+        return std::array<double, 3>{m[0] * d.x + m[3] * d.y + m[6] * d.z, m[1] * d.x + m[4] * d.y + m[7] * d.z,
+                                     m[2] * d.x + m[5] * d.y + m[8] * d.z};
+    };
+    const auto from = local(a), to = local(b);
+    const double half[3] = {box.size.x, box.size.y, box.size.z};
+    double enter = 0, leave = 1;
+    for (size_t i = 0; i < 3; ++i) {
+        const double d = to[i] - from[i];
+        if (std::abs(d) < 1e-12) {
+            if (std::abs(from[i]) > half[i]) {
+                return std::nullopt;
+            }
+            continue;
+        }
+        double t0 = (-half[i] - from[i]) / d, t1 = (half[i] - from[i]) / d;
+        if (t0 > t1) {
+            std::swap(t0, t1);
+        }
+        enter = std::max(enter, t0);
+        leave = std::min(leave, t1);
+        if (enter > leave) {
+            return std::nullopt;
+        }
+    }
+    return enter;
 }
 
 bool CommandPost::contains(Vec3 point) const {
@@ -410,6 +474,7 @@ Battlefield load_battlefield(const std::filesystem::path& path) {
 
 Conquest::Conquest(const Battlefield& battlefield, bool repeat) : battlefield_(battlefield), repeat_(repeat) {
     reset();
+    state_.doors.assign(battlefield_.doors.size(), 0.0f);
     state_.time_left = battlefield_.warmup;
 }
 
@@ -449,6 +514,32 @@ bool Conquest::damage_powerup(size_t index, double amount) {
     return state_.powerup_health[index] <= 0.0f;
 }
 
+bool Conquest::door_shut(size_t index) const {
+    return index < state_.doors.size() && state_.doors[index] < 0.5f;
+}
+
+std::optional<double> Conquest::door_hit(Vec3 a, Vec3 b) const {
+    std::optional<double> nearest;
+    for (size_t i = 0; i < battlefield_.doors.size(); ++i) {
+        if (door_shut(i)) {
+            if (const auto t = battlefield_.doors[i].hit(a, b); t && (!nearest || *t < *nearest)) {
+                nearest = t;
+            }
+        }
+    }
+    return nearest;
+}
+
+void Conquest::move_doors(double dt, std::span<const Unit> units) {
+    for (size_t i = 0; i < battlefield_.doors.size() && i < state_.doors.size(); ++i) {
+        const Door& door = battlefield_.doors[i];
+        const bool open = std::any_of(units.begin(), units.end(),
+                                      [&](const Unit& unit) { return door.triggered_by(unit.position); });
+        const double step = dt / door.open_time;
+        state_.doors[i] = float(std::clamp(state_.doors[i] + (open ? step : -step), 0.0, 1.0));
+    }
+}
+
 void Conquest::killed(int team) {
     if (state_.phase == Phase::live && team >= 0 && team < 2) {
         state_.tickets[size_t(team)] = std::max(0.0, state_.tickets[size_t(team)] - 1);
@@ -457,6 +548,7 @@ void Conquest::killed(int team) {
 
 std::vector<MatchEvent> Conquest::step(double dt, std::span<const Unit> units, size_t players) {
     std::vector<MatchEvent> events;
+    move_doors(dt, units);
     switch (state_.phase) {
     case Phase::warmup:
         if (players < battlefield_.min_players) {

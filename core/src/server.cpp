@@ -653,6 +653,18 @@ void GameServer::fire(const Client& shooter, const Shot& shot, double view_tick)
     }
 }
 
+std::optional<World::RayHit> GameServer::shot_hit(Vec3 a, Vec3 b) const {
+    auto hit = world_.raycast_hit(a, b);
+    if (conquest_) {
+        if (const auto t = conquest_->door_hit(a, b); t && (!hit || *t < hit->t)) {
+            const Vec3 d = b - a;
+            const double length = d.length();
+            hit = World::RayHit{*t, length > 1e-9 ? d * (-1.0 / length) : Vec3{0, 1, 0}};
+        }
+    }
+    return hit;
+}
+
 Vec3 GameServer::position_at(const Client& client, double tick) const {
     const auto& h = client.history;
     if (h.empty() || tick >= h.back().first) {
@@ -697,9 +709,10 @@ void GameServer::advance_bolts() {
             }
         }
         const Vec3 to = from + bolt.velocity * dt;
-        // The first thing along the way: the world, someone where the shooter
-        // saw them, or a living health/ammo droid. Bouncing grenades pass people by.
-        const auto world_hit = world_.raycast_hit(from, to);
+        // The first thing along the way: the world (shut doors too), someone
+        // where the shooter saw them, or a living health/ammo droid.
+        // Bouncing grenades pass people by.
+        const auto world_hit = shot_hit(from, to);
         std::optional<double> nearest = world_hit ? std::optional(world_hit->t) : std::nullopt;
         Vec3 normal = world_hit ? world_hit->normal : Vec3{0, 1, 0};
         Client* victim = nullptr;
@@ -863,7 +876,7 @@ void GameServer::explode(const Blast& blast, std::vector<Blast>& blasts) {
     // it can't see (chest or head).
     const Vec3 center = blast.at + blast.normal * 0.1;
     const auto sheltered = [&](Vec3 feet) {
-        return world_.raycast(center, feet + Vec3{0, 1.0, 0}) && world_.raycast(center, feet + Vec3{0, 1.6, 0});
+        return shot_hit(center, feet + Vec3{0, 1.0, 0}) && shot_hit(center, feet + Vec3{0, 1.6, 0});
     };
     for (Client& target : clients_) {
         const bool teammate = !blast.droid && bolt.team >= 0 && target.team == bolt.team &&

@@ -165,7 +165,8 @@ Matches look, sound and feel finished before Galaxies' gear changes what's in th
 - [x] Difficulty in the options (Bots: Easy, Normal, Hard; `core::BotSkill::preset`): aim error (5, 2.5, 1.2 degrees), reaction time (0.8, 0.4, 0.25 s), range (45, 60, 80 m), how often they take cover (30%, 70%, always) and roll aside (never, 15%, 35%). It applies to bots on the server the game hosts, and in a hub's battles, at once when changed; `swm_server --difficulty`.
 
 **Maps**
-- [ ] Doors that open as soldiers come, and the airlocks and gates that scripts work.
+- [x] Doors that open as soldiers come (`core::Door`; Battlefront's "door" class, 77 on six maps: Polis Massa, Tantive IV, Mustafar, Kamino, Jabba's palace, the Death Star). Each opens while a living soldier is within its trigger (the class's `AnimationTrigger`: a hardpoint and radius, 1 to 16 m) and shuts when none is, over its opening clip's length (about a second), which the client plays from Battlefront's animation bank. Shut more than halfway, a door stops bolts, grenades and blasts across a box around its collision; soldiers pass it either way, so a door never traps anyone. The server sends how open each is in its snapshots. Locked doors (Kamino's mission script locks some) stay shut, solid.
+- [ ] The airlocks and gates that mission scripts work, and the door sounds (`OpenSound`, `CloseSound`), with the audio below.
 - [ ] Destructible objects: Kashyyyk's barricades and sea-wall gate, the consoles that stop Tantive IV's turbine and drop Mustafar's bridge.
 - [ ] Deep water (Kamino's sea, Yavin's river): soldiers swim, or die.
 - [ ] Third teams: the locals (Jawas, Gungans, Geonosians, Gamorreans) as Battlefront's natives.

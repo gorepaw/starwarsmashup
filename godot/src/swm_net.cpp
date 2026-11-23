@@ -355,6 +355,11 @@ godot::Dictionary SwmClient::get_match() const {
         powerups.push_back(entry);
     }
     out["powerups"] = powerups;
+    godot::PackedFloat32Array doors;
+    for (const float open : match.doors) {
+        doors.push_back(open);
+    }
+    out["doors"] = doors;  // how open each of the battlefield's doors is, 0..1
     return out;
 }
 

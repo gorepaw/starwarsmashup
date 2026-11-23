@@ -11,6 +11,7 @@
 #include <string_view>
 #include <vector>
 
+#include "bf2/animation.h"
 #include "bf2/model.h"
 #include "bf2/odf.h"
 #include "bf2/ucfb.h"
@@ -34,6 +35,9 @@ public:
     // A model's collision mesh ("coll") and primitives ("prim"), or nullptr.
     const UcfbNode* collision_mesh(std::string_view model) const;
     const UcfbNode* collision_primitives(std::string_view model) const;
+    // An animation bank's clips ("zaa_" by name, e.g. a door's
+    // AnimationName), or nullptr.
+    const UcfbNode* animation_bank(std::string_view name) const;
     const OdfLibrary& classes() const { return classes_; }
 
 private:
@@ -41,7 +45,7 @@ private:
 
     std::deque<std::vector<uint8_t>> files_;
     std::deque<UcfbNode> roots_;
-    std::map<std::string, const UcfbNode*> models_, skeletons_, textures_, meshes_, primitives_;  // lowercase names
+    std::map<std::string, const UcfbNode*> models_, skeletons_, textures_, meshes_, primitives_, banks_;  // lowercase names
     std::map<std::string, std::string> lod_names_;  // gmod -> its first LOD's model
     OdfLibrary classes_;
 };
@@ -53,15 +57,25 @@ struct ModelExport {
     std::vector<std::string> missing_textures;
 };
 
+// A clip to write with a model (export_model), under its name.
+struct ModelClip {
+    std::string name;
+    Animation animation;
+};
+
 // Writes model `name` as `<model_dir>/<name>.gltf` (and .bin) in game space:
 // x mirrored, triangles turned to face their normals. Each segment is a
 // primitive with its own material: its diffuse texture, alpha-tested
 // ("hardedged") or blended ("transparent"), double-sided, and its vertex
 // colors if any; unlit when it glows or its colors are baked lighting. Diffuse textures are
 // written once each, as `<texture_dir>/<name>.png` (lowercase), and listed in
-// `textures_written`. Throws std::runtime_error if there's no such model.
+// `textures_written`. With `clips` (a door's opening), each skeleton bone is
+// a node of its own holding the segments that hang from it, and each clip is
+// a glTF animation moving those nodes; without, one mesh in model space.
+// Throws std::runtime_error if there's no such model.
 ModelExport export_model(const AssetLibrary& library, std::string_view name, const std::filesystem::path& model_dir,
-                         const std::filesystem::path& texture_dir, std::set<std::string>& textures_written);
+                         const std::filesystem::path& texture_dir, std::set<std::string>& textures_written,
+                         const std::vector<ModelClip>& clips = {});
 
 // A model's collision, in its model space (Battlefront coordinates): its
 // collision mesh, and its primitives as triangles (boxes, 12-sided

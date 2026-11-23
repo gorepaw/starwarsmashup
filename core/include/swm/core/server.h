@@ -227,6 +227,8 @@ private:
     net::EntityState describe(const Client& client) const;
     Vec3 spawn_point(uint32_t index) const;
     Vec3 position_at(const Client& client, double tick) const;
+    // What a shot from a to b first meets: the world, or a shut door.
+    std::optional<World::RayHit> shot_hit(Vec3 a, Vec3 b) const;
     void drop_silent(double now);
     void send(const net::Endpoint& to, const auto& message);
     Client* find(const net::Endpoint& endpoint);

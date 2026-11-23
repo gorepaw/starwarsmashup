@@ -25,6 +25,7 @@ const POWERUPS := &"bf2_powerups"  # the health and ammo droids' nodes (meta "po
 const DROID_TURN_TIME := 1.2       # s the health droid turns before it waits (ASSUMPTION)
 const DROID_TURN_RANGE := 1.2      # radians either way of where it was placed it looks
 const GONK_ROCK_RATE := 1.6        # rocks a second, the ammo droid shifting from foot to foot
+const DOORS := &"bf2_doors"  # doors' nodes (meta "bf2_door": export-map's; "player": their AnimationPlayer)
 
 
 static func is_bf2(meta: Dictionary) -> bool:
@@ -137,6 +138,16 @@ static func add_objects(parent: Node, prefix: String) -> int:
 			node.set_meta("powerup", object["powerup"])
 			node.set_meta("placed", node.basis)
 			node.add_to_group(POWERUPS)
+		if object.has("door"):
+			var door: Dictionary = object["door"]
+			var player := node.find_child("AnimationPlayer", true, false) as AnimationPlayer
+			if player != null and player.has_animation(str(door["animation"])):
+				player.assigned_animation = str(door["animation"])
+				player.speed_scale = 0.0
+				node.set_meta("bf2_door", door)
+				node.set_meta("player", player)
+				node.set_meta("open", -1.0)
+				node.add_to_group(DOORS)
 		parent.add_child(node)
 		count += 1
 	for template: Variant in models.values():
@@ -144,6 +155,21 @@ static func add_objects(parent: Node, prefix: String) -> int:
 			(template as Node).free()
 	print("placed ", count, " objects (", models.size(), " models) from ", path.get_file())
 	return count
+
+
+# The doors, as open as the server says (`open`: 0 shut .. 1, by the
+# battlefield's door index; doors it doesn't say are shut), along their
+# opening clip.
+static func animate_doors(tree: SceneTree, open: PackedFloat32Array) -> void:
+	for node: Node3D in tree.get_nodes_in_group(DOORS):
+		var door: Dictionary = node.get_meta("bf2_door")
+		var index := int(door["index"])
+		var amount := open[index] if index < open.size() else 0.0
+		if is_equal_approx(amount, float(node.get_meta("open"))):
+			continue
+		node.set_meta("open", amount)
+		var player: AnimationPlayer = node.get_meta("player")
+		player.seek(amount * player.current_animation_length, true)
 
 
 # Fog, ambient light, the sun, local lights and the sky dome. Returns the

@@ -6,6 +6,7 @@
 #include <cstring>
 #include <stdexcept>
 
+#include "bf2/hash.h"
 #include "swg/gltf.h"
 #include "swg/image.h"
 
@@ -44,6 +45,8 @@ void AssetLibrary::index(const UcfbNode& node) {
                 const auto* text = reinterpret_cast<const char*>(info->data.data());
                 skeletons_.try_emplace(lowercase(std::string(text, strnlen(text, info->data.size()))), &child);
             }
+        } else if (child.tag == "zaa_") {
+            banks_.try_emplace(lowercase(child.name()), &child);
         } else if (child.tag == "tex_") {
             textures_.try_emplace(lowercase(child.name()), &child);
         } else if (child.tag == "coll") {
@@ -209,8 +212,40 @@ bool export_texture(const AssetLibrary& library, std::string_view name, const st
     return true;
 }
 
+const UcfbNode* AssetLibrary::animation_bank(std::string_view name) const {
+    const auto it = banks_.find(lowercase(name));
+    return it == banks_.end() ? nullptr : it->second;
+}
+
+namespace {
+
+// A stored 3x3 rotation (columns) as a quaternion.
+Quat matrix_quat(const std::array<float, 9>& c) {
+    // m[row][col] = c[col * 3 + row]
+    const auto m = [&](int row, int col) { return c[size_t(col * 3 + row)]; };
+    const float trace = m(0, 0) + m(1, 1) + m(2, 2);
+    Quat q;
+    if (trace > 0) {
+        const float s = std::sqrt(trace + 1) * 2;
+        q = {s / 4, (m(2, 1) - m(1, 2)) / s, (m(0, 2) - m(2, 0)) / s, (m(1, 0) - m(0, 1)) / s};
+    } else if (m(0, 0) > m(1, 1) && m(0, 0) > m(2, 2)) {
+        const float s = std::sqrt(1 + m(0, 0) - m(1, 1) - m(2, 2)) * 2;
+        q = {(m(2, 1) - m(1, 2)) / s, s / 4, (m(0, 1) + m(1, 0)) / s, (m(0, 2) + m(2, 0)) / s};
+    } else if (m(1, 1) > m(2, 2)) {
+        const float s = std::sqrt(1 + m(1, 1) - m(0, 0) - m(2, 2)) * 2;
+        q = {(m(0, 2) - m(2, 0)) / s, (m(0, 1) + m(1, 0)) / s, s / 4, (m(1, 2) + m(2, 1)) / s};
+    } else {
+        const float s = std::sqrt(1 + m(2, 2) - m(0, 0) - m(1, 1)) * 2;
+        q = {(m(1, 0) - m(0, 1)) / s, (m(0, 2) + m(2, 0)) / s, (m(1, 2) + m(2, 1)) / s, s / 4};
+    }
+    return normalized(q);
+}
+
+} // namespace
+
 ModelExport export_model(const AssetLibrary& library, std::string_view name, const std::filesystem::path& model_dir,
-                         const std::filesystem::path& texture_dir, std::set<std::string>& textures_written) {
+                         const std::filesystem::path& texture_dir, std::set<std::string>& textures_written,
+                         const std::vector<ModelClip>& clips) {
     const UcfbNode* modl = library.model(name);
     if (modl == nullptr) {
         throw std::runtime_error("no model " + std::string(name));
@@ -223,6 +258,10 @@ ModelExport export_model(const AssetLibrary& library, std::string_view name, con
 
     ModelExport result;
     swg::Gltf gltf;
+    // With clips, a mesh per bone (segments left in their bone's space);
+    // without, one mesh (index 0 here) in model space.
+    const bool animated = !clips.empty() && !skeleton.bones.empty();
+    std::map<std::string, swg::Gltf::Mesh> bone_meshes;  // bone -> its segments
     swg::Gltf::Mesh mesh{lowercase(name), {}};
     std::map<std::string, int> images;  // texture name -> image index
     const std::filesystem::path relative_textures = std::filesystem::relative(texture_dir, model_dir);
@@ -231,8 +270,11 @@ ModelExport export_model(const AssetLibrary& library, std::string_view name, con
             ++result.skipped;
             continue;
         }
-        // Into model space through the segment's bone, then mirror x.
-        const Transform bone = skeleton.model_transform(segment.bone);
+        // Into model space through the segment's bone (unless it gets a
+        // node of its own), then mirror x.
+        const bool on_node = animated && std::any_of(skeleton.bones.begin(), skeleton.bones.end(),
+                                                     [&](const ModelBone& b) { return b.name == segment.bone; });
+        const Transform bone = on_node ? Transform{} : skeleton.model_transform(segment.bone);
         const Transform turn{bone.rotation, {0, 0, 0}};
         std::vector<Vec3> positions, normals;
         for (size_t i = 0; i < segment.positions.size(); ++i) {
@@ -290,18 +332,82 @@ ModelExport export_model(const AssetLibrary& library, std::string_view name, con
         material.unlit = (segment.flags & material_glow) || segment.baked_lighting;
         primitive.material = int(gltf.materials.size());
         gltf.materials.push_back(material);
-        mesh.primitives.push_back(primitive);
+        (on_node ? bone_meshes[segment.bone] : mesh).primitives.push_back(primitive);
         ++result.segments;
     }
-    if (mesh.primitives.empty()) {
+    if (result.segments == 0) {
         throw std::runtime_error("model " + std::string(name) + " has no readable segments");
     }
-    gltf.meshes.push_back(mesh);
+    // The root node: the model, holding what isn't on a bone.
     swg::Gltf::Node node;
     node.name = lowercase(name);
-    node.mesh = 0;
+    if (!mesh.primitives.empty()) {
+        node.mesh = int(gltf.meshes.size());
+        gltf.meshes.push_back(mesh);
+    }
     gltf.nodes.push_back(node);
     gltf.scene_nodes = {0};
+    if (animated) {
+        // A node per bone, under its parent (or the root), at its rest
+        // transform; mirrored as the vertices are.
+        std::map<std::string, int> bone_nodes;
+        for (const ModelBone& bone : skeleton.bones) {
+            swg::Gltf::Node b;
+            b.name = lowercase(bone.name);
+            b.translation = to_gltf(Vec3{bone.position[0], bone.position[1], bone.position[2]});
+            b.rotation = to_gltf(matrix_quat(bone.rotation));
+            if (const auto it = bone_meshes.find(bone.name); it != bone_meshes.end()) {
+                it->second.name = b.name;
+                b.mesh = int(gltf.meshes.size());
+                gltf.meshes.push_back(it->second);
+            }
+            bone_nodes[bone.name] = int(gltf.nodes.size());
+            gltf.nodes.push_back(b);
+        }
+        for (const ModelBone& bone : skeleton.bones) {
+            const auto parent = bone_nodes.find(bone.parent);
+            gltf.nodes[size_t(parent == bone_nodes.end() ? 0 : parent->second)].children.push_back(
+                bone_nodes[bone.name]);
+        }
+        // Each clip's tracks on the bones they name (by name_hash).
+        for (const ModelClip& clip : clips) {
+            std::vector<float> times;
+            for (uint32_t f = 0; f < clip.animation.frame_count; ++f) {
+                times.push_back(float(f) / animation_fps);
+            }
+            if (times.empty()) {
+                continue;
+            }
+            const int input = gltf.add_scalars(times);
+            swg::Gltf::Animation animation{.name = clip.name};
+            for (const ModelBone& bone : skeleton.bones) {
+                const AnimationTrack* track = clip.animation.track(name_hash(bone.name));
+                if (track == nullptr) {
+                    continue;
+                }
+                const int target = bone_nodes[bone.name];
+                if (track->rotations.size() == times.size()) {
+                    std::vector<std::array<float, 4>> rotations;
+                    for (const Quat& r : track->rotations) {
+                        const Quat q = to_gltf(r);
+                        rotations.push_back({q.x, q.y, q.z, q.w});
+                    }
+                    animation.channels.push_back({target, "rotation", input, gltf.add_vec4(rotations, false)});
+                }
+                if (track->translations.size() == times.size()) {
+                    std::vector<Vec3> translations;
+                    for (const Vec3& t : track->translations) {
+                        translations.push_back(to_gltf(t));
+                    }
+                    animation.channels.push_back(
+                        {target, "translation", input, gltf.add_vec3(translations, false, false)});
+                }
+            }
+            if (!animation.channels.empty()) {
+                gltf.animations.push_back(animation);
+            }
+        }
+    }
     std::filesystem::create_directories(model_dir);
     gltf.write(model_dir / (lowercase(name) + ".gltf"));
     return result;

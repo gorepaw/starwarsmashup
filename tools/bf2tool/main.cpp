@@ -534,7 +534,7 @@ int cmd_export_map(const std::vector<std::string>& args) {
     };
     // A model's file relative to out_dir, written on first use; "" if missing.
     std::map<std::string, std::string> models;  // lowercase name -> file
-    const auto model_file = [&](const std::string& name) -> std::string {
+    const auto model_file = [&](const std::string& name, const std::vector<ModelClip>& clips = {}) -> std::string {
         const std::string key = lowercase(name);
         if (const auto it = models.find(key); it != models.end()) {
             return it->second;
@@ -542,7 +542,7 @@ int cmd_export_map(const std::vector<std::string>& args) {
         std::string file;
         if (library.model(key) != nullptr) {
             try {
-                const ModelExport written = export_model(library, key, model_dir, texture_dir, textures);
+                const ModelExport written = export_model(library, key, model_dir, texture_dir, textures, clips);
                 file = "models/" + key + ".gltf";
                 if (written.skipped > 0 || !written.missing_textures.empty()) {
                     std::cerr << std::format("model {}: {} segments, {} skipped, {} missing textures\n", key,
@@ -920,6 +920,7 @@ int cmd_export_map(const std::vector<std::string>& args) {
     // Objects, in game space (x mirrored; rotations conjugated by the mirror).
     core::MapCollision collision;
     std::vector<std::string> powerups;  // the health and ammo droids' lines for the map file
+    std::vector<std::string> doors;     // the doors' lines (core::Door)
     std::map<std::string, std::vector<CollisionTriangle>> shapes;  // model -> its collision
     {
         std::ofstream json(out_dir / (map + ".objects.json"), std::ios::binary);
@@ -942,10 +943,32 @@ int cmd_export_map(const std::vector<std::string>& args) {
             // The class's model (GeometryName), if it has one, and its
             // collision, placed in game space.
             std::string model;
+            std::string door_json;
             if (library.classes().find(object.type) != nullptr) {
                 const OdfClass resolved = library.classes().resolve(object.type);
+                // A door's opening: its class's Animation clip from the
+                // AnimationName bank, written with its model.
+                std::vector<ModelClip> clips;
+                if (lowercase(resolved.base) == "door") {
+                    const auto bank_name = resolved.get("AnimationName");
+                    const auto clip_name = resolved.get("Animation");
+                    const UcfbNode* bank = bank_name ? library.animation_bank(*bank_name) : nullptr;
+                    const UcfbNode* bin = bank ? bank->child("BIN_") : nullptr;
+                    if (bin != nullptr && clip_name) {
+                        for (Animation& clip : parse_animation_bank(bin->data)) {
+                            if (clip.name_hash == name_hash(*clip_name)) {
+                                clips.push_back({lowercase(*clip_name), std::move(clip)});
+                                break;
+                            }
+                        }
+                    }
+                    if (clips.empty()) {
+                        std::cerr << std::format("door {}: no clip {} in bank {}\n", object.name,
+                                                 clip_name.value_or("?"), bank_name.value_or("?"));
+                    }
+                }
                 if (const auto geometry = resolved.get("GeometryName")) {
-                    model = model_file(*geometry);
+                    model = model_file(*geometry, clips);
                     // By model and what the class says its soldiers and
                     // ordnance meet.
                     const CollisionUse use = collision_use(resolved);
@@ -967,13 +990,85 @@ int cmd_export_map(const std::vector<std::string>& args) {
                                           basis[6] * x + basis[7] * y + basis[8] * z + object.position[2]};
                     };
                     // Doors (class "door": Polis Massa's) open as soldiers
-                    // come; until they move here, they're left open. Not a
-                    // locked one (IsLocked, as Kamino's mission script sets
-                    // some of its pod rooms' doors): shut.
+                    // come (core::Door); soldiers pass them, so their
+                    // collision is left out, and a shut one stops shots
+                    // with its box. Not a locked one (IsLocked, as Kamino's
+                    // mission script sets some of its pod rooms' doors):
+                    // shut, its collision the map's.
                     const bool locked = std::atof(object.get("IsLocked").c_str()) != 0;
                     const bool door = lowercase(resolved.base) == "door";
                     if (door) {
                         ++(locked ? doors_shut : doors_open);
+                    }
+                    if (door && !locked) {
+                        // Its trigger: AnimationTrigger's hardpoint (a bone of
+                        // its model) and radius; its box: the model's
+                        // collision that stops ordnance (or all of it), in its
+                        // own axes; both in Battlefront's coordinates, as the
+                        // map file has them.
+                        const auto to_world = [&](const std::array<float, 3>& p) {
+                            return std::array<double, 3>{r[0] * p[0] + r[3] * p[1] + r[6] * p[2] + object.position[0],
+                                                         r[1] * p[0] + r[4] * p[1] + r[7] * p[2] + object.position[1],
+                                                         r[2] * p[0] + r[5] * p[1] + r[8] * p[2] + object.position[2]};
+                        };
+                        std::string hardpoint;
+                        double radius = 3;
+                        std::istringstream(resolved.get("AnimationTrigger").value_or("")) >> hardpoint >> radius;
+                        std::array<float, 3> trigger_local{0, 1, 0};
+                        if (const UcfbNode* skel = library.skeleton(*geometry); skel && !hardpoint.empty()) {
+                            const Skeleton skeleton = read_skeleton(*skel);
+                            const bool found = std::any_of(skeleton.bones.begin(), skeleton.bones.end(), [&](const ModelBone& b) {
+                                return lowercase(b.name) == lowercase(hardpoint);
+                            });
+                            if (found) {
+                                for (const ModelBone& b : skeleton.bones) {
+                                    if (lowercase(b.name) == lowercase(hardpoint)) {
+                                        trigger_local = skeleton.model_transform(b.name).position;
+                                    }
+                                }
+                            } else {
+                                std::cerr << std::format("door {}: no hardpoint {}\n", object.name, hardpoint);
+                            }
+                        }
+                        std::array<float, 3> low{1e9f, 1e9f, 1e9f}, high{-1e9f, -1e9f, -1e9f};
+                        const bool any_ordnance = std::any_of(shape->second.begin(), shape->second.end(),
+                                                              [](const CollisionTriangle& t) { return t.ordnance; });
+                        for (const CollisionTriangle& t : shape->second) {
+                            if (any_ordnance && !t.ordnance) {
+                                continue;
+                            }
+                            for (const auto& p : {t.a, t.b, t.c}) {
+                                for (size_t i = 0; i < 3; ++i) {
+                                    low[i] = std::min(low[i], p[i]);
+                                    high[i] = std::max(high[i], p[i]);
+                                }
+                            }
+                        }
+                        if (low[0] <= high[0]) {
+                            const auto trigger = to_world(trigger_local);
+                            const auto center = to_world({(low[0] + high[0]) / 2, (low[1] + high[1]) / 2,
+                                                          (low[2] + high[2]) / 2});
+                            const double open_time =
+                                clips.empty() || clips[0].animation.frame_count < 2
+                                    ? 1.0
+                                    : double(clips[0].animation.frame_count - 1) / animation_fps;
+                            std::string line = std::format(
+                                "Door = {:.2f} {:.2f} {:.2f} {:g} {:.2f} {:.2f} {:.2f} {:.2f} {:.2f} {:.2f} {:.2f}",
+                                trigger[0], trigger[1], trigger[2], radius, open_time, center[0], center[1], center[2],
+                                std::max(0.05f, (high[0] - low[0]) / 2), std::max(0.05f, (high[1] - low[1]) / 2),
+                                std::max(0.05f, (high[2] - low[2]) / 2));
+                            for (int row = 0; row < 3; ++row) {
+                                for (int column = 0; column < 3; ++column) {
+                                    line += std::format(" {:.4f}", r[size_t(column * 3 + row)]);
+                                }
+                            }
+                            door_json = std::format(", \"door\": {{\"index\": {}, \"animation\": {}, \"time\": {:.3f}}}",
+                                                    doors.size(), json_string(clips.empty() ? "" : clips[0].name),
+                                                    open_time);
+                            doors.push_back(line);
+                        } else {
+                            std::cerr << std::format("door {}: no collision for its box\n", object.name);
+                        }
                     }
                     for (const CollisionTriangle& t :
                          door && !locked ? std::vector<CollisionTriangle>{} : shape->second) {
@@ -1058,7 +1153,7 @@ int cmd_export_map(const std::vector<std::string>& args) {
             }
             json << (written++ ? ",\n" : "\n") << "    {\"layer\": " << json_string(object.layer)
                  << ", \"class\": " << json_string(object.type) << ", \"name\": " << json_string(object.name)
-                 << ", \"model\": " << json_string(model) << hologram << powerup
+                 << ", \"model\": " << json_string(model) << hologram << powerup << door_json
                  << std::format(", \"position\": [{}, {}, {}], \"basis\": [", -object.position[0], object.position[1],
                                 object.position[2]);
             for (size_t i = 0; i < 9; ++i) {
@@ -1210,6 +1305,9 @@ int cmd_export_map(const std::vector<std::string>& args) {
         ++damage_regions;
     }
     for (const std::string& line : powerups) {
+        ini << line << "\n";
+    }
+    for (const std::string& line : doors) {
         ini << line << "\n";
     }
     if (no_terrain) {

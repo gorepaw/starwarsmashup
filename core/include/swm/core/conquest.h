@@ -73,6 +73,25 @@ struct DamageRegion {
     double rate = 0;
 };
 
+// A door (Battlefront's "door" class: Polis Massa's, Tantive IV's,
+// Mustafar's...). It opens while a living soldier is within `radius` of its
+// trigger (the class's AnimationTrigger: a hardpoint and a radius) and
+// shuts when none is, taking `open_time` (its opening clip's length) either
+// way. Shut more than halfway, it stops shots and blasts across its box (the
+// door model's collision, in its place). Soldiers pass it either way: it's
+// open by the time one reaches it. A locked door (IsLocked) isn't one of
+// these: its collision is the map's, and it stays shut.
+struct Door {
+    Vec3 trigger;
+    double radius = 3;
+    double open_time = 1;
+    DeathRegion box;  // a box: center, half extents, axes
+
+    bool triggered_by(Vec3 feet) const;
+    // Where along a..b (0..1) the segment enters its box, if it does.
+    std::optional<double> hit(Vec3 a, Vec3 b) const;
+};
+
 // A health or ammo droid (Battlefront's "powerupstation" class: its
 // com_item_healthrecharge and com_item_weaponrecharge). Every `delay` seconds
 // each living soldier within `radius` gets `health` health and `ammo` of
@@ -149,6 +168,7 @@ struct Battlefield {
     std::vector<DeathRegion> death_regions;
     std::vector<DamageRegion> damage_regions;
     std::vector<PowerupStation> powerups;
+    std::vector<Door> doors;
     std::array<Team, 2> teams;
     std::vector<CommandPost> posts;
     std::vector<Barrier> barriers;
@@ -192,7 +212,9 @@ struct Battlefield {
 // the rotation's rows, 9 numbers, as Battlefront stores them), and damage
 // regions (`DamageRegion = <health a second>` and a death region's shape,
 // place and rotation), and its health and ammo droids (`Powerup = x y z
-// radius delay health ammo`, see PowerupStation). `Minimap = x0 z0
+// radius delay health ammo`, see PowerupStation), and its doors (`Door = x y z
+// radius open_time` for the trigger, then its box as a death region's, `x y
+// z sx sy sz` and 9 rotation numbers; see Door). `Minimap = x0 z0
 // x1 z1` is where the map's minimap image lies: the coordinates under its
 // left, top, right and bottom edges (north up). Throws
 // std::runtime_error if it, a map or a loadout can't be read or makes no
@@ -223,6 +245,7 @@ struct MatchState {
     int8_t winner = -1;              // when ended; -1: a draw
     std::vector<PostState> posts;
     std::vector<float> powerup_health;  // current health per Battlefield::powerups[i]; <= 0: destroyed
+    std::vector<float> doors;           // how open each of Battlefield::doors is, 0 (shut) .. 1
 };
 
 struct MatchEvent {
@@ -259,12 +282,17 @@ public:
     bool powerup_alive(size_t index) const;
     // Damages health/ammo droid `index`. Returns true on the hit that destroys it.
     bool damage_powerup(size_t index, double amount);
+    // Whether door `index` is shut (more than half), stopping shots.
+    bool door_shut(size_t index) const;
+    // Where along a..b (0..1) the segment first meets a shut door, if it does.
+    std::optional<double> door_hit(Vec3 a, Vec3 b) const;
     const MatchState& state() const { return state_; }
     const Battlefield& battlefield() const { return battlefield_; }
 
 private:
     void reset();
     void capture(double dt, std::span<const Unit> units, std::vector<MatchEvent>& events);
+    void move_doors(double dt, std::span<const Unit> units);
     void finish(int winner, std::vector<MatchEvent>& events);
 
     Battlefield battlefield_;
