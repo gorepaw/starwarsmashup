@@ -8,6 +8,9 @@
 # its two strides in turn at its speed (StrideSpeed is theirs), and a stop
 # from whichever pose it's in; it idles, turns on the spot, and falls when
 # destroyed.
+# A gunner's turret (the hover tank's, the combat speeder's missile pod)
+# turns and tilts on the model with the gunner's aim (its seat's TurretNode
+# and PitchNode), about the vehicle's own up and right.
 extends RefCounted
 
 const EASE := 12.0  # 1/s: how fast an empty vehicle's drawn place catches up
@@ -80,7 +83,8 @@ func update(vehicles: Array, shown: Dictionary, delta: float) -> void:
 			var players := node.find_children("*", "AnimationPlayer", true, false)
 			_nodes[id] = {"node": node, "class": index, "walk": {
 				"player": players[0] if not players.is_empty() else null, "state": "", "next": "a",
-				"last": node.position, "yaw": node.rotation.y, "speed": 0.0, "turn": 0.0}}
+				"last": node.position, "yaw": node.rotation.y, "speed": 0.0, "turn": 0.0},
+				"turrets": _find_turrets(node, index)}
 		var entry: Dictionary = _nodes[id]
 		entry["state"] = v
 		var node: Node3D = entry["node"]
@@ -99,10 +103,81 @@ func update(vehicles: Array, shown: Dictionary, delta: float) -> void:
 			node.rotation.y = lerp_angle(node.rotation.y, float(v["yaw"]) + PI, t)
 		if str(class_of(index).get("kind", "")) == "walker":
 			_step(entry, bool(v["alive"]), delta)
+		_aim_turrets(entry, v, shown)
 	for id: int in _nodes.keys():
 		if not seen.has(id):
 			(_nodes[id]["node"] as Node).queue_free()
 			_nodes.erase(id)
+
+
+# Each seat's turret on a new vehicle's model: its nodes (a skeleton's bones
+# or plain nodes) and where they rest, in the vehicle's own space.
+func _find_turrets(node: Node3D, index: int) -> Array:
+	var out := []
+	var seats: Array = class_of(index).get("seats", [])
+	var skeletons := node.find_children("*", "Skeleton3D", true, false)
+	var skeleton: Skeleton3D = skeletons[0] if not skeletons.is_empty() else null
+	for k in seats.size():
+		var seat: Dictionary = seats[k]
+		var parts := []
+		for key in ["turret_node", "pitch_node"]:
+			parts.append(_find_part(node, skeleton, str(seat.get(key, ""))))
+		out.append({"seat": k, "turret": parts[0], "pitch": parts[1], "yaw": 0.0, "tilt": 0.0})
+	return out
+
+
+func _find_part(root: Node3D, skeleton: Skeleton3D, part_name: String) -> Dictionary:
+	if part_name == "":
+		return {}
+	if skeleton != null:
+		var bone := skeleton.find_bone(part_name)
+		if bone >= 0:
+			return {"bone": bone, "skeleton": skeleton, "rest": skeleton.get_bone_pose(bone),
+					"parent_rest": skeleton.get_bone_global_pose(skeleton.get_bone_parent(bone))
+							if skeleton.get_bone_parent(bone) >= 0 else Transform3D()}
+	var found := root.find_child(part_name, true, false) as Node3D
+	if found == null:
+		return {}
+	return {"node": found, "rest": found.transform}
+
+
+# Turned by each gunner's aim: its yaw from the vehicle's heading about the
+# vehicle's up, its pitch about its right (after the yaw). A seat no one sits
+# in keeps where it was left.
+func _aim_turrets(entry: Dictionary, v: Dictionary, shown: Dictionary) -> void:
+	var gunners: Array = v.get("gunners", [])
+	var node: Node3D = entry["node"]
+	for turret: Dictionary in entry.get("turrets", []):
+		var k := int(turret["seat"])
+		if k < gunners.size() and int(gunners[k]) != 0 and shown.has(int(gunners[k])):
+			var aim: Dictionary = shown[int(gunners[k])]
+			turret["yaw"] = angle_difference(node.rotation.y - PI, float(aim.get("aim_yaw", 0.0)))
+			turret["tilt"] = float(aim.get("pitch", 0.0))
+		var turn := Basis(Vector3.UP, float(turret["yaw"]))
+		_pose_part(node, turret["turret"], turn)
+		_pose_part(node, turret["pitch"], turn * Basis(Vector3(-1, 0, 0), float(turret["tilt"])))
+
+
+# A part turned by `turn` (in the vehicle's space) from where it rests.
+func _pose_part(root: Node3D, part: Dictionary, turn: Basis) -> void:
+	if part.is_empty():
+		return
+	if part.has("node"):
+		var n: Node3D = part["node"]
+		var parent := n.get_parent() as Node3D
+		# The turn in its parent's space: turned the same about the same axis.
+		var to_parent := (root.global_transform.affine_inverse() * parent.global_transform).basis.orthonormalized()
+		var rest: Transform3D = part["rest"]
+		n.transform = Transform3D(to_parent.inverse() * turn * to_parent * rest.basis, rest.origin)
+		return
+	var skeleton: Skeleton3D = part["skeleton"]
+	var bone := int(part["bone"])
+	var to_skeleton := (root.global_transform.affine_inverse() * skeleton.global_transform).basis.orthonormalized()
+	var parent_rest: Transform3D = part["parent_rest"]
+	var to_parent := to_skeleton * parent_rest.basis.orthonormalized()
+	var rest: Transform3D = part["rest"]
+	var local := to_parent.inverse() * turn * to_parent * rest.basis
+	skeleton.set_bone_pose_rotation(bone, local.get_rotation_quaternion())
 
 
 # A walker's legs: what it's doing from how its drawn self moved this frame.

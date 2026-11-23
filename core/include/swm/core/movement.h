@@ -79,7 +79,7 @@ struct MoveState {
     bool crouched = false;
     bool crouch_held = false;  // the crouch button was down last tick (a press starts a crouch or roll)
     float roll = 0;            // seconds of rolling left
-    float roll_yaw = 0;        // the way it rolls (as yaw)
+    float roll_yaw = 0;        // the way it rolls (as yaw); riding, where it aims its guns (their yaw)
     bool blocking = false;
     float parry_window = 0;    // seconds of timed parry left
     float stagger = 0;         // seconds of melee stagger left

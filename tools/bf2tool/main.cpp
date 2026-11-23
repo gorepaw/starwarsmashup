@@ -677,6 +677,16 @@ int cmd_export_vehicle(const std::vector<std::string>& args) {
             std::cerr << std::format("  no animation bank {}\n", *bank_name);
         }
     }
+    // A gunner's turret turns on its model (TurretNodeName, AimerNodeName):
+    // its nodes are kept, as a walker's are (a clip of none if it has none).
+    const bool aimed = std::any_of(vehicle.properties.begin(), vehicle.properties.end(), [](const auto& p) {
+        return p.first == odf_hash("TurretNodeName") || p.first == odf_hash("AimerNodeName");
+    });
+    if (aimed && clips.empty()) {
+        Animation rest;
+        rest.frame_count = 1;
+        clips.push_back({"rest", std::move(rest)});
+    }
     std::set<std::string> textures_written;
     // Unposed first: its box (posed, segments sit in their bones' spaces).
     const ModelExport model = export_model(library, geometry, out_dir, out_dir / "textures", textures_written);
@@ -736,10 +746,17 @@ int cmd_export_vehicle(const std::vector<std::string>& args) {
     // Its gunners' seats: each later section (the hover tank's TURRET1) with
     // its eye, aim limits and weapons ([weapon]s with Seat = its number);
     // one without weapons is left out.
+    struct Aimer {
+        std::string node;
+        std::string yaw, pitch;  // AimerYawLimits, AimerPitchLimits ("" unset)
+    };
     struct Seat {
         std::string name;
         std::map<std::string, std::string> values;
         std::vector<CarriedWeapon> weapons;
+        std::string turret_node;
+        std::vector<Aimer> aimers;
+        std::string pending_yaw, pending_pitch;  // limits before their node
     };
     std::vector<Seat> seats;
     sections = 0;
@@ -752,6 +769,23 @@ int cmd_export_vehicle(const std::vector<std::string>& args) {
             seats.back().weapons.push_back({value});
         } else if (hash == odf_hash("WeaponAmmo") && !seats.back().weapons.empty()) {
             seats.back().weapons.back().ammo = value;
+        } else if (hash == odf_hash("TurretNodeName")) {
+            seats.back().turret_node = value;
+        } else if (hash == odf_hash("AimerNodeName")) {
+            // Limits given before a node are its; those after, the last node's
+            // (Battlefront's files have it both ways).
+            Seat& seat = seats.back();
+            seat.aimers.push_back({value, seat.pending_yaw, seat.pending_pitch});
+            seat.pending_yaw.clear();
+            seat.pending_pitch.clear();
+        } else if (hash == odf_hash("AimerYawLimits") || hash == odf_hash("AimerPitchLimits")) {
+            Seat& seat = seats.back();
+            const bool yaw = hash == odf_hash("AimerYawLimits");
+            if (!seat.aimers.empty() && (yaw ? seat.aimers.back().yaw : seat.aimers.back().pitch).empty()) {
+                (yaw ? seat.aimers.back().yaw : seat.aimers.back().pitch) = value;
+            } else {
+                (yaw ? seat.pending_yaw : seat.pending_pitch) = value;
+            }
         } else {
             for (const char* key : {"EyePointOffset", "YawLimits", "PitchLimits", "TrackCenter", "TrackOffset"}) {
                 if (hash == odf_hash(key)) seats.back().values[key] = value;
@@ -778,6 +812,22 @@ int cmd_export_vehicle(const std::vector<std::string>& args) {
         for (const auto& [key, value] : seat.values) {
             out << key << " = " << value << "\n";
         }
+        // Its turret on the model: the node that turns with the gunner's aim
+        // (TurretNodeName, else an aimer that only yaws) and the one that
+        // tilts with it (an aimer that only pitches).
+        const auto zero = [](const std::string& limits) {
+            std::istringstream in(limits);
+            double lo = 0, hi = 0;
+            in >> lo >> hi;
+            return lo == 0 && hi == 0;
+        };
+        std::string turret = seat.turret_node, tilt;
+        for (const Aimer& aimer : seat.aimers) {
+            if (turret.empty() && zero(aimer.pitch) && !zero(aimer.yaw)) turret = aimer.node;
+            if (tilt.empty() && zero(aimer.yaw) && !zero(aimer.pitch)) tilt = aimer.node;
+        }
+        if (!turret.empty()) out << "TurretNode = " << lowercase(turret) << "\n";
+        if (!tilt.empty()) out << "PitchNode = " << lowercase(tilt) << "\n";
         for (const auto& [weapon, projectile] : usable) {
             write_weapon(out, "weapon", weapon, library.classes(), projectile);
             out << "Seat = " << seat_number << "\n";

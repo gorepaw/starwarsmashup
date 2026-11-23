@@ -254,6 +254,8 @@ std::optional<Shot> simulate_character(MoveState& state, const MoveInput& input,
         const auto [yaw, pitch] = seat_aim(state, input, *seat);
         aimed.yaw = float(yaw);
         aimed.pitch = float(pitch);
+        state.roll_yaw = float(yaw);  // the guns' way, for drawing them
+        state.pitch = float(pitch);
         aimed.buttons &= uint8_t(~(MoveInput::secondary | MoveInput::crouch | MoveInput::jump | MoveInput::sprint));
         std::optional<Shot> shot = simulate_weapons(state, aimed, seat->loadout, dt);
         if (shot) {
@@ -277,6 +279,7 @@ std::optional<Shot> simulate_character(MoveState& state, const MoveInput& input,
         const auto [yaw, pitch] = vehicle_aim(state, input, vehicle);
         aimed.yaw = float(yaw);
         aimed.pitch = float(pitch);
+        state.roll_yaw = float(yaw);  // the guns' way, for drawing them
         aimed.buttons &= uint8_t(~(MoveInput::secondary | MoveInput::crouch | MoveInput::jump));
         std::optional<Shot> shot = simulate_weapons(state, aimed, vehicle.loadout, dt);
         if (shot) {

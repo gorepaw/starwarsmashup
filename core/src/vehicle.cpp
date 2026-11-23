@@ -162,6 +162,8 @@ VehicleClass load_vehicle_class(const std::filesystem::path& path) {
         const auto [syaw_lo, syaw_hi] = read_pair(section, "YawLimits", {-180, 180});
         const auto [spitch_lo, spitch_hi] = read_pair(section, "PitchLimits", {-30, 30});
         seat.yaw_min = syaw_lo * degrees, seat.yaw_max = syaw_hi * degrees;
+        seat.turret_node = section.get("TurretNode").value_or("");
+        seat.pitch_node = section.get("PitchNode").value_or("");
         seat.pitch_min = spitch_lo * degrees, seat.pitch_max = spitch_hi * degrees;
         v.seats.push_back(std::move(seat));
     }

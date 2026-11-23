@@ -795,6 +795,8 @@ godot::Array vehicle_class_dicts(std::span<const core::VehicleClass> classes) {
             godot::Dictionary s;
             s["name"] = godot::String::utf8(seat.name.c_str());
             s["eye"] = to_godot(seat.eye);
+            s["turret_node"] = godot::String::utf8(seat.turret_node.c_str());
+            s["pitch_node"] = godot::String::utf8(seat.pitch_node.c_str());
             seats.push_back(s);
         }
         entry["seats"] = seats;

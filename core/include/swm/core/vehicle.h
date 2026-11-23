@@ -31,6 +31,9 @@ struct VehicleSeat {
     double yaw_min = -std::numbers::pi, yaw_max = std::numbers::pi;
     double pitch_min = -0.5, pitch_max = 0.5;
     Loadout loadout;
+    // Its turret on the model (lowercase node names; "" none): the node that
+    // turns with the gunner's aim, and the one that tilts with it.
+    std::string turret_node, pitch_node;
 };
 
 struct VehicleClass {
