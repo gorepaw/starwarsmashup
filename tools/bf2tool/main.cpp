@@ -1702,18 +1702,27 @@ int cmd_export_map(const std::vector<std::string>& args) {
         ini << std::format("DeathRegion = box 0 {:.2f} 0 {:.2f} 20 {:.2f} 1 0 0 0 1 0 0 0 1\n", fall_y + 20, half,
                            half);
         ++death_regions;
-        // Its water, with nothing under it but the stand-in (Kamino's sea):
-        // soldiers die once they're under it. ASSUMPTION: as in Battlefront,
-        // where they drown; 2 m down, so a pool soldiers stand in (Jabba's
-        // rancor pit's, half a meter) is waded.
-        for (const auto& [x0, z0, x1, z1, height] : water_boxes) {
-            const double top = height - 2;
-            if (top > fall_y) {
-                ini << std::format("DeathRegion = box {:.2f} {:.2f} {:.2f} {:.2f} {:.2f} {:.2f} 1 0 0 0 1 0 0 0 1\n",
-                                   (x0 + x1) / 2, (top + fall_y) / 2, (z0 + z1) / 2, (x1 - x0) / 2, (top - fall_y) / 2,
-                                   (z1 - z0) / 2);
-                ++death_regions;
-            }
+    }
+    // Deep water: soldiers can't swim, so whoever is more than drown_depth
+    // under its surface dies, as in Battlefront (ASSUMPTION: its soldier
+    // class has nothing on water but splashes, and its maps keep soldiers
+    // out of deep water or kill them there; Yavin has a spawn point on its
+    // riverbed 2 m under, so it's deeper than that). Shallower is waded:
+    // Yavin's river, Kashyyyk's shore, Dagobah's swamp, Jabba's rancor
+    // pit's pool. Deeper dies: Kamino's sea, Naboo's canals (3.5 m),
+    // Felucia's pond (8.8).
+    constexpr double drown_depth = 2.5;
+    double bottom = fall_y;
+    if (!no_terrain) {
+        bottom = *std::min_element(level.terrain.heights.begin(), level.terrain.heights.end()) - 10;
+    }
+    for (const auto& [x0, z0, x1, z1, height] : water_boxes) {
+        const double top = height - drown_depth;
+        if (top > bottom) {
+            ini << std::format("DeathRegion = box {:.2f} {:.2f} {:.2f} {:.2f} {:.2f} {:.2f} 1 0 0 0 1 0 0 0 1\n",
+                               (x0 + x1) / 2, (top + bottom) / 2, (z0 + z1) / 2, (x1 - x0) / 2, (top - bottom) / 2,
+                               (z1 - z0) / 2);
+            ++death_regions;
         }
     }
     std::cerr << std::format("boundaries: {}; death regions: {} ({} named); damage regions: {}; droids: {}\n",
