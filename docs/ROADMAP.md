@@ -241,6 +241,8 @@ Galaxies' weapons and armor become items you own, wear, and put into three loado
 **Holding weapons**
 - [ ] Each weapon held properly: its grip points, hand poses by archetype, and Battlefront's animation set for its kind (rifle, pistol, bazooka). This fixes the third-person hands, and first person uses the same points.
 - [ ] Soldiers hold their own weapon's model, not all the E-11. The HUD's weapon panels show the models.
+  - [x] Held models: a weapon names its model (an item's `Model`; Battlefront's weapons a Galaxies one of their kind and side, `core::default_weapon_model`: pistols the DL-44 or D18, rifles a side's carbine, sniper rifles the DLT-20A, shotguns the SG-82, launchers the T-21 for want of a Galaxies launcher), and every soldier, yours and everyone's, holds the one in their hand on the right hand's hold point in place of the E-11 the models were exported with (`Soldier.set_weapon`).
+  - [ ] The HUD's weapon panels showing the models.
 
 **Inventory and equipment**
 

@@ -167,8 +167,8 @@ const core::Loadout& SwmClient::loadout() const {
 }
 
 const core::Loadout& SwmClient::loadout_of(int team, int index) const {
-    if (battlefield() && team >= 0 && team < 2) {
-        const auto& loadouts = battlefield()->teams[size_t(team)].loadouts;
+    if (battlefield() && team >= 0 && (team < 2 || (team == core::natives_team && battlefield()->natives))) {
+        const auto& loadouts = battlefield()->team(team).loadouts;
         return loadouts[std::min<size_t>(size_t(index), loadouts.size() - 1)];
     }
     return loadout_;
@@ -543,6 +543,9 @@ godot::Dictionary SwmClient::get_presented() const {
     }
     godot::Dictionary out = to_dictionary(client()->presented());
     describe(out, client()->self());
+    const core::WeaponDef* held = core::weapon_in_slot(loadout(), client()->presented().combat.weapon);
+    out["weapon_model"] = godot::String::utf8(held ? held->model.c_str() : "");
+    out["anim_set"] = godot::String::utf8(held ? held->anim_set.c_str() : "rifle");
     return out;
 }
 
@@ -759,6 +762,8 @@ godot::Array SwmClient::get_weapons() const {
         }
         const core::WeaponDef& w = *held;
         entry["name"] = godot::String::utf8(w.name.c_str());
+        entry["model"] = godot::String::utf8(w.model.c_str());        // what's held: imported_assets/-relative
+        entry["anim_set"] = godot::String::utf8(w.anim_set.c_str());  // rifle, pistol or bazooka
         entry["rounds_per_clip"] = int64_t(w.rounds_per_clip);
         entry["zoom_min"] = w.zoom_min;
         entry["zoom_max"] = w.zoom_max;
@@ -805,6 +810,11 @@ godot::Array SwmClient::get_remotes() const {
             godot::Dictionary entry = to_dictionary(remote.state);
             entry["id"] = int64_t(remote.id);
             describe(entry, remote);
+            // What it's holding: its weapon's model and how it's held.
+            const core::WeaponDef* held =
+                core::weapon_in_slot(loadout_of(remote.team, remote.loadout), remote.state.combat.weapon);
+            entry["weapon_model"] = godot::String::utf8(held ? held->model.c_str() : "");
+            entry["anim_set"] = godot::String::utf8(held ? held->anim_set.c_str() : "rifle");
             out.push_back(entry);
         }
     }

@@ -264,6 +264,8 @@ WeaponDef ItemCatalog::resolve_weapon(const ItemDef& def, double quality, bool a
         w = it->second;
     }
     w.name = def.id;
+    w.model = def.model_path;
+    w.anim_set = def.anim_set;
 
     // Quality scales combat power within a narrow ±8% band in Gear queue;
     // Standard queue flattens quality to 0.5 (multiplier 1.0).

@@ -1,6 +1,7 @@
 #include "swm/core/loadout.h"
 
 #include <algorithm>
+#include <format>
 #include <cmath>
 #include <sstream>
 #include <stdexcept>
@@ -155,6 +156,41 @@ CharacterStats stats_for(const Loadout& loadout, const CharacterStats& base) {
     return stats;
 }
 
+std::string default_weapon_model(std::string_view name) {
+    const auto has = [&](std::string_view part) { return name.find(part) != std::string_view::npos; };
+    const auto model = [](std::string_view id) { return std::format("weapons/{}/{}.gltf", id, id); };
+    const bool imp = name.starts_with("imp_"), all = name.starts_with("all_"), rep = name.starts_with("rep_");
+    if (has("bowcaster")) {
+        return model("wp_rifle_bowcaster");
+    }
+    if (has("pistol")) {
+        return model(imp ? "wp_pistol_d18" : "wp_pistol_dl44");
+    }
+    if (has("sniper")) {
+        return model("wp_rifle_dlt20a");
+    }
+    if (has("shotgun") || has("blunderbuss")) {
+        return model("wp_rifle_sg82");
+    }
+    if (has("launcher") || has("rocket") || has("mortar")) {
+        return model("wp_rifle_t21");
+    }
+    if (has("rifle") || has("carbine") || has("blaster") || has("chaingun") || has("bulldog")) {
+        return model(imp ? "wp_carbine_e11" : all ? "wp_carbine_dh17" : rep ? "wp_carbine_ee3" : "wp_carbine_laser");
+    }
+    return "";
+}
+
+std::string default_anim_set(std::string_view name, bool missile) {
+    if (name.find("pistol") != std::string_view::npos) {
+        return "pistol";
+    }
+    if (missile || name.find("launcher") != std::string_view::npos) {
+        return "bazooka";
+    }
+    return "rifle";
+}
+
 WeaponDef load_weapon(const std::filesystem::path& path) {
     const Ini ini = Ini::load(path);
     const std::string where = path.string();
@@ -169,6 +205,8 @@ WeaponDef load_weapon(const std::filesystem::path& path) {
     w.projectile = projectile == "missile" ? Projectile::missile
                    : projectile == "grenade" ? Projectile::grenade
                                              : Projectile::bolt;
+    w.model = s.get("Model").value_or(default_weapon_model(w.name));
+    w.anim_set = s.get("AnimSet").value_or(default_anim_set(w.name, w.projectile == Projectile::missile));
     // Explosives hit explosive; blasters are lasers, unless the file says.
     const auto damage_type = s.get("DamageType");
     if (damage_type) {

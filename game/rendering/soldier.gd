@@ -495,6 +495,55 @@ func eye() -> Vector3:
 
 # Where bolts leave the barrel (world space); the chest if the weapon has no
 # muzzle point.
+static var _weapon_models := {}  # model path -> template (null: none there)
+var _weapon_path := "<baked>"    # what it holds: "" or "<baked>" the model's own (the E-11 it was exported with)
+var _weapon: Node3D              # the weapon it holds in place of that, if any
+
+
+# Holds the weapon whose model is `path` (game/imported_assets/-relative, as
+# a WeaponDef's): on the right hand's hold point, where the model's own (the
+# E-11 every character was exported holding) was, hidden for it. "" (or a
+# model not exported): that one.
+func set_weapon(path: String) -> void:
+	if path == _weapon_path:
+		return
+	_weapon_path = path
+	var baked := _baked_weapon()
+	if _weapon != null:
+		_weapon.queue_free()
+		_weapon = null
+	var template: Node3D = null
+	if path != "":
+		var full := "res://imported_assets/" + path
+		if not _weapon_models.has(full):
+			_weapon_models[full] = null
+			if FileAccess.file_exists(full):
+				var document := GLTFDocument.new()
+				var state := GLTFState.new()
+				if document.append_from_file(ProjectSettings.globalize_path(full), state) == OK:
+					_weapon_models[full] = document.generate_scene(state)
+		template = _weapon_models[full]
+	if template == null or baked == null:
+		if baked != null:
+			baked.visible = true
+		_muzzle = model.find_child("hp_muzzle", true, false) as Node3D
+		return
+	baked.visible = false
+	_weapon = template.duplicate() as Node3D
+	baked.get_parent().add_child(_weapon)
+	_muzzle = _weapon.find_child("hp_muzzle", true, false) as Node3D
+
+
+# The model's own weapon: the mesh on its right hand's hold point.
+func _baked_weapon() -> Node3D:
+	for attachment: Node in model.find_children("*", "BoneAttachment3D", true, false):
+		if (attachment as BoneAttachment3D).bone_name == "hold_r":
+			for child: Node in attachment.get_children():
+				if child is MeshInstance3D and str(child.name).begins_with("wp_"):
+					return child as Node3D
+	return null
+
+
 func muzzle() -> Vector3:
 	if _muzzle != null and model.visible:
 		return _muzzle.global_position

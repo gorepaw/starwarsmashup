@@ -780,7 +780,9 @@ func _load_person(look: int) -> Node3D:
 
 
 func _pose(character: Dictionary, state: Dictionary) -> void:
-	(character["soldier"] as Soldier).pose(state, _delta)
+	var soldier := character["soldier"] as Soldier
+	soldier.set_weapon(str(state.get("weapon_model", "")))  # its own weapon's model
+	soldier.pose(state, _delta)
 
 
 func _follow_route() -> Dictionary:

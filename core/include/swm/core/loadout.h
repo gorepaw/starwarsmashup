@@ -71,8 +71,24 @@ double mitigated_damage(const CharacterStats& stats, double amount, DamageType t
 // changes while carried. Defaults are the Imperial E-11's.
 enum class Projectile : uint8_t { bolt, missile, grenade };
 
+// For a Battlefront weapon (by its class name), the Galaxies weapon of the
+// same kind soldiers hold for it, game/imported_assets/-relative ("" none):
+// pistols the DL-44 (the Empire's the D18), rifles a faction's carbine (the
+// Empire's E-11, the Rebellion's DH-17, the Republic's EE-3, the
+// Separatists' laser carbine), sniper rifles the DLT-20A, shotguns and
+// blunderbusses the SG-82, launchers the T-21 (Galaxies has no launchers),
+// bowcasters the bowcaster. And its animation set by its kind.
+std::string default_weapon_model(std::string_view name);
+std::string default_anim_set(std::string_view name, bool missile);
+
 struct WeaponDef {
     std::string name = "imp_weap_inf_rifle";
+    // What soldiers hold: its model (game/imported_assets/-relative glTF:
+    // a Galaxies weapon, as an item names it; for Battlefront's weapons, one
+    // of Galaxies' of the same kind, default_weapon_model), and how they
+    // hold it: Battlefront's animation set ("rifle", "pistol", "bazooka").
+    std::string model;
+    std::string anim_set = "rifle";
     DamageType damage_type = DamageType::laser;  // of a direct hit; explosions are explosive
     // What it fires: a bolt (blasters; bullets too), a missile (rockets:
     // accelerating), or a grenade (thrown or lobbed: bounces, and explodes on
