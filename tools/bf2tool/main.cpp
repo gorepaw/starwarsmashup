@@ -217,8 +217,13 @@ std::string projectile_of(const OdfClass& weapon, const OdfClass& ordnance) {
     // ASSUMPTION: a beam (the hover tank's turret laser) as a bolt, written
     // faster than its ordnance says (write_weapon); a guided rocket (the
     // AT-ST's, steered by its gunner in Battlefront) as a plain missile.
-    if (gun && ordnance.base == "beam") {
-        return "beam";
+    if (gun && (ordnance.base == "beam" || ordnance.base == "fatray")) {
+        return "beam";  // the Geonosian turret's fat ray too
+    }
+    // ASSUMPTION: a cannon's shell (Kashyyyk's recoilless) as a lobbed
+    // grenade that bursts where it lands.
+    if (gun && ordnance.base == "shell") {
+        return "shell";
     }
     if ((weapon.base == "launcher" || weapon.base == "weapon") && ordnance.base == "missile") {
         return "missile";
@@ -248,8 +253,9 @@ void write_weapon(std::ostream& out, const char* section, const CarriedWeapon& c
     const OdfClass weapon = library.resolve(carried.name);
     const OdfClass ordnance = ordnance_of(weapon, library);
     const bool beam = projectile == "beam";
-    out << "\n[" << section << "]\nName = " << carried.name << "\nProjectile = " << (beam ? "bolt" : projectile)
-        << "\n";
+    const bool shell = projectile == "shell";
+    out << "\n[" << section << "]\nName = " << carried.name
+        << "\nProjectile = " << (beam ? "bolt" : shell ? "grenade" : projectile) << "\n";
     if (!carried.ammo.empty()) {
         out << "WeaponAmmo = " << carried.ammo << "\n";
     }
@@ -329,6 +335,9 @@ void write_weapon(std::ostream& out, const char* section, const CarriedWeapon& c
             ordnance.get("StartTimerOnContact").value_or(lowercase(ordnance.base) == "sticky" ? "1" : "0");
         out << "StartTimerOnContact = " << contact << "\n";
         out << "ExplosionImpact = " << (ordnance.get("ExplosionImpact") ? 1 : 0) << "\n";
+    }
+    if (shell) {
+        out << "StartTimerOnContact = 1\nExplosionImpact = 1\n";  // it bursts where it lands
     }
     std::string explosion_name = ordnance.get("ExplosionName").value_or("");
     for (const char* key : {"ExplosionImpact", "ExplosionExpire"}) {
