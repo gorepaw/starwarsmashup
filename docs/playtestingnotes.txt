@@ -1,0 +1,19 @@
+graphic for tactical weapon is way oversized.
+
+I dont like the text for the targets or the shops, I would like some sort of floating holographic icon 
+above sort of like in the battles instead. it could be an empire, rebel, or neutral symbol depending on the character,
+ and then it could be green for shops, yellow for quests, and purple for crafting, unlike the red and blue for combat
+
+the name of bots/shops/mobs/anything can pop up as a tooltip somehwere when we aim at something instead of being 
+persistently above the head, and we should put it in bf2 style graphic and font health bar of enemy should pop up 
+somewhere when we aim at or shoot them too
+
+the minimap needs a dot at the center for the player's location
+
+m key should bring up a full sized map especially for the swg overworld. it can be swg style, 
+it is very important for finding vendors and such
+
+i like the yellow icon of the three downward arrows already in place for the questgivers clustered 
+witht the vendors and such. they dont actually have any quests though, whats up with that
+
+Make the font for "Eliminated" more like bf2
