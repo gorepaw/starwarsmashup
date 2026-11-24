@@ -30,6 +30,7 @@ const Bf2Art = preload("res://ui/bf2_art.gd")
 
 const MESH_UNIT := 0.2
 const WEAPON_PROFILE_WIDTH := 2.6  # HUD units a held weapon's profile spans in its panel (ASSUMPTION, by eye)
+const WEAPON_PROFILE_HEIGHT := 1.0  # HUD units it may stand: a grenade (or a stubby pistol) fits its panel (ASSUMPTION, by eye)
 const WEAPON_PANEL_SHARE := 0.42   # of its panel's backdrop's width a held weapon's profile spans (ASSUMPTION, by eye)
 const ASPECT := 4.0 / 3.0
 const FONT_REFERENCE := 600.0
@@ -646,9 +647,11 @@ func _weapon_profile(path: String) -> Dictionary:
 		return {}
 	# Every weapon as wide in its panel (WEAPON_PROFILE_WIDTH HUD units before
 	# the panel's own scale), a pistol as a rifle, as Battlefront's own
-	# weapon meshes fill theirs.
+	# weapon meshes fill theirs; one as tall as it's wide (a grenade) no
+	# taller than WEAPON_PROFILE_HEIGHT.
 	var center := bounds.get_center()
-	var fit := WEAPON_PROFILE_WIDTH / maxf(0.01, bounds.size.x)
+	var fit := minf(WEAPON_PROFILE_WIDTH / maxf(0.01, bounds.size.x),
+			WEAPON_PROFILE_HEIGHT / maxf(0.01, bounds.size.y))
 	for s: Dictionary in surfaces:
 		var flat: PackedVector2Array = s["flat"]
 		for i in flat.size():
