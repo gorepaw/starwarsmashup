@@ -15,6 +15,7 @@ const HubHud = preload("res://ui/hub_hud.gd")
 const QuestScreen = preload("res://ui/quest_screen.gd")
 const ProfessionScreen = preload("res://ui/profession_screen.gd")
 const WorkbenchScreen = preload("res://ui/workbench_screen.gd")
+const WorldMapScreen = preload("res://ui/world_map_screen.gd")
 const MultiScanner3D = preload("res://rendering/multi_scanner.gd")
 
 const TALK_REACH := 4.5     # meters from a quest NPC to talk to them (the server allows 6)
@@ -50,6 +51,9 @@ var _vendor_screen: VendorScreen
 var _quest_screen: QuestScreen
 var _profession_screen: ProfessionScreen
 var _workbench_screen: WorkbenchScreen
+var _map_screen: WorldMapScreen
+var map_title := "Map"         # the map's title (the session sets it: the planet and the town)
+var map_planet := {}           # the radar's picture of the planet, for the map's widest view
 var _scanner: MultiScanner3D
 var _shown_loadouts: Array = []    # the loadouts the profession screen was last given
 var _settings: Settings
@@ -151,6 +155,11 @@ func setup(layer: CanvasLayer, world_root: Node3D, art: RefCounted, settings: Se
 	_workbench_screen.closed.connect(close_all_screens)
 	layer.add_child(_workbench_screen)
 
+	_map_screen = WorldMapScreen.new(art)
+	_map_screen.visible = false
+	_map_screen.closed.connect(close_all_screens)
+	layer.add_child(_map_screen)
+
 	if world_root != null:
 		_scanner = MultiScanner3D.new()
 		world_root.add_child(_scanner)
@@ -215,7 +224,8 @@ func is_any_screen_open() -> bool:
 			or (_vendor_screen != null and _vendor_screen.visible) \
 			or (_quest_screen != null and _quest_screen.visible) \
 			or (_profession_screen != null and _profession_screen.visible) \
-			or (_workbench_screen != null and _workbench_screen.visible)
+			or (_workbench_screen != null and _workbench_screen.visible) \
+			or (_map_screen != null and _map_screen.visible)
 
 
 func try_open_terminal(client: Object) -> bool:
@@ -311,6 +321,50 @@ func toggle_inventory(client: Object) -> bool:
 	return true
 
 
+# Opens or closes the map; true if it's open now.
+func toggle_map(client: Object) -> bool:
+	if _map_screen == null or client == null or not client.is_spawned():
+		return false
+	if _map_screen.visible:
+		close_all_screens()
+		return false
+	close_all_screens()
+	var own: Dictionary = client.get_presented()
+	_map_screen.title = map_title
+	_map_screen.planet = map_planet
+	_map_screen.player_position = own["position"]
+	_map_screen.player_yaw = float(own.get("yaw", 0.0))
+	_map_screen.places = map_places(client)
+	var quest := tracked_quest(client)
+	_map_screen.waypoint = {"position": quest["waypoint"], "name": str(quest.get("title", ""))} \
+			if quest.has("waypoint") else {}
+	_map_screen.open_map()
+	return true
+
+
+# The hub's places for the map: shops (vendors, quartermasters), quest
+# givers (bright when they've work for you) and terminals (missions, the war
+# terminal), and workbenches.
+func map_places(client: Object) -> Array:
+	var out: Array = []
+	for v: Dictionary in client.get_vendors():
+		out.append({"position": v["position"], "name": str(v["name"]), "kind": "shop", "color": WorldMapScreen.SHOP})
+	for q: Dictionary in client.get_quartermasters():
+		out.append({"position": q["position"], "name": str(q["name"]), "kind": "shop", "color": WorldMapScreen.SHOP})
+	var ready: PackedStringArray = client.get_quests().get("ready_givers", PackedStringArray())
+	for npc: Dictionary in client.get_quest_npcs():
+		if bool(npc.get("giver", false)):
+			out.append({"position": npc["position"], "name": str(npc["name"]), "kind": "quest",
+					"color": Color(WorldMapScreen.QUEST, 1.0 if ready.has(str(npc["name"])) else 0.45)})
+	for wb: Dictionary in client.get_workbenches():
+		out.append({"position": wb["position"], "name": str(wb["name"]), "kind": "craft", "color": WorldMapScreen.CRAFT})
+	for r: Dictionary in client.get_recruiters():
+		out.append({"position": r["position"], "name": str(r["name"]), "kind": "terminal", "color": WorldMapScreen.TERMINAL})
+	for t: Dictionary in client.get_mission_terminals():
+		out.append({"position": t["position"], "name": str(t["name"]), "kind": "terminal", "color": WorldMapScreen.TERMINAL})
+	return out
+
+
 func toggle_workbench(client: Object) -> bool:
 	if _workbench_screen == null or client == null or not client.is_spawned():
 		return false
@@ -373,6 +427,8 @@ func close_all_screens() -> void:
 		_profession_screen.visible = false
 	if _workbench_screen != null:
 		_workbench_screen.visible = false
+	if _map_screen != null and _map_screen.visible:
+		_map_screen.close_map()
 	_offer_serial = -1
 	if was_open:
 		terminal_closed.emit()

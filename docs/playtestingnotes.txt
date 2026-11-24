@@ -14,8 +14,13 @@ somewhere when we aim at or shoot them too
   -> Battlefront's player marker (its player_icon triangle, yellow, outlined) now sits at the radar's
      middle, pointing the way you face; in matches and in the world.
 
-m key should bring up a full sized map especially for the swg overworld. it can be swg style, 
+[DONE] m key should bring up a full sized map especially for the swg overworld. it can be swg style,
 it is very important for finding vendors and such
+  -> M opens the map in the world (M or Esc closes it): the town seen from overhead (rendered from the
+     loaded world when it opens), north up, with shops (green), quest givers (yellow chevrons, bright when
+     they've work for you), crafting (purple), terminals (blue), your quest's waypoint and you. A list
+     beside it names them, nearest first, with distances; hovering one rings it on the map. Mouse wheel
+     zooms: 300 m, 700 m, 1.6 km across, then the whole planet. Rebindable as "Map" in the controls.
 
 [DONE] i like the yellow icon of the three downward arrows already in place for the questgivers clustered
 witht the vendors and such. they dont actually have any quests though, whats up with that

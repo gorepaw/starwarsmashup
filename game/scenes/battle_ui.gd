@@ -175,6 +175,11 @@ func center_label() -> Label:
 	return _center
 
 
+# The radar's picture of the map ({texture, left_x, top_z, right_x, bottom_z}; {} none).
+func minimap() -> Dictionary:
+	return _bf2_hud.minimap if _bf2_hud != null else {}
+
+
 func match_label() -> RichTextLabel:
 	return _match_label
 

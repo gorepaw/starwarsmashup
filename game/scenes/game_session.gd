@@ -446,6 +446,28 @@ func _physics_process(_delta: float) -> void:
 	_camera_distance = CAMERA_DISTANCE if reach > CAMERA_DISTANCE else maxf(CAMERA_MIN_DISTANCE, reach - 0.25)
 
 
+# The map's title: the planet (its terrain bake's name) and the town (the
+# hub file's [hub] Name).
+func _map_title() -> String:
+	var planet := str(_config.get("bake", "")).get_file().get_slice("_", 0).capitalize()
+	var town := ""
+	var hub_path := str(_config.get("hub", ""))
+	if hub_path != "":
+		var file := FileAccess.open("res://" + hub_path if not hub_path.begins_with("res://") else hub_path, FileAccess.READ)
+		var in_hub := false
+		while file != null and not file.eof_reached():
+			var line := file.get_line().strip_edges()
+			if line.begins_with("["):
+				if in_hub:
+					break
+				in_hub = line == "[hub]"
+			elif in_hub and line.begins_with("Name"):
+				town = line.get_slice("=", 1).strip_edges()
+				break
+	if planet == "":
+		return town if town != "" else "Map"
+	return "%s, %s" % [town, planet] if town != "" else planet
+
 func _input(event: InputEvent) -> void:
 	if not _started or _exiting or _bot != "":
 		return
@@ -458,7 +480,8 @@ func _input(event: InputEvent) -> void:
 		return
 	if _hub_ui != null and _hub_ui.is_terminal_open():
 		if escape or event.is_action_pressed("interact") or event.is_action_pressed("quest_log") \
-				or event.is_action_pressed("professions") or event.is_action_pressed("workbench"):
+				or event.is_action_pressed("professions") or event.is_action_pressed("workbench") \
+				or event.is_action_pressed("world_map"):
 			_hub_ui.close_terminal()
 		elif event.is_action_pressed("leave_queue"):
 			_client.queue(-1)
@@ -506,6 +529,11 @@ func _input(event: InputEvent) -> void:
 	elif event.is_action_pressed("quest_log") and not event.is_echo() and _hub_ui != null \
 			and _client.get_match().is_empty() and not _client.get_recruiters().is_empty():
 		_capture_mouse(not _hub_ui.toggle_quest_log(_client))
+	elif event.is_action_pressed("world_map") and not event.is_echo() and _hub_ui != null \
+			and _client.get_match().is_empty() and not _client.get_recruiters().is_empty():
+		_hub_ui.map_title = _map_title()
+		_hub_ui.map_planet = _battle_ui.minimap()
+		_capture_mouse(not _hub_ui.toggle_map(_client))
 	elif event.is_action_pressed("professions") and not event.is_echo() and _hub_ui != null \
 			and _client.get_match().is_empty() and not _client.get_recruiters().is_empty():
 		_capture_mouse(not _hub_ui.toggle_professions(_client))

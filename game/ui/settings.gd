@@ -31,6 +31,7 @@ const ACTIONS := [
 	["leave_queue", "Leave the Queue", KEY_X],
 	["inventory", "Inventory & Loadouts", KEY_I],
 	["quest_log", "Quest Log", KEY_L],
+	["world_map", "Map", KEY_M],
 	["professions", "Professions", KEY_K],
 	["scanner", "Multi-Scanner", KEY_G],
 	["workbench", "Workbench & Material Vault", KEY_B],
