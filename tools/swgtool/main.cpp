@@ -1048,6 +1048,13 @@ int cmd_export_species(const std::vector<std::string>& args) {
         "human_bazooka_crouch_walkbackward",
         "human_bazooka_crouch_shoot",
         "human_bazooka_crouch_reload",
+        // human_4: riders' (a vehicle's Pilot9Pose, nine still poses, or its
+        // PilotAnimation): on speeder bikes, BARC speeders and STAPs, and
+        // seated.
+        "human_speederbike_9pose",
+        "human_barc_9pose",
+        "human_stap_ride",
+        "human_speederbike_sit",
     };
     if (!bf2_lvl.empty()) {
         std::ifstream lvl_file(bf2_lvl, std::ios::binary);
@@ -1056,7 +1063,7 @@ int cmd_export_species(const std::vector<std::string>& args) {
         }
         const std::vector<uint8_t> lvl(std::istreambuf_iterator<char>(lvl_file), {});
         const bf2::UcfbNode root = bf2::parse_ucfb(lvl);
-        for (const char* bank : {"human_0", "human_1", "human_2", "human_3"}) {
+        for (const char* bank : {"human_0", "human_1", "human_2", "human_3", "human_4"}) {
             const bf2::UcfbNode* zaf = bf2::find_named_chunk(root, "zaf_", bank);
             const bf2::UcfbNode* zaa = bf2::find_named_chunk(root, "zaa_", bank);
             if (!bf2_skeleton && zaf && zaf->child("BIN_")) {

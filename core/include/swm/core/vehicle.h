@@ -87,8 +87,10 @@ struct VehicleClass {
     std::string explosion_effect;
     std::string engine_sound;
     double stride_speed = 0;  // a walker's steps' own pace (m/s), to play them at its speed
-    // Where a rider on an open vehicle (a speeder bike) has their feet,
-    // sitting, in its model's space (RiderSeat; ASSUMPTION for Battlefront's).
+    // Where a rider on an open vehicle (a speeder bike) is put, in its
+    // model's space (RiderSeat): with a rider pose, its origin (Battlefront's
+    // PilotPosition hardpoint; the pose lifts them to the seat); crouched,
+    // their feet (ASSUMPTION for a class that names neither).
     Vec3 rider_seat{0, -0.5, -0.25};
     // A flyer: its speeds in the air (MinSpeed .. MaxSpeed, BoostSpeed on
     // energy), how fast it pitches (PitchRate, radians a second), and its
@@ -110,6 +112,9 @@ struct VehicleClass {
     std::string wake_effect;
     // A walker's footfalls: the sound and the effect as each foot lands.
     std::string step_sound, stomp_effect;
+    // How its rider sits on an open vehicle: a soldier clip held at its first
+    // frame ("" crouched).
+    std::string rider_pose;
 
     double radius() const;  // for walls: half its width
     double height() const { return bounds_max.y; }

@@ -563,6 +563,36 @@ int cmd_export_vehicle(const std::vector<std::string>& args) {
             out << key << " = " << (std::string_view(key) == "EngineSound" ? first_token(text) : text) << "\n";
         }
     }
+    // Its rider's pose, a soldier clip (export-species retargets them): its
+    // Pilot9Pose (nine still poses; the game holds the first) or its
+    // PilotAnimation, as "human_<name>". ASSUMPTION: the speeder bike's own
+    // (speederbike_9pose) comes out leaning back with its arms up, so it
+    // rides as the BARC speeder's rider does.
+    {
+        std::string pose;
+        for (const auto& [hash, value] : vehicle.properties) {
+            if ((hash == odf_hash("Pilot9Pose") || hash == odf_hash("PilotAnimation")) && pose.empty() &&
+                !value.empty()) {
+                pose = lowercase(first_token(value));
+            }
+        }
+        if (pose == "speederbike_9pose") pose = "barc_9pose";
+        if (!pose.empty()) out << "RiderPose = human_" << pose << "\n";
+        // Where it goes: its PilotPosition hardpoint (the pose lifts the
+        // rider from there to the seat).
+        if (const auto at = vehicle.get("PilotPosition"); at && !pose.empty()) {
+            Skeleton skeleton;
+            if (const UcfbNode* skel = library.skeleton(geometry)) {
+                skeleton = read_skeleton(*skel);
+            }
+            for (const ModelBone& b : skeleton.bones) {
+                if (lowercase(b.name) == lowercase(first_token(*at))) {
+                    const auto p = skeleton.model_transform(b.name).position;
+                    out << std::format("RiderSeat = {:.3f} {:.3f} {:.3f}\n", -p[0], p[1], p[2]);
+                }
+            }
+        }
+    }
     // A walker's footfalls: the sound and the effect (StompEffect) as each
     // foot lands.
     {

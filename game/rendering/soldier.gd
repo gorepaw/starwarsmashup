@@ -125,6 +125,7 @@ var _last_y := 0.0
 var _step := 0.0             # m the chest still lags a step up or down
 var _crouch := 0.0           # 0 standing .. 1 crouched
 var _rolling := false
+var _ride_clip := &""         # riding: the pose it holds (its first frame)
 var _dip := 0.0              # first person: 0 .. 1 the gun dipped to reload or throw
 var _throwing := 0.0         # s left of a first-person throw's dip
 var _swing := 0.0            # s left of a melee swing
@@ -459,6 +460,11 @@ func pose(state: Dictionary, delta: float) -> void:
 	model.position = state["position"]
 	var yaw := float(state["yaw"])
 	model.rotation.y = yaw + PI  # the model faces +Z; yaw 0 faces -Z
+	var ride := StringName(str(state.get("ride_clip", "")))
+	if ride != _ride_clip:
+		_set_ride(ride)
+	if _ride_clip != &"":
+		return
 	var rolling := float(state.get("roll", 0.0)) > 0.0
 	if rolling and not first_person:
 		model.rotation.y = float(state.get("roll_yaw", yaw)) + PI  # it rolls the way it goes
@@ -553,6 +559,31 @@ func _first_person_motion(state: Dictionary, speed: float, delta: float) -> void
 	var tilt := Basis(Vector3.RIGHT, DIP_TURN.x * dip) * Basis(Vector3.BACK, DIP_TURN.y * dip)
 	var dip_about := Transform3D(Basis(), DIP_PIVOT) * Transform3D(tilt) * Transform3D(Basis(), -DIP_PIVOT)
 	_aimer.arms = Transform3D(turn, offset) * dip_about
+
+
+# Riding: Battlefront's rider pose (a vehicle's Pilot9Pose or PilotAnimation),
+# held at its first frame instead of the legs and arms' tree. Its clip lifts
+# the hips from where it's put (the vehicle's hardpoint) to the seat. An
+# unknown clip (an older export) leaves it crouched.
+func _set_ride(clip: StringName) -> void:
+	if clip != &"" and _player != null and _player.has_animation(clip):
+		if _tree != null:
+			_tree.active = false
+		_player.play(clip)
+		_player.seek(0.0, true)
+		_player.pause()
+		_ride_clip = clip
+		if _aimer != null:
+			_aimer.pitch = 0.0
+			_aimer.leg_yaw = 0.0
+			_aimer.melee_block = false
+			_aimer.melee_swing = 0.0
+		return
+	if _ride_clip != &"":
+		_player.stop()
+		if _tree != null:
+			_tree.active = true
+	_ride_clip = &""
 
 
 func _pose_simple(state: Dictionary) -> void:

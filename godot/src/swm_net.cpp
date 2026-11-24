@@ -813,6 +813,7 @@ godot::Array vehicle_class_dicts(std::span<const core::VehicleClass> classes) {
         entry["wake_effect"] = godot::String::utf8(v.wake_effect.c_str());
         entry["step_sound"] = godot::String::utf8(v.step_sound.c_str());
         entry["stomp_effect"] = godot::String::utf8(v.stomp_effect.c_str());
+        entry["rider_pose"] = godot::String::utf8(v.rider_pose.c_str());
         godot::Array damage_effects;
         for (const core::VehicleClass::DamageEffect& d : v.damage_effects) {
             godot::Dictionary e;

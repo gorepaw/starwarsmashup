@@ -983,7 +983,8 @@ func _pose(character: Dictionary, state: Dictionary) -> void:
 		# Inside a walker's cab: not seen. On a hover vehicle: crouched on it.
 		if soldier.model.visible:
 			var seated := state.duplicate()
-			seated["crouched"] = true
+			seated["crouched"] = true  # (without a pose of its own)
+			seated["ride_clip"] = str(_vehicles.class_of(vehicle).get("rider_pose", ""))
 			seated["sprinting"] = false
 			seated["velocity"] = Vector3.ZERO
 			seated["position"] = Vehicles.to_world(state["position"], float(state["yaw"]),
