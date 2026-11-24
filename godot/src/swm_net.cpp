@@ -808,6 +808,17 @@ godot::Array vehicle_class_dicts(std::span<const core::VehicleClass> classes) {
         entry["engine_sound"] = godot::String::utf8(v.engine_sound.c_str());
         entry["stride_speed"] = v.stride_speed;
         entry["rider_seat"] = to_godot(v.rider_seat);
+        entry["wake_effect"] = godot::String::utf8(v.wake_effect.c_str());
+        godot::Array damage_effects;
+        for (const core::VehicleClass::DamageEffect& d : v.damage_effects) {
+            godot::Dictionary e;
+            e["effect"] = godot::String::utf8(d.effect.c_str());
+            e["start"] = d.start;
+            e["stop"] = d.stop;
+            e["at"] = to_godot(d.at);
+            damage_effects.push_back(e);
+        }
+        entry["damage_effects"] = damage_effects;
         entry["map_texture"] = godot::String::utf8(v.map_texture.c_str());
         entry["health_texture"] = godot::String::utf8(v.health_texture.c_str());
         vehicles.push_back(entry);

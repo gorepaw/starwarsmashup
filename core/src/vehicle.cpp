@@ -147,6 +147,16 @@ VehicleClass load_vehicle_class(const std::filesystem::path& path) {
     v.engine_sound = s.get("EngineSound").value_or("");
     v.stride_speed = s.number("StrideSpeed", 0);
     v.rider_seat = read_vec3(s, "RiderSeat", v.rider_seat);
+    v.wake_effect = s.get("WakeEffect").value_or("");
+    for (const Ini::Section& section : ini.sections()) {
+        if (section.name != "damage") continue;
+        VehicleClass::DamageEffect d;
+        d.effect = section.get("Effect").value_or("");
+        d.start = section.number("Start", 100);
+        d.stop = section.number("Stop", 0);
+        d.at = read_vec3(section, "At", {});
+        if (!d.effect.empty()) v.damage_effects.push_back(d);
+    }
     v.map_texture = s.get("MapTexture").value_or("");
     v.health_texture = s.get("HealthTexture").value_or("");
     v.loadout.name = v.name;

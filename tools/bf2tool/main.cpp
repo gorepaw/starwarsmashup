@@ -743,6 +743,42 @@ int cmd_export_vehicle(const std::vector<std::string>& args) {
         std::cerr << std::format("  weapon {} ({}, {})\n", weapon.name, projectile, ordnance.type);
         ++weapons;
     }
+    // Its damage effects: smoking, sparking and burning as it's hurt (each
+    // DamageEffect while its health is between DamageStartPercent and
+    // DamageStopPercent, at its DamageAttachPoint hardpoint), as [damage]s.
+    {
+        struct Damage {
+            double start = 100, stop = 0;
+            std::string effect, at;
+        };
+        std::vector<Damage> damages;
+        for (const auto& [hash, value] : vehicle.properties) {
+            if (hash == odf_hash("DamageStartPercent")) {
+                damages.push_back({});
+                damages.back().start = std::atof(value.c_str());
+            } else if (!damages.empty() && hash == odf_hash("DamageStopPercent")) {
+                damages.back().stop = std::atof(value.c_str());
+            } else if (!damages.empty() && hash == odf_hash("DamageEffect")) {
+                damages.back().effect = lowercase(value);
+            } else if (!damages.empty() && hash == odf_hash("DamageAttachPoint")) {
+                damages.back().at = value;
+            }
+        }
+        Skeleton skeleton;
+        if (const UcfbNode* skel = library.skeleton(geometry)) {
+            skeleton = read_skeleton(*skel);
+        }
+        for (const Damage& d : damages) {
+            if (d.effect.empty()) continue;
+            std::string bone = d.at;
+            for (const ModelBone& b : skeleton.bones) {
+                if (lowercase(b.name) == lowercase(d.at)) bone = b.name;
+            }
+            const auto p = skeleton.model_transform(bone).position;  // (its origin if no such hardpoint)
+            out << std::format("\n[damage]\nEffect = {}\nStart = {:g}\nStop = {:g}\nAt = {:.3f} {:.3f} {:.3f}\n", d.effect,
+                               d.start, d.stop, -p[0], p[1], p[2]);
+        }
+    }
     // Its gunners' seats: each later section (the hover tank's TURRET1) with
     // its eye, aim limits and weapons ([weapon]s with Seat = its number);
     // one without weapons is left out.
@@ -2548,7 +2584,7 @@ int cmd_export_effects(const std::vector<std::string>& args) {
     std::filesystem::create_directories(model_dir);
 
     std::vector<std::filesystem::path> lvl_files{lvl_dir / "ingame.lvl"};
-    for (const char* side : {"imp", "all", "rep", "cis"}) {
+    for (const char* side : {"imp", "all", "rep", "cis", "tur"}) {
         if (const auto p = lvl_dir / "side" / (std::string(side) + ".lvl"); std::filesystem::exists(p)) {
             lvl_files.push_back(p);
         }
@@ -2606,9 +2642,20 @@ int cmd_export_effects(const std::vector<std::string>& args) {
         if (odf.kind == "entc") {
             // What can be destroyed: its damage effects and chunks' trails.
             const OdfClass resolved = library.classes().resolve(odf.type);
-            if (lowercase(resolved.base) == "destructablebuilding") {
+            const std::string base = lowercase(resolved.base);
+            if (base == "destructablebuilding") {
                 for (const auto& [hash, value] : resolved.properties) {
                     if ((hash == odf_hash("DamageEffect") || hash == odf_hash("ChunkTrailEffect")) && !value.empty()) {
+                        effect_names.insert(lowercase(value));
+                    }
+                }
+            }
+            // Vehicles' (and turrets'): smoking and burning as they're hurt,
+            // and a hover vehicle's wake.
+            if (base == "hover" || base == "walker" || base == "commandwalker" || base == "flyer" ||
+                base == "armedbuilding") {
+                for (const auto& [hash, value] : resolved.properties) {
+                    if ((hash == odf_hash("DamageEffect") || hash == odf_hash("WakeEffect")) && !value.empty()) {
                         effect_names.insert(lowercase(value));
                     }
                 }

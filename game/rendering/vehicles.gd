@@ -11,6 +11,8 @@
 # A gunner's turret (the hover tank's, the combat speeder's missile pod)
 # turns and tilts on the model with the gunner's aim (its seat's TurretNode
 # and PitchNode), about the vehicle's own up and right.
+# Hurt, a vehicle smokes, sparks and burns as its class's damage effects say;
+# a hover vehicle on the move trails its wake (dust).
 extends RefCounted
 
 const EASE := 12.0  # 1/s: how fast an empty vehicle's drawn place catches up
@@ -19,14 +21,16 @@ const TURNING := 0.35  # rad/s: a standing walker turning faster turns on the sp
 
 var classes: Array = []      # the battlefield's "vehicles" (SwmClient.get_battlefield)
 var _root: Node3D
+var _effects: RefCounted     # the game's Bf2Effects (null: none)
 var _templates := {}         # class index -> Node3D (a loaded model, kept out of the tree)
 var _nodes := {}             # vehicle id -> {node, class, alive}
 
 
-func setup(root: Node3D, vehicle_classes: Array) -> void:
+func setup(root: Node3D, vehicle_classes: Array, effects: RefCounted = null) -> void:
 	clear()
 	_root = root
 	classes = vehicle_classes
+	_effects = effects
 
 
 func clear() -> void:
@@ -104,10 +108,52 @@ func update(vehicles: Array, shown: Dictionary, delta: float) -> void:
 		if str(class_of(index).get("kind", "")) == "walker":
 			_step(entry, bool(v["alive"]), delta)
 		_aim_turrets(entry, v, shown)
+		_update_effects(entry, v)
 	for id: int in _nodes.keys():
 		if not seen.has(id):
 			(_nodes[id]["node"] as Node).queue_free()
 			_nodes.erase(id)
+
+
+# Its damage effects for its health, and its wake while it moves (a hover
+# vehicle's, from under it).
+func _update_effects(entry: Dictionary, v: Dictionary) -> void:
+	if _effects == null:
+		return
+	var node: Node3D = entry["node"]
+	var c := class_of(int(entry["class"]))
+	var running: Dictionary = entry.get("effects", {})
+	var percent := 100.0 * float(v["health"]) / maxf(1.0, float(v["max_health"]))
+	var list: Array = c.get("damage_effects", [])
+	for i in list.size():
+		var e: Dictionary = list[i]
+		_run(node, running, "damage%d" % i, str(e["effect"]), e["at"],
+				bool(v["alive"]) and percent <= float(e["start"]) and percent > float(e["stop"]))
+	var wake := str(c.get("wake_effect", ""))
+	if wake != "":
+		var moving := (v["velocity"] as Vector3).length() > 3.0 and bool(v["alive"])
+		_run(node, running, "wake", wake, Vector3(0, -float(c.get("altitude", 0.0)), 0), moving)
+	entry["effects"] = running
+
+
+# An effect trailing from a point on the vehicle while `on`; off, it fades
+# out where it was.
+func _run(node: Node3D, running: Dictionary, key: String, effect: String, at: Vector3, on: bool) -> void:
+	if on and not running.has(key):
+		var holder := Node3D.new()
+		holder.position = at
+		node.add_child(holder)
+		var trail: Node3D = _effects.attach_trail(holder, effect)
+		running[key] = trail if trail != null else holder
+	elif not on and running.has(key):
+		var trail: Node3D = running[key]
+		running.erase(key)
+		if is_instance_valid(trail) and trail.get_parent() != null and trail.name == "Trail":
+			var holder := trail.get_parent()
+			_effects.detach_trail(trail)
+			holder.queue_free()
+		elif is_instance_valid(trail):
+			trail.queue_free()
 
 
 # Each seat's turret on a new vehicle's model: its nodes (a skeleton's bones

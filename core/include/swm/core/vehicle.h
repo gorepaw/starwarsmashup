@@ -98,6 +98,16 @@ struct VehicleClass {
     double pitch_rate = 1.2;
     double takeoff_height = 2.5, takeoff_time = 1, landed_height = 0.5, landing_speed = 5;
     std::string map_texture, health_texture;
+    // How it looks hurt and moving: each damage effect while its health is
+    // between start and stop percent, at `at` (its model's space; [damage]s),
+    // and a hover vehicle's wake (WakeEffect).
+    struct DamageEffect {
+        std::string effect;
+        double start = 100, stop = 0;
+        Vec3 at;
+    };
+    std::vector<DamageEffect> damage_effects;
+    std::string wake_effect;
 
     double radius() const;  // for walls: half its width
     double height() const { return bounds_max.y; }

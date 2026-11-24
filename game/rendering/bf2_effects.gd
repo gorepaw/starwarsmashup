@@ -458,6 +458,12 @@ func _make_emitter(e: Dictionary, continuous: bool) -> CPUParticles3D:
 	var quad := QuadMesh.new()
 	if is_spark:
 		var stretch := maxf(4.0, float(e.get("spark_length", 0.025)) * 260.0)
+		# One not thrown, only rising (a burning vehicle's flames), is no
+		# longer than it goes in its spark length, not a long streak.
+		if vmax <= 0.5:
+			var speed := vmax + particles.gravity.length() * life * 0.5
+			var width := maxf(0.02, (scaled_min + scaled_max) * 0.5)
+			stretch = clampf(speed * float(e.get("spark_length", 0.025)) / width, 1.0, stretch)
 		quad.size = Vector2(1.0, stretch)
 		particles.particle_flag_align_y = true
 	else:
