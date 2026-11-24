@@ -644,6 +644,7 @@ func _sync_quests(client: Object) -> Dictionary:
 				_offer_serial = -1
 			if not _quest_screen.waiting:
 				_quest_screen.offers = quests.get("offers", [])
+				_quest_screen.offer_note = str(quests.get("offer_note", ""))
 				_quest_screen.source = str(quests.get("offer_source", _quest_screen.source))
 		if _quest_screen.visible:
 			_quest_screen.queue_redraw()
@@ -732,9 +733,17 @@ func _screen_marker(camera: Camera3D, at: Vector3, distance: String) -> Dictiona
 	return {"at": center + direction * scale, "onscreen": false, "angle": angle, "distance": distance}
 
 
-# Battlefront's objective chevrons over each quest giver's head.
+# Battlefront's objective chevrons over each quest giver's head: bright over
+# one with work for you now, faint over one whose work waits on another's.
 func _update_giver_markers(client: Object) -> void:
-	if _world_root == null or not _giver_nodes.is_empty():
+	if _world_root == null:
+		return
+	if not _giver_nodes.is_empty():
+		var ready: PackedStringArray = client.get_quests().get("ready_givers", PackedStringArray())
+		for npc: Dictionary in client.get_quest_npcs():
+			var sprite: Sprite3D = _giver_nodes.get(int(npc["entity"]))
+			if sprite != null:
+				sprite.modulate = Color(GIVER_COLOR, 1.0 if ready.has(str(npc["name"])) else 0.3)
 		return
 	var texture: Texture2D = _hub_hud.art.texture("hud_objective_icon") if _hub_hud != null else null
 	if texture == null:

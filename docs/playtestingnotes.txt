@@ -1,4 +1,6 @@
-graphic for tactical weapon is way oversized.
+[DONE] graphic for tactical weapon is way oversized.
+  -> The HUD fitted every held weapon's profile to a rifle's width, so the round C-22 grenade stood ~4x
+     too tall. Profiles are now also capped in height (bf2_hud.gd WEAPON_PROFILE_HEIGHT).
 
 I dont like the text for the targets or the shops, I would like some sort of floating holographic icon 
 above sort of like in the battles instead. it could be an empire, rebel, or neutral symbol depending on the character,
@@ -13,7 +15,11 @@ the minimap needs a dot at the center for the player's location
 m key should bring up a full sized map especially for the swg overworld. it can be swg style, 
 it is very important for finding vendors and such
 
-i like the yellow icon of the three downward arrows already in place for the questgivers clustered 
+[DONE] i like the yellow icon of the three downward arrows already in place for the questgivers clustered
 witht the vendors and such. they dont actually have any quests though, whats up with that
+  -> They do, but only Ilsa Marn's ("A Stranger in Mos Eisley") is open to a new character; Corporal Dask,
+     Bolo Dreel and Teska Vo's quests all need hers done first, and they just said "No work for you right
+     now". Now they say why ("...has work for you after A Stranger in Mos Eisley (Ilsa Marn)"), and the
+     chevron is bright only over givers with work for you now (faint over the others).
 
 Make the font for "Eliminated" more like bf2

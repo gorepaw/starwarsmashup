@@ -298,6 +298,7 @@ private:
         uint32_t quest_inventory_rev = 0;  // the inventory revision quests last looked at
         std::vector<std::string> offers;   // quest ids the last giver or terminal offered
         std::string offer_source;
+        std::string offer_note;  // the last giver offered nothing: why
         uint16_t offer_serial = 0;
         uint32_t notice_tick = UINT32_MAX;  // when the notice was last set
         bool use_held = false;              // the use button, last input

@@ -118,6 +118,10 @@ public:
     std::vector<std::string> givers() const;
     // What `giver` offers a character with this journal now.
     std::vector<const QuestDef*> offered_by(std::string_view giver, const std::vector<QuestProgress>& journal) const;
+    // Why `giver` offers nothing now, for the player: the quest of theirs
+    // they're already on, the quest to finish first (and whose it is), a
+    // full journal, or that there's no more; "" when they do offer something.
+    std::string why_none(std::string_view giver, const std::vector<QuestProgress>& journal) const;
     // What a mission terminal offers now: up to `count` destroy missions
     // between 300 m and 3 km out, a different set every 10 minutes
     // (`now` in seconds), never one the character already has.

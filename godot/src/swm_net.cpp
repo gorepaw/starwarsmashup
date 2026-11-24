@@ -748,6 +748,10 @@ godot::Dictionary SwmClient::get_quests() const {
     out["offers"] = offers;
     out["offer_source"] = godot::String::utf8(sync.offer_source.c_str());
     out["offer_serial"] = int64_t(sync.offer_serial);
+    out["offer_note"] = godot::String::utf8(sync.offer_note.c_str());
+    godot::PackedStringArray ready;
+    for (const std::string& giver : sync.ready_givers) ready.push_back(godot::String::utf8(giver.c_str()));
+    out["ready_givers"] = ready;
     return out;
 }
 

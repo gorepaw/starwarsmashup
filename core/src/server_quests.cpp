@@ -230,6 +230,7 @@ void GameServer::handle_quest_request(Client& client, const net::QuestRequest& r
                 client.offers.push_back(def->id);
             }
             client.offer_source = npc->name;
+            client.offer_note = client.offers.empty() ? quest_book_->why_none(npc->name, client.quests) : "";
             ++client.offer_serial;
             ++client.quest_rev;
             client.quest_sync_tick = 0;
@@ -245,6 +246,7 @@ void GameServer::handle_quest_request(Client& client, const net::QuestRequest& r
             client.offers.push_back(def->id);
         }
         client.offer_source = terminal.name;
+        client.offer_note.clear();
         ++client.offer_serial;
         ++client.quest_rev;
         client.quest_sync_tick = 0;
@@ -356,6 +358,14 @@ void GameServer::send_quest_sync(Client& client) {
     }
     sync.offer_source = client.offer_source;
     sync.offer_serial = client.offer_serial;
+    sync.offer_note = client.offer_note;
+    if (quest_book_ != nullptr) {
+        for (const std::string& giver : quest_book_->givers()) {
+            if (giver != "Mission Terminal" && !quest_book_->offered_by(giver, client.quests).empty()) {
+                sync.ready_givers.push_back(giver);
+            }
+        }
+    }
     link_.send(client.endpoint, net::encode(sync));
     client.quest_sync_tick = tick_;
 }

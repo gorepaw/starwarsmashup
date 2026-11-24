@@ -353,6 +353,35 @@ bool QuestBook::can_accept(const QuestDef& def, const std::vector<QuestProgress>
     return active < max_active_quests && (!def.mission || missions < max_active_missions);
 }
 
+std::string QuestBook::why_none(std::string_view giver, const std::vector<QuestProgress>& journal) const {
+    if (!offered_by(giver, journal).empty()) return "";
+    const std::string name(giver);
+    for (const QuestDef& def : quests_) {
+        const QuestProgress* p = find_progress(journal, def.id);
+        if (same_ci(def.giver, giver) && p != nullptr && !p->done) {
+            return std::format("You're already doing {} for {}.", def.title, name);
+        }
+    }
+    for (const QuestDef& def : quests_) {
+        if (!same_ci(def.giver, giver) || find_progress(journal, def.id) != nullptr) continue;
+        for (const std::string& required : def.prerequisites) {
+            const QuestProgress* p = find_progress(journal, required);
+            if (p != nullptr && p->done) continue;
+            const QuestDef* first = find(required);
+            if (first == nullptr) continue;
+            return first->giver.empty() || same_ci(first->giver, giver)
+                       ? std::format("{} has work for you after {}.", name, first->title)
+                       : std::format("{} has work for you after {} ({}).", name, first->title, first->giver);
+        }
+    }
+    int active = 0;
+    for (const QuestProgress& p : journal) active += p.done ? 0 : 1;
+    if (active >= max_active_quests) {
+        return std::format("Your journal is full ({} quests).", max_active_quests);
+    }
+    return std::format("{} has no more work for you.", name);
+}
+
 std::vector<const QuestDef*> QuestBook::offered_by(std::string_view giver,
                                                    const std::vector<QuestProgress>& journal) const {
     std::vector<const QuestDef*> out;

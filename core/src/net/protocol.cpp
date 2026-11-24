@@ -847,6 +847,11 @@ struct Encoder {
         }
         out.put_string(m.offer_source);
         out.put(m.offer_serial);
+        out.put_string(m.offer_note);
+        out.put(uint8_t(std::min<size_t>(m.ready_givers.size(), 255)));
+        for (size_t i = 0; i < m.ready_givers.size() && i < 255; ++i) {
+            out.put_string(m.ready_givers[i]);
+        }
     }
     void operator()(const QuestAck& m) {
         out.put(uint8_t(Type::quest_ack));
@@ -1354,6 +1359,11 @@ Message decode(std::span<const uint8_t> packet) {
         }
         m.offer_source = in.get_string();
         m.offer_serial = in.get<uint16_t>();
+        m.offer_note = in.get_string();
+        const size_t ready = in.get<uint8_t>();
+        for (size_t i = 0; i < ready; ++i) {
+            m.ready_givers.push_back(in.get_string());
+        }
         message = std::move(m);
         break;
     }

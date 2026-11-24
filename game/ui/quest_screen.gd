@@ -16,6 +16,7 @@ const DONE_COLOR := Color(0.45, 0.85, 0.5)
 var mode := "log"            # "offers" or "log"
 var source := ""             # offers: who offers them
 var offers: Array = []       # quests on offer
+var offer_note := ""         # offering nothing: why (the server's)
 var waiting := false         # offers: asked, not answered yet
 var active: Array = []       # log: active quests
 var completed: Array = []    # log: completed quest titles
@@ -34,6 +35,7 @@ func open_offers(from: String) -> void:
 	mode = "offers"
 	source = from
 	offers = []
+	offer_note = ""
 	waiting = true
 	_selected = 0
 	_scroll = 0
@@ -123,7 +125,8 @@ func _paint() -> void:
 	draw_rect(list_rect, Color(0.04, 0.06, 0.09, 0.6))
 	var row_h := 38.0 * u
 	if list.is_empty():
-		var empty := "Asking..." if waiting else ("No work for you right now." if mode == "offers"
+		var empty := "Asking..." if waiting else ((offer_note if offer_note != "" else "No work for you right now.")
+				if mode == "offers"
 				else ("No active quests. Look for people with a marker over their heads, or a mission terminal."
 				if _tab == "active" else "Nothing finished yet."))
 		var ly := list_rect.position.y + 10 * u

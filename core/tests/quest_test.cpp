@@ -81,10 +81,14 @@ void test_book_steps() {
     std::vector<QuestProgress> journal;
     CHECK(book.offered_by("hunter", journal).size() == 1);  // names ignore case; "next" needs "hunt"
     CHECK(book.offered_by("Elder", journal).empty());
+    CHECK(book.why_none("Hunter", journal).empty());  // it offers "hunt"
+    CHECK(book.why_none("Elder", journal) == "Elder has no more work for you.");
     CHECK(book.can_accept(*book.find("hunt"), journal));
     CHECK(!book.can_accept(*book.find("next"), journal));
     book.accept(journal, *book.find("hunt"));
     CHECK(journal.size() == 1 && journal[0].step == 0);
+    // On it: the hunter says so ("next" waits for it).
+    CHECK(book.why_none("Hunter", journal).starts_with("You're already doing "));
     CHECK(!book.can_accept(*book.find("hunt"), journal));  // already taken
 
     // Go to: not there yet, then there.

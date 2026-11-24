@@ -19,7 +19,7 @@ namespace swm::core::net {
 // Every packet starts with a magic number, the protocol version and a message
 // type. Peers drop packets with another version. Bump it on any wire change.
 inline constexpr uint16_t protocol_magic = 0x4D53;  // "SM"
-inline constexpr uint16_t protocol_version = 29;
+inline constexpr uint16_t protocol_version = 30;
 inline constexpr uint8_t droid_explosion_weapon = 0xFF;  // Explosion::weapon sentinel for destroyed health/ammo droids
 // ...for a destroyed object (Battlefield::destructibles); clients draw it
 // from the object's own explosion as they see it go.
@@ -407,6 +407,8 @@ struct QuestSync {
     std::vector<QuestInfo> offers;
     std::string offer_source;   // who offers them: a person's name, or a terminal's
     uint16_t offer_serial = 0;  // changes each time the player talks to a giver or uses a terminal
+    std::string offer_note;     // offering nothing: why (QuestBook::why_none)
+    std::vector<std::string> ready_givers;  // the quest givers with something for this player now
 
     friend bool operator==(const QuestSync&, const QuestSync&) = default;
 };
