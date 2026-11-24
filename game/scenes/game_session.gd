@@ -380,6 +380,7 @@ func step_frame(delta: float) -> void:
 			SwgCity.update_doors(_doors, people, delta)
 
 	_battle_ui.hub_markers = _hub_ui.radar_markers(_client) if _hub_ui != null else []
+	_battle_ui.hub_ui_ref = _hub_ui
 	_battle_ui.driving = _driven_vehicle()
 	_battle_ui.update_hud(_client, _weapons, _remotes.size(), _client.get_max_health(),
 			_show_stats, delta, _pause_menu != null and _pause_menu.visible,
@@ -883,6 +884,12 @@ func _update_remotes(own_team: int) -> void:
 		var holo_height := float(_remotes[id]["eye_height"]) + 0.65 if int(remote["team"]) == NATIVES_TEAM else 2.25
 		var shown_holo := _battle_ui.show_team_tag(id, _remotes[id]["model"], int(remote["team"]), own_team,
 				bool(remote["alive"]), friend, holo_height)
+		if not shown_holo and _hub_ui != null and _client.get_match().is_empty():
+			var factions: PackedStringArray = _client.get_factions()
+			var team := int(remote["team"])
+			var faction := factions[team].to_lower() if team >= 0 and team < factions.size() else ""
+			var side := "alliance" if faction.contains("rebel") else ("empire" if faction.contains("imp") or faction.contains("empire") else "neutral")
+			shown_holo = _hub_ui.show_combat_hologram(id, _remotes[id]["model"], side, friend or own_team < 0, bool(remote["alive"]))
 		tag.visible = not shown_holo
 		if tag.visible:
 			var rname := str(remote.get("name", ""))
@@ -893,6 +900,8 @@ func _update_remotes(own_team: int) -> void:
 			(_remotes[id]["model"] as Node).queue_free()
 			_remotes.erase(id)
 			_battle_ui.forget_team_tag(id)
+			if _hub_ui != null:
+				_hub_ui.forget_hologram(id)
 
 
 func _update_person(id: int, state: Dictionary) -> void:
@@ -907,29 +916,25 @@ func _update_person(id: int, state: Dictionary) -> void:
 		SwgColors.apply(model, _people_colors.get(look, {}), int(state.get("colors", 0)))
 		add_child(model)
 		var player := model.find_child("AnimationPlayer", true, false) as AnimationPlayer
+		# Their names show when aimed at (the HUD's target name); a bandit
+		# has a red hologram over its head, as an enemy soldier in a match.
 		var tag: Label3D = null
-		if actor_kind >= 2:
-			var top_y := 1.8
+		var top_y := 1.8
+		if actor_kind == 3:
 			for mesh: Node in model.find_children("*", "MeshInstance3D", true, false):
 				var box := (mesh as MeshInstance3D).get_aabb()
 				top_y = maxf(top_y, box.position.y + box.size.y)
-			tag = Label3D.new()
-			tag.billboard = BaseMaterial3D.BILLBOARD_ENABLED
-			tag.fixed_size = true
-			tag.pixel_size = 0.0011
-			tag.font_size = 22
-			tag.outline_size = 6
-			tag.no_depth_test = true
-			tag.position = Vector3.UP * (top_y + 0.45)
-			model.add_child(tag)
 		if actor_kind == 3 and player != null and player.has_animation("human_rifle_stand_idle_emote_full"):
 			var soldier := Soldier.new(model)
 			_remotes[id] = {"model": model, "person": true, "actor_kind": actor_kind,
-					"soldier": soldier, "tag": tag}
+					"soldier": soldier, "tag": tag, "holo_height": top_y + 0.45}
 		else:
 			_remotes[id] = {"model": model, "person": true, "actor_kind": actor_kind,
-					"player": player, "tag": tag}
+					"player": player, "tag": tag, "holo_height": top_y + 0.45}
 	var person: Dictionary = _remotes[id]
+	if actor_kind == 3 and _hub_ui != null:
+		var alive_now := bool(state.get("alive", true)) and str(state.get("life", "alive")) == "alive"
+		_hub_ui.show_combat_hologram(id, person["model"], "neutral", false, alive_now, float(person.get("holo_height", 2.25)))
 	var tag: Label3D = person.get("tag")
 	if tag != null:
 		var alive := bool(state.get("alive", true)) and str(state.get("life", "alive")) == "alive"

@@ -16,6 +16,7 @@ const TeamTags = preload("res://rendering/team_tags.gd")
 const AMMO_NUDGE := Vector2(0.025, 0)
 const TARGET_CONE := 0.035
 const TARGET_RANGE := 150.0
+const SHOT_TARGET_TIME := 3.0  # s the HUD keeps showing what you last hit
 const SEEN_FIRING := 2.0
 const FRIEND_COLOR := Color(0.35, 0.6, 1.0)
 const ENEMY_COLOR := Color(1.0, 0.3, 0.25)
@@ -48,6 +49,9 @@ var _cone_shader: Shader
 var _team_tags: TeamTags
 var _fired := {}
 var _hit_flash := 0.0
+var _aimed := {}            # what the reticle is on this frame (an aim candidate; {} nothing)
+var _shot_target := ""      # what you last hit (its candidate key), shown for SHOT_TARGET_TIME
+var _shot_time := 0.0
 
 var _prev_post_owners: Array[int] = []
 var _prev_phase := ""
@@ -58,6 +62,7 @@ var _outside := 0.0
 var _was_choosing := false
 
 var _map_meta: Dictionary = {}
+var hub_ui_ref: Object      # the hub's UI, for its practice targets' readouts (null in a match)
 var hub_markers: Array = []  # a hub's radar markers (HubUI.radar_markers), set before each update
 var driving := {}            # the vehicle we drive ({label, health, max_health, ...}), set before each update
 var _world_bake := ""
@@ -296,6 +301,9 @@ func note_fired(entity_id: int) -> void:
 
 func note_hit() -> void:
 	_hit_flash = 0.15
+	if not _aimed.is_empty():
+		_shot_target = str(_aimed["key"])
+		_shot_time = SHOT_TARGET_TIME
 
 
 func add_feed_line(line: String) -> void:
@@ -381,6 +389,7 @@ func update_hud(client: Object, weapons: Array, remotes_count: int, max_health: 
 	_hud.text = "\n".join(lines)
 	_update_match_hud(client, delta, hub_ui, generation, who_cb)
 	_hit_flash = maxf(0.0, _hit_flash - delta)
+	_shot_time = maxf(0.0, _shot_time - delta)
 	_crosshair.visible = _bf2_hud == null
 	_feed.visible = _bf2_hud == null
 	_crosshair.text = "x" if _hit_flash > 0 else "+"
@@ -503,10 +512,24 @@ func _update_bf2_hud(client: Object, weapons: Array, max_health: float, delta: f
 		var max_shield := maxf(float(own.get("max_shield", 0.0)), float(client.get_max_shield()))
 		_bf2_hud.shield_fraction = clampf(float(own.get("shield", 0.0)) / max_shield, 0.0, 1.0) \
 				if max_shield > 0.0 and driving.is_empty() else -1.0
-		var target := _aimed_at(client, camera)
+		var candidates := _aim_candidates(client, team)
+		var target := _aimed_at(client, camera, candidates)
+		_aimed = target
+		if target.is_empty() and _shot_time > 0.0:
+			for c: Dictionary in candidates:
+				if str(c["key"]) == _shot_target:
+					target = c
+					break
 		var tint := Color8(220, 220, 220)
 		if not target.is_empty():
-			tint = FRIEND_COLOR if team >= 0 and client.is_allied(team, int(target["team"])) else ENEMY_COLOR
+			tint = FRIEND_COLOR if bool(target["friend"]) else (ENEMY_COLOR if bool(target["hostile"]) else tint)
+			# Battlefront's target readout: the name under the reticle, and the
+			# health of what you fight (aimed at, or hit in the last few seconds).
+			if str(target["name"]) != "":
+				b["player1.weapon1.target.className"] = str(target["name"])
+			if bool(target["hostile"]) and float(target["max_health"]) > 0.0:
+				b["player1.weapon1.target.healthFraction"] = maxf(0.001,
+						clampf(float(target["health"]) / float(target["max_health"]), 0.0, 1.0))
 		b["player1.weapon1.target.teamColor"] = tint
 		b["player1.weapon1.target.teamColorBright"] = tint.lightened(0.3)
 		if _hit_flash > 0:
@@ -706,22 +729,67 @@ func _update_minimap(client: Object, team: int, game: Dictionary) -> void:
 				"color": FRIEND_COLOR if friend else ENEMY_COLOR})
 
 
-func _aimed_at(client: Object, camera: Camera3D) -> Dictionary:
+# What the reticle can name: {key, name, at (where to aim), team, friend,
+# hostile, health, max_health}. Soldiers and players always; in the world
+# also its people (citizens, creatures, bandits), the practice targets, and
+# the workbenches and terminals.
+func _aim_candidates(client: Object, team: int) -> Array:
+	var out: Array = []
+	var in_world: bool = client.get_match().is_empty()
+	for remote: Dictionary in client.get_remotes():
+		if not bool(remote["alive"]):
+			continue
+		var person := int(remote.get("look", 0)) > 0
+		if person and (not in_world or str(remote.get("name", "")) == ""):
+			continue  # (a shop's keeper is named by their shop, below)
+		var kind := int(remote.get("actor_kind", 0))
+		var friend: bool = not person and team >= 0 and client.is_allied(team, int(remote["team"]))
+		out.append({"key": "e%d" % int(remote["id"]), "name": str(remote.get("name", "")),
+				"at": (remote["position"] as Vector3) + Vector3.UP * (0.7 if kind == 2 else 1.1),
+				"team": int(remote["team"]), "friend": friend,
+				"hostile": kind >= 2 or (not person and not friend),
+				"health": float(remote.get("health", 0.0)), "max_health": float(remote.get("max_health", 0.0))})
+	if in_world and hub_ui_ref != null:
+		for t: Dictionary in client.get_targets():
+			if not bool(t["alive"]):
+				continue
+			var dps := float(hub_ui_ref.call("target_dps", int(t["id"])))
+			out.append({"key": "t%d" % int(t["id"]),
+					"name": str(t["name"]) + ("  -  %d DPS" % roundi(dps) if dps > 0.5 else ""),
+					"at": (t["position"] as Vector3) + Vector3.UP * 1.0, "team": -1, "friend": false, "hostile": true,
+					"health": float(t["health"]), "max_health": float(t["max_health"])})
+		var givers: Array = client.get_quest_npcs().filter(func(npc: Dictionary) -> bool: return bool(npc.get("giver", false)))
+		for group: Array in [client.get_vendors(), client.get_quartermasters(), givers, client.get_workbenches(),
+				client.get_recruiters(), client.get_mission_terminals()]:
+			for place: Dictionary in group:
+				out.append({"key": "p" + str(place["name"]) + str(place["position"]), "name": str(place["name"]),
+						"at": (place["position"] as Vector3) + Vector3.UP * 1.0, "team": -1, "friend": false,
+						"hostile": false, "health": 0.0, "max_health": 0.0})
+	return out
+
+
+# The candidate nearest the reticle, within its cone (wider up close), and
+# not behind the map.
+func _aimed_at(client: Object, camera: Camera3D, candidates: Array) -> Dictionary:
 	var from := camera.global_position
 	var forward := -camera.global_basis.z
 	var best := {}
 	var best_angle := TARGET_CONE
-	for remote: Dictionary in client.get_remotes():
-		if not bool(remote["alive"]) or int(remote.get("look", 0)) > 0:
-			continue
-		var to: Vector3 = remote["position"] + Vector3.UP * 1.1 - from
+	for c: Dictionary in candidates:
+		var to: Vector3 = (c["at"] as Vector3) - from
 		var distance := to.length()
 		if distance > TARGET_RANGE or distance < 0.5:
 			continue
 		var angle := forward.angle_to(to)
 		if angle < maxf(best_angle, 0.6 / distance) and angle < best_angle + 0.6 / distance:
-			best = remote
+			best = c
 			best_angle = angle
+	if not best.is_empty():
+		# A wall between (more than a meter short of it: its own collision doesn't count).
+		var along := float(client.raycast(from, best["at"]))
+		var distance := from.distance_to(best["at"])
+		if along >= 0.0 and along * distance < distance - 1.0:
+			return {}
 	return best
 
 

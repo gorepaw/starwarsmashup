@@ -17,11 +17,17 @@ const ProfessionScreen = preload("res://ui/profession_screen.gd")
 const WorkbenchScreen = preload("res://ui/workbench_screen.gd")
 const WorldMapScreen = preload("res://ui/world_map_screen.gd")
 const MultiScanner3D = preload("res://rendering/multi_scanner.gd")
+const TeamTags = preload("res://rendering/team_tags.gd")
 
 const TALK_REACH := 4.5     # meters from a quest NPC to talk to them (the server allows 6)
 const OFFER_REACH := 8.0    # an offer closes when you walk further than this from it
 const GIVER_COLOR := Color(1.0, 0.8, 0.35)
 const TERMINAL_COLOR := Color(0.45, 0.85, 1.0)
+const SHOP_COLOR := Color(0.35, 0.92, 0.55)
+const CRAFT_COLOR := Color(0.75, 0.5, 1.0)
+const HOLO_HEIGHT := 2.6   # m over a place's ground, its hologram
+const PLACE_HOLO_SCALE := 2.5  # a place's hologram, as big as a soldier's this many times (ASSUMPTION, by eye)
+const TARGET_HOLO_ID := 1 << 40  # practice targets' hologram ids, past any entity's
 
 signal queue_requested(side: int, mode: String)
 signal item_bought(def_id: String, use_fp: bool)
@@ -63,6 +69,9 @@ var _qm_nodes: Array = []
 var _vendor_nodes: Array = []
 var _workbench_nodes: Array = []
 var _corpse_nodes: Dictionary = {}  # corpse_entity -> {ring, label}
+var _holograms: TeamTags      # holograms over the world's people and places (null: no insignia exported)
+var _holograms_looked := false
+var _holo_anchors := {}       # place key -> Node3D standing where it is
 var _target_nodes: Dictionary = {}  # target_id -> {root, body, label, hits: Array[{t, dmg}], last_dmg, flash}
 var _notice_id := 0
 var _notice := ""
@@ -435,6 +444,12 @@ func close_all_screens() -> void:
 
 
 func clear_recruiters() -> void:
+	for key: String in _holo_anchors.keys():
+		if _holograms != null:
+			_holograms.forget(key.hash())
+		if is_instance_valid(_holo_anchors[key]):
+			(_holo_anchors[key] as Node).queue_free()
+	_holo_anchors.clear()
 	for node: Node in _recruiter_nodes:
 		if is_instance_valid(node):
 			node.queue_free()
@@ -533,19 +548,8 @@ func add_recruiters(client: Object, world: Node3D) -> void:
 			ring.mesh = torus
 			ring.material_override = mat
 			ring.position = pos + Vector3.UP * 0.08
-			var label := Label3D.new()
-			label.text = str(qm["name"])
-			label.billboard = BaseMaterial3D.BILLBOARD_ENABLED
-			label.fixed_size = true
-			label.pixel_size = 0.0014
-			label.font_size = 24
-			label.outline_size = 8
-			label.modulate = col
-			label.position = pos + Vector3.UP * 2.5
 			_world_root.add_child(ring)
-			_world_root.add_child(label)
 			_qm_nodes.append(ring)
-			_qm_nodes.append(label)
 
 	if _vendor_nodes.is_empty():
 		for v: Dictionary in client.get_vendors():
@@ -561,19 +565,8 @@ func add_recruiters(client: Object, world: Node3D) -> void:
 			ring.mesh = torus
 			ring.material_override = mat
 			ring.position = pos + Vector3.UP * 0.08
-			var label := Label3D.new()
-			label.text = str(v["name"])
-			label.billboard = BaseMaterial3D.BILLBOARD_ENABLED
-			label.fixed_size = true
-			label.pixel_size = 0.0014
-			label.font_size = 24
-			label.outline_size = 8
-			label.modulate = col
-			label.position = pos + Vector3.UP * 2.5
 			_world_root.add_child(ring)
-			_world_root.add_child(label)
 			_vendor_nodes.append(ring)
-			_vendor_nodes.append(label)
 
 	if _workbench_nodes.is_empty():
 		for wb: Dictionary in client.get_workbenches():
@@ -589,19 +582,8 @@ func add_recruiters(client: Object, world: Node3D) -> void:
 			ring.mesh = torus
 			ring.material_override = mat
 			ring.position = pos + Vector3.UP * 0.08
-			var label := Label3D.new()
-			label.text = str(wb["name"])
-			label.billboard = BaseMaterial3D.BILLBOARD_ENABLED
-			label.fixed_size = true
-			label.pixel_size = 0.0014
-			label.font_size = 24
-			label.outline_size = 8
-			label.modulate = col
-			label.position = pos + Vector3.UP * 2.5
 			_world_root.add_child(ring)
-			_world_root.add_child(label)
 			_workbench_nodes.append(ring)
-			_workbench_nodes.append(label)
 
 
 func at_recruiter(client: Object) -> Dictionary:
@@ -813,9 +795,114 @@ func _update_giver_markers(client: Object) -> void:
 		sprite.fixed_size = true
 		sprite.pixel_size = 0.0012
 		sprite.modulate = GIVER_COLOR
-		sprite.position = (npc["position"] as Vector3) + Vector3.UP * 2.45
+		sprite.layers = TeamTags.LAYER
+		sprite.position = (npc["position"] as Vector3) + Vector3.UP * (HOLO_HEIGHT + 0.85)
 		_world_root.add_child(sprite)
 		_giver_nodes[int(npc["entity"])] = sprite
+
+
+# The world's holograms (Battlefront's insignia, as over soldiers in a match):
+# the Rebels', the Empire's, and Battlefront's command post icon for
+# everyone else; from whichever exported map has them. null if none does.
+func _world_holograms() -> TeamTags:
+	if _holograms != null or _holograms_looked:
+		return _holograms
+	_holograms_looked = true
+	var maps := DirAccess.open("res://imported_assets/maps")
+	if maps == null:
+		return null
+	for map_name: String in maps.get_directories():
+		var models := "maps/%s/models/" % map_name
+		if FileAccess.file_exists("res://imported_assets/" + models + "com_icon_alliance.gltf") \
+				and FileAccess.file_exists("res://imported_assets/" + models + "com_icon_imperial.gltf"):
+			var tags := TeamTags.new("res://imported_assets", {"images": {
+					"alliance": models + "com_icon_alliance.gltf", "empire": models + "com_icon_imperial.gltf",
+					"neutral": "hud/textures/hud_flag_icon.png"}})
+			if tags.available():
+				_holograms = tags
+			break
+	return _holograms
+
+
+# Whose side a Galaxies character is on, by their template. ASSUMPTION:
+# troopers and Imperials are the Empire's, rebels the Rebellion's, and
+# everyone else neutral.
+static func side_of_template(template: String) -> String:
+	var t := template.to_lower()
+	for imperial: String in ["stormtrooper", "imperial", "scout_trooper", "dark_trooper", "_imp_", "storm_commando"]:
+		if t.contains(imperial):
+			return "empire"
+	return "alliance" if t.contains("rebel") else "neutral"
+
+
+# A soldier, bandit or player's hologram in the world (red or blue, as in a
+# match); false if there are no holograms.
+func show_combat_hologram(id: int, model: Node3D, side: String, friend: bool, alive: bool,
+		height := TeamTags.HEIGHT) -> bool:
+	if _world_holograms() == null:
+		return false
+	_holograms.show(id, model, side, friend, alive, height)
+	return true
+
+
+func forget_hologram(id: int) -> void:
+	if _holograms != null:
+		_holograms.forget(id)
+
+
+# Over each shop (vendors, quartermasters: green), quest giver (yellow) and
+# workbench (purple), a hologram of its keeper's side; then all the world's
+# holograms turned, sized and faded for the camera.
+func _update_place_holograms(client: Object, delta: float) -> void:
+	if _world_holograms() == null or _world_root == null:
+		return
+	var looks: PackedStringArray = client.get_looks()
+	var by_name := {}
+	var by_entity := {}
+	for r: Dictionary in client.get_remotes():
+		var look := int(r.get("look", 0))
+		if look > 0 and look <= looks.size():
+			by_name[str(r["name"])] = looks[look - 1]
+			by_entity[int(r["id"])] = looks[look - 1]
+	var seen := {}
+	for v: Dictionary in client.get_vendors():
+		_place_hologram("vendor:" + str(v["name"]), v["position"],
+				side_of_template(str(by_name.get(str(v["name"]), ""))), SHOP_COLOR, seen)
+	for q: Dictionary in client.get_quartermasters():
+		var faction := str(q.get("faction", ""))
+		_place_hologram("qm:" + str(q["name"]), q["position"],
+				"alliance" if faction == "rebellion" else ("empire" if faction == "empire" else "neutral"), SHOP_COLOR, seen)
+	for wb: Dictionary in client.get_workbenches():
+		_place_hologram("workbench:" + str(wb["name"]), wb["position"], "neutral", CRAFT_COLOR, seen)
+	for npc: Dictionary in client.get_quest_npcs():
+		if bool(npc.get("giver", false)):
+			var template := str(by_entity.get(int(npc["entity"]), by_name.get(str(npc["name"]), "")))
+			_place_hologram("giver:" + str(npc["name"]), npc["position"], side_of_template(template), GIVER_COLOR, seen)
+	for key: String in _holo_anchors.keys():
+		if not seen.has(key):
+			_holograms.forget(key.hash())
+			(_holo_anchors[key] as Node).queue_free()
+			_holo_anchors.erase(key)
+	var camera := _world_root.get_viewport().get_camera_3d()
+	if camera != null:
+		_holograms.update(camera, delta, client.raycast)
+
+
+func _place_hologram(key: String, at: Vector3, side: String, color: Color, seen: Dictionary) -> void:
+	seen[key] = true
+	var anchor: Node3D = _holo_anchors.get(key)
+	if anchor == null:
+		anchor = Node3D.new()
+		_world_root.add_child(anchor)
+		_holo_anchors[key] = anchor
+	anchor.position = at
+	_holograms.show(key.hash(), anchor, side, true, true, HOLO_HEIGHT, color, PLACE_HOLO_SCALE)
+
+
+# A practice target's damage per second over the last few seconds (0 when
+# it's not been hit), for the aim's readout.
+func target_dps(id: int) -> float:
+	return float((_target_nodes.get(id, {}) as Dictionary).get("dps", 0.0))
 
 
 func at_lootable_corpse(client: Object) -> Dictionary:
@@ -952,16 +1039,8 @@ func _update_targets(client: Object, delta: float) -> void:
 			head.material_override = mat
 			head.position = Vector3.UP * 1.62
 			body.add_child(head)
-			var label := Label3D.new()
-			label.billboard = BaseMaterial3D.BILLBOARD_ENABLED
-			label.fixed_size = true
-			label.pixel_size = 0.0013
-			label.font_size = 24
-			label.outline_size = 6
-			label.position = Vector3.UP * 2.25
-			root.add_child(label)
 			_world_root.add_child(root)
-			_target_nodes[id] = {"root": root, "body": body, "mat": mat, "label": label,
+			_target_nodes[id] = {"root": root, "body": body, "mat": mat,
 					"hits": [], "last_dmg": 0.0, "flash": 0.0}
 
 		var entry: Dictionary = _target_nodes[id]
@@ -980,12 +1059,9 @@ func _update_targets(client: Object, delta: float) -> void:
 			total += float(h["dmg"])
 		var span := maxf(1.0, now_s - float(hits[0]["t"])) if hits.size() > 1 else 1.0
 		var dps := total / span if not hits.is_empty() else 0.0
-		var lbl: Label3D = entry["label"]
-		if alive:
-			lbl.text = "%s\n%d / %d HP%s" % [str(t["name"]), roundi(float(t["health"])), roundi(float(t["max_health"])),
-					"\nLast: %.0f  DPS: %.0f" % [float(entry["last_dmg"]), dps] if dps > 0.5 else ""]
-		else:
-			lbl.text = "%s\n[KNOCKED DOWN]" % str(t["name"])
+		entry["dps"] = dps
+		if _world_holograms() != null:
+			_holograms.show(TARGET_HOLO_ID + id, root, "neutral", false, alive)
 
 	for id: int in _target_nodes.keys():
 		if not seen.has(id):
@@ -993,6 +1069,7 @@ func _update_targets(client: Object, delta: float) -> void:
 			if is_instance_valid(r):
 				r.queue_free()
 			_target_nodes.erase(id)
+			forget_hologram(TARGET_HOLO_ID + id)
 
 
 func update_hub(client: Object, world: Node3D, delta: float, pause_visible: bool,
@@ -1005,6 +1082,7 @@ func update_hub(client: Object, world: Node3D, delta: float, pause_visible: bool
 	if in_hub:
 		_update_targets(client, delta)
 		_update_corpse_markers(client)
+		_update_place_holograms(client, delta)
 		if _quest_screen != null and _hub_hud != null:
 			_update_quest_hud(client)
 	var status: Dictionary = client.get_player_status()

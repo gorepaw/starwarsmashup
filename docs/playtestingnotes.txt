@@ -2,13 +2,22 @@
   -> The HUD fitted every held weapon's profile to a rifle's width, so the round C-22 grenade stood ~4x
      too tall. Profiles are now also capped in height (bf2_hud.gd WEAPON_PROFILE_HEIGHT).
 
-I dont like the text for the targets or the shops, I would like some sort of floating holographic icon 
+[DONE] I dont like the text for the targets or the shops, I would like some sort of floating holographic icon
 above sort of like in the battles instead. it could be an empire, rebel, or neutral symbol depending on the character,
  and then it could be green for shops, yellow for quests, and purple for crafting, unlike the red and blue for combat
+  -> The floating names are gone. Over each shop (vendors, quartermasters) floats a green hologram, over
+     each quest giver a yellow one (their chevron above it), over the workbench a purple one: the battles'
+     insignia, Rebel or Imperial by the character (a quartermaster's faction; a trooper is the Empire's),
+     and Battlefront's command post icon for everyone neutral. Practice targets and bandits get a red one,
+     other players red or blue by side, as in a match. They grey out behind walls, as the battles' do.
 
-the name of bots/shops/mobs/anything can pop up as a tooltip somehwere when we aim at something instead of being 
-persistently above the head, and we should put it in bf2 style graphic and font health bar of enemy should pop up 
+[DONE] the name of bots/shops/mobs/anything can pop up as a tooltip somehwere when we aim at something instead of being
+persistently above the head, and we should put it in bf2 style graphic and font health bar of enemy should pop up
 somewhere when we aim at or shoot them too
+  -> Battlefront's own target readout, at the top middle of the screen where it puts it: what you aim at
+     is named in its font (people, shops, quest givers, creatures, bandits, targets, workbenches,
+     terminals; not through walls), and an enemy's (or a target's, with its DPS) health bar shows while
+     you aim at it and for 3 seconds after you hit it.
 
 [DONE] the minimap needs a dot at the center for the player's location
   -> Battlefront's player marker (its player_icon triangle, yellow, outlined) now sits at the radar's

@@ -10,6 +10,12 @@
 #   tags.show(id, model, "empire", friend, alive)       # each frame, per soldier
 #   tags.update(camera, delta, raycast)                 # raycast(from, to) -> fraction or < 0
 #   tags.forget(id)                                     # gone
+#
+# In the world they mark people and places by what they're for: a `tint`
+# (a shop's green, a quest's yellow, crafting's purple) in place of friend
+# and enemy, and the "neutral" side's symbol may be a flat image (a .png: a
+# glowing quad, as Battlefront's command post icon). They're drawn on render
+# layer LAYER (pictures of the world from overhead leave them out).
 extends RefCounted
 
 const HEIGHT := 2.25           # m over a soldier's feet
@@ -25,6 +31,7 @@ const FRIEND := Color(0.35, 0.6, 1.0)  # as the game's FRIEND_COLOR, ENEMY_COLOR
 const ENEMY := Color(1.0, 0.3, 0.25)
 const BLOCKED_FRIEND := Color(0.6, 0.6, 0.62)
 const BLOCKED_FRIEND_ALPHA := 0.3
+const LAYER := 2  # render layer (its bit) of what's drawn over the world for the player
 
 var _dir := ""
 var _images := {}     # side -> its model's file
@@ -47,7 +54,8 @@ func available() -> bool:
 # A soldier's hologram, created the first time (side: "alliance", "empire",
 # "republic" or "cis"; none for anything else), `height` over its feet (a
 # native's own: an Ewok's is lower).
-func show(id: int, model: Node3D, side: String, friend: bool, alive: bool, height := HEIGHT) -> void:
+func show(id: int, model: Node3D, side: String, friend: bool, alive: bool, height := HEIGHT,
+		tint := Color(0, 0, 0, 0), scale := 1.0) -> void:
 	var tag: Dictionary = _tags.get(id, {})
 	if tag.is_empty() or tag["side"] != side or not is_instance_valid(tag["pivot"]):
 		forget(id)
@@ -60,6 +68,8 @@ func show(id: int, model: Node3D, side: String, friend: bool, alive: bool, heigh
 		_order.append(id)
 	tag["friend"] = friend
 	tag["alive"] = alive
+	tag["tint"] = tint
+	tag["scale"] = scale
 
 
 func forget(id: int) -> void:
@@ -94,7 +104,12 @@ func update(camera: Camera3D, delta: float, raycast: Callable) -> void:
 		var seen := float(tag["seen"])
 		var color: Color
 		var alpha: float
-		if tag["friend"]:
+		var tint: Color = tag.get("tint", Color(0, 0, 0, 0))
+		if tint.a > 0.0:
+			# A place's or person's own color: greyed and faint when hidden.
+			color = tint.lerp(BLOCKED_FRIEND, 1.0 - seen)
+			alpha = lerpf(BLOCKED_FRIEND_ALPHA, BRIGHTNESS, seen) * tint.a
+		elif tag["friend"]:
 			color = FRIEND.lerp(BLOCKED_FRIEND, 1.0 - seen)
 			alpha = lerpf(BLOCKED_FRIEND_ALPHA, BRIGHTNESS, seen)
 		else:
@@ -107,7 +122,7 @@ func update(camera: Camera3D, delta: float, raycast: Callable) -> void:
 		var at := pivot.global_position
 		var to_camera := Vector2(eye.x - at.x, eye.z - at.z)
 		var facing := atan2(to_camera.x, to_camera.y) + SWAY * sin(_time * SWAY_RATE * TAU + id)
-		var size := clampf(at.distance_to(eye) * SIZE_PER_METER, MIN_SIZE, MAX_SIZE)
+		var size := clampf(at.distance_to(eye) * SIZE_PER_METER, MIN_SIZE, MAX_SIZE) * float(tag.get("scale", 1.0))
 		pivot.global_basis = Basis(Vector3.UP, facing).scaled(Vector3.ONE * size / _width(tag))
 
 
@@ -134,6 +149,7 @@ func _make(model: Node3D, side: String, height := HEIGHT) -> Dictionary:
 	follow.remote_path = follow.get_path_to(pivot)
 	var materials: Array = []
 	for mesh: MeshInstance3D in image.find_children("*", "MeshInstance3D", true, false):
+		mesh.layers = LAYER
 		for surface in mesh.mesh.get_surface_count():
 			var glow := (mesh.get_surface_override_material(surface) as StandardMaterial3D).duplicate() as StandardMaterial3D
 			mesh.set_surface_override_material(surface, glow)
@@ -150,6 +166,9 @@ func _template(side: String) -> Node3D:
 	_templates[side] = null
 	if not _images.has(side):
 		return null
+	if str(_images[side]).ends_with(".png"):
+		_templates[side] = _flat_template(_dir.path_join(_images[side]))
+		return _templates[side]
 	var document := GLTFDocument.new()
 	var state := GLTFState.new()
 	if document.append_from_file(ProjectSettings.globalize_path(_dir.path_join(_images[side])), state) != OK:
@@ -178,3 +197,29 @@ func _template(side: String) -> Node3D:
 	scene.set_meta("width", maxf(bounds.size.x, bounds.size.y))
 	_templates[side] = scene
 	return scene
+
+
+# A flat symbol (an image): a glowing square, a meter across, drawn as the
+# models are (over anything, both sides).
+func _flat_template(path: String) -> Node3D:
+	var texture: Texture2D = load(path) if ResourceLoader.exists(path) else null
+	if texture == null:
+		return null
+	var root := Node3D.new()
+	var mesh := MeshInstance3D.new()
+	var quad := QuadMesh.new()
+	quad.size = Vector2.ONE
+	mesh.mesh = quad
+	mesh.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	var glow := StandardMaterial3D.new()
+	glow.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	glow.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	glow.blend_mode = BaseMaterial3D.BLEND_MODE_ADD
+	glow.cull_mode = BaseMaterial3D.CULL_DISABLED
+	glow.no_depth_test = true
+	glow.render_priority = 1
+	glow.albedo_texture = texture
+	mesh.set_surface_override_material(0, glow)
+	root.add_child(mesh)
+	root.set_meta("width", 1.0)
+	return root
