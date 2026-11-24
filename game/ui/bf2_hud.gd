@@ -73,6 +73,7 @@ var _dir := ""
 var _layout: Array = []
 var _tables: Array = []   # color tables from hudtransforms
 var _meshes := {}
+var _health_rect := Rect2()  # where the health bar is drawn (all of it), this frame; the shield's goes above
 var _panels := {}  # weapon panel ("player1weapon1") -> its backdrop's screen rect, where its held weapon goes
 var _draws: Array = []    # collected each redraw: [{z, order, call}]
 
@@ -125,6 +126,7 @@ func _process(delta: float) -> void:
 
 func _draw() -> void:
 	_draws.clear()
+	_health_rect = Rect2()
 	var screen := size
 	for node: Dictionary in _layout:
 		_element(node, Transform2D(), Color.WHITE, 128.0, true, screen)
@@ -137,9 +139,15 @@ func _draw() -> void:
 		_draw_shield_bar(screen)
 
 
+# The Deflector Shield's charge: a thin bar just above the health bar, as
+# wide (Battlefront has none; this keeps clear of the weapon panels above).
 func _draw_shield_bar(screen: Vector2) -> void:
-	var h := screen.y
-	var bar := Rect2(Vector2(screen.x * 0.042, h * 0.775), Vector2(h * 0.17, h * 0.014))
+	var health := _health_rect
+	if health.size.x <= 0.0:
+		return
+	var tall := maxf(3.0, health.size.y * 0.55)
+	var bar := Rect2(Vector2(health.position.x, health.position.y - tall - health.size.y * 0.75),
+			Vector2(health.size.x, tall))
 	draw_rect(bar, Color(0.05, 0.09, 0.14, 0.78))
 	var frac := clampf(shield_fraction, 0.0, 1.0)
 	if frac > 0.0:
@@ -259,6 +267,8 @@ func _bitmap(node: Dictionary, xf: Transform2D, color: Color, z: float, bar: boo
 		var v: Array = t["values"]
 		uv = Rect2(v[0], v[1], float(v[2]) - float(v[0]), float(v[3]) - float(v[1]))
 	if bar:
+		if str(_prop(node, "EventValue").get("text", "")) == "player1.healthFraction":
+			_health_rect = Rect2(xf * rect.position, xf.basis_xform(rect.size)).abs()
 		var fraction := clampf(_number_event(node, "EventValue", _value(node, "Value", 0, 1.0)), 0.0, 1.0)
 		rect.size.x *= fraction
 		uv.size.x *= fraction
