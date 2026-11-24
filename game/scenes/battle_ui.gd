@@ -4,6 +4,7 @@
 class_name BattleUI
 extends Node
 
+const CENTER_FONT := "gamefont_large"  # the middle of the screen's messages ("Eliminated")
 const Bf2Hud = preload("res://ui/bf2_hud.gd")
 const Bf2Map = preload("res://rendering/bf2_map.gd")
 const Bf2Audio = preload("res://audio/bf2_audio.gd")
@@ -138,6 +139,14 @@ func setup(layer: CanvasLayer, world_root: Node3D, audio: Bf2Audio, hud_dir: Str
 	_center.add_theme_font_size_override("font_size", 20)
 	_center.add_theme_color_override("font_outline_color", Color.BLACK)
 	_center.add_theme_constant_override("outline_size", 6)
+	# In Battlefront's own large font where there's one, with its drop shadow
+	# (sized with the screen in _update_match_hud).
+	if _bf2_hud != null and _bf2_hud.art != null and _bf2_hud.art.godot_font(CENTER_FONT) != null:
+		_center.add_theme_font_override("font", _bf2_hud.art.godot_font(CENTER_FONT))
+		_center.add_theme_constant_override("outline_size", 0)
+		_center.add_theme_color_override("font_shadow_color", Color(0, 0, 0, 0.8))
+		_center.add_theme_constant_override("shadow_offset_x", 2)
+		_center.add_theme_constant_override("shadow_offset_y", 2)
 	layer.add_child(_center)
 	_match_label = RichTextLabel.new()
 	_match_label.bbcode_enabled = true
@@ -713,6 +722,11 @@ func _aimed_at(client: Object, camera: Camera3D) -> Dictionary:
 
 func _update_match_hud(client: Object, delta: float, hub_ui: Node, generation: int, who_cb: Callable) -> void:
 	_center.text = ""
+	if _center.has_theme_font_override("font"):
+		# Battlefront's fonts are drawn for a 600-pixel-high screen.
+		var font_size := roundi(float(_bf2_hud.art.line_height(CENTER_FONT)) * _center.get_viewport_rect().size.y / 600.0)
+		if _center.get_theme_font_size("font_size") != font_size:
+			_center.add_theme_font_size_override("font_size", font_size)
 	var game: Dictionary = client.get_match()
 	if game.is_empty() or not client.is_spawned():
 		_match_label.text = ""

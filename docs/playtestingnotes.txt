@@ -24,4 +24,7 @@ witht the vendors and such. they dont actually have any quests though, whats up 
      now". Now they say why ("...has work for you after A Stranger in Mos Eisley (Ilsa Marn)"), and the
      chevron is bright only over givers with work for you now (faint over the others).
 
-Make the font for "Eliminated" more like bf2
+[DONE] Make the font for "Eliminated" more like bf2
+  -> The middle-of-screen messages ("Eliminated", "Eliminated. Respawning...", notices) now use
+     Battlefront's own gamefont_large, drop-shadowed and scaled with the screen as Battlefront's are.
+     (Bf2Art.godot_font() turns any of its bitmap fonts into a Godot Font for Labels.)

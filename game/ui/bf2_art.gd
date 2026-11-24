@@ -18,6 +18,7 @@ var _textures := {}
 var _fonts := {}
 var _strings := {}
 var _styles := {}
+var _godot_fonts := {}
 
 
 static func load_from(directory: String) -> RefCounted:
@@ -60,6 +61,50 @@ func localize(key: String) -> String:
 
 func has_font(font_name: String) -> bool:
 	return _fonts.has(font_name)
+
+
+# A Battlefront font as a Godot Font (a bitmap FontFile, built once), for
+# Labels and the like: at a font_size of its line height it's its own size,
+# and other sizes scale it (as the art's draw_text does). null if there's no
+# such font.
+func godot_font(font_name: String) -> Font:
+	if _godot_fonts.has(font_name):
+		return _godot_fonts[font_name]
+	var font: Dictionary = _fonts.get(font_name, {})
+	if font.is_empty():
+		return null
+	var line := int(font["line"])
+	var file := FontFile.new()
+	file.fixed_size = line
+	file.fixed_size_scale_mode = TextServer.FIXED_SIZE_SCALE_ENABLED
+	var cache_size := Vector2i(line, 0)
+	# Its glyphs hang from their line's top; Godot's from a baseline.
+	var ascent := float(line) * 0.8
+	file.set_cache_ascent(0, line, ascent)
+	file.set_cache_descent(0, line, float(line) - ascent)
+	var pages: Array = font["pages"]
+	for i in pages.size():
+		var page: Texture2D = pages[i]
+		if page != null:
+			var image := page.get_image()
+			if image.is_compressed():
+				image.decompress()
+			file.set_texture_image(0, cache_size, i, image)
+	for code: int in font["glyphs"]:
+		var glyph: Array = font["glyphs"][code]
+		var page: Texture2D = pages[int(glyph[1])]
+		if page == null:
+			continue
+		var page_size := page.get_size()
+		var region := Rect2(float(glyph[7]) * page_size.x, float(glyph[9]) * page_size.y,
+				(float(glyph[8]) - float(glyph[7])) * page_size.x, (float(glyph[10]) - float(glyph[9])) * page_size.y)
+		file.set_glyph_advance(0, line, code, Vector2(float(glyph[2]), 0))
+		file.set_glyph_offset(0, cache_size, code, Vector2(float(glyph[3]), float(glyph[5]) - ascent))
+		file.set_glyph_size(0, cache_size, code, region.size)
+		file.set_glyph_uv_rect(0, cache_size, code, region)
+		file.set_glyph_texture_idx(0, cache_size, code, int(glyph[1]))
+	_godot_fonts[font_name] = file
+	return file
 
 
 func line_height(font_name: String, scale := 1.0) -> float:
