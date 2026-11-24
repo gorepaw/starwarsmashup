@@ -10,7 +10,9 @@ the name of bots/shops/mobs/anything can pop up as a tooltip somehwere when we a
 persistently above the head, and we should put it in bf2 style graphic and font health bar of enemy should pop up 
 somewhere when we aim at or shoot them too
 
-the minimap needs a dot at the center for the player's location
+[DONE] the minimap needs a dot at the center for the player's location
+  -> Battlefront's player marker (its player_icon triangle, yellow, outlined) now sits at the radar's
+     middle, pointing the way you face; in matches and in the world.
 
 m key should bring up a full sized map especially for the swg overworld. it can be swg style, 
 it is very important for finding vendors and such

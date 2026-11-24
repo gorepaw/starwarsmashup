@@ -429,6 +429,18 @@ func _map(node: Dictionary, xf: Transform2D, color: Color, z: float, screen: Vec
 		_add(z - 1, func() -> void:
 			draw_set_transform_matrix(cone)
 			draw_mesh(fov["mesh"], fov["texture"], Transform2D(), cone_color))
+	# You, at its middle: Battlefront's player marker (player_icon), pointing
+	# the way you face (up: the map turns with you), outlined to stand out.
+	var you := _texture("player_icon")
+	if you != null:
+		var you_size := radius * 0.13
+		_add(z - 2.5, func() -> void:
+			draw_set_transform_matrix(xf)
+			var outline := you_size * 1.45
+			draw_texture_rect(you, Rect2(-Vector2(outline, outline) * 0.5, Vector2(outline, outline)), false,
+					Color(0, 0, 0, 0.75))
+			draw_texture_rect(you, Rect2(-Vector2(you_size, you_size) * 0.5, Vector2(you_size, you_size)), false,
+					Color(1.0, 0.92, 0.45)))
 	var post_icon := _texture(POST_ICON)
 	for marker: Dictionary in map_markers:
 		var at: Vector2 = to_map.call(marker["position"])
