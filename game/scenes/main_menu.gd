@@ -117,7 +117,7 @@ func _setup_3d() -> void:
 		if meta is Dictionary:
 			var mesh := MeshInstance3D.new()
 			if ClassDB.class_exists("SwmTerrain"):
-				var swm_t := ClassDB.instantiate("SwmTerrain")
+				var swm_t: Object = ClassDB.instantiate("SwmTerrain")
 				if swm_t.load_bake(ProjectSettings.globalize_path(bake)) == OK:
 					var ox := float(meta["origin_x"])
 					var oz := float(meta["origin_z"])
