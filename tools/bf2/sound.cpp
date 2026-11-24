@@ -247,9 +247,64 @@ void parse_snd_scop(std::span<const uint8_t> scop, SoundProp& prop) {
             prop.has_stream = true;
         } else if (df.keyword == H_Layer && df.u32s.size() >= 2) {
             const float delay = df.f32s.size() >= 3 ? df.f32s[2] : 0.0f;
-            prop.layers.push_back({df.u32s[1], delay});
+            prop.layers.push_back({df.u32s[1], delay, df.u32s[0]});
         }
     }
+}
+
+// A SoundParameterized's scope: Name, SoundLayered, and Layer() scopes of a
+// Name and ParameterGraph(parameter, graph, target) entries.
+void parse_parameterized_scop(std::span<const uint8_t> scop, SoundParameterized& out) {
+    static const uint32_t H_Name = sound_name_hash("Name");
+    static const uint32_t H_SoundLayered = sound_name_hash("SoundLayered");
+    static const uint32_t H_Layer = sound_name_hash("Layer");
+    static const uint32_t H_ParameterGraph = sound_name_hash("ParameterGraph");
+    const auto chunks = read_cfg_chunks(scop);
+    for (size_t i = 0; i < chunks.size(); ++i) {
+        DataFields df;
+        if (chunks[i].tag != TAG_DATA || !parse_data_fields(chunks[i].payload, df)) {
+            continue;
+        }
+        if (df.keyword == H_Name && !df.u32s.empty()) {
+            out.name_hash = df.u32s[0];
+        } else if (df.keyword == H_SoundLayered && !df.u32s.empty()) {
+            out.layered_hash = df.u32s[0];
+        } else if (df.keyword == H_Layer && i + 1 < chunks.size() && chunks[i + 1].tag == TAG_SCOP) {
+            SoundParameterized::Layer layer;
+            for (const CfgChunk& sub : read_cfg_chunks(chunks[i + 1].payload)) {
+                DataFields sf;
+                if (sub.tag != TAG_DATA || !parse_data_fields(sub.payload, sf)) {
+                    continue;
+                }
+                if (sf.keyword == H_Name && !sf.u32s.empty()) {
+                    layer.name_hash = sf.u32s[0];
+                } else if (sf.keyword == H_ParameterGraph && sf.u32s.size() >= 3) {
+                    layer.controls.push_back({sf.u32s[0], sf.u32s[1], sf.u32s[2]});
+                }
+            }
+            out.layers.push_back(std::move(layer));
+            ++i;
+        }
+    }
+}
+
+// A ParameterGraph record's scope: Name and its ControlPoint(x, y)s.
+std::pair<uint32_t, std::vector<std::pair<float, float>>> parse_graph_scop(std::span<const uint8_t> scop) {
+    static const uint32_t H_Name = sound_name_hash("Name");
+    static const uint32_t H_ControlPoint = sound_name_hash("ControlPoint");
+    std::pair<uint32_t, std::vector<std::pair<float, float>>> out;
+    for (const CfgChunk& chunk : read_cfg_chunks(scop)) {
+        DataFields df;
+        if (chunk.tag != TAG_DATA || !parse_data_fields(chunk.payload, df)) {
+            continue;
+        }
+        if (df.keyword == H_Name && !df.u32s.empty()) {
+            out.first = df.u32s[0];
+        } else if (df.keyword == H_ControlPoint && df.f32s.size() >= 2) {
+            out.second.emplace_back(df.f32s[0], df.f32s[1]);
+        }
+    }
+    return out;
 }
 
 } // namespace
@@ -362,6 +417,8 @@ void SoundLibrary::add_file(const std::filesystem::path& path) {
         static const uint32_t H_SoundStreamProperties = sound_name_hash("SoundStreamProperties");
         static const uint32_t H_SoundStream = sound_name_hash("SoundStream");
         static const uint32_t H_SoundLayered = sound_name_hash("SoundLayered");
+        static const uint32_t H_SoundParameterized = sound_name_hash("SoundParameterized");
+        static const uint32_t H_ParameterGraph = sound_name_hash("ParameterGraph");
 
         std::vector<uint8_t> buf(chunk_size);
         in.seekg(std::streamoff(chunk_start));
@@ -376,6 +433,23 @@ void SoundLibrary::add_file(const std::filesystem::path& path) {
             }
             DataFields df;
             if (!parse_data_fields(chunks[i].payload, df)) {
+                continue;
+            }
+            if (df.keyword == H_SoundParameterized) {
+                SoundParameterized p;
+                parse_parameterized_scop(chunks[i + 1].payload, p);
+                if (p.name_hash != 0) {
+                    parameterized_.try_emplace(p.name_hash, std::move(p));
+                }
+                ++i;
+                continue;
+            }
+            if (df.keyword == H_ParameterGraph) {
+                auto [name, points] = parse_graph_scop(chunks[i + 1].payload);
+                if (name != 0 && !points.empty()) {
+                    graphs_.try_emplace(name, std::move(points));
+                }
+                ++i;
                 continue;
             }
             SoundProp prop;
@@ -479,6 +553,16 @@ std::optional<SoundProp> SoundLibrary::resolve(uint32_t name_hash) const {
         if (!p.layers.empty()) { out.layers = p.layers; }
     }
     return out;
+}
+
+const SoundParameterized* SoundLibrary::find_parameterized(uint32_t name_hash) const {
+    const auto it = parameterized_.find(name_hash);
+    return it == parameterized_.end() ? nullptr : &it->second;
+}
+
+const std::vector<std::pair<float, float>>* SoundLibrary::find_graph(uint32_t name_hash) const {
+    const auto it = graphs_.find(name_hash);
+    return it == graphs_.end() ? nullptr : &it->second;
 }
 
 const SoundClipRef* SoundLibrary::find_sample(uint32_t sample_hash) const {

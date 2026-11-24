@@ -807,8 +807,12 @@ godot::Array vehicle_class_dicts(std::span<const core::VehicleClass> classes) {
         entry["explosion_effect"] = godot::String::utf8(v.explosion_effect.c_str());
         entry["engine_sound"] = godot::String::utf8(v.engine_sound.c_str());
         entry["stride_speed"] = v.stride_speed;
+        // Its top speed ahead (not boosting): its engine's sound goes by it.
+        entry["top_speed"] = v.kind == core::VehicleKind::flyer ? v.max_speed : v.forward_speed;
         entry["rider_seat"] = to_godot(v.rider_seat);
         entry["wake_effect"] = godot::String::utf8(v.wake_effect.c_str());
+        entry["step_sound"] = godot::String::utf8(v.step_sound.c_str());
+        entry["stomp_effect"] = godot::String::utf8(v.stomp_effect.c_str());
         godot::Array damage_effects;
         for (const core::VehicleClass::DamageEffect& d : v.damage_effects) {
             godot::Dictionary e;

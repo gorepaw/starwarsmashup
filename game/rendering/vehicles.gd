@@ -13,24 +13,30 @@
 # and PitchNode), about the vehicle's own up and right.
 # Hurt, a vehicle smokes, sparks and burns as its class's damage effects say;
 # a hover vehicle on the move trails its wake (dust).
+# Its engine runs while someone drives it (its class's EngineSound: loops
+# whose pitch and gain follow its speed, acceleration, health and how long
+# it's been on or off), and a walker's feet stomp as they land.
 extends RefCounted
 
 const EASE := 12.0  # 1/s: how fast an empty vehicle's drawn place catches up
 const WALKING := 0.4  # m/s: a walker going slower is standing
 const TURNING := 0.35  # rad/s: a standing walker turning faster turns on the spot
+const ENGINE_OFF := 4.0  # s: an engine turned off this long is silent
 
 var classes: Array = []      # the battlefield's "vehicles" (SwmClient.get_battlefield)
 var _root: Node3D
 var _effects: RefCounted     # the game's Bf2Effects (null: none)
+var _audio: RefCounted       # the game's Bf2Audio (null: none)
 var _templates := {}         # class index -> Node3D (a loaded model, kept out of the tree)
 var _nodes := {}             # vehicle id -> {node, class, alive}
 
 
-func setup(root: Node3D, vehicle_classes: Array, effects: RefCounted = null) -> void:
+func setup(root: Node3D, vehicle_classes: Array, effects: RefCounted = null, audio: RefCounted = null) -> void:
 	clear()
 	_root = root
 	classes = vehicle_classes
 	_effects = effects
+	_audio = audio
 
 
 func clear() -> void:
@@ -109,8 +115,11 @@ func update(vehicles: Array, shown: Dictionary, delta: float) -> void:
 			_step(entry, bool(v["alive"]), delta)
 		_aim_turrets(entry, v, shown)
 		_update_effects(entry, v)
+		_update_engine(entry, v, delta)
 	for id: int in _nodes.keys():
 		if not seen.has(id):
+			if _audio != null and not entry_engine(_nodes[id]).is_empty():
+				_audio.stop_engine(entry_engine(_nodes[id]))
 			(_nodes[id]["node"] as Node).queue_free()
 			_nodes.erase(id)
 
@@ -134,6 +143,89 @@ func _update_effects(entry: Dictionary, v: Dictionary) -> void:
 		var moving := (v["velocity"] as Vector3).length() > 3.0 and bool(v["alive"])
 		_run(node, running, "wake", wake, Vector3(0, -float(c.get("altitude", 0.0)), 0), moving)
 	entry["effects"] = running
+
+
+# Its engine: on while it's driven (rising over TurnOnTime), off once it's
+# left (dying away over TurnOffTime), its loops set by how it goes.
+# ASSUMPTION: its acceleration is how fast its speed (of its top speed) is
+# changing, twice over a second, smoothed.
+func _update_engine(entry: Dictionary, v: Dictionary, delta: float) -> void:
+	var c := class_of(int(entry["class"]))
+	var sound := str(c.get("engine_sound", ""))
+	if _audio == null or sound == "" or delta <= 0:
+		return
+	var state: Dictionary = entry.get("engine_state", {"on": false, "on_time": 99.0, "off_time": 99.0,
+			"speed": 0.0, "acceleration": 0.0})
+	entry["engine_state"] = state
+	var running := int(v["driver"]) != 0 and bool(v["alive"])
+	if running and not bool(state["on"]):
+		state["on"] = true
+		state["on_time"] = 0.0
+	elif not running and bool(state["on"]):
+		state["on"] = false
+		state["off_time"] = 0.0
+	if bool(state["on"]):
+		state["on_time"] = float(state["on_time"]) + delta
+	else:
+		state["off_time"] = float(state["off_time"]) + delta
+	var engine := entry_engine(entry)
+	if not bool(state["on"]) and float(state["off_time"]) > ENGINE_OFF:
+		if not engine.is_empty():
+			_audio.stop_engine(engine)
+		return
+	if engine.is_empty():
+		engine = _audio.start_engine(sound, entry["node"])
+		entry["engine"] = engine
+		if engine.is_empty():
+			return
+	var node: Node3D = entry["node"]
+	var top := maxf(1.0, float(c.get("top_speed", 20.0)))
+	var speed := (v["velocity"] as Vector3).dot(node.global_basis.z.normalized()) / top  # models face +z
+	var change := clampf((speed - float(state["speed"])) / delta * 2.0, -1.0, 1.0)
+	state["acceleration"] = lerpf(float(state["acceleration"]), change, minf(1.0, 4.0 * delta))
+	state["speed"] = speed
+	_audio.update_engine(engine, {
+		"speed": speed,
+		"acceleration": float(state["acceleration"]),
+		"turn_on_time": float(state["on_time"]) if bool(state["on"]) else 99.0,
+		"turn_off_time": 0.0 if bool(state["on"]) else float(state["off_time"]),
+		"health": float(v["health"]) / maxf(1.0, float(v["max_health"])),
+	})
+
+
+func entry_engine(entry: Dictionary) -> Dictionary:
+	return entry.get("engine", {})
+
+
+# A walker's foot landing: its stomp (dust) and its step's sound, under the
+# foot that came down (its feet in turn; under the walker if its bones
+# aren't found).
+func _footfall(entry: Dictionary) -> void:
+	var c := class_of(int(entry["class"]))
+	var node: Node3D = entry["node"]
+	var walk: Dictionary = entry["walk"]
+	var feet: Array = walk.get("feet", [])
+	if not walk.has("feet"):
+		var skeletons := node.find_children("*", "Skeleton3D", true, false)
+		if not skeletons.is_empty():
+			var skeleton: Skeleton3D = skeletons[0]
+			for i in skeleton.get_bone_count():
+				var bone := skeleton.get_bone_name(i).to_lower()
+				if bone.ends_with("_foot") and (bone.contains("_l_") or bone.contains("_r_")):
+					feet.append([skeleton, i])
+		walk["feet"] = feet
+	var at := node.global_position
+	if not feet.is_empty():
+		var k := int(walk.get("foot", 0)) % feet.size()
+		walk["foot"] = int(walk.get("foot", 0)) + 1  # (its footfalls so far)
+		var skeleton: Skeleton3D = feet[k][0]
+		at = skeleton.global_transform * skeleton.get_bone_global_pose(int(feet[k][1])).origin
+		at.y = node.global_position.y
+	if _effects != null and str(c.get("stomp_effect", "")) != "":
+		_effects.spawn_burst(str(c["stomp_effect"]), at)
+	if _audio != null and str(c.get("step_sound", "")) != "":
+		var camera := _root.get_viewport().get_camera_3d()
+		_audio.play_3d(str(c["step_sound"]), at, camera.global_position if camera != null else at)
 
 
 # An effect trailing from a point on the vehicle while `on`; off, it fades
@@ -258,6 +350,7 @@ func _step(entry: Dictionary, alive: bool, delta: float) -> void:
 			_play(walk, "walkstart_" + str(walk["next"]), rate, backward)
 			walk["state"] = "start"
 		elif state in ["start", "walk"] and done:
+			_footfall(entry)
 			_play(walk, "walk_" + str(walk["next"]), rate, backward)
 			walk["next"] = "b" if walk["next"] == "a" else "a"
 			walk["state"] = "walk"
@@ -266,8 +359,13 @@ func _step(entry: Dictionary, alive: bool, delta: float) -> void:
 	elif state in ["start", "walk"]:
 		if done:
 			# Each stride ends where the other starts.
+			_footfall(entry)
 			_play(walk, "walkstop_" + str(walk["next"]), 1.0)
 			walk["state"] = "stop"
+			walk["stopped"] = false
+	elif state == "stop" and done and not bool(walk.get("stopped", true)):
+		_footfall(entry)
+		walk["stopped"] = true
 	elif state != "stop" or done:
 		var turning := absf(float(walk["turn"])) > TURNING
 		if turning:

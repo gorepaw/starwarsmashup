@@ -32,6 +32,10 @@ namespace {
 using namespace swm;
 using namespace swm::bf2;
 
+// A walker's footfall sound (the AT-ST's com_weap_layered_at_step): its key's
+// name is hashed and wasn't found, so it's known by its hash.
+constexpr uint32_t WALKER_STEP_SOUND = 0x97157af6;
+
 constexpr const char* usage = R"(usage:
   bf2tool tree <file.lvl> [--depth <n>]
   bf2tool list <file.lvl> <tag>
@@ -557,6 +561,20 @@ int cmd_export_vehicle(const std::vector<std::string>& args) {
         if (const auto value = body_value(key)) {
             const std::string text(*value);
             out << key << " = " << (std::string_view(key) == "EngineSound" ? first_token(text) : text) << "\n";
+        }
+    }
+    // A walker's footfalls: the sound and the effect (StompEffect) as each
+    // foot lands.
+    {
+        bool step = false, stomp = false;
+        for (const auto& [hash, value] : vehicle.properties) {
+            if (hash == WALKER_STEP_SOUND && !step && !value.empty()) {
+                out << "StepSound = " << lowercase(first_token(value)) << "\n";
+                step = true;
+            } else if (hash == odf_hash("StompEffect") && !stomp && !value.empty()) {
+                out << "StompEffect = " << lowercase(first_token(value)) << "\n";
+                stomp = true;
+            }
         }
     }
     // Its explosion when destroyed: damage and reach, for whoever's near.
@@ -2651,11 +2669,12 @@ int cmd_export_effects(const std::vector<std::string>& args) {
                 }
             }
             // Vehicles' (and turrets'): smoking and burning as they're hurt,
-            // and a hover vehicle's wake.
+            // a hover vehicle's wake and a walker's footfalls.
             if (base == "hover" || base == "walker" || base == "commandwalker" || base == "flyer" ||
                 base == "armedbuilding") {
                 for (const auto& [hash, value] : resolved.properties) {
-                    if ((hash == odf_hash("DamageEffect") || hash == odf_hash("WakeEffect")) && !value.empty()) {
+                    if ((hash == odf_hash("DamageEffect") || hash == odf_hash("WakeEffect") ||
+                         hash == odf_hash("StompEffect")) && !value.empty()) {
                         effect_names.insert(lowercase(value));
                     }
                 }
@@ -2797,6 +2816,11 @@ int cmd_export_audio(const std::vector<std::string>& args) {
                     }
                 }
             }
+            for (const auto& [hash, value] : resolved.properties) {
+                if (hash == WALKER_STEP_SOUND && !value.empty()) {
+                    names.insert(lowercase(first_token(value)));
+                }
+            }
         }
     }
 
@@ -2881,6 +2905,68 @@ int cmd_export_audio(const std::vector<std::string>& args) {
     json << "{\n  \"sounds\": {\n";
     size_t resolved_count = 0;
     for (const std::string& name : names) {
+        // An engine: its SoundLayered's loops, each with the graphs that set
+        // its pitch and gain from the vehicle's state.
+        if (const SoundParameterized* engine = library.find_parameterized(sound_name_hash(name))) {
+            const auto layered = library.resolve(engine->layered_hash);
+            if (!layered) {
+                continue;
+            }
+            static const std::map<uint32_t, std::string> parameters = {
+                {sound_name_hash("Speed"), "speed"},
+                {sound_name_hash("Acceleration"), "acceleration"},
+                {sound_name_hash("TurnOnTime"), "turn_on_time"},
+                {sound_name_hash("TurnOffTime"), "turn_off_time"},
+                {sound_name_hash("Health"), "health"},
+            };
+            static const uint32_t H_Pitch = sound_name_hash("Pitch");
+            static const uint32_t H_Gain = sound_name_hash("Gain");
+            std::string body;
+            size_t written = 0;
+            for (const SoundProp::Layer& layer : layered->layers) {
+                const auto child = library.resolve(layer.prop_hash);
+                if (!child) {
+                    continue;
+                }
+                auto [_, clips] = collect_clips(*child);
+                if (clips.empty()) {
+                    continue;
+                }
+                std::string controls;
+                for (const SoundParameterized::Layer& p : engine->layers) {
+                    if (p.name_hash != layer.name_hash) continue;
+                    for (const SoundParameterized::Control& c : p.controls) {
+                        const auto param = parameters.find(c.parameter);
+                        const auto* points = library.find_graph(c.graph);
+                        if (param == parameters.end() || !points || (c.target != H_Pitch && c.target != H_Gain)) {
+                            continue;
+                        }
+                        controls += std::format("{}{{\"parameter\": \"{}\", \"target\": \"{}\", \"points\": [",
+                                                controls.empty() ? "" : ", ", param->second,
+                                                c.target == H_Pitch ? "pitch" : "gain");
+                        for (size_t k = 0; k < points->size(); ++k) {
+                            controls += std::format("{}[{:g}, {:g}]", k ? ", " : "", (*points)[k].first,
+                                                    (*points)[k].second);
+                        }
+                        controls += "]}";
+                    }
+                }
+                body += std::format("{}{{\"gain\": {:g}, \"pitch\": {:g}, \"min_distance\": {:g}, "
+                                    "\"max_distance\": {:g}, \"clips\": [",
+                                    written++ ? ", " : "", child->gain, child->pitch, child->min_distance,
+                                    child->max_distance);
+                for (size_t c = 0; c < clips.size(); ++c) {
+                    body += std::format("{}{{\"file\": {}, \"weight\": {:g}}}", c ? ", " : "",
+                                        json_string(clips[c].rel_path), clips[c].weight);
+                }
+                body += "], \"controls\": [" + controls + "]}";
+            }
+            if (written > 0) {
+                json << (resolved_count++ ? ",\n" : "") << "    " << json_string(name)
+                     << ": {\"kind\": \"engine\", \"layers\": [" << body << "]}";
+            }
+            continue;
+        }
         const auto prop_opt = library.resolve(sound_name_hash(name));
         if (!prop_opt) {
             continue;

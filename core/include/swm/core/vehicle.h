@@ -108,6 +108,8 @@ struct VehicleClass {
     };
     std::vector<DamageEffect> damage_effects;
     std::string wake_effect;
+    // A walker's footfalls: the sound and the effect as each foot lands.
+    std::string step_sound, stomp_effect;
 
     double radius() const;  // for walls: half its width
     double height() const { return bounds_max.y; }

@@ -269,6 +269,86 @@ func dispose() -> void:
 	_wav_cache.clear()
 
 
+# --- engines -------------------------------------------------------------------
+
+# A vehicle's engine (export-audio's "engine" sounds, Battlefront's
+# SoundParameterized): its loops, played from `node`, until stop_engine().
+# {} if there's no such engine.
+func start_engine(sound_name: String, node: Node3D) -> Dictionary:
+	var spec: Dictionary = _sounds.get(sound_name.to_lower(), {})
+	if str(spec.get("kind", "")) != "engine":
+		return {}
+	var layers := []
+	for layer: Dictionary in spec.get("layers", []):
+		var stream := _pick_stream(layer, true)
+		if stream == null:
+			continue
+		if stream.loop_mode != AudioStreamWAV.LOOP_FORWARD:
+			stream.loop_mode = AudioStreamWAV.LOOP_FORWARD
+			stream.loop_begin = 0
+			stream.loop_end = int(stream.get_length() * stream.mix_rate)
+		var p := AudioStreamPlayer3D.new()
+		p.bus = &"SFX"
+		p.stream = stream
+		p.attenuation_model = AudioStreamPlayer3D.ATTENUATION_INVERSE_DISTANCE
+		p.unit_size = maxf(2.0, float(layer.get("min_distance", 10.0)) * 0.6)
+		p.max_distance = maxf(20.0, float(layer.get("max_distance", 100.0)))
+		p.volume_db = -80.0
+		node.add_child(p)
+		p.play(randf() * stream.get_length())  # (engines side by side don't beat)
+		layers.append({"player": p, "layer": layer})
+	return {"layers": layers} if not layers.is_empty() else {}
+
+
+# Each layer's pitch and gain from the vehicle's state, `parameters`: speed
+# (forward, of its top speed), acceleration (-1..1), turn_on_time and
+# turn_off_time (seconds), health (0..1). Each of a layer's graphs scales its
+# pitch or gain by its value at that parameter. ASSUMPTION: gain stays at or
+# under 1 (one AT-ST layer's graph reaches 8).
+func update_engine(engine: Dictionary, parameters: Dictionary) -> void:
+	for entry: Dictionary in engine.get("layers", []):
+		var p: AudioStreamPlayer3D = entry["player"]
+		if not is_instance_valid(p):
+			continue
+		var layer: Dictionary = entry["layer"]
+		var gain := float(layer.get("gain", 1.0))
+		var pitch := float(layer.get("pitch", 1.0))
+		for control: Dictionary in layer.get("controls", []):
+			var parameter := str(control.get("parameter", ""))
+			if not parameters.has(parameter):
+				continue
+			var y := _graph(control.get("points", []), float(parameters[parameter]))
+			if str(control.get("target", "")) == "gain":
+				gain *= y
+			else:
+				pitch *= y
+		p.volume_db = linear_to_db(clampf(gain, 0.0001, 1.0))
+		p.pitch_scale = clampf(pitch, 0.1, 4.0)
+
+
+func stop_engine(engine: Dictionary) -> void:
+	for entry: Dictionary in engine.get("layers", []):
+		var p: AudioStreamPlayer3D = entry["player"]
+		if is_instance_valid(p):
+			p.queue_free()
+	engine.clear()
+
+
+# A graph's value at x: straight between its points, level past its ends.
+static func _graph(points: Array, x: float) -> float:
+	if points.is_empty():
+		return 1.0
+	if x <= float(points[0][0]):
+		return float(points[0][1])
+	for i in range(1, points.size()):
+		var x1 := float(points[i][0])
+		if x <= x1:
+			var x0 := float(points[i - 1][0])
+			var t := (x - x0) / maxf(1e-6, x1 - x0)
+			return lerpf(float(points[i - 1][1]), float(points[i][1]), t)
+	return float(points[points.size() - 1][1])
+
+
 func _play_layered(spec: Dictionary, is_3d: bool, pos: Vector3, camera_pos: Vector3, volume_scale: float) -> void:
 	for layer: Dictionary in spec.get("layers", []):
 		var delay := float(layer.get("delay", 0.0))

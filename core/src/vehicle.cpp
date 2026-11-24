@@ -148,6 +148,8 @@ VehicleClass load_vehicle_class(const std::filesystem::path& path) {
     v.stride_speed = s.number("StrideSpeed", 0);
     v.rider_seat = read_vec3(s, "RiderSeat", v.rider_seat);
     v.wake_effect = s.get("WakeEffect").value_or("");
+    v.step_sound = s.get("StepSound").value_or("");
+    v.stomp_effect = s.get("StompEffect").value_or("");
     for (const Ini::Section& section : ini.sections()) {
         if (section.name != "damage") continue;
         VehicleClass::DamageEffect d;

@@ -74,6 +74,26 @@ struct SoundProp {
     struct Layer {
         uint32_t prop_hash = 0;
         float delay = 0.0f;
+        uint32_t name_hash = 0;  // its name, for a SoundParameterized's layers
+    };
+    std::vector<Layer> layers;
+};
+
+// A sound whose layers follow the game's state (an engine): a SoundLayered
+// set of loops, each layer's pitch and gain set by graphs of parameters
+// (Speed, Acceleration, TurnOnTime, TurnOffTime, Health), as
+// ParameterGraph(parameter, graph, target) entries in its Layer scopes.
+struct SoundParameterized {
+    uint32_t name_hash = 0;
+    uint32_t layered_hash = 0;
+    struct Control {
+        uint32_t parameter = 0;  // its name's hash
+        uint32_t graph = 0;      // a ParameterGraph record's name
+        uint32_t target = 0;     // "Pitch" or "Gain" (hashed)
+    };
+    struct Layer {
+        uint32_t name_hash = 0;  // a layer of the SoundLayered, by its name
+        std::vector<Control> controls;
     };
     std::vector<Layer> layers;
 };
@@ -88,6 +108,10 @@ public:
     // Resolves a sound property by name hash, walking any Inherit chain.
     std::optional<SoundProp> resolve(uint32_t name_hash) const;
 
+    const SoundParameterized* find_parameterized(uint32_t name_hash) const;
+    // A ParameterGraph's ControlPoints (x, y), in order; null if none.
+    const std::vector<std::pair<float, float>>* find_graph(uint32_t name_hash) const;
+
     const SoundClipRef* find_sample(uint32_t sample_hash) const;
     const SoundClipRef* find_segment(uint32_t stream_hash, uint32_t seg_hash) const;
 
@@ -100,6 +124,8 @@ private:
     std::map<std::pair<uint32_t, uint32_t>, SoundClipRef> segments_;
     std::map<uint32_t, SoundClipRef> segments_by_hash_;
     std::map<uint32_t, SoundProp> props_;
+    std::map<uint32_t, SoundParameterized> parameterized_;
+    std::map<uint32_t, std::vector<std::pair<float, float>>> graphs_;
 };
 
 // Decodes Battlefront II Format 5 (IMA ADPCM) audio into interleaved signed

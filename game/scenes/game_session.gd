@@ -269,7 +269,7 @@ func start_session(config: Dictionary) -> bool:
 	_battle_ui.set_world_context(_world_bake, _map_meta, _battlefield)
 	_battle_ui.add_posts()
 	_bind_powerups()
-	_vehicles.setup(_world, _vehicle_classes(), _effects)
+	_vehicles.setup(_world, _vehicle_classes(), _effects, _audio)
 	if _bot == "" and not DisplayServer.get_name().to_lower().contains("headless"):
 		DisplayServer.window_set_size(Vector2i(1280, 720))
 		_capture_mouse(true)
@@ -1602,7 +1602,7 @@ func _arrive() -> void:
 	_battle_ui.set_world_context(_world_bake, _map_meta, _battlefield)
 	_battle_ui.add_posts()
 	_bind_powerups()
-	_vehicles.setup(_world, _vehicle_classes(), _effects)
+	_vehicles.setup(_world, _vehicle_classes(), _effects, _audio)
 	_was_alive = false
 	print("transferred to ", "the battle on " + str(_battlefield["name"]) if not _battlefield.is_empty() else "the hub")
 
