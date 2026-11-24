@@ -1,1 +1,1 @@
-E:\godot\godot-4.7.2\bin\godot.windows.editor.double.x86_64.exe --path game --windowed --resolution 1280x720
+& "E:\godot\godot-4.7.2\bin\godot.windows.editor.double.x86_64.exe" --path game
