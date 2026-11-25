@@ -753,6 +753,7 @@ struct Encoder {
         out.put(m.you.active_loadout);
         out.put(m.you.switching_loadout);
         out.put(m.you.switch_progress);
+        out.put(m.you.extract_progress);
         out.put(m.you.inventory_rev);
     }
     void operator()(const Goodbye&) { out.put(uint8_t(Type::goodbye)); }
@@ -1239,6 +1240,7 @@ Message decode(std::span<const uint8_t> packet) {
         m.you.active_loadout = in.get<uint8_t>();
         m.you.switching_loadout = in.get<int8_t>();
         m.you.switch_progress = in.get<float>();
+        m.you.extract_progress = in.get<float>();
         m.you.inventory_rev = in.get<uint32_t>();
         message = std::move(m);
         break;

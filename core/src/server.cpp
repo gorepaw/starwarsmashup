@@ -544,6 +544,7 @@ void GameServer::update(double now) {
         next_tick_time_ = now;
         next_save_time_ = now + config_.save_interval;
     }
+    now_ = now;
     receive(now);
     const double dt = 1 / config_.tick_rate;
     if (now - next_tick_time_ > 0.25) {
@@ -1161,6 +1162,7 @@ void GameServer::step() {
     if (tick_ % 15 == 0) {
         check_quest_positions();
     }
+    update_extractions(now_);
 
     net::Snapshot base_snapshot;
     base_snapshot.server_tick = tick_;
@@ -1229,6 +1231,10 @@ void GameServer::step() {
             client.switching_to >= 0
                 ? float(std::clamp(1.0 - client.switch_remaining / loadout_switch_time, 0.0, 1.0))
                 : 0.0f;
+        client.status.extract_progress =
+            client.extract_started >= 0.0 && config_.extract_time > 0.0
+                ? float(std::clamp((now_ - client.extract_started) / config_.extract_time, 0.0, 1.0))
+                : -1.0f;
         client.status.inventory_rev = client.inventory_rev;
         net::Snapshot client_snapshot = base_snapshot;
         if (filter_npcs) {

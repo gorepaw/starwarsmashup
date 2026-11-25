@@ -60,6 +60,10 @@ struct ServerConfig {
     bool friendly_fire = false;  // in a match
     bool single_match = false;   // one match, no next one (a hub's match: see match_over())
     bool pvp_enabled = true;     // false in open-world hubs (no player-vs-player harm outside matches)
+    // Extracting resources from the ground: it takes this many seconds, standing
+    // still, and the next must be this many meters from where the last was.
+    double extract_time = 6.0;
+    double extract_spacing = 25.0;
 };
 
 inline constexpr int hostile_npc_team = 100;
@@ -318,7 +322,11 @@ private:
         uint32_t crafting_rev = 0;
         uint32_t acked_crafting_rev = 0;
         uint32_t crafting_sync_tick = 0;
-        double last_extract_time = -10.0;
+        double extract_started = -1.0;  // when the extraction under way began; < 0: none
+        Vec3 extract_from;              // where it began (you must stay there)
+        ResourceCategory extract_category = ResourceCategory::mineral;
+        bool has_extracted = false;
+        Vec3 last_extract_site;         // where the last one finished
     };
     // A vehicle in a match. Empty, it keeps its own state; driven, its
     // driver's state is its state (MoveState::vehicle), and the driver's
@@ -467,6 +475,8 @@ private:
     void apply_professions(const Client& client, const CharacterLoadout& cl, Loadout& loadout) const;
     // Crafting & gathering (server_crafting.cpp).
     void handle_gather_request(Client& client, const net::GatherRequest& request, double now);
+    void update_extractions(double now);
+    void finish_extraction(Client& client, ResourceCategory category);
     void handle_craft_request(Client& client, const net::CraftRequest& request);
     void send_crafting_sync(Client& client);
     void save_materials(Client& client);
@@ -532,6 +542,7 @@ private:
     uint64_t rng_ = 0x574D5049434B5550ull;
     uint32_t next_spawn_slot_ = 0;  // spreads spawns around a post
     double next_tick_time_ = 0;
+    double now_ = 0;  // the clock as of the last update()
     double next_save_time_ = 0;
     bool started_ = false;
     std::optional<Vec3> cloning_facility_;

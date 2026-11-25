@@ -78,8 +78,12 @@ their unique loadouts, but for now they can all just be in plain clothes.
      plain_clothes). Characters made before this keep what they have: equip the Tatooine Field Tunic
      from the shops (40 Cr), or make a new one.
 
-gathering resources is a bit too easy, make it so the gathering takes longer and reuires you stay still, 
+[DONE] gathering resources is a bit too easy, make it so the gathering takes longer and reuires you stay still, 
 also make it so you need to move after each time
+  -> Extracting from the ground now takes 6 s, standing still (moving, dying or getting into a vehicle
+     breaks it off, and the scanner's panel shows the progress), and the next one must be at least 25 m
+     from where the last finished ("This ground is worked out: move N m..."). The server holds both rules
+     (ServerConfig extract_time, extract_spacing). Harvesting corpses and salvaging are as they were.
 
 [DONE] we dont need chevrons AND circles for questgivers. lets make an exclaimation point style symbol for non-faction quests,
 some kind of coins symbol for sell points, a chest symbol for nonfaction shops, and some kind of wrench symbol for 

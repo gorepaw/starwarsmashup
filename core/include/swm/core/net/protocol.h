@@ -200,6 +200,7 @@ struct PlayerStatus {
     uint8_t active_loadout = 0;
     int8_t switching_loadout = -1;
     float switch_progress = 0.0f;
+    float extract_progress = -1.0f;  // an extraction under way: how far along it is (0..1); else -1
     uint32_t inventory_rev = 0;
 
     friend bool operator==(const PlayerStatus&, const PlayerStatus&) = default;

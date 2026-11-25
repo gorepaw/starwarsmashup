@@ -188,6 +188,12 @@ func _paint_scanner() -> void:
 	var bar_col := Color(0.25, 0.92, 0.55) if conc >= 0.6 else (ACCENT if conc >= 0.3 else Color(0.85, 0.45, 0.25))
 	draw_rect(Rect2(bar_bg.position, Vector2(bar_bg.size.x * conc, bar_bg.size.y)), bar_col)
 	var hint := str(scanner.get("hint", "[E] Extract  [Wheel] Mode  [G] Off"))
-	if cd > 0.05:
-		hint = "Extracting... %.1fs" % cd
+	var extracting := float(scanner.get("extract_progress", -1.0))
+	if extracting >= 0.0:
+		hint = "Extracting... hold still  %d%%" % roundi(extracting * 100.0)
+		var track := Rect2(Vector2(box.position.x + 12 * u, box.end.y - 8 * u), Vector2(box.size.x - 24 * u, 4 * u))
+		draw_rect(track, Color(0.12, 0.16, 0.2, 0.85))
+		draw_rect(Rect2(track.position, Vector2(track.size.x * extracting, track.size.y)), ACCENT)
+	elif cd > 0.05:
+		hint = "[E] Extract  [Wheel] Mode  [G] Off"
 	text("gamefont_tiny", hint, Vector2(box.get_center().x, box.position.y + 42 * u), "Center", DIM)

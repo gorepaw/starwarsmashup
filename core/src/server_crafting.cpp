@@ -78,25 +78,26 @@ void GameServer::handle_gather_request(Client& client, const net::GatherRequest&
     const CraftingBook& book = *config_.crafting;
 
     if (req.action == net::GatherRequest::extract_terrain) {
-        if (now - client.last_extract_time < 1.5) return;
-        client.last_extract_time = now;
+        if (client.extract_started >= 0.0) return;  // already at it
         const ResourceCategory cat = ResourceCategory(req.category);
+        if (client.has_extracted) {
+            const Vec3 d = client.state.position - client.last_extract_site;
+            const double apart = std::hypot(d.x, d.z);
+            if (apart < config_.extract_spacing) {
+                notify(client.entity, std::format("This ground is worked out: move {} m from where you last extracted.",
+                                                  int(std::ceil(config_.extract_spacing - apart))));
+                return;
+            }
+        }
         const auto [res, conc] = book.best_resource_at(cat, client.state.position.x, client.state.position.z);
         if (res == nullptr) {
             notify(client.entity, "No matching resource signature nearby.");
             return;
         }
-        const std::string prof = cat == ResourceCategory::flora ? "foraging" : "surveying";
-        const int lv = profession_level(config_.professions, client.professions, prof);
-        const double yield_bonus = 1.0 + double(lv) * 0.01 + (lv >= 50 ? 0.20 : 0.0);
-        const int64_t qty = std::max<int64_t>(2, int64_t(std::llround((4.0 + 14.0 * conc) * yield_bonus)));
-        add_material(client.materials, res->id, qty);
-        save_materials(client);
-        ++client.crafting_rev;
-        client.crafting_sync_tick = 0;
-        const int64_t xp = 15 + int64_t(std::llround(conc * 25.0));
-        earn_profession_xp(client, prof, xp);
-        notify(client.entity, std::format("Extracted {}x {} ({}% concentration)", qty, res->name, int(conc * 100.0)));
+        client.extract_started = now;
+        client.extract_from = client.state.position;
+        client.extract_category = cat;
+        notify(client.entity, "Extracting: stay still.");
         return;
     }
 
@@ -166,6 +167,46 @@ void GameServer::handle_gather_request(Client& client, const net::GatherRequest&
             summary += std::format("{}x {}", st.amount, r ? r->name : st.resource_id);
         }
         notify(client.entity, std::format("Salvaged {} -> {}", def->display_name, summary));
+    }
+}
+
+// What you got from the ground where you stood still: the best of its kind there.
+void GameServer::finish_extraction(Client& client, ResourceCategory cat) {
+    const CraftingBook& book = *config_.crafting;
+    client.extract_started = -1.0;
+    const auto [res, conc] = book.best_resource_at(cat, client.state.position.x, client.state.position.z);
+    if (res == nullptr) {
+        notify(client.entity, "No matching resource signature nearby.");
+        return;
+    }
+    client.has_extracted = true;
+    client.last_extract_site = client.state.position;
+    const std::string prof = cat == ResourceCategory::flora ? "foraging" : "surveying";
+    const int lv = profession_level(config_.professions, client.professions, prof);
+    const double yield_bonus = 1.0 + double(lv) * 0.01 + (lv >= 50 ? 0.20 : 0.0);
+    const int64_t qty = std::max<int64_t>(2, int64_t(std::llround((4.0 + 14.0 * conc) * yield_bonus)));
+    add_material(client.materials, res->id, qty);
+    save_materials(client);
+    ++client.crafting_rev;
+    client.crafting_sync_tick = 0;
+    const int64_t xp = 15 + int64_t(std::llround(conc * 25.0));
+    earn_profession_xp(client, prof, xp);
+    notify(client.entity, std::format("Extracted {}x {} ({}% concentration)", qty, res->name, int(conc * 100.0)));
+}
+
+// Extractions under way: done after `extract_time` standing where they began;
+// broken off by moving (or dying).
+void GameServer::update_extractions(double now) {
+    if (config_.crafting == nullptr) return;
+    for (Client& client : clients_) {
+        if (client.extract_started < 0.0) continue;
+        const Vec3 d = client.state.position - client.extract_from;
+        if (client.life != Life::alive || std::hypot(d.x, d.z) > 1.0 || client.state.vehicle >= 0) {
+            client.extract_started = -1.0;
+            notify(client.entity, "Extraction broken off: you moved.");
+        } else if (now - client.extract_started >= config_.extract_time) {
+            finish_extraction(client, client.extract_category);
+        }
     }
 }
 

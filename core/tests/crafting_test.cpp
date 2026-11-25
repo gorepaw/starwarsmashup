@@ -137,6 +137,8 @@ void test_server_client_crafting_loopback() {
         config.crafting = &crafting;
         config.pvp_enabled = false;
         config.spawn = {0, 0, 0};
+        config.extract_time = 0.1;  // (the rules of extraction have their own test)
+        config.extract_spacing = 0;
 
         GameServer server(srv_link, world, config, &store);
         server.set_looks({"object/mobile/shared_dressed_commoner_tatooine_rodian_male_01.iff"});
@@ -221,9 +223,81 @@ void test_server_client_crafting_loopback() {
 
 } // namespace
 
+// Extracting takes a few seconds standing still, and the next one wants new ground.
+void test_extraction_rules() {
+    const auto root = repo_root();
+    ItemCatalog catalog;
+    catalog.load(root / "game" / "items" / "swg_catalog.ini");
+    ProfessionBook professions;
+    professions.load(root / "game" / "professions" / "professions.ini");
+    CraftingBook crafting;
+    crafting.load_resources(root / "game" / "crafting" / "resources.ini");
+    crafting.load_schematics(root / "game" / "crafting" / "schematics.ini");
+    Heightfield ground{201, 2.0, -200, -200, std::vector<float>(201 * 201, 0.0f)};
+    World world{ground};
+    net::LoopbackHub links;
+    net::Endpoint server_ep{1, 1}, client_ep{2, 1};
+    net::LoopbackLink srv_link{links, server_ep};
+    net::LoopbackLink cli_link{links, client_ep};
+    ServerConfig config;
+    config.catalog = &catalog;
+    config.professions = &professions;
+    config.crafting = &crafting;
+    config.pvp_enabled = false;
+    config.spawn = {0, 0, 0};
+    GameServer server(srv_link, world, config);
+    server.set_crafting(&crafting, {});
+    GameClient client(cli_link, world, ClientConfig{.server = server_ep, .name = "Digger"});
+    double now = 0.0;
+    const auto run = [&](double seconds) {
+        for (const double end = now + seconds; now < end; now += 1.0 / 60.0) {
+            server.update(now);
+            client.update(now);
+        }
+    };
+    const auto total = [&] {
+        int64_t sum = 0;
+        for (const MaterialStack& st : client.crafting().materials) sum += st.amount;
+        return sum;
+    };
+    run(0.5);
+    CHECK(client.status() == GameClient::Status::connected);
+    CHECK(client.player_status().extract_progress < 0);
+
+    // Under way, it takes its time; then it pays.
+    client.gather_extract(ResourceCategory::mineral);
+    run(2.0);
+    CHECK(total() == 0);
+    CHECK(client.player_status().extract_progress > 0.1f && client.player_status().extract_progress < 0.9f);
+    run(5.0);
+    CHECK(total() > 0);
+    CHECK(client.player_status().extract_progress < 0);
+
+    // The same ground gives no more.
+    const int64_t first = total();
+    client.gather_extract(ResourceCategory::mineral);
+    run(8.0);
+    CHECK(total() == first);
+
+    // Moving breaks one off.
+    client.set_input({.forward = 1.0});
+    run(7.0);
+    client.set_input({});
+    run(0.5);
+    client.gather_extract(ResourceCategory::mineral);
+    run(1.0);
+    CHECK(client.player_status().extract_progress > 0.0f);
+    client.set_input({.forward = 1.0});
+    run(1.0);
+    client.set_input({});
+    run(8.0);
+    CHECK(total() == first);
+}
+
 int main() {
+    test_extraction_rules();
     test_crafting_book();
     test_sqlite_v6_materials_and_presets();
     test_server_client_crafting_loopback();
-    return 0;
+    return swm::test::finish("crafting_test");
 }

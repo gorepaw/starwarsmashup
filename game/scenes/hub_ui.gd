@@ -417,7 +417,7 @@ func extract_scanner(client: Object) -> bool:
 	if _scanner.extract_cooldown > 0.0:
 		return false
 	client.gather_extract(_scanner.current_mode())
-	_scanner.extract_cooldown = 1.5
+	_scanner.extract_cooldown = 0.4  # (the server takes its own time: it is a few seconds, standing still)
 	return true
 
 
@@ -1208,7 +1208,10 @@ func update_hub(client: Object, world: Node3D, delta: float, pause_visible: bool
 	_hub_hud.notice_alpha = clampf(_notice_time, 0.0, 1.0)
 	if _scanner != null and _hub_hud != null:
 		if in_hub and _scanner.active:
-			_hub_hud.scanner = _scanner.update_scanner(client, _crafting_store, client.get_presented()["position"], delta)
+			var scan: Dictionary = _scanner.update_scanner(client, _crafting_store, client.get_presented()["position"], delta)
+			if not scan.is_empty():
+				scan["extract_progress"] = float(status.get("extract_progress", -1.0))
+			_hub_hud.scanner = scan
 		else:
 			if _scanner.active:
 				_scanner.active = false

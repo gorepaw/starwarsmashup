@@ -281,6 +281,7 @@ godot::Dictionary SwmClient::get_player_status() const {
         out["active_loadout"] = int64_t(status.active_loadout);
         out["switching_loadout"] = int64_t(status.switching_loadout);
         out["switch_progress"] = double(status.switch_progress);
+        out["extract_progress"] = double(status.extract_progress);
         out["inventory_rev"] = int64_t(status.inventory_rev);
     }
     return out;
