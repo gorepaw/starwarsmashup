@@ -137,7 +137,9 @@ public:
     const std::vector<std::string>& looks() const { return looks_; }
     // Queue for a battle on a side (0..3) while at a war terminal, or
     // leave the queue (-1). Repeated until the server's status shows it.
-    void queue(int team);
+    // `mode`: the core::GameMode wanted (Stage 11; net::QueueRequest::any_mode
+    // for any); a Space Terminal queues for Space Assault whatever it says.
+    void queue(int team, uint8_t mode = 0);
     // Authoritative inventory & loadouts synced from the server.
     uint32_t inventory_rev() const { return inventory_rev_; }
     const std::vector<ItemInstance>& items() const { return items_; }
@@ -245,6 +247,12 @@ private:
     double latest_tick_time_ = 0;
     double render_tick_ = 0;
     std::map<uint32_t, std::deque<Sample>> history_;
+    // Each entity's rarely changing strings, as last sent in full (Stage 13:
+    // snapshots carry them only now and then).
+    std::map<uint32_t, net::EntityState> static_cache_;
+    // Fills an entity's strings in from the cache (or caches them when it
+    // brought them). False: they were never sent, so it can't be drawn yet.
+    bool fill_static(net::EntityState& entity);
     Stats stats_;
     // Combat and the match
     net::EntityState self_;
@@ -274,6 +282,8 @@ private:
     std::vector<std::string> looks_;
     net::PlayerStatus player_status_;
     int wanted_queue_ = -2;  // -2: no request
+    uint8_t wanted_mode_ = 0;
+    int queue_attempts_ = 0;  // requests sent: the hub may refuse (no such battle here), so only a few
     double last_queue_request_ = -1e9;
     uint32_t inventory_rev_ = 0;
     std::vector<ItemInstance> items_;
@@ -299,9 +309,11 @@ class ClientSession {
 public:
     using BattlefieldFinder = std::function<std::optional<Battlefield>(const std::string& name)>;
     using WorldFinder = std::function<std::shared_ptr<const World>(const Battlefield&)>;
+    // A planet's world by its bake's name (Stage 13: a transfer to another planet's hub).
+    using PlanetFinder = std::function<std::shared_ptr<const World>(const std::string& planet)>;
 
     ClientSession(net::Link& link, const World& world, ClientConfig config, BattlefieldFinder battlefields,
-                  WorldFinder worlds = {});
+                  WorldFinder worlds = {}, PlanetFinder planets = {}, std::string home_planet = {});
 
     // Follows a pending transfer (the new client starts on the next call),
     // or updates the client.
@@ -310,6 +322,8 @@ public:
     const GameClient& client() const { return *client_; }
     // The world the client is in now.
     const World& world() const { return battle_world_ ? *battle_world_ : world_; }
+    // The planet it's on (its bake's name; empty: the home planet's, or in a battle).
+    const std::string& planet() const { return planet_; }
     int generation() const { return generation_; }
     // Why the last transfer couldn't be followed, if it couldn't.
     const std::string& error() const { return error_; }
@@ -320,6 +334,10 @@ private:
     ClientConfig config_;
     BattlefieldFinder battlefields_;
     WorldFinder worlds_;
+    PlanetFinder planets_;
+    std::string home_planet_;
+    std::string planet_;  // empty: home
+    std::map<std::string, std::shared_ptr<const World>> planet_worlds_;  // loaded once each
     std::shared_ptr<const World> battle_world_;  // outlives client_, which refers to it
     std::unique_ptr<GameClient> client_;
     int generation_ = 0;

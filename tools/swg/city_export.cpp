@@ -6,6 +6,7 @@
 #include <fstream>
 #include <map>
 #include <numbers>
+#include <optional>
 #include <ostream>
 #include <set>
 #include <sstream>
@@ -349,11 +350,34 @@ double plane_height(const std::array<Vec3, 3>& t, double x, double z) {
 
 void export_city(TreLibrary& library, const CityExport& city, std::ostream& log) {
     std::vector<SnapshotNode> nodes = parse_world_snapshot(library.read(normalize_path(city.snapshot)));
-    const std::vector<SnapshotNode> terminals = recruiters(city);
-    nodes.insert(nodes.end(), terminals.begin(), terminals.end());
-    if (!city.hub.empty()) {
-        log << std::format("{} war terminal(s) from {}\n", terminals.size(), city.hub.string());
+    // Each hub file (a town's) on its own, as if it were the only one.
+    std::vector<CityExport> per_hub;
+    for (const std::filesystem::path& hub : city.more_hubs) {
+        per_hub.push_back(city);
+        per_hub.back().hub = hub;
     }
+    if (!city.hub.empty()) {
+        per_hub.insert(per_hub.begin(), city);
+    }
+    for (const CityExport& one : per_hub) {
+        const std::vector<SnapshotNode> terminals = recruiters(one);
+        nodes.insert(nodes.end(), terminals.begin(), terminals.end());
+        log << std::format("{} war terminal(s) from {}\n", terminals.size(), one.hub.string());
+    }
+    std::vector<CityArea> areas = city.areas;
+    if (areas.empty()) {
+        areas.push_back({city.bake.filename().string(), city.center_x, city.center_z, city.radius});
+    }
+    // The town an object stands in (its index in areas), or -1.
+    const auto area_of = [&](const SnapshotNode& node) {
+        for (size_t i = 0; i < areas.size(); ++i) {
+            if (std::hypot(node.position.x - areas[i].center_x, node.position.z - areas[i].center_z) <= areas[i].radius) {
+                return int(i);
+            }
+        }
+        return -1;
+    };
+    size_t area = 0;  // the town being placed
     const std::filesystem::path out_dir = city.bake.parent_path() / (city.bake.filename().string() + "_city");
     const std::string out_name = out_dir.filename().string();
     std::filesystem::create_directories(out_dir);
@@ -373,8 +397,9 @@ void export_city(TreLibrary& library, const CityExport& city, std::ostream& log)
     std::ostringstream objects;
     objects << "{\n  \"city\": " << std::format("\"{}\"", out_name) << ",\n  \"objects\": [";
     core::MapCollision collision;
-    std::vector<std::array<Vec3, 3>> rooms;  // every building's rooms' walked floors, game space
-    std::vector<std::array<Vec3, 3>> drawn_rooms;  // and their drawn floors
+    // Per town: every building's rooms' walked floors, game space, and their drawn floors.
+    std::vector<std::vector<std::array<Vec3, 3>>> rooms(areas.size());
+    std::vector<std::vector<std::array<Vec3, 3>>> drawn_rooms(areas.size());
     size_t placed_count = 0, furniture = 0, doors = 0;
     // Galaxies' door styles: each one's door, how far it slides and how fast.
     struct DoorStyle {
@@ -572,10 +597,10 @@ void export_city(TreLibrary& library, const CityExport& city, std::ostream& log)
             }
         }
         for (const auto& t : model.rooms) {
-            rooms.push_back({p.apply(t[0]), p.apply(t[1]), p.apply(t[2])});
+            rooms[area].push_back({p.apply(t[0]), p.apply(t[1]), p.apply(t[2])});
         }
         for (const auto& t : model.drawn_rooms) {
-            drawn_rooms.push_back({p.apply(t[0]), p.apply(t[1]), p.apply(t[2])});
+            drawn_rooms[area].push_back({p.apply(t[0]), p.apply(t[1]), p.apply(t[2])});
         }
         return true;
     };
@@ -585,9 +610,11 @@ void export_city(TreLibrary& library, const CityExport& city, std::ostream& log)
         if (node.parent_id != 0 && !recruiter) {
             continue;
         }
-        if (std::hypot(node.position.x - city.center_x, node.position.z - city.center_z) > city.radius) {
+        const int in_area = area_of(node);
+        if (in_area < 0) {
             continue;
         }
+        area = size_t(in_area);
         const int index = int(placed_count);
         if (!place(node, recruiter, -1, 0)) {
             continue;
@@ -643,24 +670,35 @@ void export_city(TreLibrary& library, const CityExport& city, std::ostream& log)
     const std::filesystem::path objects_path = city.bake.string() + ".objects.json";
     std::ofstream(objects_path, std::ios::binary) << objects.str();
     core::save_map_collision(collision, core::map_collision_path(city.bake));
-    core::TerrainHoles holes;
-    if (!rooms.empty()) {
-        const core::Heightfield ground = core::load_bake(city.bake);
-        holes = room_terrain_holes(rooms, drawn_rooms, [&](double x, double z) { return ground.height_at(x, z); });
-        core::save_terrain_holes(holes, city.bake.string() + ".holes");
+    std::vector<core::TerrainHoles> patches;
+    std::string holes_text;
+    std::optional<core::Heightfield> ground;
+    for (size_t i = 0; i < areas.size(); ++i) {
+        if (rooms[i].empty() && drawn_rooms[i].empty()) {
+            continue;
+        }
+        if (!ground) {
+            ground = core::load_bake(city.bake);
+        }
+        patches.push_back(
+            room_terrain_holes(rooms[i], drawn_rooms[i], [&](double x, double z) { return ground->height_at(x, z); }));
+        holes_text += std::format("; {} {} x {}", areas[i].name, patches.back().width, patches.back().height);
     }
-    log << std::format("placed {} objects ({} inside buildings, {} doors, {} models) in {}; {} collision triangles; "
-                       "terrain holes {} x {} cells over the rooms\n",
-                       placed_count, furniture, doors, models.size(), out_dir.string(), collision.triangles.size(),
-                       holes.width, holes.height);
+    if (!patches.empty()) {
+        core::save_terrain_hole_patches(patches, city.bake.string() + ".holes");
+    }
+    log << std::format("placed {} objects ({} inside buildings, {} doors, {} models) in {} town(s) in {}; {} collision "
+                       "triangles; terrain holes over the rooms{}\n",
+                       placed_count, furniture, doors, models.size(), areas.size(), out_dir.string(),
+                       collision.triangles.size(), holes_text.empty() ? std::string(": none") : holes_text);
     for (const auto& [why, count] : skipped) {
         log << std::format("  not placed: {} ({})\n", why, count);
     }
     for (const auto& [kind, count] : collisions.skipped()) {
         log << std::format("  collision not read: {} ({})\n", kind, count);
     }
-    if (!city.hub.empty()) {
-        export_people(library, city, out_dir, log);
+    for (const CityExport& one : per_hub) {
+        export_people(library, one, out_dir, log);
     }
 }
 

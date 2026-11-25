@@ -20,7 +20,7 @@ namespace swm::core::net {
 // Every packet starts with a magic number, the protocol version and a message
 // type. Peers drop packets with another version. Bump it on any wire change.
 inline constexpr uint16_t protocol_magic = 0x4D53;  // "SM"
-inline constexpr uint16_t protocol_version = 37;
+inline constexpr uint16_t protocol_version = 39;
 inline constexpr uint8_t droid_explosion_weapon = 0xFF;  // Explosion::weapon sentinel for destroyed health/ammo droids
 // ...for a destroyed object (Battlefield::destructibles); clients draw it
 // from the object's own explosion as they see it go.
@@ -40,9 +40,14 @@ struct Hello {
 // A hub's war terminal: standing within `radius` of it, a player can queue
 // for a battle.
 struct Recruiter {
+    // Stage 11: which battles it queues for: Battlefront's ground battles,
+    // its space battles (a Starport's Space Terminal, which also hosts
+    // interplanetary travel once more planets open), or both.
+    enum Kind : uint8_t { ground = 0, space = 1, both = 2 };
     std::string name;
     Vec3 position;  // game space
     double radius = 4;
+    Kind kind = ground;
 
     friend bool operator==(const Recruiter&, const Recruiter&) = default;
 };
@@ -176,6 +181,10 @@ struct Welcome {
 // battle on a side (0..3), near a war terminal; -1 leaves the queue.
 struct QueueRequest {
     int8_t team = -1;
+    // Stage 11: the game mode wanted (core::GameMode; a space terminal's
+    // battles are Space Assault whatever this says), or any_mode.
+    static constexpr uint8_t any_mode = 0xFF;
+    uint8_t mode = 0;
 };
 
 // Server -> client, repeated until the client leaves: go to another server
@@ -185,6 +194,10 @@ struct Transfer {
     uint16_t port = 0;
     uint64_t ticket = 0;      // to show the next server
     std::string battlefield;  // the match's battlefield (a file name without .ini); empty for a hub
+    // A hub on another planet (Stage 13): its terrain bake's name (e.g.
+    // "naboo", next to the client's own), whose world the client loads;
+    // empty: the session's home planet.
+    std::string planet;
 
     friend bool operator==(const Transfer&, const Transfer&) = default;
 };
@@ -256,9 +269,22 @@ struct EntityState {
     std::string weapon_model; // active weapon glTF (empty: use team loadout)
     std::string anim_set;     // active weapon anim set (empty: use team loadout)
     std::string worn;         // comma-separated worn armor/clothing glTFs
+    // The strings above rarely change, so a snapshot carries them only when a
+    // client may not have them yet (has_static); otherwise just their key,
+    // and the client fills them in from what it was sent before (Stage 13).
+    uint32_t static_key = 0;  // static_key(*this); 0: not computed
+    bool has_static = true;
+    // Its whole state (a client's own, which it predicts and reconciles), or
+    // only what's drawn (everyone else's: where it is and how it moves, in
+    // floats, its held weapon and whether it's reloading; Stage 13).
+    bool full_state = true;
 
     bool alive() const { return life == Life::alive; }
 };
+
+// A hash of an entity's rarely changing strings (name, appearance, weapon
+// model, anim set, worn), never 0.
+uint32_t static_key(const EntityState& entity);
 
 // A projectile in flight: a blaster bolt, a missile or a grenade.
 struct BoltState {
@@ -294,7 +320,12 @@ struct Impact {
 // (attacker 0: the world, e.g. out of bounds); for captured and neutralized,
 // `attacker` is the team and `victim` the command post.
 struct CombatEvent {
-    enum Kind : uint8_t { hit = 1, kill = 2, captured = 3, neutralized = 4 };
+    // Flag events (Stage 11): attacker = the soldier (0: none), victim = the
+    // flag's index, damage = the soldier's team.
+    enum Kind : uint8_t {
+        hit = 1, kill = 2, captured = 3, neutralized = 4,
+        flag_taken = 5, flag_dropped = 6, flag_returned = 7, flag_captured = 8,
+    };
     Kind kind = hit;
     uint32_t attacker = 0;
     uint32_t victim = 0;
@@ -332,6 +363,8 @@ struct VehicleState {
     uint8_t flags = 0;    // bit 0: landed/grounded; bit 1: active mobile spawn
     std::vector<uint32_t> gunners;  // per gunner's seat: who sits there (0: no one)
     uint32_t owner = 0;             // in the world: whose it is (only they ride it); 0 in a match
+    uint32_t towing = 0;            // Stage 11: the walker its tow cable holds (0: none)
+    float tow_wraps = 0;            // ...and how many times round its legs so far
 
     static constexpr uint8_t flag_grounded = 1 << 0;
     static constexpr uint8_t flag_mobile_spawn = 1 << 1;
@@ -431,6 +464,7 @@ struct ServiceRequest {
         bank_withdraw_item = 4,    // `item_id`: the bank's
         heal = 5,
         bind = 6,
+        travel = 7,                // `id`: the travel point (a "travel" service's name) to fly to (Stage 13)
     };
     uint8_t action = 0;
     std::string id;

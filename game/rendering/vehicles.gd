@@ -29,6 +29,7 @@ var _effects: RefCounted     # the game's Bf2Effects (null: none)
 var _audio: RefCounted       # the game's Bf2Audio (null: none)
 var _templates := {}         # class index -> Node3D (a loaded model, kept out of the tree)
 var _nodes := {}             # vehicle id -> {node, class, alive}
+var _cables := {}            # Stage 11: snowspeeder id -> its tow cable's MeshInstance3D
 
 
 func setup(root: Node3D, vehicle_classes: Array, effects: RefCounted = null, audio: RefCounted = null) -> void:
@@ -45,6 +46,10 @@ func clear() -> void:
 		if is_instance_valid(node):
 			node.queue_free()
 	_nodes.clear()
+	for cable: Node in _cables.values():
+		if is_instance_valid(cable):
+			cable.queue_free()
+	_cables.clear()
 	for template: Node in _templates.values():
 		if is_instance_valid(template):
 			template.free()
@@ -128,12 +133,53 @@ func update(vehicles: Array, shown: Dictionary, delta: float) -> void:
 		_aim_turrets(entry, v, shown)
 		_update_effects(entry, v)
 		_update_engine(entry, v, delta)
+	_update_cables(vehicles)
 	for id: int in _nodes.keys():
 		if not seen.has(id):
 			if _audio != null and not entry_engine(_nodes[id]).is_empty():
 				_audio.stop_engine(entry_engine(_nodes[id]))
 			(_nodes[id]["node"] as Node).queue_free()
 			_nodes.erase(id)
+
+
+# Stage 11: each snowspeeder's tow cable, from under its tail to the walker
+# it holds, sagging a little: a thin dark line, redrawn each frame.
+func _update_cables(vehicles: Array) -> void:
+	var towing := {}
+	for v: Dictionary in vehicles:
+		var target := int(v.get("towing", 0))
+		var id := int(v["id"])
+		if target == 0 or not _nodes.has(id) or not _nodes.has(target) or not bool(v["alive"]):
+			continue
+		towing[id] = true
+		if not _cables.has(id):
+			var line := MeshInstance3D.new()
+			line.mesh = ImmediateMesh.new()
+			var material := StandardMaterial3D.new()
+			material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+			material.albedo_color = Color(0.12, 0.12, 0.12)
+			line.material_override = material
+			line.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+			_root.add_child(line)
+			_cables[id] = line
+		var from: Vector3 = (_nodes[id]["node"] as Node3D).global_position
+		var walker: Node3D = _nodes[target]["node"]
+		# Round its legs: wound low on the walker, a few meters up.
+		var to := walker.global_position + Vector3.UP * 3.0
+		var mesh: ImmediateMesh = (_cables[id] as MeshInstance3D).mesh
+		mesh.clear_surfaces()
+		mesh.surface_begin(Mesh.PRIMITIVE_LINE_STRIP)
+		const SEGMENTS := 16
+		for i in SEGMENTS + 1:
+			var t := float(i) / SEGMENTS
+			var p := from.lerp(to, t)
+			p.y -= sin(t * PI) * minf(6.0, from.distance_to(to) * 0.06)
+			mesh.surface_add_vertex(p)
+		mesh.surface_end()
+	for id: int in _cables.keys():
+		if not towing.has(id):
+			(_cables[id] as Node).queue_free()
+			_cables.erase(id)
 
 
 # Its damage effects for its health, and its wake while it moves (a hover

@@ -239,9 +239,72 @@ void test_trivial_quests_grey() {
 
 } // namespace
 
+// Stage 13: a shuttle from one travel point to another, for a fare.
+void test_travel() {
+    const auto root = repo_root();
+    const auto db_path = std::filesystem::temp_directory_path() / "swm_travel_test.sqlite";
+    std::filesystem::remove(db_path);
+    ItemCatalog catalog;
+    catalog.load(root / "game" / "items" / "swg_catalog.ini");
+    Heightfield ground{201, 2.0, -200, -200, std::vector<float>(201 * 201, 0.0f)};
+    World world{ground};
+    {
+        SqliteCharacterStore store(db_path);
+        net::LoopbackHub links;
+        net::Endpoint server_ep{1, 1}, client_ep{2, 1};
+        net::LoopbackLink srv_link{links, server_ep};
+        net::LoopbackLink cli_link{links, client_ep};
+        ServerConfig config;
+        config.catalog = &catalog;
+        config.pvp_enabled = false;
+        config.spawn = {0, 0, 0};
+        GameServer server(srv_link, world, config, &store);
+        const Vec3 there{-120, 0, 80};
+        server.set_vendors({{"Home Shuttleport", "travel", {0, 0, 0}, 6, "Home"},
+                            {"Far Shuttleport", "travel", there, 6, "Far"}});
+        GameClient client(cli_link, world, ClientConfig{.server = server_ep, .name = "Traveller"});
+        double now = 0;
+        const auto run = [&](double seconds) {
+            for (const double end = now + seconds; now < end; now += 1.0 / 60.0) {
+                server.update(now);
+                client.update(now);
+            }
+        };
+        run(0.5);
+        CHECK(client.status() == GameClient::Status::connected);
+        const int64_t start = client.player_status().credits;
+        CHECK(start >= 200);
+        const auto distance_to = [&](Vec3 p) {
+            const Vec3 at = server.state_of(client.entity_id())->position;
+            return std::hypot(at.x - p.x, at.z - p.z);
+        };
+
+        // Nowhere to go: nothing happens.
+        client.service(net::ServiceRequest::travel, "Nowhere", 0, 0);
+        run(0.3);
+        CHECK(distance_to({0, 0, 0}) < 8 && client.player_status().credits == start);
+
+        // Off at the far end, the fare paid; the client jumps there too.
+        client.service(net::ServiceRequest::travel, "Far Shuttleport", 0, 0);
+        run(0.5);
+        CHECK(distance_to(there) < 6);
+        CHECK(client.player_status().credits == start - 100);
+        CHECK(std::hypot(client.predicted().position.x - there.x, client.predicted().position.z - there.z) < 6);
+
+        // And back, from there.
+        client.service(net::ServiceRequest::travel, "Home Shuttleport", 0, 0);
+        run(0.5);
+        CHECK(distance_to({0, 0, 0}) < 6 && client.player_status().credits == start - 200);
+        client.disconnect();
+        run(0.2);
+    }
+    std::filesystem::remove(db_path);
+}
+
 int main() {
     test_trivial_quests_grey();
     test_event_steps();
     test_services();
+    test_travel();
     return swm::test::finish("services_test");
 }

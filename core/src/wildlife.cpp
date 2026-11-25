@@ -227,10 +227,12 @@ void WorldPopulation::spawn_all() {
             CreatureMob mob;
             mob.entity = entity;
             mob.archetype = arch_idx;
-            mob.lair = li;
+            mob.lair = lair_states_.size() - 1;  // lairs of unknown types have no state
             mob.home = pos;
             mob.goal = pos;
             mob.wait_until = random_unit() * 4.0;
+            lair_states_.back().mobs.push_back(creatures_.size());
+            by_entity_[entity] = {false, creatures_.size()};
             creatures_.push_back(mob);
         }
     }
@@ -272,14 +274,167 @@ void WorldPopulation::spawn_all() {
             mob.wait_until = random_unit() * 3.0;
             mob.loadout = std::move(spec.loadout);
             mob.brain.aim_phase = random_unit() * 100.0;
+            camp_states_.back().mobs.push_back(bandits_.size());
+            by_entity_[entity] = {true, bandits_.size()};
             bandits_.push_back(std::move(mob));
         }
     }
+
+    // Everyone starts asleep; groups wake as players come near.
+    if (activity_.wake_radius > 0) {
+        for (LairState& lair : lair_states_) {
+            lair.awake = false;
+            for (const size_t idx : lair.mobs) {
+                sleep_creature(creatures_[idx]);
+            }
+        }
+        for (CampState& camp : camp_states_) {
+            camp.awake = false;
+            for (const size_t idx : camp.mobs) {
+                sleep_bandit(bandits_[idx]);
+            }
+        }
+    }
+}
+
+void WorldPopulation::sleep_creature(CreatureMob& mob) {
+    const auto info = server_.npc_info(mob.entity);
+    if (!info || info->life != Life::alive) {
+        return;  // the dead wait to come back when their lair wakes
+    }
+    // Home, healed, and out of the world.
+    server_.respawn_npc(mob.entity, mob.home, random_unit() * 2.0 * std::numbers::pi);
+    server_.set_npc_hidden(mob.entity, true);
+    mob.dormant = true;
+    mob.goal = mob.home;
+    mob.target = 0;
+    mob.returning = false;
+    mob.flee_until = 0;
+    mob.pose = 0;
+    mob.attack_pose_until = 0;
+    mob.last_seen_damage_tick = 0;
+}
+
+void WorldPopulation::sleep_bandit(BanditMob& mob) {
+    const auto info = server_.npc_info(mob.entity);
+    if (!info || info->life != Life::alive) {
+        return;
+    }
+    server_.respawn_npc(mob.entity, mob.home, random_unit() * 2.0 * std::numbers::pi);
+    server_.set_npc_hidden(mob.entity, true);
+    mob.dormant = true;
+    mob.patrol_goal = mob.home;
+    mob.target = 0;
+    mob.returning = false;
+    mob.lost_target_at = 0;
+    mob.brain.reset();
+    mob.last_seen_damage_tick = 0;
+}
+
+void WorldPopulation::update_activity(double now) {
+    if (activity_.wake_radius <= 0 || now < next_activity_check_) {
+        return;
+    }
+    next_activity_check_ = now + activity_.check_interval;
+    const auto decide = [&](Vec3 center, double radius, bool& awake, double& quiet_since, bool engaged) {
+        // Returns +1 to wake, -1 to sleep, 0 to stay as it is.
+        const double reach = radius + activity_.wake_radius;
+        if (!awake) {
+            return server_.player_near(center, reach) ? 1 : 0;
+        }
+        if (engaged || server_.player_near(center, reach + activity_.sleep_margin)) {
+            quiet_since = -1;
+            return 0;
+        }
+        if (quiet_since < 0) {
+            quiet_since = now;
+        }
+        return now - quiet_since >= activity_.linger ? -1 : 0;
+    };
+    for (LairState& lair : lair_states_) {
+        bool engaged = false;
+        for (const size_t idx : lair.mobs) {
+            const CreatureMob& m = creatures_[idx];
+            engaged = engaged || (m.dead_since < 0 && (m.target != 0 || m.returning || m.flee_until > now));
+        }
+        const int change = decide(lair.center, lair.radius, lair.awake, lair.quiet_since, engaged);
+        if (change > 0) {
+            lair.awake = true;
+            lair.quiet_since = -1;
+            for (const size_t idx : lair.mobs) {
+                CreatureMob& mob = creatures_[idx];
+                if (mob.dormant) {
+                    mob.dormant = false;
+                    mob.wait_until = now + random_unit() * 3.0;
+                    server_.set_npc_hidden(mob.entity, false);
+                }
+            }
+        } else if (change < 0) {
+            lair.awake = false;
+            for (const size_t idx : lair.mobs) {
+                sleep_creature(creatures_[idx]);
+            }
+        }
+    }
+    for (CampState& camp : camp_states_) {
+        bool engaged = false;
+        for (const size_t idx : camp.mobs) {
+            const BanditMob& m = bandits_[idx];
+            engaged = engaged || (m.dead_since < 0 && (m.target != 0 || m.returning));
+        }
+        const int change = decide(camp.center, camp.radius, camp.awake, camp.quiet_since, engaged);
+        if (change > 0) {
+            camp.awake = true;
+            camp.quiet_since = -1;
+            for (const size_t idx : camp.mobs) {
+                BanditMob& mob = bandits_[idx];
+                if (mob.dormant) {
+                    mob.dormant = false;
+                    mob.wait_until = now + random_unit() * 3.0;
+                    server_.set_npc_hidden(mob.entity, false);
+                }
+            }
+        } else if (change < 0) {
+            camp.awake = false;
+            for (const size_t idx : camp.mobs) {
+                sleep_bandit(bandits_[idx]);
+            }
+        }
+    }
+}
+
+size_t WorldPopulation::awake_groups() const {
+    size_t n = 0;
+    for (const LairState& l : lair_states_) n += l.awake ? 1 : 0;
+    for (const CampState& c : camp_states_) n += c.awake ? 1 : 0;
+    return n;
+}
+
+size_t WorldPopulation::dormant_mobs() const {
+    size_t n = 0;
+    for (const CreatureMob& m : creatures_) n += m.dormant ? 1 : 0;
+    for (const BanditMob& m : bandits_) n += m.dormant ? 1 : 0;
+    return n;
+}
+
+bool WorldPopulation::dormant(uint32_t entity) const {
+    const auto it = by_entity_.find(entity);
+    if (it == by_entity_.end()) return false;
+    return it->second.first ? bandits_[it->second.second].dormant : creatures_[it->second.second].dormant;
 }
 
 void WorldPopulation::update(double now) {
     if (last_update_ == 0.0) {
         last_update_ = now;
+    }
+    update_activity(now);
+    players_.clear();
+    for (const uint32_t id : server_.entities()) {
+        if (server_.alive(id) && !server_.cloaked(id)) {  // Stage 12: a cloak hides you from the wild too
+            if (const MoveState* st = server_.state_of(id)) {
+                players_.push_back({id, st->position, st->velocity});
+            }
+        }
     }
     update_creatures(now);
     update_bandits(now);
@@ -296,23 +451,13 @@ void WorldPopulation::update_creatures(double now) {
         }
     }
 
-    // Snapshot alive players once per tick
-    struct PlayerPos {
-        uint32_t entity;
-        Vec3 pos;
-    };
-    std::vector<PlayerPos> players;
-    for (const uint32_t id : server_.entities()) {
-        if (server_.alive(id)) {
-            if (const MoveState* st = server_.state_of(id)) {
-                players.push_back({id, st->position});
-            }
-        }
-    }
+    const std::vector<PlayerPos>& players = players_;
 
     for (size_t idx = 0; idx < creatures_.size(); ++idx) {
         CreatureMob& mob = creatures_[idx];
+        if (mob.dormant) continue;  // asleep: out of the world
         const CreatureArchetype& arch = spawns_.creatures[mob.archetype];
+        const bool awake = lair_states_[mob.lair].awake;
         const auto info = server_.npc_info(mob.entity);
         if (!info) continue;
 
@@ -327,7 +472,7 @@ void WorldPopulation::update_creatures(double now) {
                 server_.set_npc_hidden(mob.entity, true);
                 mob.corpse_hidden = true;
             }
-            if (now - mob.dead_since >= arch.respawn_time) {
+            if (awake && now - mob.dead_since >= arch.respawn_time) {
                 const Vec3 spawn_pos = random_point_around(lair_states_[mob.lair].center, lair_states_[mob.lair].radius * 0.5);
                 mob.home = spawn_pos;
                 mob.goal = spawn_pos;
@@ -338,6 +483,7 @@ void WorldPopulation::update_creatures(double now) {
             }
             continue;
         }
+        if (!awake) continue;
 
         const Vec3 pos = info->state.position;
         MoveInput input;
@@ -477,22 +623,12 @@ void WorldPopulation::update_creatures(double now) {
 void WorldPopulation::update_bandits(double now) {
     const double dt = std::clamp(now - last_update_, 0.0, 0.25);
 
-    struct PlayerPos {
-        uint32_t entity;
-        Vec3 pos;
-        Vec3 vel;
-    };
-    std::vector<PlayerPos> players;
-    for (const uint32_t id : server_.entities()) {
-        if (server_.alive(id)) {
-            if (const MoveState* st = server_.state_of(id)) {
-                players.push_back({id, st->position, st->velocity});
-            }
-        }
-    }
+    const std::vector<PlayerPos>& players = players_;
 
     for (BanditMob& mob : bandits_) {
+        if (mob.dormant) continue;
         const BanditArchetype& arch = spawns_.bandits[mob.archetype];
+        const bool awake = camp_states_[mob.camp].awake;
         const auto info = server_.npc_info(mob.entity);
         if (!info) continue;
 
@@ -507,7 +643,7 @@ void WorldPopulation::update_bandits(double now) {
                 server_.set_npc_hidden(mob.entity, true);
                 mob.corpse_hidden = true;
             }
-            if (now - mob.dead_since >= arch.respawn_time) {
+            if (awake && now - mob.dead_since >= arch.respawn_time) {
                 const Vec3 spawn_pos = random_point_around(camp_states_[mob.camp].center, camp_states_[mob.camp].radius * 0.65);
                 mob.home = spawn_pos;
                 mob.patrol_goal = spawn_pos;
@@ -518,6 +654,7 @@ void WorldPopulation::update_bandits(double now) {
             }
             continue;
         }
+        if (!awake) continue;
 
         const Vec3 pos = info->state.position;
         MoveInput input;
@@ -630,36 +767,30 @@ std::vector<uint32_t> WorldPopulation::mob_entities() const {
 }
 
 int64_t WorldPopulation::xp_for(uint32_t entity) const {
-    for (const CreatureMob& m : creatures_) {
-        if (m.entity == entity) return spawns_.creatures[m.archetype].xp_reward;
-    }
-    for (const BanditMob& m : bandits_) {
-        if (m.entity == entity) return spawns_.bandits[m.archetype].xp_reward;
-    }
-    return 0;
+    const auto it = by_entity_.find(entity);
+    if (it == by_entity_.end()) return 0;
+    const auto [bandit, index] = it->second;
+    return bandit ? spawns_.bandits[bandits_[index].archetype].xp_reward
+                  : spawns_.creatures[creatures_[index].archetype].xp_reward;
 }
 
 std::string WorldPopulation::loot_table_for(uint32_t entity) const {
-    for (const CreatureMob& m : creatures_) {
-        if (m.entity == entity) return spawns_.creatures[m.archetype].loot_table;
-    }
-    for (const BanditMob& m : bandits_) {
-        if (m.entity == entity) return spawns_.bandits[m.archetype].loot_table;
-    }
-    return {};
+    const auto it = by_entity_.find(entity);
+    if (it == by_entity_.end()) return {};
+    const auto [bandit, index] = it->second;
+    return bandit ? spawns_.bandits[bandits_[index].archetype].loot_table
+                  : spawns_.creatures[creatures_[index].archetype].loot_table;
 }
 
 KillTags WorldPopulation::kill_tags(uint32_t entity) const {
-    for (const CreatureMob& m : creatures_) {
-        if (m.entity == entity) return {spawns_.creatures[m.archetype].id, "", false};
+    const auto it = by_entity_.find(entity);
+    if (it == by_entity_.end()) return {};
+    const auto [bandit, index] = it->second;
+    if (!bandit) {
+        return {spawns_.creatures[creatures_[index].archetype].id, "", false};
     }
-    for (const BanditMob& m : bandits_) {
-        if (m.entity == entity) {
-            const BanditArchetype& type = spawns_.bandits[m.archetype];
-            return {type.id, type.gang, true};
-        }
-    }
-    return {};
+    const BanditArchetype& type = spawns_.bandits[bandits_[index].archetype];
+    return {type.id, type.gang, true};
 }
 
 } // namespace swm::core

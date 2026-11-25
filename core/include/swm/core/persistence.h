@@ -11,6 +11,7 @@
 #include "swm/core/items.h"
 #include "swm/core/profession.h"
 #include "swm/core/quest.h"
+#include "swm/core/telemetry.h"
 #include "swm/core/vec3.h"
 
 namespace swm::core {
@@ -92,6 +93,11 @@ public:
     // Per-character faction reputation standing across all 4 playable factions.
     virtual std::map<std::string, int64_t> list_reputation(PersistentId owner_id) = 0;
     virtual void save_reputation(PersistentId owner_id, const std::map<std::string, int64_t>& reputation) = 0;
+    // Stage 11: match telemetry, one record per finished battle (id and
+    // ended_at set by the store when 0), and the newest `limit` back,
+    // newest first. By default, not kept.
+    virtual int64_t record_match(const MatchTelemetry&) { return 0; }
+    virtual std::vector<MatchTelemetry> list_matches(size_t /*limit*/) { return {}; }
 };
 
 // Keeps everything in memory, for tests.
@@ -126,8 +132,11 @@ public:
     std::string get_extra(PersistentId owner_id, const std::string& key) override;
     void set_extra(PersistentId owner_id, const std::string& key, const std::string& value) override;
     bool update_item_colors(PersistentId item_id, const std::string& color_json) override;
+    int64_t record_match(const MatchTelemetry& match) override;
+    std::vector<MatchTelemetry> list_matches(size_t limit) override;
 
 private:
+    std::vector<MatchTelemetry> matches_;  // Stage 11, oldest first
     std::map<PersistentId, std::map<std::string, std::string>> extras_;
     std::map<PersistentId, CharacterRecord> characters_;
     PersistentId next_id_ = 1;

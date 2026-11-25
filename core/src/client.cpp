@@ -51,8 +51,10 @@ const Loadout& GameClient::loadout() const {
     return config_.loadout;
 }
 
-void GameClient::queue(int team) {
+void GameClient::queue(int team, uint8_t mode) {
     wanted_queue_ = std::clamp(team, -1, 3);
+    wanted_mode_ = mode;
+    queue_attempts_ = 0;
     last_queue_request_ = -1e9;
 }
 
@@ -287,11 +289,12 @@ void GameClient::update(double now) {
         const bool done = wanted_queue_ < 0 ? player_status_.queue == net::PlayerStatus::none
                                             : player_status_.queue == net::PlayerStatus::queued &&
                                                   player_status_.team == wanted_queue_;
-        if (done) {
-            wanted_queue_ = -2;
+        if (done || queue_attempts_ >= 6) {
+            wanted_queue_ = -2;  // done, or the hub won't have it (it said why)
         } else {
-            link_.send(config_.server, net::encode(net::QueueRequest{int8_t(wanted_queue_)}));
+            link_.send(config_.server, net::encode(net::QueueRequest{int8_t(wanted_queue_), wanted_mode_}));
             last_queue_request_ = now;
+            ++queue_attempts_;
         }
     }
     if (spawned_) {
@@ -457,22 +460,67 @@ void GameClient::handle(const net::Datagram& datagram, double now) {
     player_status_ = snapshot->you;
 
     std::map<uint32_t, std::deque<Sample>> seen;
-    for (const net::EntityState& entity : snapshot->entities) {
+    std::map<uint32_t, net::EntityState> cache;
+    for (net::EntityState entity : snapshot->entities) {
+        const bool known = fill_static(entity);
+        if (const auto it = static_cache_.find(entity.id); it != static_cache_.end()) {
+            cache[entity.id] = std::move(it->second);
+        }
         if (entity.id == entity_) {
+            if (!known) {
+                // Our own strings haven't come yet: keep what we had.
+                entity.name = self_.name;
+                entity.appearance = self_.appearance;
+                entity.weapon_model = self_.weapon_model;
+                entity.anim_set = self_.anim_set;
+                entity.worn = self_.worn;
+            }
             reconcile(snapshot->last_input, entity, now);
             continue;
+        }
+        if (!known) {
+            continue;  // not drawable until its strings arrive (a tick or two)
         }
         // Characters missing from the snapshot have left.
         auto& samples = seen[entity.id];
         if (auto it = history_.find(entity.id); it != history_.end()) {
             samples = std::move(it->second);
         }
-        samples.push_back({snapshot->server_tick, entity});
+        samples.push_back({snapshot->server_tick, std::move(entity)});
         while (samples.size() > 2 && samples[1].tick + 1 < render_tick_) {
             samples.pop_front();
         }
     }
     history_ = std::move(seen);
+    // Entities out of this snapshot are forgotten; the server sends their
+    // strings again when they're back.
+    static_cache_ = std::move(cache);
+}
+
+bool GameClient::fill_static(net::EntityState& entity) {
+    if (entity.has_static) {
+        net::EntityState& cached = static_cache_[entity.id];
+        cached.static_key = entity.static_key;
+        cached.name = entity.name;
+        cached.appearance = entity.appearance;
+        cached.weapon_model = entity.weapon_model;
+        cached.anim_set = entity.anim_set;
+        cached.worn = entity.worn;
+        return true;
+    }
+    const auto it = static_cache_.find(entity.id);
+    if (it == static_cache_.end()) {
+        return false;
+    }
+    // A changed key with no strings (they were lost): keep the old ones
+    // until the new ones come.
+    entity.name = it->second.name;
+    entity.appearance = it->second.appearance;
+    entity.weapon_model = it->second.weapon_model;
+    entity.anim_set = it->second.anim_set;
+    entity.worn = it->second.worn;
+    entity.has_static = true;
+    return true;
 }
 
 void GameClient::reconcile(uint32_t last_input, const net::EntityState& server, double now) {
@@ -614,9 +662,10 @@ std::vector<GameClient::Remote> GameClient::remotes() const {
 }
 
 ClientSession::ClientSession(net::Link& link, const World& world, ClientConfig config, BattlefieldFinder battlefields,
-                             WorldFinder worlds)
+                             WorldFinder worlds, PlanetFinder planets, std::string home_planet)
     : link_(link), world_(world), config_(std::move(config)), battlefields_(std::move(battlefields)),
-      worlds_(std::move(worlds)), client_(std::make_unique<GameClient>(link_, world_, config_)) {}
+      worlds_(std::move(worlds)), planets_(std::move(planets)), home_planet_(std::move(home_planet)),
+      client_(std::make_unique<GameClient>(link_, world_, config_)) {}
 
 void ClientSession::update(double now) {
     if (client_->status() == GameClient::Status::transferring) {
@@ -641,7 +690,27 @@ void ClientSession::update(double now) {
                 error_ = "can't load the world of " + transfer.battlefield + ": " + e.what();
             }
         }
+        // Another planet's hub (Stage 13): its world, loaded once.
+        std::string planet;
+        if (error_.empty() && !next.battlefield && !transfer.planet.empty() && transfer.planet != home_planet_) {
+            planet = transfer.planet;
+            auto& cached = planet_worlds_[planet];
+            if (!cached && planets_) {
+                try {
+                    cached = planets_(planet);
+                } catch (const std::exception& e) {
+                    error_ = "can't load the planet " + planet + ": " + e.what();
+                }
+            }
+            if (error_.empty() && !cached) {
+                error_ = "no planet named " + planet;
+            }
+            world = cached;
+        }
         if (error_.empty()) {
+            if (!next.battlefield) {
+                planet_ = planet;  // a battle leaves it: its hub sends us back to its planet
+            }
             client_ = std::make_unique<GameClient>(link_, world ? *world : world_, next);
             battle_world_ = std::move(world);  // after: the old client referred to the old one
             ++generation_;

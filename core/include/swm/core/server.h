@@ -9,6 +9,7 @@
 #include <set>
 #include <span>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 #include "swm/core/combat.h"
@@ -69,9 +70,39 @@ struct ServerConfig {
     // still, and the next must be this many meters from where the last was.
     double extract_time = 6.0;
     double extract_spacing = 25.0;
+    // Stage 13: interest management outside a match (a match sends everything).
+    // NPCs farther than npc_sim_radius from every player in the world stand
+    // still, unsimulated (0: always simulate). A client is sent NPCs within
+    // npc_view_radius, other players within player_view_radius, and bolts,
+    // explosions and impacts within effect_view_radius (0: all); once sent,
+    // an entity is kept until it's view_margin farther, so it doesn't blink
+    // at the edge.
+    double npc_sim_radius = 350;
+    double npc_view_radius = 240;
+    double player_view_radius = 1200;
+    double effect_view_radius = 450;
+    double view_margin = 30;
+    // Stage 13: the planet this server's world is (e.g. "Tatooine"), kept as
+    // each character's location; empty: no planets (a match, a test).
+    std::string planet;
 };
 
 inline constexpr int hostile_npc_team = 100;
+
+// Stage 13: what a server's ticks cost, over a window (GameServer::take_perf).
+struct ServerPerf {
+    uint64_t ticks = 0;
+    double tick_seconds = 0;      // total time spent in ticks
+    double worst_tick = 0;        // seconds, the slowest tick
+    uint64_t npc_ticks = 0;       // NPCs simulated, summed over ticks
+    uint64_t npc_frozen = 0;      // NPCs left standing (no player near), summed over ticks
+    uint64_t snapshots = 0;
+    uint64_t snapshot_bytes = 0;
+    size_t largest_snapshot = 0;  // bytes
+    uint64_t entities_sent = 0;   // entities in snapshots, summed
+    uint64_t static_sent = 0;     // of which with their strings
+    double window = 0;            // seconds the window covers (set by take_perf)
+};
 
 struct PlayerResult {
     std::string name;
@@ -80,12 +111,22 @@ struct PlayerResult {
     std::map<std::string, int64_t> profession_xp;  // earned in the match, by profession
     int remaining_std_ammo = -1;
     int remaining_hvy_ammo = -1;
+    // Stage 11 telemetry: the loadout's primary weapon, and kills by weapon.
+    std::string primary_weapon;
+    std::map<std::string, uint16_t> weapon_kills;
 };
 
 struct MatchResult {
     std::string battlefield;  // its name
     int winner = -1;          // -1: a draw
     std::vector<PlayerResult> players;
+    // Stage 11 telemetry: how it was fought and how it ended.
+    GameMode mode = GameMode::conquest;
+    std::array<std::string, 2> teams;  // the two sides' names
+    std::array<double, 2> tickets{};   // reinforcements left
+    std::array<double, 2> scores{};    // points (space assault), captures (flags) or kills (hunt)
+    double duration = 0;               // seconds live
+    uint16_t captures = 0;             // command posts taken or neutralized, and flags captured
 };
 
 // Authoritative game server. Clients send inputs; the server simulates every
@@ -179,6 +220,8 @@ public:
     // (routed_professions); saved, and shown if they're here.
     void award_profession_xp(const std::string& name, const std::map<std::string, int64_t>& earned, int64_t routed);
     const ProfessionBook* profession_book() const { return config_.professions; }
+    // Its store, if it saves (Stage 11: hubs record match telemetry there).
+    CharacterStore* store() const { return store_; }
     // A connected player's experience in each profession; nullptr if not connected.
     const std::vector<ProfessionProgress>* professions_of(uint32_t entity) const;
     // Crafting & Material Vault (server_crafting.cpp).
@@ -251,6 +294,27 @@ public:
     size_t corpse_loot_count() const { return corpse_loots_.size(); }
     void set_pvp_enabled(bool enabled) { config_.pvp_enabled = enabled; }
     void set_cloning_facility(Vec3 position) { cloning_facility_ = position; }
+    // Stage 13: every town's cloning facilities (name, position); the dead
+    // are cloned at the nearest to where they fell (unless bound elsewhere).
+    void set_cloning_facilities(std::vector<std::pair<std::string, Vec3>> facilities) {
+        cloning_facilities_ = std::move(facilities);
+    }
+    // Stage 13: more service points (another planet's starports, as
+    // "travel_offworld": Detail "<planet>|<fare>"), for clients joining after.
+    void add_vendors(std::vector<net::Vendor> vendors) {
+        vendors_.insert(vendors_.end(), vendors.begin(), vendors.end());
+    }
+    const std::vector<net::Vendor>& vendors() const { return vendors_; }
+    // Stage 13: the next time `name` joins, they're put there (off a
+    // starship from another planet) instead of where they were saved. A
+    // height below -1e8: on the ground there.
+    void expect_arrival(const std::string& name, Vec3 position) { arrivals_[name] = position; }
+    // A player paid for a ticket to another planet's starport (a
+    // "travel_offworld" service by that name): the galaxy sends them there.
+    std::function<void(uint32_t entity, const std::string& destination)> on_offworld_travel;
+    // A character saved on another planet (its location) joined: true if
+    // the galaxy is sending them there (they keep that location meanwhile).
+    std::function<bool(uint32_t entity, const std::string& location)> on_wrong_planet;
     const ItemCatalog* catalog() const { return config_.catalog; }
     void steer_npc(uint32_t entity, const MoveInput& input);
     std::vector<uint32_t> npcs() const;
@@ -269,6 +333,18 @@ public:
     bool hidden_from(uint32_t viewer, uint32_t entity) const;
     // Whether a player is cloaked (creatures and outlaws don't pick them as targets).
     bool cloaked(uint32_t entity) const;
+    // Stage 13: takes an NPC out of the world for good (a companion dismissed).
+    void remove_npc(uint32_t entity);
+    // Where the players in the world are (alive or dead, not waiting to spawn).
+    std::vector<Vec3> player_positions() const;
+    // Whether an NPC there is simulated (a player is within npc_sim_radius,
+    // as of the last tick; always in a match). Steering one that isn't is wasted.
+    bool npc_awake_at(Vec3 position) const;
+    // Whether a player in the world is within `radius` of there, as of the last tick.
+    bool player_near(Vec3 position, double radius) const { return player_grid_.any_near(position, radius); }
+    // What ticks have cost since the last call, and starts a new window.
+    ServerPerf take_perf(double now);
+    const ServerConfig& config() const { return config_; }
 
     std::function<void(const std::string&)> log;
     std::function<void(uint32_t npc_entity, uint32_t killer_entity)> on_npc_killed;
@@ -279,7 +355,10 @@ public:
     std::function<std::optional<int>(const std::string& name, uint64_t ticket, int team)> admit;
     std::function<void(uint32_t entity, const std::string& name)> on_join;
     // A player standing at a war terminal asked to queue for a side (-1: leave).
-    std::function<void(uint32_t entity, int team)> on_queue;
+    // Stage 11: `mode` is the core::GameMode asked for (or
+    // net::QueueRequest::any_mode), `terminal` the net::Recruiter::Kind of
+    // the terminal it stands at (ground, space or both).
+    std::function<void(uint32_t entity, int team, uint8_t mode, uint8_t terminal)> on_queue;
     // A match just ended.
     std::function<void(const MatchResult&)> on_match_ended;
 
@@ -305,6 +384,7 @@ private:
         double outside = 0;  // seconds out of bounds
         int remote_chair = -1;
         uint16_t kills = 0, deaths = 0, captures = 0;
+        std::map<std::string, uint16_t> weapon_kills;  // in a match: kills by weapon name (telemetry)
         std::deque<std::pair<uint32_t, Vec3>> history;  // recent positions, for rewinding
         uint32_t last_input = 0;  // newest simulated input
         std::deque<MoveInput> queue;
@@ -364,6 +444,15 @@ private:
         std::vector<ItemInstance> bank_items;  // ids are the bank's own
         uint64_t next_bank_id = 1;
         std::optional<Vec3> bound;      // where their clone is kept (cloning terminals), else the hub's facility
+        // Stage 13: what its last snapshot had (interest management), and
+        // which entities' strings it has been sent (net::EntityState::has_static).
+        std::set<uint32_t> seen_entities;
+        struct SentStatic {
+            uint32_t key = 0;
+            uint32_t since = 0;      // tick the key was first sent
+            uint32_t last_full = 0;  // tick the strings were last sent
+        };
+        std::map<uint32_t, SentStatic> sent_static;
         SpecialistState spec;  // Stage 12: kit, effects, datapad, contracts (server_specialists.cpp)
     };
     // A vehicle in a match. Empty, it keeps its own state; driven, its
@@ -384,6 +473,12 @@ private:
         double away = 0;        // seconds empty away from its spawn
         double dead_for = -1;   // seconds since destroyed; -1 alive
         double auto_cooldown = 0;  // seconds until automated ship turret fires next
+        // Stage 11: its tow cable on a walker (0: none), who fired it, the
+        // bearing from the walker it was last at, how far round it's wound
+        // (radians, signed) and for how long.
+        uint32_t towing = 0;
+        uint32_t tow_gunner = 0;
+        double tow_bearing = 0, tow_wound = 0, tow_time = 0;
     };
     struct RangeTarget {
         uint32_t entity = 0;
@@ -504,6 +599,11 @@ private:
     void leave_vehicle(Client& client);
     Vehicle* vehicle_of(uint32_t driver);
     Vehicle* vehicle_gunned_by(uint32_t gunner);  // the one it sits in as a gunner
+    // Stage 11: a tow-cable seat's shot: harpoons the nearest enemy AT-AT in
+    // reach, if the snowspeeder flies.
+    void fire_tow_cable(Client& gunner, const VehicleSeat& seat);
+    // Winds each cable as its snowspeeder circles; trips the walker, or snaps.
+    void update_tow_cables(double dt);
     // In the world: an owned vehicle item used: its vehicle called beside
     // its owner, or (called already) put away.
     void call_vehicle(Client& client, const ItemDef& def);
@@ -601,8 +701,15 @@ private:
     ServerConfig config_;
     CharacterStore* store_;
     std::optional<Conquest> conquest_;
+    double match_live_time_ = 0;    // Stage 11: seconds the current match has been live
+    uint16_t match_captures_ = 0;   // Stage 11: posts taken/neutralized and flags captured this match
     std::vector<Client> clients_;
     std::vector<Npc> npcs_;
+    std::unordered_map<uint32_t, size_t> npc_index_;  // Stage 13: entity -> index into npcs_
+    PointGrid player_grid_{64};  // Stage 13: players in the world, this tick
+    PointGrid npc_grid_{64};     // Stage 13: visible NPCs, this tick (indices into npcs_)
+    ServerPerf perf_;
+    double perf_since_ = -1;
     std::vector<std::string> looks_;
     std::vector<Bolt> bolts_;
     std::vector<Pickup> pickups_;
@@ -635,6 +742,8 @@ private:
     double next_save_time_ = 0;
     bool started_ = false;
     std::optional<Vec3> cloning_facility_;
+    std::vector<std::pair<std::string, Vec3>> cloning_facilities_;
+    std::map<std::string, Vec3> arrivals_;  // Stage 13: players expected from another planet
     // Stage 12: what specialists have put in the field, the companions
     // fielded, marks shown to a side, and the bazaar.
     struct Mark {

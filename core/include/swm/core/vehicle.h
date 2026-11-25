@@ -35,7 +35,22 @@ struct VehicleSeat {
     // Its turret on the model (lowercase node names; "" none): the node that
     // turns with the gunner's aim, and the one that tilts with it.
     std::string turret_node, pitch_node;
+    // A tow cable (Stage 11; TowCable = <lock range m> <lock time s>, the
+    // snowspeeder's rear gun, Battlefront's towcableweapon): its shot
+    // harpoons an enemy AT-AT within the lock range, and the pilot wraps
+    // its legs by circling it (see tow_wraps_to_trip). 0: an ordinary seat.
+    double tow_lock_range = 0, tow_lock_time = 0;
 };
+
+// The tow cable (Stage 11, as Battlefront I's Hoth played it; ASSUMPTION:
+// Battlefront II's files keep the weapon, not the rule): full turns a
+// snowspeeder must circle a harpooned AT-AT to trip it, the longest the
+// cable reaches before it snaps (m), and how long a cable holds at most (s).
+inline constexpr double tow_wraps_to_trip = 3.0;
+inline constexpr double tow_max_length = 110.0;
+inline constexpr double tow_max_time = 40.0;
+// Whether a vehicle class is one a tow cable can trip (Battlefront's AT-AT).
+bool towable(const struct VehicleClass& vehicle);
 
 struct VehicleClass {
     std::string name;   // its Battlefront class, e.g. "imp_hover_speederbike"

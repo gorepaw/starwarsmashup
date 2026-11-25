@@ -64,7 +64,8 @@ constexpr const char* usage = R"(usage:
   swgtool export-building <dir> <out_dir> --pob <path.pob> --name <name>
   swgtool pob-check <dir>
   swgtool snapshot <dir> <path.ws> [--match <text>] [--near <x> <z> <radius>] [--inside <id>]
-  swgtool export-city <dir> <bake_prefix> --snapshot <path.ws> --center <x> <z> --radius <m> [--hub <hub.ini>]
+  swgtool export-city <dir> <bake_prefix> --snapshot <path.ws> --center <x> <z> --radius <m> [--hub <hub.ini>]...
+  swgtool export-city <dir> <bake_prefix> --snapshot <path.ws> --area <name> <x> <z> <radius>... [--hub <hub.ini>]...
   swgtool export-people <dir> <bake_prefix> --hub <hub.ini> [--bf2-lvl <ingame.lvl>]
 )";
 
@@ -832,19 +833,34 @@ int cmd_datatable(const std::vector<std::string>& args) {
 
 int cmd_export_city(const std::vector<std::string>& args) {
     const auto center = std::find(args.begin(), args.end(), "--center");
-    if (args.size() < 2 || option(args, "--snapshot").empty() || option(args, "--radius").empty() ||
-        center == args.end() || center + 2 >= args.end()) {
+    CityExport city;
+    // --area <name> <x> <z> <radius>, repeated: several towns on one bake.
+    for (size_t i = 0; i + 4 < args.size(); ++i) {
+        if (args[i] == "--area") {
+            city.areas.push_back({args[i + 1], std::stod(args[i + 2]), std::stod(args[i + 3]), std::stod(args[i + 4])});
+        }
+    }
+    const bool one_center = center != args.end() && center + 2 < args.end() && !option(args, "--radius").empty();
+    if (args.size() < 2 || option(args, "--snapshot").empty() || (!one_center && city.areas.empty())) {
         std::cerr << usage;
         return 2;
     }
     TreLibrary library(args[0]);
-    CityExport city;
     city.bake = args[1];
     city.snapshot = option(args, "--snapshot");
-    city.center_x = std::stod(*(center + 1));
-    city.center_z = std::stod(*(center + 2));
-    city.radius = std::stod(option(args, "--radius"));
-    city.hub = option(args, "--hub");
+    if (one_center) {
+        city.center_x = std::stod(*(center + 1));
+        city.center_z = std::stod(*(center + 2));
+        city.radius = std::stod(option(args, "--radius"));
+    }
+    const std::vector<std::string> hubs = options(args, "--hub");
+    for (size_t i = 0; i < hubs.size(); ++i) {
+        if (i == 0) {
+            city.hub = hubs[i];
+        } else {
+            city.more_hubs.push_back(hubs[i]);
+        }
+    }
     export_city(library, city, std::cout);
     return 0;
 }

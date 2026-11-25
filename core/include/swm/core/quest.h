@@ -115,6 +115,9 @@ public:
     // Lairs and camps for missions, and where their distances are measured
     // from (the hub).
     void set_world(const WorldSpawns* spawns, Vec3 origin);
+    // Stage 13: the planet's towns (name, center): a mission's lair or camp
+    // is described from the nearest ("north of Anchorhead").
+    void set_towns(std::vector<std::pair<std::string, Vec3>> towns);
 
     // A quest, or a mission by its id; nullptr if there's none.
     const QuestDef* find(std::string_view id) const;
@@ -128,9 +131,11 @@ public:
     // full journal, or that there's no more; "" when they do offer something.
     std::string why_none(std::string_view giver, const std::vector<QuestProgress>& journal) const;
     // What a mission terminal offers now: up to `count` destroy missions
-    // between 300 m and 3 km out, a different set every 10 minutes
-    // (`now` in seconds), never one the character already has.
-    std::vector<const QuestDef*> missions(double now, const std::vector<QuestProgress>& journal, size_t count = 6) const;
+    // between 300 m and 3 km out (from `from`, the terminal; else the hub's
+    // origin), a different set every 10 minutes (`now` in seconds), never
+    // one the character already has.
+    std::vector<const QuestDef*> missions(double now, const std::vector<QuestProgress>& journal, size_t count = 6,
+                                          const Vec3* from = nullptr) const;
     bool can_accept(const QuestDef& def, const std::vector<QuestProgress>& journal) const;
     // Whether `giver` has a quest this journal hasn't finished (not yet open to
     // them, or under way): the giver isn't done with them.
@@ -168,6 +173,7 @@ private:
     std::map<std::string, size_t, std::less<>> index_;
     const WorldSpawns* spawns_ = nullptr;
     Vec3 origin_;
+    std::vector<std::pair<std::string, Vec3>> towns_;  // Stage 13
     mutable std::map<std::string, QuestDef, std::less<>> missions_;  // built on demand
 };
 

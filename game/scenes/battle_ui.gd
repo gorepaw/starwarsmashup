@@ -12,6 +12,7 @@ const ScopeOverlay = preload("res://ui/scope_overlay.gd")
 const SpawnScreen = preload("res://ui/spawn_screen.gd")
 const ScoreScreen = preload("res://ui/score_screen.gd")
 const TeamTags = preload("res://rendering/team_tags.gd")
+const BattleFlags = preload("res://rendering/battle_flags.gd")  # Stage 11: flag modes
 
 const AMMO_NUDGE := Vector2(0.025, 0)
 const TARGET_CONE := 0.035
@@ -45,6 +46,7 @@ var _match_label: RichTextLabel
 var _feed_lines: PackedStringArray = []
 
 var _posts: Array = []
+var _flag_view := BattleFlags.new()
 var _cone_shader: Shader
 var _team_tags: TeamTags
 var _fired := {}
@@ -197,6 +199,7 @@ func set_world_context(bake: String, meta: Dictionary, battlefield: Dictionary) 
 
 func clear_posts() -> void:
 	_team_tags = null
+	_flag_view.clear()
 	for post: Dictionary in _posts:
 		var nodes: Array = post.get("nodes", [])
 		if post.has("hologram"):
@@ -268,6 +271,7 @@ func add_posts() -> void:
 		label.position = position + Vector3.UP * 6
 		_world_root.add_child(label)
 		_posts.append({"material": material, "label": label, "nodes": [beam, ring, label]})
+	_flag_view.build(_world_root, _battlefield)
 
 
 func show_team_tag(id: int, model: Node3D, team: int, own_team: int, alive: bool, friend := false,
@@ -380,6 +384,7 @@ func spawn_post_position(client: Object, post_index: int) -> Vector3:
 func update_posts(game: Dictionary, own_team: int, elapsed: float) -> void:
 	if game.is_empty():
 		return
+	_flag_view.update(game, own_team, elapsed)
 	for i in mini(_posts.size(), (game["posts"] as Array).size()):
 		var state: Dictionary = game["posts"][i]
 		if _posts[i].has("hologram"):
@@ -511,8 +516,31 @@ func handle_capture_event(event: Dictionary, own_team: int) -> void:
 	add_feed_line("%s %s %s" % [_team_name(att_team), event["kind"], _battlefield["posts"][post_idx]["name"]])
 
 
+# Stage 11: a flag taken, dropped, returned or captured (attacker: the
+# soldier, victim: the flag, damage: the soldier's team).
+func handle_flag_event(event: Dictionary, own_team: int, who: Callable) -> void:
+	var team := int(event["damage"])
+	var soldier := int(event["attacker"])
+	var by := str(who.call(soldier)) if soldier != 0 else _team_name(team)
+	var ours := team == own_team
+	match str(event["kind"]):
+		"flag_taken":
+			add_feed_line("%s took the flag" % by)
+			if _audio != null:
+				_audio.play_2d("com_blg_commandpost_capture" if ours else "com_blg_commandpost_lost")
+		"flag_dropped":
+			add_feed_line("%s dropped the flag" % by)
+		"flag_returned":
+			add_feed_line("The flag went home" if soldier == 0 else "%s returned their flag" % by)
+		"flag_captured":
+			add_feed_line("%s captured the flag!" % by)
+			if _audio != null:
+				_audio.play_2d("com_blg_commandpost_capture" if ours else "com_blg_commandpost_lost")
+
+
 func push_hud_message(event: Dictionary, client: Object) -> void:
-	if _bf2_hud == null or _feed_lines.is_empty() or not (event["kind"] in ["kill", "captured", "neutralized"]):
+	if _bf2_hud == null or _feed_lines.is_empty() or not (event["kind"] in ["kill", "captured", "neutralized",
+			"flag_taken", "flag_dropped", "flag_returned", "flag_captured"]):
 		return
 	_bf2_hud.messages.append({"text": _feed_lines[-1], "age": 0.0, "color": _message_color(event, client)})
 	if _bf2_hud.messages.size() > 16:
@@ -858,6 +886,8 @@ func _aim_candidates(client: Object, team: int) -> Array:
 		for group: Array in [client.get_vendors(), client.get_quartermasters(), givers, client.get_workbenches(),
 				client.get_recruiters(), client.get_mission_terminals()]:
 			for place: Dictionary in group:
+				if str(place.get("kind", "")) == "travel_offworld":
+					continue  # another planet's starport (Stage 13)
 				out.append({"key": "p" + str(place["name"]) + str(place["position"]), "name": str(place["name"]),
 						"at": (place["position"] as Vector3) + Vector3.UP * 1.0, "team": -1, "friend": false,
 						"hostile": false, "health": 0.0, "max_health": 0.0})
@@ -937,6 +967,8 @@ func _update_match_hud(client: Object, delta: float, hub_ui: Node, generation: i
 		var warmup: bool = game["phase"] == "warmup"
 		if warmup:
 			_match_label.text = "[center]\n\n\n\n\nWarmup: the match starts in %d s[/center]" % ceili(game["time_left"])
+		elif str(game.get("mode", "")) in ["ctf", "1flag", "hunt"]:
+			_match_label.text = _mode_banner(game, team, score_limit)
 		elif score_limit > 0:
 			_match_label.text = _space_systems_banner(game, team, score_limit)
 		else:
@@ -956,6 +988,36 @@ func _update_match_hud(client: Object, delta: float, hub_ui: Node, generation: i
 		_center.text = "Eliminated"
 	elif _outside > 0:
 		_center.text = "Return to the battlefield!"
+
+
+# Stage 11: the flag modes' and Hunt's banner: the score to reach, the time
+# left, and where the flags are.
+func _mode_banner(game: Dictionary, team: int, score_limit: int) -> String:
+	var ally := team if team >= 0 and team < 2 else 0
+	var scores: Array = game.get("scores", [0, 0])
+	var mode := str(game.get("mode", ""))
+	var goal := "%d captures" % score_limit if mode != "hunt" else "%d kills" % score_limit
+	var secs := maxi(0, ceili(float(game.get("time_left", 0.0))))
+	var line := "[center][color=#%s]%s %d[/color]  |  %s %s  |  %d:%02d  |  [color=#%s]%d %s[/color]" % [
+			FRIEND_COLOR.to_html(false), _team_name(ally), int(scores[ally]),
+			str(_battlefield.get("mode_name", mode)), goal, secs / 60, secs % 60,
+			ENEMY_COLOR.to_html(false), int(scores[1 - ally]), _team_name(1 - ally)]
+	var flags: Array = game.get("flags", [])
+	var defs: Array = _battlefield.get("flags", [])
+	var notes := PackedStringArray()
+	for i in mini(flags.size(), defs.size()):
+		var owner := int(defs[i]["owner"])
+		var whose := "The flag" if owner < 0 else ("Your flag" if owner == ally else "Their flag")
+		var state: Dictionary = flags[i]
+		if int(state.get("carrier", 0)) != 0:
+			notes.append("%s is carried" % whose)
+		elif not bool(state.get("home", true)):
+			notes.append("%s lies dropped (%ds)" % [whose, maxi(0, 30 - int(float(state.get("dropped_for", 0.0))))])
+		else:
+			notes.append("%s is home" % whose)
+	if not notes.is_empty():
+		line += "\n" + "   ".join(notes)
+	return line + "[/center]"
 
 
 func _space_systems_banner(game: Dictionary, team: int, score_limit: int) -> String:

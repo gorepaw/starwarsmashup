@@ -97,6 +97,7 @@ bool over_edge(const World& world, const Battlefield* field, const NavGrid* nav,
 Bot::Bot(uint64_t seed, BotSkill skill) : rng_(seed * 0x9E3779B97F4A7C15ull + 1), skill_(skill) {
     aim_phase_ = random() * 100;
     queue_team_ = random() < 0.5 ? 0 : 1;
+    flag_role_ = random();
 }
 
 // Walks to the nearest war terminal and queues there.
@@ -104,11 +105,21 @@ void Bot::go_to_recruiter(GameClient& client, double now) {
     GameClient::Controls controls;
     const MoveState& me = client.predicted();
     controls.yaw = me.yaw;
+    // The nearest Ground Battle Terminal (Stage 11: Space Terminals stand
+    // inside starports, out of a hub bot's straight walk); any if none.
     const net::Recruiter* nearest = nullptr;
-    for (const net::Recruiter& r : client.recruiters()) {
-        if (nearest == nullptr ||
-            horizontal_distance(me.position, r.position) < horizontal_distance(me.position, nearest->position)) {
-            nearest = &r;
+    for (const bool ground_only : {true, false}) {
+        for (const net::Recruiter& r : client.recruiters()) {
+            if (ground_only && r.kind == net::Recruiter::space) {
+                continue;
+            }
+            if (nearest == nullptr ||
+                horizontal_distance(me.position, r.position) < horizontal_distance(me.position, nearest->position)) {
+                nearest = &r;
+            }
+        }
+        if (nearest != nullptr) {
+            break;
         }
     }
     const double distance = horizontal_distance(me.position, nearest->position);
@@ -119,7 +130,16 @@ void Bot::go_to_recruiter(GameClient& client, double now) {
             controls.forward = 1;
             controls.sprint = distance > 20;
         } else if (now >= next_objective_) {
-            client.queue(queue_team_);
+            // Stage 11: a side of either era the hub offers (its seed's, unless
+            // set), and any of Battlefront's modes (a Space Terminal's are
+            // space battles whatever it asks).
+            int team = queue_team_;
+            if (!queue_team_set_ && client.factions().size() >= 4) {
+                team = int(random() * 4) % 4;
+                queue_team_ = team;
+                queue_team_set_ = true;
+            }
+            client.queue(team, net::QueueRequest::any_mode);
             next_objective_ = now + 2;
         }
     }
@@ -244,6 +264,52 @@ void Bot::choose_objective(const GameClient& client, double now) {
         }
     }
     next_objective_ = now + 4 + random() * 4;
+}
+
+std::optional<Vec3> Bot::flag_objective(const GameClient& client) const {
+    const Battlefield* field = client.config().battlefield ? &*client.config().battlefield : nullptr;
+    const MatchState* match = client.match() ? &*client.match() : nullptr;
+    if (field == nullptr || match == nullptr || field->flags.empty() || match->flags.size() != field->flags.size()) {
+        return std::nullopt;
+    }
+    const int team = client.self().team;
+    const uint32_t me = client.entity_id();
+    const Vec3 at = client.predicted().position;
+    // Carrying one: home to the nearest capture region where we score.
+    for (const FlagState& flag : match->flags) {
+        if (flag.carrier == me) {
+            std::optional<Vec3> best;
+            for (const FlagCapture& capture : field->flag_captures) {
+                if (capture.team == team &&
+                    (!best || horizontal_distance(at, capture.where.center) < horizontal_distance(at, *best))) {
+                    best = capture.where.center;
+                }
+            }
+            return best;
+        }
+    }
+    std::optional<Vec3> best;
+    double best_distance = std::numeric_limits<double>::max();
+    for (size_t i = 0; i < match->flags.size(); ++i) {
+        const FlagState& flag = match->flags[i];
+        const int owner = field->flags[i].owner;
+        const double distance = horizontal_distance(at, flag.position);
+        // Our own flag lying dropped: anyone near goes to send it home.
+        if (owner == team && !flag.home && flag.carrier == 0 && (distance < 60 || flag_role_ >= 0.7)) {
+            if (distance < best_distance) {
+                best_distance = distance;
+                best = flag.position;
+            }
+            continue;
+        }
+        // Theirs (or the neutral one): the attackers go for it, unless a
+        // teammate has it already.
+        if (owner != team && flag_role_ < 0.7 && flag.carrier == 0 && distance < best_distance) {
+            best_distance = distance;
+            best = flag.position;
+        }
+    }
+    return best;
 }
 
 double drop_pace(Vec3 position, const std::vector<Vec3>& path, size_t corner) {
@@ -730,6 +796,12 @@ void Bot::update(GameClient& client, const World& world, double now) {
         if (post.console) {
             destination->y = post.console->y;
         }
+        // Stage 11: in a flag mode the flags come first.
+        chasing_flag_ = false;
+        if (const auto flag = flag_objective(client)) {
+            destination = *flag;
+            chasing_flag_ = true;
+        }
         choose_powerup(client, now);
         if (powerup_ >= 0 || pickup_ != 0) {
             destination = powerup_spot_;
@@ -876,12 +948,12 @@ void Bot::update(GameClient& client, const World& world, double now) {
         // Over or under a post (on the hillside over Polis Massa's CP3, in
         // its cave) isn't there yet.
         double off_height = 0;
-        if (in_match && powerup_ < 0 && pickup_ == 0 && !cover_) {
+        if (in_match && powerup_ < 0 && pickup_ == 0 && !cover_ && !chasing_flag_) {
             const CommandPost& post = client.config().battlefield->posts[size_t(objective_)];
             off_height = std::max({0.0, post.low - 0.5 - me.position.y, me.position.y - post.high});
         }
         to_go = horizontal_distance(*destination, me.position) + off_height;
-        const double stop = pickup_ != 0 || cover_ ? 0.4 : 1.5;  // right onto a pickup, right behind cover
+        const double stop = pickup_ != 0 || cover_ || chasing_flag_ ? 0.4 : 1.5;  // right onto a pickup or a flag, right behind cover
         if (to_go > stop) {
             const Vec3 toward = steer(me.position, *destination, now);
             const Vec3 d{toward.x - me.position.x, 0, toward.z - me.position.z};

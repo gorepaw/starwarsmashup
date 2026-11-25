@@ -1,5 +1,7 @@
 #include "swm/core/sqlite_store.h"
 
+#include <algorithm>
+#include <chrono>
 #include <stdexcept>
 #include <string>
 
@@ -257,6 +259,39 @@ SqliteCharacterStore::SqliteCharacterStore(const std::filesystem::path& path) {
              " value TEXT NOT NULL,"
              " PRIMARY KEY (owner_id, key)"
              ") STRICT");
+        // Stage 11: match telemetry (CharacterStore::record_match), likewise outside the versioned tables.
+        exec("CREATE TABLE IF NOT EXISTS match_telemetry ("
+             " id INTEGER PRIMARY KEY,"
+             " ended_at INTEGER NOT NULL,"
+             " battlefield TEXT NOT NULL,"
+             " map TEXT NOT NULL,"
+             " mode TEXT NOT NULL,"
+             " era TEXT NOT NULL,"
+             " space INTEGER NOT NULL,"
+             " team1 TEXT NOT NULL,"
+             " team2 TEXT NOT NULL,"
+             " winner INTEGER NOT NULL,"
+             " tickets1 REAL NOT NULL,"
+             " tickets2 REAL NOT NULL,"
+             " score1 REAL NOT NULL,"
+             " score2 REAL NOT NULL,"
+             " duration REAL NOT NULL,"
+             " captures INTEGER NOT NULL,"
+             " players INTEGER NOT NULL,"
+             " bots INTEGER NOT NULL"
+             ") STRICT");
+        exec("CREATE TABLE IF NOT EXISTS match_participants ("
+             " match_id INTEGER NOT NULL REFERENCES match_telemetry(id) ON DELETE CASCADE,"
+             " name TEXT NOT NULL,"
+             " team INTEGER NOT NULL,"
+             " bot INTEGER NOT NULL,"
+             " kills INTEGER NOT NULL,"
+             " deaths INTEGER NOT NULL,"
+             " captures INTEGER NOT NULL,"
+             " primary_weapon TEXT NOT NULL,"
+             " weapon_kills TEXT NOT NULL"
+             ") STRICT");
+        exec("CREATE INDEX IF NOT EXISTS match_participants_match ON match_participants(match_id)");
 
         constexpr const char* cols =
             "id, name, x, y, z, yaw, species, gender, location, appearance, credits, faction_points, experience, active_loadout";
@@ -916,6 +951,133 @@ void SqliteCharacterStore::save_reputation(PersistentId owner_id, const std::map
         sqlite3_exec(db_, "ROLLBACK", nullptr, nullptr, nullptr);
         throw;
     }
+}
+
+int64_t SqliteCharacterStore::record_match(const MatchTelemetry& match) {
+    struct Finalize {
+        sqlite3_stmt* statement;
+        ~Finalize() { sqlite3_finalize(statement); }
+    };
+    const auto text = [](sqlite3_stmt* st, int index, const std::string& value) {
+        sqlite3_bind_text(st, index, value.c_str(), int(value.size()), SQLITE_TRANSIENT);
+    };
+    exec("BEGIN");
+    try {
+        int64_t id = 0;
+        {
+            sqlite3_stmt* st = prepare(
+                db_, "INSERT INTO match_telemetry (ended_at, battlefield, map, mode, era, space, team1, team2, winner, "
+                     "tickets1, tickets2, score1, score2, duration, captures, players, bots) "
+                     "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
+            Finalize finalize{st};
+            const int64_t ended =
+                match.ended_at != 0
+                    ? match.ended_at
+                    : int64_t(std::chrono::duration_cast<std::chrono::seconds>(
+                                  std::chrono::system_clock::now().time_since_epoch())
+                                  .count());
+            sqlite3_bind_int64(st, 1, ended);
+            text(st, 2, match.battlefield);
+            text(st, 3, match.map);
+            text(st, 4, match.mode);
+            text(st, 5, match.era);
+            sqlite3_bind_int(st, 6, match.space ? 1 : 0);
+            text(st, 7, match.teams[0]);
+            text(st, 8, match.teams[1]);
+            sqlite3_bind_int(st, 9, match.winner);
+            sqlite3_bind_double(st, 10, match.tickets[0]);
+            sqlite3_bind_double(st, 11, match.tickets[1]);
+            sqlite3_bind_double(st, 12, match.scores[0]);
+            sqlite3_bind_double(st, 13, match.scores[1]);
+            sqlite3_bind_double(st, 14, match.duration);
+            sqlite3_bind_int(st, 15, match.captures);
+            sqlite3_bind_int(st, 16, match.player_count());
+            sqlite3_bind_int(st, 17, match.bot_count());
+            if (sqlite3_step(st) != SQLITE_DONE) fail(db_, "record_match");
+            id = sqlite3_last_insert_rowid(db_);
+        }
+        sqlite3_stmt* st = prepare(db_, "INSERT INTO match_participants (match_id, name, team, bot, kills, deaths, "
+                                        "captures, primary_weapon, weapon_kills) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)");
+        Finalize finalize{st};
+        for (const MatchParticipant& p : match.participants) {
+            sqlite3_reset(st);
+            sqlite3_bind_int64(st, 1, id);
+            text(st, 2, p.name);
+            sqlite3_bind_int(st, 3, p.team);
+            sqlite3_bind_int(st, 4, p.bot ? 1 : 0);
+            sqlite3_bind_int(st, 5, p.kills);
+            sqlite3_bind_int(st, 6, p.deaths);
+            sqlite3_bind_int(st, 7, p.captures);
+            text(st, 8, p.primary_weapon);
+            text(st, 9, encode_weapon_kills(p.weapon_kills));
+            if (sqlite3_step(st) != SQLITE_DONE) fail(db_, "record_match participant");
+        }
+        exec("COMMIT");
+        return id;
+    } catch (...) {
+        exec("ROLLBACK");
+        throw;
+    }
+}
+
+std::vector<MatchTelemetry> SqliteCharacterStore::list_matches(size_t limit) {
+    struct Finalize {
+        sqlite3_stmt* statement;
+        ~Finalize() { sqlite3_finalize(statement); }
+    };
+    const auto column = [](sqlite3_stmt* st, int index) {
+        const auto* value = reinterpret_cast<const char*>(sqlite3_column_text(st, index));
+        return std::string(value ? value : "");
+    };
+    std::vector<MatchTelemetry> out;
+    sqlite3_stmt* st = prepare(db_, "SELECT id, ended_at, battlefield, map, mode, era, space, team1, team2, winner, "
+                                    "tickets1, tickets2, score1, score2, duration, captures FROM match_telemetry "
+                                    "ORDER BY id DESC LIMIT ?");
+    Finalize finalize{st};
+    sqlite3_bind_int64(st, 1, sqlite3_int64(std::min<size_t>(limit, size_t(1) << 30)));
+    for (;;) {
+        const int step = sqlite3_step(st);
+        if (step == SQLITE_DONE) break;
+        if (step != SQLITE_ROW) fail(db_, "list_matches");
+        MatchTelemetry m;
+        m.id = sqlite3_column_int64(st, 0);
+        m.ended_at = sqlite3_column_int64(st, 1);
+        m.battlefield = column(st, 2);
+        m.map = column(st, 3);
+        m.mode = column(st, 4);
+        m.era = column(st, 5);
+        m.space = sqlite3_column_int(st, 6) != 0;
+        m.teams = {column(st, 7), column(st, 8)};
+        m.winner = sqlite3_column_int(st, 9);
+        m.tickets = {sqlite3_column_double(st, 10), sqlite3_column_double(st, 11)};
+        m.scores = {sqlite3_column_double(st, 12), sqlite3_column_double(st, 13)};
+        m.duration = sqlite3_column_double(st, 14);
+        m.captures = uint16_t(sqlite3_column_int(st, 15));
+        out.push_back(std::move(m));
+    }
+    sqlite3_stmt* people = prepare(db_, "SELECT name, team, bot, kills, deaths, captures, primary_weapon, "
+                                        "weapon_kills FROM match_participants WHERE match_id = ?");
+    Finalize finalize_people{people};
+    for (MatchTelemetry& m : out) {
+        sqlite3_reset(people);
+        sqlite3_bind_int64(people, 1, m.id);
+        for (;;) {
+            const int step = sqlite3_step(people);
+            if (step == SQLITE_DONE) break;
+            if (step != SQLITE_ROW) fail(db_, "list_matches participants");
+            MatchParticipant p;
+            p.name = column(people, 0);
+            p.team = sqlite3_column_int(people, 1);
+            p.bot = sqlite3_column_int(people, 2) != 0;
+            p.kills = uint16_t(sqlite3_column_int(people, 3));
+            p.deaths = uint16_t(sqlite3_column_int(people, 4));
+            p.captures = uint16_t(sqlite3_column_int(people, 5));
+            p.primary_weapon = column(people, 6);
+            p.weapon_kills = decode_weapon_kills(column(people, 7));
+            m.participants.push_back(std::move(p));
+        }
+    }
+    return out;
 }
 
 } // namespace swm::core

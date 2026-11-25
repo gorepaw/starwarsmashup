@@ -69,6 +69,24 @@ void test_hub_file() {
         refused = true;
     }
     CHECK(refused);
+
+    // Stage 13: a planet's other towns, each a file of its own (Town =), read
+    // with the hub's: their [town], people and services the hub's.
+    std::ofstream(dir / "far.ini") << "[town]\nName = Far Town\nCenter = 100 200\nRadius = 250\n"
+                                      "CloningFacility = 110 190\nCloningFacility = 90 210\n"
+                                      "[crowd]\nCount = 3\nArea = 100 200 40\nTemplate = object/mobile/shared_x.iff\n"
+                                      "[service]\nName = Far Shuttleport\nType = travel\nPosition = 120 220\n";
+    std::ofstream(dir / "towns.ini") << "[hub]\nName = Home\nSpawn = 10 20\nRadius = 500\nCloningFacility = 5 5\n"
+                                        "Town = far.ini\nBattlefield = fields/dunes.ini\n"
+                                        "[recruiter]\nPosition = 0 0\n"
+                                        "[crowd]\nCount = 5\nArea = 10 20 30\nTemplate = object/mobile/shared_y.iff\n";
+    const HubConfig towns = load_hub(dir / "towns.ini");
+    CHECK(towns.towns.size() == 2 && towns.towns[0].name == "Home" && towns.towns[0].radius == 500);
+    CHECK(towns.towns[0].center == Vec3(-10, 0, 20) && towns.towns[0].cloning.size() == 1);
+    CHECK(towns.towns[1].name == "Far Town" && towns.towns[1].center == Vec3(-100, 0, 200) &&
+          towns.towns[1].cloning.size() == 2 && towns.towns[1].radius == 250);
+    CHECK(towns.crowds.size() == 2 && towns.crowd.count == 5 && towns.crowds[1].count == 3);
+    CHECK(towns.vendors.size() == 1 && towns.vendors[0].kind == "travel" && towns.vendors[0].name == "Far Shuttleport");
     std::filesystem::remove_all(dir);
 }
 
@@ -208,7 +226,7 @@ void test_queue_battle_and_back() {
     std::printf("hub: back after %.0f s; alice: \"%s\", bob: \"%s\"\n", now, players[0].notice.c_str(),
                 players[1].notice.c_str());
     // Both queued, went to the same battle, fought, and came back to the hub.
-    CHECK(players[0].queued && players[1].queued && battles_started == 1 && next_battle == "Test Field");
+    CHECK(players[0].queued && players[1].queued && battles_started == 1 && next_battle == "Test Field (Conquest)");
     // In the battle's world, on the server and the clients; back at the hub, in its own.
     CHECK(worlds_loaded == 1 && client_worlds == 2);
     CHECK(std::abs(players[0].battle_height - 10) < 0.01 && std::abs(players[1].battle_height - 10) < 0.01);
@@ -228,6 +246,15 @@ void test_queue_battle_and_back() {
     CHECK(players[0].notice.find("at Test Field") != std::string::npos);
     CHECK(players[1].notice.find("at Test Field") != std::string::npos);
     CHECK(hub.battle_count() == 0 && stranger && stranger->status() == GameClient::Status::refused);
+    // Stage 11: the battle's telemetry: where and how it was fought, who won,
+    // the two players (not bots) and the two bots.
+    CHECK(hub.telemetry().size() == 1);
+    if (!hub.telemetry().empty()) {
+        const MatchTelemetry& t = hub.telemetry().back();
+        CHECK(t.battlefield == "test_field" && t.map == "Test Field" && t.mode == "conquest" && t.era == "gcw");
+        CHECK(!t.space && t.teams[0] == hub.last_result()->teams[0] && t.winner == hub.last_result()->winner);
+        CHECK(t.player_count() == 2 && t.bot_count() == 2 && t.duration > 0);
+    }
 }
 
 // A hub's people: parsed from its file, made by the hub's server, walking
@@ -326,7 +353,9 @@ void test_creature_body() {
     world.add_map_collision(wall);
     net::LoopbackHub links;
     net::LoopbackLink link{links, {1, 1}};
-    GameServer server(link, world, ServerConfig{});
+    ServerConfig config;
+    config.npc_sim_radius = 0;  // simulated with no player near (Stage 13 freezes them otherwise)
+    GameServer server(link, world, config);
     const uint32_t person = server.add_npc("Citizen", {0, 0, -5}, 0, 1);
     const uint32_t bantha = server.add_npc("Bantha", {0, 0, 5}, 0, 2, 0, 0, 1.7);
     MoveInput east;

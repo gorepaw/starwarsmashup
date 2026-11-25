@@ -243,6 +243,10 @@ godot::Array SwmClient::get_recruiters() const {
             entry["name"] = godot::String::utf8(r.name.c_str());
             entry["position"] = to_godot(r.position);
             entry["radius"] = r.radius;
+            // Stage 11: which battles it queues for.
+            entry["kind"] = r.kind == core::net::Recruiter::space  ? "space"
+                            : r.kind == core::net::Recruiter::both ? "both"
+                                                                    : "ground";
             out.push_back(entry);
         }
     }
@@ -259,10 +263,30 @@ godot::PackedStringArray SwmClient::get_factions() const {
     return out;
 }
 
-void SwmClient::queue(int64_t team) {
+void SwmClient::queue(int64_t team, const godot::String& mode) {
     if (client()) {
-        client()->queue(int(team));
+        // Stage 11: the game mode by id ("conquest", "ctf", "1flag", "hunt",
+        // "xl"), or "any".
+        uint8_t wanted = 0;
+        const std::string id = mode.utf8().get_data();
+        if (id == "any") {
+            wanted = core::net::QueueRequest::any_mode;
+        } else if (const auto parsed = core::parse_game_mode(id)) {
+            wanted = uint8_t(*parsed);
+        }
+        client()->queue(int(team), wanted);
     }
+}
+
+godot::Array SwmClient::get_game_modes() const {
+    godot::Array out;
+    for (size_t i = 0; i < core::game_mode_count; ++i) {
+        godot::Dictionary entry;
+        entry["id"] = godot::String::utf8(std::string(core::game_mode_id(core::GameMode(i))).c_str());
+        entry["name"] = godot::String::utf8(std::string(core::game_mode_name(core::GameMode(i))).c_str());
+        out.push_back(entry);
+    }
+    return out;
 }
 
 godot::Dictionary SwmClient::get_player_status() const {
@@ -371,6 +395,8 @@ godot::Array SwmClient::get_vehicles() const {
             }
             entry["gunners"] = gunners;
             entry["owner"] = int64_t(v.owner);  // in the world: whose it is (0 in a match)
+            entry["towing"] = int64_t(v.towing);  // Stage 11: the walker its tow cable holds (0: none)
+            entry["tow_wraps"] = double(v.tow_wraps);
             out.push_back(entry);
         }
     }
@@ -1247,6 +1273,27 @@ godot::Dictionary SwmClient::get_battlefield() const {
     }
     out["powerups"] = powerups;
     out["is_space"] = field.is_space();
+    // Stage 11: its game mode, and a flag mode's flags and capture regions.
+    out["mode"] = godot::String::utf8(std::string(core::game_mode_id(field.mode)).c_str());
+    out["mode_name"] = godot::String::utf8(std::string(core::game_mode_name(field.mode)).c_str());
+    godot::Array flags;
+    for (const core::Flag& flag : field.flags) {
+        godot::Dictionary entry;
+        entry["owner"] = int64_t(flag.owner);
+        entry["home"] = to_godot(flag.home);
+        flags.push_back(entry);
+    }
+    out["flags"] = flags;
+    godot::Array captures;
+    for (const core::FlagCapture& capture : field.flag_captures) {
+        godot::Dictionary entry;
+        entry["team"] = int64_t(capture.team);
+        entry["position"] = to_godot(capture.where.center);
+        entry["radius"] = std::max(capture.where.size.x, capture.where.size.z);
+        captures.push_back(entry);
+    }
+    out["flag_captures"] = captures;
+    out["time_limit"] = field.time_limit;
     out["min_fly_y"] = field.min_fly_y;
     out["max_fly_y"] = field.max_fly_y;
     out["score_limit"] = int64_t(field.score_limit);
@@ -1339,6 +1386,17 @@ godot::Dictionary SwmClient::get_match() const {
     scores.push_back(int64_t(match.scores[1]));
     out["scores"] = scores;
     out["score_limit"] = int64_t(match.score_limit);
+    out["mode"] = godot::String::utf8(std::string(core::game_mode_id(match.mode)).c_str());
+    godot::Array flag_states;
+    for (const core::FlagState& flag : match.flags) {
+        godot::Dictionary entry;
+        entry["position"] = to_godot(flag.position);
+        entry["carrier"] = int64_t(flag.carrier);
+        entry["home"] = flag.home;
+        entry["dropped_for"] = double(flag.dropped_for);
+        flag_states.push_back(entry);
+    }
+    out["flags"] = flag_states;
     out["dominant"] = int64_t(match.dominant);
     out["victory_left"] = match.victory_left;
     out["winner"] = int64_t(match.winner);
@@ -1421,7 +1479,7 @@ godot::Error SwmClient::start(const godot::String& server, const godot::String& 
             return std::nullopt;
         }
         try {
-            return core::load_battlefield(std::filesystem::path(dir) / (id + ".ini"));
+            return core::load_battlefield_id(std::filesystem::path(dir), id);  // id: file[@mode]
         } catch (const std::exception& error) {
             godot::UtilityFunctions::push_error("SwmClient: ", error.what());
             return std::nullopt;
@@ -1431,7 +1489,16 @@ godot::Error SwmClient::start(const godot::String& server, const godot::String& 
     auto find_world = [](const core::Battlefield& field) -> std::shared_ptr<const core::World> {
         return field.terrain.empty() ? nullptr : core::load_world(field.terrain);
     };
-    session_ = std::make_unique<core::ClientSession>(*link, *world_, config, find_battlefield, find_world);
+    // Another planet a hub sends us to (Stage 13): its bake, next to ours.
+    auto find_planet = [dir = std::filesystem::path(bake_).parent_path()](const std::string& planet)
+        -> std::shared_ptr<const core::World> {
+        if (planet.find_first_of("/\\.") != std::string::npos) {
+            return nullptr;
+        }
+        return core::load_world(dir / planet);
+    };
+    session_ = std::make_unique<core::ClientSession>(*link, *world_, config, find_battlefield, find_world, find_planet,
+                                                     std::filesystem::path(bake_).filename().string());
     return godot::OK;
 }
 
@@ -1614,6 +1681,19 @@ godot::Array SwmClient::take_events() {
                 break;
             case core::net::CombatEvent::neutralized:
                 entry["kind"] = "neutralized";
+                break;
+            // Stage 11: flags. attacker = the soldier, victim = the flag, damage = the team.
+            case core::net::CombatEvent::flag_taken:
+                entry["kind"] = "flag_taken";
+                break;
+            case core::net::CombatEvent::flag_dropped:
+                entry["kind"] = "flag_dropped";
+                break;
+            case core::net::CombatEvent::flag_returned:
+                entry["kind"] = "flag_returned";
+                break;
+            case core::net::CombatEvent::flag_captured:
+                entry["kind"] = "flag_captured";
                 break;
             }
             entry["attacker"] = int64_t(event.attacker);
@@ -1865,6 +1945,11 @@ godot::String SwmClient::get_bake() const {
     if (battlefield() && !battlefield()->terrain.empty() && session_ && &session_->world() != world_.get()) {
         return godot::String::utf8(battlefield()->terrain.generic_string().c_str());
     }
+    // Another planet's hub (Stage 13): its bake, next to ours.
+    if (!battlefield() && session_ && !session_->planet().empty()) {
+        const std::filesystem::path planet = std::filesystem::path(bake_).parent_path() / session_->planet();
+        return godot::String::utf8(planet.generic_string().c_str());
+    }
     return godot::String::utf8(bake_.c_str());
 }
 
@@ -1917,7 +2002,8 @@ void SwmClient::_bind_methods() {
     ClassDB::bind_method(D_METHOD("get_vehicles"), &SwmClient::get_vehicles);
     ClassDB::bind_method(D_METHOD("get_corpses"), &SwmClient::get_corpses);
     ClassDB::bind_method(D_METHOD("get_factions"), &SwmClient::get_factions);
-    ClassDB::bind_method(D_METHOD("queue", "team"), &SwmClient::queue);
+    ClassDB::bind_method(D_METHOD("queue", "team", "mode"), &SwmClient::queue, DEFVAL("conquest"));
+    ClassDB::bind_method(D_METHOD("get_game_modes"), &SwmClient::get_game_modes);
     ClassDB::bind_method(D_METHOD("get_player_status"), &SwmClient::get_player_status);
     ClassDB::bind_method(D_METHOD("get_inventory"), &SwmClient::get_inventory);
     ClassDB::bind_method(D_METHOD("get_reputation"), &SwmClient::get_reputation);
@@ -2024,6 +2110,16 @@ godot::Error SwmServer::set_hub(const godot::String& path) {
     return godot::OK;
 }
 
+godot::Error SwmServer::set_galaxy(const godot::String& path) {
+    try {
+        galaxy_config_ = core::load_galaxy(to_std(path));
+    } catch (const std::exception& error) {
+        godot::UtilityFunctions::push_error("set_galaxy: ", error.what());
+        return godot::ERR_CANT_OPEN;
+    }
+    return godot::OK;
+}
+
 godot::Error SwmServer::set_catalog(const godot::String& catalog_ini, const godot::String& bf2_items_dir) {
     try {
         catalog_.load(to_std(catalog_ini), to_std(bf2_items_dir));
@@ -2098,11 +2194,26 @@ godot::Error SwmServer::start(int64_t port, const godot::String& bake_prefix, co
     }
     config.crafting = has_crafting_ ? &crafting_ : nullptr;
     config.spawn = {-spawn.x, 0, spawn.y};  // Galaxies to game coordinates
+    if (galaxy_config_ && !battlefield_) {
+        config.planet = galaxy_config_->planets[0].name;
+    }
     server_ = std::make_unique<core::GameServer>(*udp_, *world_, config, store_.get());
     server_->log = [](const std::string& line) { godot::UtilityFunctions::print("server: ", line.c_str()); };
     if (hub_config_) {
-        hub_ = std::make_unique<core::Hub>(*server_, udp_->port(), *world_, *hub_config_, hub_network_);
+        core::HubConfig hub_config = *hub_config_;
+        if (galaxy_config_) {
+            hub_config.planet = galaxy_config_->planets[0].stem();
+        }
+        hub_ = std::make_unique<core::Hub>(*server_, udp_->port(), *world_, std::move(hub_config), hub_network_);
         hub_->log = server_->log;
+        if (galaxy_config_) {
+            try {
+                galaxy_ = std::make_unique<core::Galaxy>(*server_, udp_->port(), *galaxy_config_, config, store_.get(),
+                                                         hub_network_, server_->log);
+            } catch (const std::exception& error) {
+                godot::UtilityFunctions::push_error("SwmServer: galaxy: ", error.what());
+            }
+        }
     }
     if (bot_count_ > 0 || (battlefield_ && battlefield_->natives)) {  // (and the battlefield's natives)
         core::ClientConfig bot_config;
@@ -2128,10 +2239,21 @@ void SwmServer::update() {
         if (hub_) {
             hub_->update(now);
         }
+        if (galaxy_) {
+            galaxy_->update(now);
+        }
     }
 }
 
 void SwmServer::stop() {
+    if (galaxy_ && galaxy_config_) {
+        for (const auto& planet : galaxy_config_->planets) {
+            if (core::GameServer* other = galaxy_->server(planet.name); other && other != server_.get()) {
+                other->save_all();
+            }
+        }
+    }
+    galaxy_.reset();
     hub_.reset();
     if (bots_) {
         bots_->disconnect();
@@ -2161,6 +2283,7 @@ void SwmServer::_bind_methods() {
     ClassDB::bind_method(D_METHOD("set_battlefield", "path"), &SwmServer::set_battlefield);
     ClassDB::bind_method(D_METHOD("set_bots", "count"), &SwmServer::set_bots);
     ClassDB::bind_method(D_METHOD("set_hub", "path"), &SwmServer::set_hub);
+    ClassDB::bind_method(D_METHOD("set_galaxy", "path"), &SwmServer::set_galaxy);
     ClassDB::bind_method(D_METHOD("set_catalog", "catalog_ini", "bf2_items_dir"), &SwmServer::set_catalog);
     ClassDB::bind_method(D_METHOD("set_professions", "path"), &SwmServer::set_professions);
     ClassDB::bind_method(D_METHOD("set_world_vehicles", "dir"), &SwmServer::set_world_vehicles);

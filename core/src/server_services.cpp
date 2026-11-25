@@ -3,6 +3,7 @@
 // (who patch you up for a fee) and cloning terminals (where your clone is kept).
 #include <algorithm>
 #include <cmath>
+#include <cstdlib>
 #include <format>
 #include <sstream>
 
@@ -13,6 +14,7 @@ namespace swm::core {
 namespace {
 
 constexpr int64_t clinic_fee = 25;
+constexpr int64_t travel_fare = 100;  // a shuttle ticket to another of the planet's towns (Stage 13)
 
 // A bank item's fields on a line each, tab-separated (backslash escapes tab, newline and itself).
 std::string escape(const std::string& text) {
@@ -293,6 +295,77 @@ void GameServer::handle_service_request(Client& client, const net::ServiceReques
         store_->set_extra(client.character, "bound", std::format("{} {}", terminal->position.x, terminal->position.z));
         notify(client.entity, "Your clone is kept here now: " + terminal->name);
         quest_event(client, "bind");
+        return;
+    }
+    case net::ServiceRequest::travel: {
+        // A shuttle (or starport transport) to another of the planet's travel
+        // points; from a starport, to another planet's (Stage 13).
+        const net::Vendor* from = service_near(client, "travel");
+        if (from == nullptr) from = service_near(client, "starport");
+        if (from == nullptr) return;
+        const auto offworld = std::find_if(vendors_.begin(), vendors_.end(), [&](const net::Vendor& v) {
+            return v.kind == "travel_offworld" && v.name == req.id;
+        });
+        if (offworld != vendors_.end()) {
+            if (from->kind != "starport") {
+                notify(client.entity, "Ships to other planets leave from a starport.");
+                return;
+            }
+            if (client.state.vehicle >= 0) {
+                notify(client.entity, "Put your vehicle away before boarding.");
+                return;
+            }
+            const size_t bar = offworld->detail.find('|');
+            const int64_t fare = bar == std::string::npos ? 1000 : std::atoll(offworld->detail.c_str() + bar + 1);
+            if (client.credits < fare) {
+                notify(client.entity, std::format("A ticket to {} is {} Cr.", offworld->name, fare));
+                return;
+            }
+            if (!on_offworld_travel) {
+                notify(client.entity, "No ships are flying there.");
+                return;
+            }
+            client.credits -= fare;
+            save_economy_now();
+            quest_event(client, "travel");
+            say(std::format("{} bought passage from {} to {} ({} Cr)", client.name, from->name, offworld->name, fare));
+            on_offworld_travel(client.entity, offworld->name);
+            return;
+        }
+        const auto to = std::find_if(vendors_.begin(), vendors_.end(), [&](const net::Vendor& v) {
+            return (v.kind == "travel" || v.kind == "starport") && v.name == req.id;
+        });
+        if (to == vendors_.end() || to->name == from->name) {
+            notify(client.entity, "No shuttle goes there from here.");
+            return;
+        }
+        if (client.state.vehicle >= 0) {
+            notify(client.entity, "Put your vehicle away before boarding.");
+            return;
+        }
+        const int64_t fare = travel_fare;
+        if (client.credits < fare) {
+            notify(client.entity, std::format("A ticket to {} is {} Cr.", to->name, fare));
+            return;
+        }
+        client.credits -= fare;
+        save_economy_now();
+        // Off the shuttle at the far end, spread out a little.
+        const uint32_t slot = client.entity > 0 ? client.entity - 1 : 0;
+        Vec3 pos = world_.clamp(to->position + Vec3{1.5 * double(slot % 4) - 2.25, 0, 1.5 * double((slot / 4) % 3)});
+        const double ground = world_.terrain().height_at(pos.x, pos.z);
+        const double reach = to->position.y > ground + 0.5 ? to->position.y + 1.0 : ground + 1.0;
+        pos.y = world_.support_at(pos.x, pos.z, reach, client.stats.move.step_up).height;
+        if (pos.y < -1e8) pos.y = ground;
+        client.state.position = pos;  // weapons and all as they were
+        client.state.velocity = {};
+        client.history.clear();
+        ++client.spawn_count;  // clients jump there rather than glide
+        client.extract_started = -1.0;
+        client.switching_to = -1;
+        notify(client.entity, std::format("Arrived at {} ({} Cr)", to->name, fare));
+        quest_event(client, "travel");
+        say(std::format("{} travelled from {} to {}", client.name, from->name, to->name));
         return;
     }
     default:

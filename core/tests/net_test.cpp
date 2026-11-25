@@ -235,8 +235,9 @@ void test_session() {
     CHECK(s.b.predicted().position == b_server->position);
     const auto a_seen_by_b = find_remote(s.b.remotes(), s.a.entity_id());
     const auto b_seen_by_a = find_remote(s.a.remotes(), s.b.entity_id());
-    CHECK(a_seen_by_b && near(horizontal_distance(a_seen_by_b->state.position, a_server->position), 0));
-    CHECK(b_seen_by_a && near(horizontal_distance(b_seen_by_a->state.position, b_server->position), 0));
+    // (Others' positions come as floats: within a millimeter even at a planet's edge.)
+    CHECK(a_seen_by_b && near(horizontal_distance(a_seen_by_b->state.position, a_server->position), 0, 1e-3));
+    CHECK(b_seen_by_a && near(horizontal_distance(b_seen_by_a->state.position, b_server->position), 0, 1e-3));
     CHECK(a_seen_by_b->max_health > 0 && a_seen_by_b->actor_kind == 0);
     // B went after A, which circled at up to sprint speed.
     CHECK(horizontal_distance(b_server->position, {3, 0, 0}) > 5);

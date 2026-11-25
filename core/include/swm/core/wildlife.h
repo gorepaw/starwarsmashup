@@ -79,11 +79,26 @@ struct WorldSpawns {
 
 WorldSpawns load_world_spawns(const std::filesystem::path& path);
 
+// When a lair or camp is simulated (Stage 13). A whole planet's wildlife
+// can't think all the time for a few players: a group is asleep (its living
+// members out of the world, at home and healed; its dead waiting to come
+// back) until a player comes within wake_radius of its edge, and goes back to
+// sleep once none has been within wake_radius + sleep_margin for `linger`
+// seconds and none of its members is fighting or going home.
+struct PopulationActivity {
+    double wake_radius = 300;   // 0: every group always awake
+    double sleep_margin = 100;
+    double linger = 15;
+    double check_interval = 0.5;  // seconds between looks at who's near
+};
+
 class WorldPopulation {
 public:
     WorldPopulation(GameServer& server, const World& world, const NavGrid* nav, const WorldSpawns& spawns,
                     const ItemCatalog* catalog, const std::map<std::string, uint8_t>& look_indices);
 
+    // Before spawn_all().
+    void set_activity(const PopulationActivity& activity) { activity_ = activity; }
     void spawn_all();
     void update(double now);
 
@@ -94,6 +109,15 @@ public:
     std::string loot_table_for(uint32_t entity) const;
     // What a creature or bandit counts as for quests (empty type id: neither).
     KillTags kill_tags(uint32_t entity) const;
+
+    // Lairs and camps, and how many are awake; mobs asleep (out of the world).
+    size_t group_count() const { return lair_states_.size() + camp_states_.size(); }
+    size_t awake_groups() const;
+    size_t dormant_mobs() const;
+    bool lair_awake(size_t lair) const { return lair < lair_states_.size() && lair_states_[lair].awake; }
+    bool camp_awake(size_t camp) const { return camp < camp_states_.size() && camp_states_[camp].awake; }
+    // Whether a creature or bandit is asleep (out of the world until a player comes near).
+    bool dormant(uint32_t entity) const;
 
 private:
     struct CreatureMob {
@@ -112,6 +136,7 @@ private:
         double dead_since = -1;
         bool corpse_hidden = false;
         uint32_t last_seen_damage_tick = 0;
+        bool dormant = false;  // alive, out of the world while its lair sleeps
     };
 
     struct LairState {
@@ -119,6 +144,9 @@ private:
         double radius = 25;
         Vec3 herd_anchor;
         double next_herd_move = 0;
+        bool awake = true;
+        double quiet_since = -1;    // when no player was last near (or -1)
+        std::vector<size_t> mobs;   // indices into creatures_
     };
 
     struct BanditMob {
@@ -136,11 +164,21 @@ private:
         uint32_t last_seen_damage_tick = 0;
         Loadout loadout;
         CombatBrain brain;
+        bool dormant = false;
     };
 
     struct CampState {
         Vec3 center;
         double radius = 22;
+        bool awake = true;
+        double quiet_since = -1;
+        std::vector<size_t> mobs;  // indices into bandits_
+    };
+
+    struct PlayerPos {
+        uint32_t entity;
+        Vec3 pos;
+        Vec3 vel;
     };
 
     double random_unit();
@@ -150,6 +188,9 @@ private:
     Loadout build_bandit_loadout(const BanditArchetype& arch) const;
     void update_creatures(double now);
     void update_bandits(double now);
+    void update_activity(double now);
+    void sleep_creature(CreatureMob& mob);
+    void sleep_bandit(BanditMob& mob);
 
     GameServer& server_;
     const World& world_;
@@ -163,6 +204,11 @@ private:
     std::vector<BanditMob> bandits_;
     uint64_t rng_ = 0x5441544F4F494E45ull;
     double last_update_ = 0;
+    PopulationActivity activity_;
+    double next_activity_check_ = 0;
+    std::vector<PlayerPos> players_;  // this update's, alive
+    // entity -> (bandit?, index into creatures_ or bandits_)
+    std::map<uint32_t, std::pair<bool, size_t>> by_entity_;
 };
 
 } // namespace swm::core

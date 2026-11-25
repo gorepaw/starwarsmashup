@@ -266,8 +266,64 @@ struct SpaceSystem {
     std::string label;
 };
 
+// Battlefront II's game modes a battle is fought in. Conquest and Space
+// Assault are the battlefield's own; the others take their command posts
+// (spawn points only, in the flag modes and Hunt) and flags from the map's
+// other mode layers (`Mode = <id> <map file>` in a battlefield file).
+// Hero Assault waits for heroes (Jedi / the Force are parked).
+enum class GameMode : uint8_t {
+    conquest = 0,       // hold posts, bleed the other side's reinforcements
+    space_assault = 1,  // points for kills and ship systems (a space battlefield's)
+    ctf = 2,            // two flags: carry theirs to your home region
+    one_flag = 3,       // one neutral flag: carry it to their capture region
+    hunt = 4,           // spawn-only posts, first side to the kill limit wins
+    xl = 5,             // the XL layer, with bigger teams: team deathmatch (Battlefront's ObjectiveTDM)
+};
+inline constexpr size_t game_mode_count = 6;
+// Its id in battlefield files and battle ids ("conquest", "assault", "ctf",
+// "1flag", "hunt", "xl"), and its name for people ("Capture the Flag").
+std::string_view game_mode_id(GameMode mode);
+std::string_view game_mode_name(GameMode mode);
+std::optional<GameMode> parse_game_mode(std::string_view id);
+
+// A flag (Battlefront's ctf and 1flag layers' "flag" objects). In two-flag
+// CTF each side has one at home; in one-flag CTF one neutral flag waits in
+// the middle.
+struct Flag {
+    int owner = -1;  // team whose flag it is; -1: neutral (one-flag)
+    Vec3 home;       // game space, where it stands (and comes back to)
+};
+
+// Where a team scores by bringing a flag (Battlefront's capture regions:
+// Team1FlagCapture...): a region, as a death region's shape.
+struct FlagCapture {
+    int team = 0;
+    DeathRegion where;
+};
+
+// How near a soldier walks to take a flag (ASSUMPTION: Battlefront's
+// com_item_flag has no radius we know of; one this size feels like its).
+inline constexpr double flag_pickup_radius = 1.5;
+// Seconds a dropped flag lies before it goes home on its own (ASSUMPTION:
+// Battlefront's is about this).
+inline constexpr double flag_return_time = 30.0;
+
 struct Battlefield {
     std::string name;
+    // The mode this battlefield is set up for (load_battlefield's), and the
+    // modes its file offers: conquest (or space assault) always, then each
+    // `Mode = ` line's.
+    GameMode mode = GameMode::conquest;
+    std::vector<GameMode> modes{GameMode::conquest};
+    std::vector<Flag> flags;
+    std::vector<FlagCapture> flag_captures;
+    int capture_limit = 5;     // flag modes: captures to win (Battlefront's captureLimit)
+    int hunt_limit = 50;       // Hunt: kills to win
+    int team_size = 0;         // > 0: soldiers per team this mode wants (XL's), over the hub's
+    // Seconds a flag or Hunt match lasts at most (TimeLimit; the higher
+    // score wins then, else a draw); 0: no limit. During it MatchState's
+    // time_left counts down.
+    double time_limit = 0;
     std::filesystem::path terrain;  // its heightfield bake prefix, if its map names one
     double min_x = -1e9, min_z = -1e9, max_x = 1e9, max_z = 1e9;  // game space
     // The playable area within those (Battlefront's boundary paths): inside
@@ -359,6 +415,21 @@ struct Battlefield {
 // std::runtime_error if it, a map or a loadout can't be read or makes no
 // sense.
 Battlefield load_battlefield(const std::filesystem::path& path);
+// The same, set up for `mode`: one of its `Mode = <id> <map file>` lines
+// (relative to it), whose map file gives the mode's command posts, vehicle
+// spawns and flags (`Flag = <owner 0|1|2> x y z` and `FlagCapture = <team
+// 1|2> <shape> x y z sx sy sz` and 9 rotation numbers, as bf2tool
+// export-map --flag writes them); everything else is the battlefield's Map's.
+// Conquest (or a space battlefield's assault) needs no such line. Throws
+// std::runtime_error if the battlefield doesn't offer the mode.
+Battlefield load_battlefield(const std::filesystem::path& path, GameMode mode);
+
+// A battle's battlefield id: a battlefield file's name without .ini, and
+// `@<mode>` for a mode other than its own ("kamino_cw@1flag").
+std::string battlefield_id(const std::string& file, GameMode mode);
+// Loads a battle's battlefield by id from the battlefield files in `dir`.
+// Throws std::runtime_error for an id that isn't a plain name.
+Battlefield load_battlefield_id(const std::filesystem::path& dir, const std::string& id);
 
 // Every character is waiting to spawn (choosing a loadout and a post), alive,
 // or dead (down until it may spawn again).
@@ -375,8 +446,20 @@ struct PostState {
     friend bool operator==(const PostState&, const PostState&) = default;
 };
 
+// A flag in play: at home, carried, or dropped where its carrier fell.
+struct FlagState {
+    Vec3 position;          // game space: its home, its carrier's, or where it lies
+    uint32_t carrier = 0;   // the entity carrying it; 0: no one
+    bool home = true;
+    float dropped_for = 0;  // seconds it has lain dropped
+
+    friend bool operator==(const FlagState&, const FlagState&) = default;
+};
+
 struct MatchState {
     Phase phase = Phase::warmup;
+    GameMode mode = GameMode::conquest;
+    std::vector<FlagState> flags;    // per Battlefield::flags (flag modes)
     double time_left = 0;            // seconds left of the warmup or the results
     std::array<double, 2> tickets{};
     std::array<double, 2> scores{};
@@ -397,10 +480,14 @@ struct MatchState {
 };
 
 struct MatchEvent {
-    enum Kind : uint8_t { went_live, ended, restarted, captured, neutralized };
+    enum Kind : uint8_t {
+        went_live, ended, restarted, captured, neutralized,
+        flag_taken, flag_dropped, flag_returned, flag_captured,  // flag modes: `post` is the flag
+    };
     Kind kind = went_live;
-    int team = -1;   // captured/neutralized: who took it; ended: the winner
+    int team = -1;   // captured/neutralized: who took it; ended: the winner; flags: whose soldier did it
     int post = -1;
+    uint32_t entity = 0;  // flag_taken/flag_captured: the carrier
 };
 
 // Battlefront conquest rules, without networking: command posts change hands
@@ -418,6 +505,8 @@ public:
     struct Unit {
         int team = 0;
         Vec3 position;
+        uint32_t id = 0;     // its entity, for carrying flags (0: can't carry)
+        bool on_foot = true; // in a vehicle, it can't take a flag
     };
     // Advances by `dt` seconds. `units` are the living soldiers; `players`
     // counts everyone in the match, for the warmup's minimum.
@@ -452,6 +541,7 @@ public:
 private:
     void reset();
     void capture(double dt, std::span<const Unit> units, std::vector<MatchEvent>& events);
+    void move_flags(double dt, std::span<const Unit> units, std::vector<MatchEvent>& events);
     void move_doors(double dt, std::span<const Unit> units);
     void mend(double dt);
     void finish(int winner, std::vector<MatchEvent>& events);

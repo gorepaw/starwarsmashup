@@ -48,6 +48,8 @@ public:
     bool delete_preset(PersistentId owner_id, const std::string& name) override;
     std::map<std::string, int64_t> list_reputation(PersistentId owner_id) override;
     void save_reputation(PersistentId owner_id, const std::map<std::string, int64_t>& reputation) override;
+    int64_t record_match(const MatchTelemetry& match) override;       // Stage 11
+    std::vector<MatchTelemetry> list_matches(size_t limit) override;  // Stage 11
 
     // The schema version this build writes (PRAGMA user_version).
     static constexpr int schema_version = 7;

@@ -232,4 +232,19 @@ void ensure_starter_kit(CharacterStore& store, PersistentId char_id) {
     }
 }
 
+int64_t MemoryCharacterStore::record_match(const MatchTelemetry& match) {
+    MatchTelemetry stored = match;
+    stored.id = int64_t(matches_.size()) + 1;
+    matches_.push_back(std::move(stored));
+    return matches_.back().id;
+}
+
+std::vector<MatchTelemetry> MemoryCharacterStore::list_matches(size_t limit) {
+    std::vector<MatchTelemetry> out;
+    for (auto it = matches_.rbegin(); it != matches_.rend() && out.size() < limit; ++it) {
+        out.push_back(*it);
+    }
+    return out;
+}
+
 } // namespace swm::core

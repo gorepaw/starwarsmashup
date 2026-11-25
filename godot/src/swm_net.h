@@ -18,6 +18,7 @@
 #include "swm/core/client.h"
 #include "swm/core/conquest.h"
 #include "swm/core/heightfield.h"
+#include "swm/core/galaxy.h"
 #include "swm/core/hub.h"
 #include "swm/core/items.h"
 #include "swm/core/nav.h"
@@ -137,7 +138,11 @@ public:
     // look (1 and up) indexes these from 1.
     godot::PackedStringArray get_looks() const;
     // Queue for a battle on a side (0..3) at a war terminal; -1 leaves the queue.
-    void queue(int64_t team);
+    // Stage 11: `mode` is a game mode id ("conquest", "ctf", "1flag",
+    // "hunt", "xl") or "any"; a Space Terminal queues for space battles.
+    void queue(int64_t team, const godot::String& mode = "conquest");
+    // The game modes: [{id, name}].
+    godot::Array get_game_modes() const;
     // {queue ("none" or "queued"), team, in_queue, starts_in, battlefield,
     // notice_id, notice, credits, faction_points, experience, active_loadout,
     // switching_loadout, switch_progress, inventory_rev}.
@@ -281,6 +286,11 @@ public:
     // Makes the server a hub (a hub file, an OS path; see game/hubs/): its
     // war terminals queue players for battles it launches. Call before start().
     godot::Error set_hub(const godot::String& path);
+    // Stage 13: hosts every planet a galaxy file names (an OS path; see
+    // game/hubs/galaxy.ini), each a hub on its own world server, with
+    // starships between them. The first is this server's (set_hub's hub and
+    // start()'s bake should be its). Call before start().
+    godot::Error set_galaxy(const godot::String& path);
     // Loads the item catalog for hub inventory, quartermasters, and loadouts.
     godot::Error set_catalog(const godot::String& catalog_ini, const godot::String& bf2_items_dir);
     // Loads the profession roster (game/professions/professions.ini): players
@@ -327,6 +337,8 @@ private:
     bool has_crafting_ = false;
     core::UdpHubNetwork hub_network_;
     std::unique_ptr<core::Hub> hub_;
+    std::optional<core::GalaxyConfig> galaxy_config_;  // Stage 13
+    std::unique_ptr<core::Galaxy> galaxy_;
 };
 
 } // namespace swm::godot_bindings

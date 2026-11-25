@@ -10,6 +10,7 @@ const SwgTerrainStreamer = preload("res://rendering/swg_terrain_streamer.gd")
 const TATOOINE_SKY = preload("res://rendering/tatooine_sky.gdshader")
 const SwgBuilding = preload("res://rendering/swg_building.gd")
 const Bf2Map = preload("res://rendering/bf2_map.gd")
+const Weather = preload("res://rendering/weather.gd")  # Stage 11: rain, sand, snow, ash, mist
 const SwgCity = preload("res://rendering/swg_city.gd")
 const NATIVES_TEAM := 2  # a battlefield's natives (core::natives_team)
 const Soldier = preload("res://rendering/soldier.gd")
@@ -77,6 +78,7 @@ var _solo := false
 var _announced := false
 var _camera: Camera3D
 var _sky_dome: Node3D
+var _weather := Weather.new()
 var _camera_yaw := 0.0
 var _camera_distance := CAMERA_DISTANCE
 var _camera_sphere := SphereShape3D.new()
@@ -139,6 +141,8 @@ var _people_colors := {}
 var _shot_delay := 0
 var _loading_screen: LoadingScreen
 var _loading_phase := 0  # 0 idle, 1 waiting frame to load transfer world, 2 hiding after first rendered frame
+var _travel_hold := 0.0  # Stage 13: seconds the loading screen stays up after a long jump (a shuttle)
+var _last_own_position := Vector3.INF
 
 
 func _ready() -> void:
@@ -233,6 +237,10 @@ func start_session(config: Dictionary) -> bool:
 		if hub_path != "" and _server.set_hub(_os_path(hub_path)) != OK:
 			_emit_or_menu(1)
 			return false
+		# Stage 13: the other planets, each its own hub, with starships between them.
+		var galaxy_path := str(_config.get("galaxy", "hubs/galaxy.ini" if hub_path != "" else ""))
+		if galaxy_path != "" and FileAccess.file_exists(_os_path(galaxy_path)):
+			_server.set_galaxy(_os_path(galaxy_path))
 		var catalog_path := _os_path("items/swg_catalog.ini")
 		if FileAccess.file_exists(catalog_path):
 			_server.set_catalog(catalog_path, _os_path("imported_assets/items"))
@@ -336,6 +344,10 @@ func step_frame(delta: float) -> void:
 		_loading_phase = 0
 		if _loading_screen != null:
 			_loading_screen.visible = false
+	if _travel_hold > 0.0:
+		_travel_hold -= delta
+		if _travel_hold <= 0.0 and _loading_screen != null and _loading_phase == 0:
+			_loading_screen.visible = false
 	if _server != null:
 		_server.update()
 	if _bot != "conquest":
@@ -343,12 +355,15 @@ func step_frame(delta: float) -> void:
 	_client.update()
 	if _client.get_generation() != _generation:
 		_generation = _client.get_generation()
+		_last_own_position = Vector3.INF  # another world: not a jump in this one
 		if _loading_screen != null and _bot == "" and not DisplayServer.get_name().to_lower().contains("headless"):
 			var bf: Dictionary = _client.get_battlefield()
 			if not bf.is_empty():
 				_loading_screen.show_loading(str(bf.get("name", "BATTLEFIELD")), "Deploying to battle...", "hud_flag_icon")
 			else:
-				_loading_screen.show_loading("MOS EISLEY, TATOOINE", "Returning to Mos Eisley...", "hud_flag_icon")
+				# Back from a battle, or off a starship (Stage 13): the planet's name.
+				var planet := _game_path(_client.get_bake()).get_file().get_slice("_", 0).capitalize()
+				_loading_screen.show_loading(planet.to_upper(), "Arriving on %s..." % planet, "hud_flag_icon")
 			_loading_phase = 1
 			return
 		_arrive()
@@ -359,6 +374,13 @@ func step_frame(delta: float) -> void:
 
 	if _client.is_spawned():
 		var own: Dictionary = _client.get_presented()
+		# A shuttle (or a clone in another town) moves us kilometers at once:
+		# the loading screen covers the world streaming in there.
+		var own_position: Vector3 = own["position"]
+		if _last_own_position != Vector3.INF and own_position.distance_to(_last_own_position) > 300.0 				and _loading_screen != null and _bot == "" and _client.get_match().is_empty() 				and not DisplayServer.get_name().to_lower().contains("headless"):
+			_loading_screen.show_loading(_map_title().to_upper(), "Arriving...", "hud_flag_icon")
+			_travel_hold = 1.5
+		_last_own_position = own_position
 		_ensure_character_appearance(_own, own, true)
 		PlayerAppearance.set_worn_models(_own, str(own.get("worn", "")))
 		var alive_now: bool = bool(own["alive"]) and str(own.get("life", "alive")) == "alive"
@@ -441,6 +463,7 @@ func step_frame(delta: float) -> void:
 		_audio.update(delta, _camera.global_position)
 	if _sky_dome != null:
 		_sky_dome.global_position = _camera.global_position
+	_weather.update(_camera.global_position, delta)
 	if _terrain_streamer != null:
 		var focus := _camera.global_position
 		if _client != null and _client.is_spawned():
@@ -494,6 +517,8 @@ func _physics_process(_delta: float) -> void:
 # hub file's [hub] Name).
 func _map_title() -> String:
 	var planet := str(_config.get("bake", "")).get_file().get_slice("_", 0).capitalize()
+	if _world_bake != "" and _battlefield.is_empty():
+		planet = _world_bake.get_file().get_slice("_", 0).capitalize()  # the planet we're on (Stage 13)
 	var town := ""
 	var hub_path := str(_config.get("hub", ""))
 	if hub_path != "":
@@ -508,6 +533,19 @@ func _map_title() -> String:
 			elif in_hub and line.begins_with("Name"):
 				town = line.get_slice("=", 1).strip_edges()
 				break
+	# Stage 13: the planet has several towns; the one whose travel point
+	# (shuttleport, starport) is nearest, within a couple of kilometers.
+	if _client != null and _client.is_spawned():
+		var at: Vector3 = _client.get_presented()["position"]
+		var best := 2500.0
+		for v: Dictionary in _client.get_vendors():
+			if str(v.get("kind", "")) != "travel" or str(v.get("detail", "")) == "":
+				continue
+			var p: Vector3 = v["position"]
+			var d := Vector2(p.x - at.x, p.z - at.z).length()
+			if d < best:
+				best = d
+				town = str(v["detail"])
 	if planet == "":
 		return town if town != "" else "Map"
 	return "%s, %s" % [town, planet] if town != "" else planet
@@ -534,9 +572,7 @@ func _input(event: InputEvent) -> void:
 		elif event is InputEventKey and event.pressed and not event.echo \
 				and (event as InputEventKey).physical_keycode in [KEY_1, KEY_2, KEY_3, KEY_4]:
 			var kc := (event as InputEventKey).physical_keycode
-			var sidx := kc - KEY_1
-			if sidx < _client.get_factions().size():
-				_client.queue(sidx)
+			_hub_ui.terminal_pick(kc - KEY_1)  # a side of the era the terminal shows
 		return
 	if _specialist_ui != null and _specialist_ui.handle_input(event, _client, _camera, _battle_ui.spawn_loadout):
 		return  # Stage 12: its keys, and everything while its screens are open
@@ -1379,6 +1415,8 @@ func _update_events() -> void:
 				_battle_ui.add_feed_line("%s eliminated %s" % [_who(event["attacker"]), _who(event["victim"])])
 		elif event["kind"] in ["captured", "neutralized"]:
 			_battle_ui.handle_capture_event(event, own_team)
+		elif str(event["kind"]).begins_with("flag_"):
+			_battle_ui.handle_flag_event(event, own_team, _who)
 		_battle_ui.push_hud_message(event, _client)
 
 
@@ -1645,6 +1683,9 @@ func _build_world(bake: String) -> bool:
 		sun.rotation_degrees = Vector3(-34, -42, 0)
 		sun.light_color = Color(1.0, 0.95, 0.86)
 		sun.light_energy = 1.45
+	# The planet's weather (Kamino's storm, Hoth's snow...): looks and sound only.
+	_weather.setup(_world, Weather.planet_of(bake, Bf2Map.is_bf2(meta as Dictionary)), environment, sun, self,
+			DisplayServer.get_name().to_lower().contains("headless"))
 	return true
 
 
@@ -1688,7 +1729,8 @@ func _setup_scene() -> void:
 	_specialist_ui.screen_closed.connect(func() -> void:
 		if _bot == "" and (_pause_menu == null or not _pause_menu.visible):
 			_capture_mouse(true))
-	_hub_ui.queue_requested.connect(func(side: int) -> void: _client.queue(side))
+	_hub_ui.queue_requested.connect(func(side: int, mode: String) -> void:
+		_client.queue(side, mode if mode != "" else "conquest"))
 	_hub_ui.item_bought.connect(func(def_id: String, use_fp: bool) -> void: _client.buy_item(def_id, use_fp))
 	_hub_ui.loadout_saved.connect(func(slot: int, lo: Dictionary) -> void: _client.save_loadout(slot, lo))
 	_hub_ui.loadout_activated.connect(func(slot: int) -> void: _client.switch_loadout(slot))

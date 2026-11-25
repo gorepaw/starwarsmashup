@@ -103,7 +103,7 @@ func _next() -> void:
 	_scores.ended = shot == "end"
 	_spawn.visible = shot == "spawn"
 	_terminal.visible = shot in ["terminal", "queued"]
-	_terminal.queued = 1 if shot == "queued" else -1
+	_terminal.queued = 3 if shot == "queued" else -1
 	_hub.visible = shot in ["hub", "back", "quests"]
 	_quests.visible = shot in ["offers", "questlog"]
 	if shot == "offers":
@@ -232,9 +232,11 @@ func _sample_screens() -> void:
 		{"name": "CP4", "position": Vector2(10, -10), "color": Color(0.35, 0.6, 1.0), "ours": true}]
 	_spawn.post = 0
 	_spawn.minimap = _minimap
-	_terminal.title = "War Terminal"
-	_terminal.sides = [{"name": "Rebellion", "icon": "all_icon"}, {"name": "Empire", "icon": "imp_icon"}]
-	_terminal.battlefield = "Polis Massa"
+	_terminal.title = "Ground Battle Terminal"
+	_terminal.kind = "ground"
+	_terminal.sides = [{"name": "Rebellion", "icon": "all_icon"}, {"name": "Empire", "icon": "imp_icon"},
+			{"name": "Republic", "icon": "rep_icon"}, {"name": "Separatists", "icon": "cis_icon"}]
+	_terminal.battlefield = "Kamino (1-Flag CTF)"
 	_terminal.starts_in = 6.2
 	_terminal.in_queue = 3
 	_terminal.keys = {"leave": "X", "close": "Esc"}

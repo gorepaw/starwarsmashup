@@ -223,9 +223,10 @@ struct Field {
         config.respawn_delay = 2;
         server = std::make_unique<GameServer>(server_link, world, config);
     }
-    GameClient& join(const std::string& name) {
+    GameClient& join(const std::string& name, int team = -1) {
         links.push_back(std::make_unique<net::LoopbackLink>(hub, net::Endpoint{uint32_t(10 + links.size()), 1}));
         ClientConfig config{.server = {1, 1}, .name = name};
+        config.team = team;
         config.battlefield = server->match()->battlefield();
         clients.push_back(std::make_unique<GameClient>(*links.back(), world, config));
         return *clients.back();
@@ -508,6 +509,139 @@ void test_flyer() {
     CHECK(state.grounded && near(state.position.y, 0.5) && state.velocity.length() == 0);
 }
 
+// Stage 11: the snowspeeder's tow cable. Its rear gunner harpoons an enemy
+// AT-AT in reach while it flies; the pilot circles the walker; wound round
+// its legs enough times, the walker falls. Too far, the cable snaps.
+void test_tow_cable() {
+    VehicleClass speeder;
+    speeder.name = "test_snowspeeder";
+    speeder.label = "Snowspeeder";
+    speeder.kind = VehicleKind::flyer;
+    speeder.max_health = 1400;
+    speeder.min_speed = 15;
+    speeder.max_speed = speeder.forward_speed = 30;
+    speeder.acceleration = 20;
+    speeder.turn_rate = 1.2;
+    speeder.pitch_rate = 1;
+    speeder.bounds_min = {-2, 0, -3};
+    speeder.bounds_max = {2, 1.5, 3};
+    speeder.loadout.weapons = {std::nullopt, std::nullopt, std::nullopt};
+    VehicleSeat rear;
+    rear.name = "TURRET";
+    rear.tow_lock_range = 70;
+    rear.tow_lock_time = 0.4;
+    WeaponDef harpoon;
+    harpoon.name = "test_harpoon";
+    harpoon.rounds_per_clip = 20;
+    harpoon.shot_delay = 3;
+    rear.loadout.weapons = {harpoon, std::nullopt, std::nullopt};
+    speeder.seats = {rear};
+    VehicleClass atat;
+    atat.name = "test_walk_atat";
+    atat.label = "AT-AT";
+    atat.kind = VehicleKind::walker;
+    atat.max_health = 9000;
+    atat.forward_speed = 0;
+    atat.bounds_min = {-4, 0, -9};
+    atat.bounds_max = {4, 20, 9};
+    CHECK(towable(atat) && !towable(speeder));
+
+    Battlefield field;
+    field.teams[0] = {"Empire", {Loadout{}}, "imp"};
+    field.teams[1] = {"Rebellion", {Loadout{}}, "all"};
+    field.min_x = field.min_z = -190;
+    field.max_x = field.max_z = 190;
+    field.posts = {{.name = "Snowfield", .position = {0, 0, -100}, .owner = 0},
+                   {.name = "Echo Base", .position = {0, 0, 100}, .owner = 1}};
+    field.warmup = 200;
+    field.vehicles = {speeder, atat};
+    VehicleSpawn speeder_spawn{.name = "speeder", .position = {0, 0, 90}, .post = 1, .vehicle = {-1, 0}};
+    VehicleSpawn walker_spawn{.name = "walker", .position = {0, 0, 0}, .post = 0, .vehicle = {1, -1}};
+    field.vehicle_spawns = {speeder_spawn, walker_spawn};
+    Field f(field);
+    // As a hub's battle admits its players: on the side they were sent for.
+    f.server->admit = [](const std::string&, uint64_t, int asked) -> std::optional<int> {
+        return asked >= 0 ? asked : 0;
+    };
+    GameClient& empire = f.join("empire", 0);  // holds the snowfield: the walker is the Empire's
+    GameClient& a = f.join("pilot", 1);        // the Rebellion's pilot
+    GameClient& c = f.join("gunner", 1);       // and rear gunner
+    f.run(0.3);
+    CHECK(empire.self().team == 0 && a.self().team == 1 && c.self().team == 1);
+    a.request_spawn(0, 1);
+    c.request_spawn(0, 1);
+    f.run(0.5);
+    const auto find_vehicle = [&](GameClient& who, uint8_t cls) -> const net::VehicleState* {
+        for (const net::VehicleState& v : who.vehicles()) {
+            if (v.vehicle == cls) return &v;
+        }
+        return nullptr;
+    };
+    const net::VehicleState* sv = find_vehicle(a, 0);
+    CHECK(sv != nullptr && find_vehicle(a, 1) != nullptr);
+    if (sv == nullptr) return;
+    const Vec3 at = sv->position;
+    const auto walk_to = [&](GameClient& who, Vec3 to) {
+        const Vec3 d = to - who.predicted().position;
+        return GameClient::Controls{.forward = std::hypot(d.x, d.z) > 1.5 ? 1.0 : 0.0, .yaw = std::atan2(-d.x, -d.z)};
+    };
+    f.run(4, [&] {
+        a.set_input(walk_to(a, at));
+        c.set_input(walk_to(c, at));
+    });
+    f.run(0.1, [&] { a.set_input({.use = true}); });
+    f.run(0.2, [&] { a.set_input({}); });
+    f.run(0.1, [&] { c.set_input({.use = true}); });
+    f.run(0.3, [&] { c.set_input({}); });
+    CHECK(a.self().state.seat == 0 && a.self().state.vehicle == 0 && c.self().state.seat == 1);
+    // Fired on the ground: nothing.
+    f.run(0.2, [&] { c.set_input({.fire = true}); });
+    f.run(0.2, [&] { c.set_input({}); });
+    CHECK(find_vehicle(a, 0) && find_vehicle(a, 0)->towing == 0);
+    // Up and toward the walker (at the origin), then the harpoon.
+    const auto fly_toward = [&](Vec3 to, double throttle) {
+        const net::VehicleState* v = find_vehicle(a, 0);
+        const Vec3 from = v ? v->position : Vec3{};
+        const Vec3 d = to - from;
+        return GameClient::Controls{.forward = throttle, .yaw = std::atan2(-d.x, -d.z)};
+    };
+    f.run(3, [&] { a.set_input(fly_toward({0, 0, 0}, 1)); });
+    const net::VehicleState* flying = find_vehicle(a, 0);
+    CHECK(flying && !(flying->flags & net::VehicleState::flag_grounded));
+    CHECK(flying && (flying->position - Vec3{}).length() < 70);
+    f.run(0.2, [&] {
+        a.set_input(fly_toward({0, 0, 0}, 0));
+        c.set_input({.fire = true});
+    });
+    f.run(0.2, [&] { c.set_input({}); });
+    const net::VehicleState* walker = find_vehicle(a, 1);
+    flying = find_vehicle(a, 0);
+    CHECK(flying && walker && flying->towing == walker->id);
+    // Circle it: steer along the tangent, held about 30 m out.
+    float wraps = 0;
+    bool fell = false;
+    f.run(40, [&] {
+        const net::VehicleState* v = find_vehicle(a, 0);
+        const net::VehicleState* w = find_vehicle(a, 1);
+        if (v == nullptr || w == nullptr) return;
+        fell |= !w->alive;
+        wraps = std::max(wraps, v->tow_wraps);
+        const Vec3 r = v->position - w->position;
+        const double radius = std::hypot(r.x, r.z);
+        // Tangent (counterclockwise seen from above) plus a pull to 30 m.
+        Vec3 tangent{-r.z, 0, r.x};
+        tangent = tangent * (1.0 / std::max(1e-6, radius));
+        const Vec3 inward = r * (-(radius - 30) / std::max(1e-6, radius) * 0.05);
+        const Vec3 d = tangent + inward;
+        a.set_input({.forward = 0, .yaw = std::atan2(-d.x, -d.z)});
+    });
+    CHECK(wraps >= 2.0f);
+    CHECK(fell);
+    flying = find_vehicle(a, 0);
+    CHECK(flying && flying->towing == 0);
+    CHECK(c.self().kills >= 0);
+}
+
 std::filesystem::path repo_root() {
     auto p = std::filesystem::current_path();
     while (!p.empty() && !std::filesystem::exists(p / "game" / "vehicles")) {
@@ -641,6 +775,7 @@ int main() {
     test_bot_drives();
     test_turret();
     test_flyer();
+    test_tow_cable();
     test_world_vehicles();
     return swm::test::finish("vehicle_test");
 }

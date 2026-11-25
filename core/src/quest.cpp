@@ -229,6 +229,11 @@ void QuestBook::set_world(const WorldSpawns* spawns, Vec3 origin) {
     missions_.clear();
 }
 
+void QuestBook::set_towns(std::vector<std::pair<std::string, Vec3>> towns) {
+    towns_ = std::move(towns);
+    missions_.clear();
+}
+
 const QuestDef* QuestBook::find(std::string_view id) const {
     if (id.starts_with("mission:")) {
         return mission(id);
@@ -314,11 +319,20 @@ const QuestDef* QuestBook::mission(std::string_view id) const {
         def.title = "Destroy: " + spawn.name;
     }
     def.level = 1 + 8 * (tier - 1);  // a tier's creatures and bandits are a few levels' work (ASSUMPTION)
-    const double distance = flat_distance(origin_, position);
-    const std::string direction = describe_direction(origin_, position);
-    def.summary = lair ? std::format("A lair of {} has been reported {} of the city. Clear it out: all {} of them.",
-                                     name, direction, count)
-                       : std::format("{} have set up camp {} of the city. Break it up: {} of them.", name, direction,
+    // Described from the nearest town (Stage 13), else the hub's origin.
+    Vec3 from = origin_;
+    std::string town = "the city";
+    for (const auto& [town_name, center] : towns_) {
+        if (town == "the city" || flat_distance(center, position) < flat_distance(from, position)) {
+            from = center;
+            town = town_name;
+        }
+    }
+    const double distance = flat_distance(from, position);
+    const std::string direction = describe_direction(from, position);
+    def.summary = lair ? std::format("A lair of {} has been reported {} of {}. Clear it out: all {} of them.",
+                                     name, direction, town, count)
+                       : std::format("{} have set up camp {} of {}. Break it up: {} of them.", name, direction, town,
                                      count);
     QuestStep travel;
     travel.kind = QuestStepKind::go_to;
@@ -450,14 +464,15 @@ std::vector<const QuestDef*> QuestBook::offered_by(std::string_view giver,
 }
 
 std::vector<const QuestDef*> QuestBook::missions(double now, const std::vector<QuestProgress>& journal,
-                                                 size_t count) const {
+                                                 size_t count, const Vec3* from) const {
+    const Vec3 origin = from != nullptr ? *from : origin_;
     std::vector<std::pair<uint64_t, std::string>> candidates;
     if (spawns_ == nullptr) {
         return {};
     }
     const uint64_t window = uint64_t(std::max(0.0, now) / 600);
     const auto consider = [&](const std::string& id, Vec3 position) {
-        const double distance = flat_distance(origin_, position);
+        const double distance = flat_distance(origin, position);
         if (distance >= 300 && distance <= 3000 && find_progress(journal, id) == nullptr) {
             candidates.emplace_back(mix(window * 0x100000001B3ull ^ std::hash<std::string>{}(id)), id);
         }
@@ -477,7 +492,7 @@ std::vector<const QuestDef*> QuestBook::missions(double now, const std::vector<Q
         }
     }
     std::sort(out.begin(), out.end(), [&](const QuestDef* a, const QuestDef* b) {
-        return flat_distance(origin_, *a->steps[0].where) < flat_distance(origin_, *b->steps[0].where);
+        return flat_distance(origin, *a->steps[0].where) < flat_distance(origin, *b->steps[0].where);
     });
     return out;
 }

@@ -111,13 +111,20 @@ public:
     // through, or -1.
     int breach() const { return breach_; }
     // The side it queues for in a hub (default: picked from the seed).
-    void set_queue_team(int team) { queue_team_ = team; }
+    void set_queue_team(int team) {
+        queue_team_ = team;
+        queue_team_set_ = true;
+    }
     // The walkable grid of the battlefield it plays on (shared between bots;
     // null: run straight).
     void set_navigation(std::shared_ptr<const NavGrid> navigation) { navigation_ = std::move(navigation); }
     // The route it's following (corners on the ground), and the next corner.
     const std::vector<Vec3>& path() const { return path_; }
     size_t next_corner() const { return corner_; }
+    // Stage 11: in a flag mode, where the flags send it (carrying one: its
+    // side's capture region; else the flag to take, or its own lying
+    // dropped); nothing for a defender with nothing to do, or other modes.
+    std::optional<Vec3> flag_objective(const GameClient& client) const;
 
 private:
     double random();  // 0..1
@@ -171,12 +178,15 @@ private:
     double strafe_ = 1;
     double next_strafe_ = 0;
     double aim_phase_ = 0;
+    double flag_role_ = 0;      // Stage 11: under 0.7 it goes for flags; else it holds the posts
+    bool chasing_flag_ = false;  // this tick its destination is a flag's
     double slow_since_ = -1;  // moving too slowly since
     double unstick_until_ = 0;
     double next_grenade_ = 0;
     double throw_until_ = 0;
     double grenade_pitch_ = 0;
     int queue_team_ = 0;
+    bool queue_team_set_ = false;  // set_queue_team, or picked from the hub's sides
     std::shared_ptr<const NavGrid> navigation_;
     std::vector<Vec3> path_;
     size_t corner_ = 0;

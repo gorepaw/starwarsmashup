@@ -195,6 +195,11 @@ VehicleClass load_vehicle_class(const std::filesystem::path& path) {
         seat.turret_node = section.get("TurretNode").value_or("");
         seat.pitch_node = section.get("PitchNode").value_or("");
         seat.pitch_min = spitch_lo * degrees, seat.pitch_max = spitch_hi * degrees;
+        if (const auto tow = section.get("TowCable")) {
+            std::istringstream fields(*tow);
+            fields >> seat.tow_lock_range >> seat.tow_lock_time;
+            seat.tow_lock_range = std::max(0.0, seat.tow_lock_range);
+        }
         v.seats.push_back(std::move(seat));
     }
     std::vector<int> slots(v.seats.size() + 1, 0);
@@ -523,6 +528,10 @@ double distance_to_vehicle(Vec3 point, Vec3 position, double yaw, const VehicleC
     const double dy = std::max({vehicle.bounds_min.y - p.y, 0.0, p.y - vehicle.bounds_max.y});
     const double dz = std::max({vehicle.bounds_min.z - p.z, 0.0, p.z - vehicle.bounds_max.z});
     return std::sqrt(dx * dx + dy * dy + dz * dz);
+}
+
+bool towable(const VehicleClass& vehicle) {
+    return vehicle.kind == VehicleKind::walker && vehicle.name.find("atat") != std::string::npos;
 }
 
 } // namespace swm::core

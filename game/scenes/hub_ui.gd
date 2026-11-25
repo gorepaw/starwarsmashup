@@ -19,6 +19,7 @@ const WorldMapScreen = preload("res://ui/world_map_screen.gd")
 const TrainerScreen = preload("res://ui/trainer_screen.gd")
 const BankScreen = preload("res://ui/bank_screen.gd")
 const InfoTerminalScreen = preload("res://ui/info_terminal_screen.gd")
+const TravelScreen = preload("res://ui/travel_screen.gd")
 const MultiScanner3D = preload("res://rendering/multi_scanner.gd")
 const TeamTags = preload("res://rendering/team_tags.gd")
 
@@ -41,7 +42,9 @@ const HOLO_HEIGHT := 2.6   # m over a place's ground, its hologram
 const PLACE_HOLO_SCALE := 2.5  # a place's hologram, as big as a soldier's this many times (ASSUMPTION, by eye)
 const TARGET_HOLO_ID := 1 << 40  # practice targets' hologram ids, past any entity's
 
-signal queue_requested(side: int)
+# Stage 11: `mode` is the game mode id wanted ("conquest", "ctf", "1flag",
+# "hunt", "xl", "any"; "assault" at a Space Terminal); "" when leaving.
+signal queue_requested(side: int, mode: String)
 signal item_bought(def_id: String, use_fp: bool)
 signal loadout_saved(slot_index: int, loadout: Dictionary)
 signal loadout_activated(slot_index: int)
@@ -74,6 +77,7 @@ var _map_screen: WorldMapScreen
 var _trainer_screen: TrainerScreen
 var _bank_screen: BankScreen
 var _info_screen: InfoTerminalScreen
+var _travel_screen: TravelScreen
 var _professions: Array = []       # the professions' defs (set_professions), for the trainers
 var _trained_by := ""              # the trainer (their name) whose screen is open
 var map_title := "Map"         # the map's title (the session sets it: the planet and the town)
@@ -116,8 +120,8 @@ func setup(layer: CanvasLayer, world_root: Node3D, art: RefCounted, settings: Se
 	layer.add_child(_hub_hud)
 	_terminal_screen = WarTerminalScreen.new(art)
 	_terminal_screen.visible = false
-	_terminal_screen.side_chosen.connect(func(side: int) -> void: queue_requested.emit(side))
-	_terminal_screen.leave_requested.connect(func() -> void: queue_requested.emit(-1))
+	_terminal_screen.side_chosen.connect(func(side: int, mode: String) -> void: queue_requested.emit(side, mode))
+	_terminal_screen.leave_requested.connect(func() -> void: queue_requested.emit(-1, ""))
 	_terminal_screen.closed.connect(close_terminal)
 	layer.add_child(_terminal_screen)
 
@@ -208,6 +212,13 @@ func setup(layer: CanvasLayer, world_root: Node3D, art: RefCounted, settings: Se
 	_info_screen.closed.connect(close_all_screens)
 	layer.add_child(_info_screen)
 
+	_travel_screen = TravelScreen.new(art)
+	_travel_screen.visible = false
+	_travel_screen.service_requested.connect(func(action: int, id: String, amount: int, item_id: int) -> void:
+		service_requested.emit(action, id, amount, item_id))
+	_travel_screen.closed.connect(close_all_screens)
+	layer.add_child(_travel_screen)
+
 	if world_root != null:
 		_scanner = MultiScanner3D.new()
 		world_root.add_child(_scanner)
@@ -277,6 +288,7 @@ func is_any_screen_open() -> bool:
 			or (_trainer_screen != null and _trainer_screen.visible) \
 			or (_bank_screen != null and _bank_screen.visible) \
 			or (_info_screen != null and _info_screen.visible) \
+			or (_travel_screen != null and _travel_screen.visible) \
 			or (_map_screen != null and _map_screen.visible)
 
 
@@ -316,6 +328,20 @@ func try_open_terminal(client: Object) -> bool:
 			"bazaar", "newsnet", "gambling", "data_terminal":
 				if _info_screen != null:
 					_info_screen.open_terminal(str(service["kind"]), str(service["name"]), str(service.get("detail", "")))
+					return true
+			"travel", "starport":
+				if _travel_screen != null:
+					# The planet's shuttleports and starports; from a starport,
+					# other planets' too (Stage 13).
+					var points: Array = []
+					for v: Dictionary in client.get_vendors():
+						var kind := str(v["kind"])
+						if kind == "travel" or kind == "starport":
+							points.append(v)
+						elif kind == "travel_offworld" and str(service["kind"]) == "starport":
+							points.append(v)
+					var status: Dictionary = client.get_player_status()
+					_travel_screen.open_travel(str(service["name"]), points, int(status.get("credits", 0)))
 					return true
 			"clinic":
 				service_requested.emit(5, "", 0, 0)
@@ -457,6 +483,8 @@ func toggle_map(client: Object) -> bool:
 func map_places(client: Object) -> Array:
 	var out: Array = []
 	for v: Dictionary in client.get_vendors():
+		if str(v["kind"]) == "travel_offworld":
+			continue  # another planet's starport (Stage 13)
 		if is_shop(str(v["kind"])):
 			out.append({"position": v["position"], "name": str(v["name"]), "kind": "shop", "color": WorldMapScreen.SHOP})
 		else:
@@ -549,6 +577,8 @@ func close_all_screens() -> void:
 		_bank_screen.visible = false
 	if _info_screen != null:
 		_info_screen.visible = false
+	if _travel_screen != null:
+		_travel_screen.visible = false
 	_offer_serial = -1
 	if was_open:
 		terminal_closed.emit()
@@ -627,6 +657,12 @@ func add_recruiters(client: Object, world: Node3D) -> void:
 				_recruiter_nodes.append(node)
 
 
+# Keys 1 and 2 at an open battle terminal: a side of the era it shows.
+func terminal_pick(n: int) -> void:
+	if _terminal_screen != null and _terminal_screen.visible:
+		_terminal_screen.pick(n)
+
+
 func at_recruiter(client: Object) -> Dictionary:
 	if client == null or not client.is_spawned():
 		return {}
@@ -674,8 +710,8 @@ func at_service(client: Object) -> Dictionary:
 		return {}
 	var position: Vector3 = client.get_presented()["position"]
 	for v: Dictionary in client.get_vendors():
-		if is_shop(str(v["kind"])):
-			continue
+		if is_shop(str(v["kind"])) or str(v["kind"]) == "travel_offworld":
+			continue  # (another planet's starport: not here)
 		var at: Vector3 = v["position"]
 		if Vector2(position.x - at.x, position.z - at.z).length() <= float(v["radius"]):
 			return v
@@ -998,10 +1034,12 @@ func _update_place_holograms(client: Object, delta: float) -> void:
 	for vi in vendors.size():
 		var v: Dictionary = vendors[vi]
 		var kind := str(v.get("kind", ""))
+		if kind == "travel_offworld":
+			continue  # another planet's starport (Stage 13)
 		if not is_shop(kind):
 			# A service point: a star (trainers, newsnet, gambling, data_terminal), coins (the bank, bazaar) or a cross (clinics, cloning), in the terminals' blue.
 			var symbol: String = {"trainer": "star", "bank": "coins", "bazaar": "coins",
-					"newsnet": "star", "gambling": "star", "data_terminal": "star"}.get(kind, "cross")
+					"newsnet": "star", "gambling": "star", "data_terminal": "star", "travel": "star", "starport": "star"}.get(kind, "cross")
 			_place_hologram("service:%d" % vi, v["position"], symbol, TERMINAL_COLOR, seen)
 			continue
 		var side := side_of_template(str(by_name.get(str(v["name"]), "")))
@@ -1369,6 +1407,7 @@ func update_hub(client: Object, world: Node3D, delta: float, pause_visible: bool
 		sides.append({"name": factions[i], "icon": _side_icon(factions[i], i)})
 	if _terminal_screen.visible:
 		_terminal_screen.title = str(terminal["name"])
+		_terminal_screen.kind = str(terminal.get("kind", "ground"))
 		_terminal_screen.sides = sides
 		_terminal_screen.queued = queued
 		_terminal_screen.battlefield = str(status.get("battlefield", ""))
@@ -1385,7 +1424,7 @@ func update_hub(client: Object, world: Node3D, delta: float, pause_visible: bool
 	elif not vendor.is_empty():
 		tip = "Press %s to trade with %s" % [_key_name("interact"), vendor["name"]]
 	elif not service.is_empty():
-		var verb := {"trainer": "talk to", "bank": "use the", "clinic": "get patched up at the", "cloning": "keep your clone at the"}
+		var verb := {"trainer": "talk to", "bank": "use the", "clinic": "get patched up at the", "cloning": "keep your clone at the", "travel": "buy a shuttle ticket at the", "starport": "buy passage at the"}
 		tip = "Press %s to %s %s" % [_key_name("interact"), verb.get(str(service["kind"]), "use"), service["name"]]
 	elif not wb.is_empty():
 		tip = "Press %s to use %s" % [_key_name("interact"), wb["name"]]

@@ -14,10 +14,21 @@
 
 namespace swm::swg {
 
+// A town on a planet: the snapshot's objects within `radius` of its center.
+struct CityArea {
+    std::string name;
+    double center_x = 0, center_z = 0;  // Galaxies x z
+    double radius = 0;                  // meters
+};
+
 struct CityExport {
     std::string snapshot;             // the planet's world snapshot (.ws)
     double center_x = 0, center_z = 0;  // Galaxies x z
     double radius = 0;                // meters around the center
+    // Or several towns on the same bake (a planet's), when not empty: each
+    // object within any of them, and each town's rooms a terrain holes patch
+    // of its own (core::save_terrain_hole_patches), as they're kilometers apart.
+    std::vector<CityArea> areas;
     std::filesystem::path bake;       // the terrain bake's prefix the city stands on
     // A hub file (game/hubs/) whose war terminals ([recruiter] with a
     // Template, an object template, and Yaw in degrees) stand in the city
@@ -26,6 +37,7 @@ struct CityExport {
     // template's file without "shared_", with clips walk, idle and sit).
     // Optional.
     std::filesystem::path hub;
+    std::vector<std::filesystem::path> more_hubs;  // the other towns' files, likewise
 };
 
 // Exports the objects a world snapshot places around a point (a city's

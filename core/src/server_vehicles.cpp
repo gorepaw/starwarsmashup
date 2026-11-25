@@ -55,6 +55,8 @@ net::VehicleState GameServer::describe(const Vehicle& v) const {
                    : 0);
     s.gunners = v.gunners;
     s.owner = v.owner;
+    s.towing = v.towing;
+    s.tow_wraps = float(std::abs(v.tow_wound) / (2 * std::numbers::pi));
     return s;
 }
 

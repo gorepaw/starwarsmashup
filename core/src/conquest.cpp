@@ -477,7 +477,7 @@ std::string side_for(const std::string& name) {
 // on Endor the Rebellion, on Yavin the Empire), the other defends. A spawn
 // whose classes aren't exported is left out.
 void read_vehicle_spawns(Battlefield& field, const Ini& ini, const std::filesystem::path& vehicles,
-                         const std::string& where, size_t attacker = 0) {
+                         const std::string& where, size_t attacker = 0, bool turrets = true) {
     for (const Ini::Section& s : ini.sections()) {
         if (s.name != "vehicle_spawn") {
             continue;
@@ -528,7 +528,7 @@ void read_vehicle_spawns(Battlefield& field, const Ini& ini, const std::filesyst
     // Turrets ([turret]: Class, Position, Forward): for whoever mans them,
     // back a while after they're destroyed (ASSUMPTION: 30 s).
     for (const Ini::Section& s : ini.sections()) {
-        if (s.name != "turret") continue;
+        if (!turrets || s.name != "turret") continue;
         const std::string name = s.get("Class").value_or("");
         auto it = std::find_if(field.vehicles.begin(), field.vehicles.end(),
                                [&](const VehicleClass& v) { return iequals(v.name, name); });
@@ -560,7 +560,108 @@ void read_vehicle_spawns(Battlefield& field, const Ini& ini, const std::filesyst
     }
 }
 
+std::string_view game_mode_id(GameMode mode) {
+    switch (mode) {
+    case GameMode::conquest: return "conquest";
+    case GameMode::space_assault: return "assault";
+    case GameMode::ctf: return "ctf";
+    case GameMode::one_flag: return "1flag";
+    case GameMode::hunt: return "hunt";
+    case GameMode::xl: return "xl";
+    }
+    return "conquest";
+}
+
+std::string_view game_mode_name(GameMode mode) {
+    switch (mode) {
+    case GameMode::conquest: return "Conquest";
+    case GameMode::space_assault: return "Space Assault";
+    case GameMode::ctf: return "Capture the Flag";
+    case GameMode::one_flag: return "1-Flag CTF";
+    case GameMode::hunt: return "Hunt";
+    case GameMode::xl: return "XL";
+    }
+    return "Conquest";
+}
+
+std::optional<GameMode> parse_game_mode(std::string_view id) {
+    for (size_t i = 0; i < game_mode_count; ++i) {
+        if (iequals(id, game_mode_id(GameMode(i)))) {
+            return GameMode(i);
+        }
+    }
+    if (iequals(id, "con") || iequals(id, "cp")) return GameMode::conquest;
+    if (iequals(id, "ass") || iequals(id, "space_assault")) return GameMode::space_assault;
+    if (iequals(id, "one_flag") || iequals(id, "1ctf")) return GameMode::one_flag;
+    return std::nullopt;
+}
+
+std::string battlefield_id(const std::string& file, GameMode mode) {
+    if (mode == GameMode::conquest || mode == GameMode::space_assault) {
+        return file;
+    }
+    return file + "@" + std::string(game_mode_id(mode));
+}
+
+Battlefield load_battlefield_id(const std::filesystem::path& dir, const std::string& id) {
+    const size_t at = id.find('@');
+    const std::string file = id.substr(0, at);
+    if (file.empty() || file.find_first_of("/\\.:") != std::string::npos) {
+        throw std::runtime_error("not a battlefield id: " + id);
+    }
+    GameMode mode = GameMode::conquest;
+    if (at != std::string::npos) {
+        const auto parsed = parse_game_mode(id.substr(at + 1));
+        if (!parsed) {
+            throw std::runtime_error("battlefield id " + id + ": no such game mode");
+        }
+        mode = *parsed;
+    }
+    return load_battlefield(dir / (file + ".ini"), mode);
+}
+
 Battlefield load_battlefield(const std::filesystem::path& path) {
+    return load_battlefield(path, GameMode::conquest);
+}
+
+namespace {
+
+// A flag mode's flags: `Flag = <owner 0|1|2> x y z` (Battlefront
+// coordinates; 0 neutral) and `FlagCapture = <team 1|2> <shape> x y z sx sy
+// sz` and 9 rotation numbers.
+void read_flags(Battlefield& field, const Ini::Section& section, const std::string& where) {
+    for (const auto& [key, value] : section.values) {
+        if (iequals(key, "Flag")) {
+            std::istringstream fields(value);
+            int owner = 0;
+            Flag flag;
+            if (!(fields >> owner >> flag.home.x >> flag.home.y >> flag.home.z) || owner < 0 || owner > 2) {
+                throw std::runtime_error(where + ": Flag is \"<owner 0|1|2> x y z\", got \"" + value + "\"");
+            }
+            flag.owner = owner - 1;
+            flag.home.x = -flag.home.x;
+            field.flags.push_back(flag);
+        } else if (iequals(key, "FlagCapture")) {
+            std::istringstream fields(value);
+            int team = 0;
+            std::string rest;
+            if (!(fields >> team) || team < 1 || team > 2) {
+                throw std::runtime_error(where + ": FlagCapture is \"<team 1|2> <region>\", got \"" + value + "\"");
+            }
+            std::getline(fields >> std::ws, rest);
+            // The region, read as a death region's.
+            Ini::Section one;
+            one.values.emplace_back("DeathRegion", rest);
+            Battlefield scratch;
+            read_regions(scratch, one, where);
+            field.flag_captures.push_back({team - 1, scratch.death_regions.at(0)});
+        }
+    }
+}
+
+} // namespace
+
+Battlefield load_battlefield(const std::filesystem::path& path, GameMode mode) {
     const Ini ini = Ini::load(path);
     const std::string where = path.string();
     Battlefield field;
@@ -569,6 +670,29 @@ Battlefield load_battlefield(const std::filesystem::path& path) {
         throw std::runtime_error(where + ": no [battlefield] section");
     }
     field.name = main->get("Name").value_or(path.stem().string());
+    // Its other modes: Mode = <id> <map file>.
+    std::optional<std::filesystem::path> mode_map;
+    for (const auto& [key, value] : main->values) {
+        if (!iequals(key, "Mode")) {
+            continue;
+        }
+        std::istringstream fields(value);
+        std::string id, file;
+        fields >> id >> file;
+        const auto parsed = parse_game_mode(id);
+        if (!parsed || file.empty() || *parsed == GameMode::conquest || *parsed == GameMode::space_assault) {
+            throw std::runtime_error(where + ": Mode is \"ctf|1flag|hunt|xl <map file>\", got \"" + value + "\"");
+        }
+        field.modes.push_back(*parsed);
+        if (*parsed == mode) {
+            mode_map = path.parent_path() / file;
+        }
+    }
+    field.capture_limit = std::max(1, int(main->number("CaptureLimit", field.capture_limit)));
+    field.hunt_limit = std::max(1, int(main->number("HuntLimit", field.hunt_limit)));
+    if (mode != GameMode::conquest && mode != GameMode::space_assault && !mode_map) {
+        throw std::runtime_error(where + ": " + field.name + " has no " + std::string(game_mode_name(mode)));
+    }
     if (const auto bounds = main->get("Bounds")) {
         read_bounds(field, *bounds, where);
     }
@@ -703,6 +827,34 @@ Battlefield load_battlefield(const std::filesystem::path& path) {
             }
             read_vehicle_spawns(field, map_ini, path.parent_path() / *vehicles, map_path.string(), attacker);
         }
+        // Another mode's layer: its posts, vehicle spawns and flags in
+        // place of conquest's (turrets and the rest stay the map's).
+        if (mode_map) {
+            if (!std::filesystem::exists(*mode_map)) {
+                throw std::runtime_error(where + ": map file " + mode_map->string() +
+                                         " is missing (export it with bf2tool export-map --mode " +
+                                         std::string(game_mode_id(mode)) + ")");
+            }
+            const Ini mode_ini = Ini::load(*mode_map);
+            field.posts.clear();
+            std::erase_if(field.vehicle_spawns, [](const VehicleSpawn& spawn) { return spawn.post >= 0; });
+            read_posts(field, mode_ini, mode_map->string());
+            if (const auto vehicles = main->get("Vehicles")) {
+                size_t attacker = 0;
+                if (const auto name = main->get("Attacker")) {
+                    for (size_t t = 0; t < field.teams.size(); ++t) {
+                        if (iequals(field.teams[t].name, *name)) attacker = t;
+                    }
+                }
+                read_vehicle_spawns(field, mode_ini, path.parent_path() / *vehicles, mode_map->string(), attacker,
+                                    false);
+            }
+            if (const Ini::Section* about = mode_ini.section("map")) {
+                read_flags(field, *about, mode_map->string());
+            }
+        }
+    } else if (mode_map) {
+        throw std::runtime_error(where + ": a Mode needs the battlefield's Map");
     }
     read_posts(field, ini, where);
     read_barriers(field, *main, where);
@@ -888,6 +1040,47 @@ Battlefield load_battlefield(const std::filesystem::path& path) {
         }
         it->attackers.push_back(team - 1);
     }
+    // The mode it's set up for. A space battlefield's own is Space Assault.
+    if (field.is_space()) {
+        field.modes.front() = GameMode::space_assault;
+        if (mode == GameMode::conquest) {
+            mode = GameMode::space_assault;
+        }
+    } else if (mode == GameMode::space_assault) {
+        throw std::runtime_error(where + ": " + field.name + " isn't a space battlefield");
+    }
+    field.mode = mode;
+    if (mode == GameMode::ctf) {
+        const bool both = std::any_of(field.flags.begin(), field.flags.end(), [](const Flag& f) { return f.owner == 0; }) &&
+                          std::any_of(field.flags.begin(), field.flags.end(), [](const Flag& f) { return f.owner == 1; });
+        if (!both || field.flag_captures.empty()) {
+            throw std::runtime_error(where + ": Capture the Flag needs a flag per side and capture regions");
+        }
+    } else if (mode == GameMode::one_flag) {
+        if (field.flags.size() != 1 || field.flags[0].owner >= 0 || field.flag_captures.size() < 2) {
+            throw std::runtime_error(where + ": 1-Flag CTF needs one neutral flag and a capture region per side");
+        }
+    } else {
+        field.flags.clear();
+        field.flag_captures.clear();
+    }
+    if (mode == GameMode::xl) {
+        field.team_size = std::clamp(int(main->number("XLTeamSize", 32)), 1, 32);
+    }
+    if (mode == GameMode::ctf || mode == GameMode::one_flag || mode == GameMode::hunt) {
+        field.time_limit = std::max(0.0, main->number("TimeLimit", 1200));
+    }
+    if (mode != GameMode::conquest && mode != GameMode::space_assault) {
+        // Spawn points only: Battlefront's flag, hunt and XL (team
+        // deathmatch) layers' posts can't be taken.
+        for (CommandPost& post : field.posts) {
+            post.capturable = false;
+        }
+    }
+    if (field.posts.empty() && mode != GameMode::conquest) {
+        throw std::runtime_error(where + ": " + field.name + "'s " + std::string(game_mode_name(mode)) +
+                                 " has no command posts to spawn at");
+    }
     return field;
 }
 
@@ -898,9 +1091,18 @@ Conquest::Conquest(const Battlefield& battlefield, bool repeat) : battlefield_(b
 }
 
 void Conquest::reset() {
+    state_.mode = battlefield_.mode;
     state_.tickets = {battlefield_.tickets, battlefield_.tickets};
     state_.scores = {0, 0};
-    state_.score_limit = uint16_t(std::clamp(battlefield_.score_limit, 0, 65535));
+    const int limit = battlefield_.mode == GameMode::ctf || battlefield_.mode == GameMode::one_flag
+                          ? battlefield_.capture_limit
+                      : battlefield_.mode == GameMode::hunt ? battlefield_.hunt_limit
+                                                            : battlefield_.score_limit;
+    state_.score_limit = uint16_t(std::clamp(limit, 0, 65535));
+    state_.flags.clear();
+    for (const Flag& flag : battlefield_.flags) {
+        state_.flags.push_back({flag.home});
+    }
     state_.dominant = -1;
     state_.victory_left = 0;
     state_.winner = -1;
@@ -1056,6 +1258,11 @@ void Conquest::killed(int team, bool is_flyer) {
     }
     if (battlefield_.score_limit > 0) {
         add_score(1 - team, is_flyer ? 2.0 : 1.0);
+    } else if (battlefield_.mode == GameMode::hunt) {
+        double& score = state_.scores[size_t(1 - team)];
+        score = std::min(double(battlefield_.hunt_limit), score + 1);
+    } else if (battlefield_.mode == GameMode::ctf || battlefield_.mode == GameMode::one_flag) {
+        // Reinforcements are unlimited: only captures count.
     } else {
         state_.tickets[size_t(team)] = std::max(0.0, state_.tickets[size_t(team)] - 1);
     }
@@ -1084,12 +1291,34 @@ std::vector<MatchEvent> Conquest::step(double dt, std::span<const Unit> units, s
         if (state_.time_left <= 0) {
             reset();
             state_.phase = Phase::live;
-            state_.time_left = 0;
+            state_.time_left = battlefield_.time_limit;
             events.push_back({MatchEvent::went_live});
         }
         break;
     case Phase::live: {
         capture(dt, units, events);
+        if (battlefield_.mode == GameMode::ctf || battlefield_.mode == GameMode::one_flag ||
+            battlefield_.mode == GameMode::hunt) {
+            if (battlefield_.mode != GameMode::hunt) {
+                move_flags(dt, units, events);
+            }
+            const double limit = state_.score_limit;
+            if (state_.scores[0] >= limit || state_.scores[1] >= limit) {
+                finish(state_.scores[0] >= limit ? 0 : 1, events);
+                break;
+            }
+            if (battlefield_.time_limit > 0) {
+                state_.time_left -= dt;
+                if (state_.time_left <= 0) {
+                    state_.time_left = 0;
+                    const int winner = state_.scores[0] > state_.scores[1]   ? 0
+                                       : state_.scores[1] > state_.scores[0] ? 1
+                                                                             : -1;
+                    finish(winner, events);
+                }
+            }
+            break;
+        }
         if (battlefield_.score_limit > 0) {
             if (state_.scores[0] >= battlefield_.score_limit || state_.scores[1] >= battlefield_.score_limit) {
                 const int winner = state_.scores[0] >= battlefield_.score_limit ? 0 : 1;
@@ -1105,7 +1334,9 @@ std::vector<MatchEvent> Conquest::step(double dt, std::span<const Unit> units, s
         }
         // The team holding more posts bleeds the other's reinforcements.
         // (Ours: Battlefront's bleed comes from per-map scripts.)
-        const int lead = held[0] - held[1];
+        // XL is Battlefront's ObjectiveTDM: only kills cost reinforcements.
+        const bool tdm = battlefield_.mode == GameMode::xl;
+        const int lead = tdm ? 0 : held[0] - held[1];
         if (lead != 0) {
             double& tickets = state_.tickets[lead > 0 ? 1 : 0];
             tickets = std::max(0.0, tickets - battlefield_.bleed * std::abs(lead) * dt);
@@ -1117,7 +1348,7 @@ std::vector<MatchEvent> Conquest::step(double dt, std::span<const Unit> units, s
         }
         // Holding every post starts the countdown to victory.
         const int total = int(state_.posts.size());
-        const int dominant = held[0] == total ? 0 : held[1] == total ? 1 : -1;
+        const int dominant = tdm ? -1 : held[0] == total ? 0 : held[1] == total ? 1 : -1;
         if (dominant != state_.dominant) {
             state_.dominant = int8_t(dominant);
             state_.victory_left = battlefield_.victory_time;
@@ -1150,6 +1381,77 @@ void Conquest::finish(int winner, std::vector<MatchEvent>& events) {
     state_.victory_left = 0;
     state_.time_left = battlefield_.results;
     events.push_back({MatchEvent::ended, winner});
+}
+
+void Conquest::move_flags(double dt, std::span<const Unit> units, std::vector<MatchEvent>& events) {
+    const auto send_home = [&](size_t i) {
+        state_.flags[i] = {battlefield_.flags[i].home};
+    };
+    const auto carrying = [&](uint32_t id) {
+        return std::any_of(state_.flags.begin(), state_.flags.end(), [&](const FlagState& f) { return f.carrier == id; });
+    };
+    for (size_t i = 0; i < state_.flags.size() && i < battlefield_.flags.size(); ++i) {
+        const Flag& def = battlefield_.flags[i];
+        FlagState& flag = state_.flags[i];
+        if (flag.carrier != 0) {
+            const auto it = std::find_if(units.begin(), units.end(), [&](const Unit& u) { return u.id == flag.carrier; });
+            if (it == units.end() || !it->on_foot) {
+                // Its carrier fell (or climbed into a vehicle): it lies there.
+                const int team = it != units.end() ? it->team : -1;
+                flag.carrier = 0;
+                flag.dropped_for = 0;
+                events.push_back({MatchEvent::flag_dropped, team, int(i)});
+                continue;
+            }
+            flag.position = it->position;
+            const Vec3 chest{it->position.x, it->position.y + 1.0, it->position.z};
+            for (const FlagCapture& capture : battlefield_.flag_captures) {
+                if (capture.team == it->team && (capture.where.contains(it->position) || capture.where.contains(chest))) {
+                    state_.scores[size_t(it->team)] += 1;
+                    events.push_back({MatchEvent::flag_captured, it->team, int(i), it->id});
+                    send_home(i);
+                    break;
+                }
+            }
+            continue;
+        }
+        if (!flag.home) {
+            flag.dropped_for += float(dt);
+            if (flag.dropped_for >= flag_return_time) {
+                send_home(i);
+                events.push_back({MatchEvent::flag_returned, def.owner, int(i)});
+                continue;
+            }
+        }
+        for (const Unit& unit : units) {
+            if (unit.id == 0 || !unit.on_foot || unit.team < 0 || unit.team > 1) {
+                continue;
+            }
+            const double dx = unit.position.x - flag.position.x, dz = unit.position.z - flag.position.z;
+            if (dx * dx + dz * dz > flag_pickup_radius * flag_pickup_radius ||
+                std::abs(unit.position.y - flag.position.y) > 2.5) {
+                continue;
+            }
+            if (unit.team == def.owner) {
+                // Its own side touches it where it lies: it goes home.
+                if (!flag.home) {
+                    send_home(i);
+                    events.push_back({MatchEvent::flag_returned, unit.team, int(i), unit.id});
+                    break;
+                }
+                continue;
+            }
+            if (carrying(unit.id)) {
+                continue;
+            }
+            flag.carrier = unit.id;
+            flag.home = false;
+            flag.dropped_for = 0;
+            flag.position = unit.position;
+            events.push_back({MatchEvent::flag_taken, unit.team, int(i), unit.id});
+            break;
+        }
+    }
 }
 
 void Conquest::capture(double dt, std::span<const Unit> units, std::vector<MatchEvent>& events) {

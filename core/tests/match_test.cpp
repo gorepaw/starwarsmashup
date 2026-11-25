@@ -837,6 +837,71 @@ void test_destructibles() {
     bots.disconnect();
 }
 
+// Stage 11: bots play Capture the Flag: they go for the other side's flag,
+// carry it home and score, and send their own home when it's dropped.
+void test_bots_play_ctf() {
+    Battlefield battlefield = three_posts();
+    battlefield.mode = GameMode::ctf;
+    for (CommandPost& post : battlefield.posts) {
+        post.capturable = false;
+    }
+    battlefield.posts.erase(battlefield.posts.begin() + 1);  // spawn only at the bases
+    battlefield.flags = {{.owner = 0, .home = {-55, 0, 0}}, {.owner = 1, .home = {55, 0, 0}}};
+    DeathRegion west_home;
+    west_home.shape = DeathRegion::Shape::cylinder;
+    west_home.center = {-55, 0, 0};
+    west_home.size = {4, 3, 4};
+    DeathRegion east_home = west_home;
+    east_home.center = {55, 0, 0};
+    battlefield.flag_captures = {{0, west_home}, {1, east_home}};
+    battlefield.capture_limit = 2;
+    battlefield.time_limit = 600;
+    Field field(battlefield);
+    std::vector<Bot> bots;
+    for (int i = 0; i < 6; ++i) {
+        field.join("bot" + std::to_string(i));
+        // Poor shots: Hard bots, even on both sides, kill each other in the
+        // middle all match long; this is about what they do with the flags.
+        bots.emplace_back(uint64_t(i + 11), BotSkill{.aim_error = 20, .fire_range = 15});
+    }
+    int taken = 0, captured = 0;
+    double closest = 1e9;
+    bool ended = false;
+    while (field.now < 600 && !ended) {
+        field.run(5, [&] {
+            for (size_t i = 0; i < bots.size(); ++i) {
+                bots[i].update(*field.clients[i], field.world, field.now);
+                if (field.clients[i]->alive()) {
+                    const Vec3 at = field.clients[i]->predicted().position;
+                    const Vec3 theirs = field.clients[i]->self().team == 0 ? Vec3{55, 0, 0} : Vec3{-55, 0, 0};
+                    closest = std::min(closest, std::hypot(at.x - theirs.x, at.z - theirs.z));
+                }
+                for (const auto& event : field.clients[i]->take_events()) {
+                    if (i == 0) {
+                        taken += event.kind == net::CombatEvent::flag_taken;
+                        captured += event.kind == net::CombatEvent::flag_captured;
+                    }
+                }
+            }
+            ended = ended || field.server->match()->state().phase == Phase::ended;
+        });
+    }
+    const MatchState& state = field.server->match()->state();
+    std::printf("ctf bots: %d flags taken, %d captured, score %.0f - %.0f in %.0f s (closest to a flag %.1f m)\n",
+                taken, captured, state.scores[0], state.scores[1], field.now, closest);
+    if (taken == 0) {
+        const GameClient& c = *field.clients[0];
+        std::printf("  phase %d, client flags %zu, field flags %zu, alive %d team %d at %.1f %.1f, objective %s\n",
+                    int(state.phase), c.match() ? c.match()->flags.size() : 0, c.config().battlefield->flags.size(),
+                    int(c.alive()), c.self().team, c.predicted().position.x, c.predicted().position.z,
+                    bots[0].flag_objective(c) ? "flag" : "none");
+    }
+    CHECK(taken >= 1 && captured >= 1);
+    for (const auto& client : field.clients) {
+        client->disconnect();
+    }
+}
+
 void test_bots_play_a_match() {
     Battlefield battlefield = three_posts();
     battlefield.posts.insert(battlefield.posts.begin() + 1, CommandPost{.name = "Inner west", .position = {-30, 0, 10}});
@@ -940,5 +1005,6 @@ int main() {
     test_dropped_pickups();
     test_spawn_under_floor();
     test_bots_play_a_match();
+    test_bots_play_ctf();
     return swm::test::finish("match_test");
 }

@@ -257,7 +257,8 @@ void GameServer::handle_quest_request(Client& client, const net::QuestRequest& r
         if (flat_distance(terminal.position, client.state.position) > terminal.radius + 1.5) return;
         client.offers.clear();
         if (terminal.kind.empty() || terminal.kind == "general") {
-            for (const QuestDef* def : quest_book_->missions(tick_ / config_.tick_rate, client.quests)) {
+            for (const QuestDef* def :
+                 quest_book_->missions(tick_ / config_.tick_rate, client.quests, 6, &terminal.position)) {
                 client.offers.push_back(def->id);
             }
             client.offer_note.clear();

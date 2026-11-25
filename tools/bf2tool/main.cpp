@@ -48,6 +48,7 @@ constexpr const char* usage = R"(usage:
   bf2tool export-map <_lvl_pc dir> <map> -o <out dir> [--mode conquest] [--sky <planet>] [--skip <layer>]...
                      [--death <region>]... [--landing <region>]... [--open <object>]... [--team <post>=<n>]...
                      [--disable <barrier>]... [--drop-boundary <path>]... [--set <object>.<property>=<value>]...
+                     [--layer <layer>] [--flag <object>=<0|1|2>]... [--flag-capture <region>=<1|2>]...
                      [--regen <object>=<health a second>]... [--kill-plays <object>=<animation group>]...
                      [--kill-stops <object>=<animation group>]... [--kill-removes <object>=<death region>]...
                      [--start-plays <animation group>]... [--timed-death <region>=<first>,<on>,<off>]...
@@ -221,6 +222,11 @@ std::string projectile_of(const OdfClass& weapon, const OdfClass& ordnance) {
     // A vehicle's guns derive from plain "weapon" (com_weap_veh_laser) or "launcher".
     const bool gun = weapon.base == "cannon" || weapon.base == "weapon" || weapon.base == "launcher";
     if (gun && (ordnance.base == "bolt" || ordnance.base == "bullet")) {
+        return "bolt";
+    }
+    // The snowspeeder's rear gun (towcableweapon): its harpoon flies as a
+    // bolt; the seat's TowCable line (written with it) makes it a tow cable.
+    if (weapon.base == "towcableweapon" && ordnance.base == "towcable") {
         return "bolt";
     }
     // ASSUMPTION: a beam (the hover tank's turret laser) as a bolt, written
@@ -945,6 +951,17 @@ int cmd_export_vehicle(const std::vector<std::string>& args) {
         }
         if (!turret.empty()) out << "TurretNode = " << lowercase(turret) << "\n";
         if (!tilt.empty()) out << "PitchNode = " << lowercase(tilt) << "\n";
+        // A tow cable (Battlefront's towcableweapon: the snowspeeder's rear
+        // gun): how near a walker must be to lock on, and how long locking
+        // takes (LockOnRange, LockTime).
+        for (const auto& [weapon, projectile] : usable) {
+            const OdfClass def = library.classes().resolve(weapon.name);
+            if (def.base == "towcableweapon") {
+                out << "TowCable = " << def.get("LockOnRange").value_or("70") << " "
+                    << def.get("LockTime").value_or("0.4") << "\n";
+                std::cerr << std::format("  seat {}: tow cable {}\n", seat.name, weapon.name);
+            }
+        }
         for (const auto& [weapon, projectile] : usable) {
             write_weapon(out, "weapon", weapon, library.classes(), projectile);
             out << "Seat = " << seat_number << "\n";
@@ -992,6 +1009,7 @@ int cmd_export_map(const std::vector<std::string>& args) {
     const std::string map = args[1];
     const std::filesystem::path out_dir = args[3];
     std::string mode = "conquest";
+    std::string mode_layer;  // --layer: the mode's sublevel by its layer's exact name (lowercase)
     std::string sky_code;
     std::vector<std::string> skipped;
     std::vector<std::string> deaths;
@@ -1035,9 +1053,15 @@ int cmd_export_map(const std::vector<std::string>& args) {
     // object name (lowercase) -> property, value: the mission script's
     // SetProperty (a door's IsLocked, a post's SpawnPath or CaptureRegion)
     std::vector<std::tuple<std::string, std::string, std::string>> sets;
+    // A flag mode's flags (the mission script's AddFlag / ObjectiveOneFlagCTF
+    // tables): flag object (lowercase) -> owning team ("0" neutral, "1",
+    // "2"); capture region (lowercase) -> the team that scores there.
+    std::vector<std::pair<std::string, std::string>> flags, flag_captures;
     for (size_t i = 4; i + 1 < args.size(); i += 2) {
         if (args[i] == "--mode") {
             mode = args[i + 1];
+        } else if (args[i] == "--layer") {
+            mode_layer = lowercase(args[i + 1]);
         } else if (args[i] == "--sky") {
             sky_code = lowercase(args[i + 1]);
         } else if (args[i] == "--skip") {
@@ -1104,6 +1128,18 @@ int cmd_export_map(const std::vector<std::string>& args) {
                 return 2;
             }
             teams[lowercase(args[i + 1].substr(0, eq))] = args[i + 1].substr(eq + 1);
+        } else if (args[i] == "--flag" || args[i] == "--flag-capture") {
+            const size_t eq = args[i + 1].find('=');
+            const std::string team = eq == std::string::npos ? "" : args[i + 1].substr(eq + 1);
+            if (team != "0" && team != "1" && team != "2") {
+                std::cerr << usage;
+                return 2;
+            }
+            if (args[i] == "--flag-capture" && team == "0") {
+                std::cerr << usage;
+                return 2;
+            }
+            (args[i] == "--flag" ? flags : flag_captures).emplace_back(lowercase(args[i + 1].substr(0, eq)), team);
         } else if (args[i] == "--start-plays") {
             start_plays.push_back(lowercase(args[i + 1]));
         } else if (args[i] == "--timed-death") {
@@ -1556,8 +1592,22 @@ int cmd_export_map(const std::vector<std::string>& args) {
             ? std::vector<std::string>{"_assault", "_ass", "_ass_hangar", "_ass_spawn", "_ass_paths", "swingassault",
                                        "_obj_hangar", "_obj_spawn", "_obj_paths", "swing_obj"}
             : std::vector<std::string>{"_" + mode};
+    // A sublevel's name hash, as level files store it (FNV-1a over c | 0x20,
+    // which unlike odf_hash turns '_' into 0x7f): what a mission script's
+    // ReadDataFile names (hoth_XL).
+    const auto sublevel_hash = [](std::string_view name) {
+        uint32_t hash = 2166136261u;
+        for (const char c : name) {
+            hash ^= uint32_t(uint8_t(c) | 0x20);
+            hash *= 16777619u;
+        }
+        return hash;
+    };
     const auto named_for_mode = [&](const std::string& layer) {
         const std::string name = lowercase(layer);
+        if (!mode_layer.empty()) {
+            return name == mode_layer;  // --layer: the one the mission script reads (kamino1_1CTF)
+        }
         return std::any_of(mode_names.begin(), mode_names.end(), [&](const std::string& m) { return ends_with(name, m); });
     };
     const auto named_for_other_mode = [&](const std::string& layer) {
@@ -1581,8 +1631,10 @@ int cmd_export_map(const std::vector<std::string>& args) {
     for (int pass = 0; pass < 2 && mode_sublevel == 0; ++pass) {
         for (const auto& [hash, layers] : level.sublevels) {
             const bool chosen =
-                pass == 0 ? std::any_of(layers.begin(), layers.end(), named_for_mode)
-                          : post_sublevels.contains(hash) && std::none_of(layers.begin(), layers.end(), named_for_other_mode);
+                !mode_layer.empty() ? pass == 0 && (hash == sublevel_hash(mode_layer) ||
+                                                    std::any_of(layers.begin(), layers.end(), named_for_mode))
+                : pass == 0         ? std::any_of(layers.begin(), layers.end(), named_for_mode)
+                                    : post_sublevels.contains(hash) && std::none_of(layers.begin(), layers.end(), named_for_other_mode);
             if (chosen) {
                 mode_sublevel = hash;
                 for (const std::string& layer : layers) {
@@ -1593,6 +1645,13 @@ int cmd_export_map(const std::vector<std::string>& args) {
         }
     }
     if (mode_sublevel == 0) {
+        for (const auto& [hash, layers] : level.sublevels) {
+            std::cerr << std::format("  sublevel {:08x}:", hash);
+            for (const std::string& layer : layers) {
+                std::cerr << " " << layer;
+            }
+            std::cerr << "\n";
+        }
         throw std::runtime_error("no " + mode + " sublevel");
     }
     std::set<uint32_t> modes;  // every game mode's sublevel
@@ -2378,6 +2437,37 @@ int cmd_export_map(const std::vector<std::string>& args) {
         ini << "\n";
         ++death_regions;
     }
+    // A flag mode's flags (core::Flag): the flag objects where they stand,
+    // and the capture regions (core::FlagCapture), as death regions are.
+    for (const auto& [name, owner] : flags) {
+        const auto it = std::find_if(level.objects.begin(), level.objects.end(), [&](const WorldItem& object) {
+            return included(object) && lowercase(object.name) == name;
+        });
+        if (it == level.objects.end()) {
+            throw std::runtime_error("no flag object " + name + " in the " + mode + " layers");
+        }
+        ini << std::format("Flag = {} {:.2f} {:.2f} {:.2f}\n", owner, it->position[0], it->position[1], it->position[2]);
+    }
+    for (const auto& [name, team] : flag_captures) {
+        const auto it = std::find_if(level.regions.begin(), level.regions.end(), [&](const WorldItem& region) {
+            return included(region) && (lowercase(region.name) == name || lowercase(region.get("Name")) == name);
+        });
+        if (it == level.regions.end()) {
+            throw std::runtime_error("no capture region " + name + " in the " + mode + " layers");
+        }
+        const auto& r = it->rotation;  // stored columns
+        ini << std::format("FlagCapture = {} {} {:.2f} {:.2f} {:.2f} {:.2f} {:.2f} {:.2f}", team, it->type,
+                           it->position[0], it->position[1], it->position[2], it->size[0], it->size[1], it->size[2]);
+        for (int row = 0; row < 3; ++row) {
+            for (int column = 0; column < 3; ++column) {
+                ini << std::format(" {:.4f}", r[size_t(column * 3 + row)]);
+            }
+        }
+        ini << "\n";
+    }
+    if (!flags.empty()) {
+        std::cerr << std::format("flags: {}; capture regions: {}\n", flags.size(), flag_captures.size());
+    }
     // Damage regions: the map's own, always on (no script adds them): a
     // region whose class is "damageregion damagerate=<n> personscale=<n>
     // ...", hurting soldiers in it by damagerate times personscale a second
@@ -2488,14 +2578,23 @@ int cmd_export_map(const std::vector<std::string>& args) {
     for (const WorldItem& object : level.objects) {
         const std::string reg_name =
             !object.get("CaptureRegion").empty() ? object.get("CaptureRegion") : object.get("ControlRegion");
-        if (!included(object) || reg_name.empty() ||
+        // The flag and hunt layers' spawn-only posts (com_bldg_controlzone_ctf):
+        // a spawn path and a team, no capture region.
+        const bool spawn_only = reg_name.empty() && mode != "conquest" && mode != "assault" &&
+                                object.sublevel == mode_sublevel && !object.get("SpawnPath").empty() &&
+                                lowercase(object.type).find("controlzone") != std::string::npos;
+        if (!included(object) || (reg_name.empty() && !spawn_only) ||
             std::find(opened.begin(), opened.end(), lowercase(object.name)) != opened.end()) {
             continue;
         }
         const uint32_t obj_group = object.sublevel ? object.sublevel : odf_hash(object.layer);
         const bool capturable = !object.get("CaptureRegion").empty();
-        const WorldItem* capture = level.region(reg_name, object.sublevel);
-        const auto& at = capture ? capture->position : object.position;
+        const WorldItem* capture = reg_name.empty() ? nullptr : level.region(reg_name, object.sublevel);
+        // Outside conquest and assault posts are spawn points (a script may
+        // point their capture region at a death region to keep them so:
+        // Kamino's 1-flag cp11 and cp22): placed by the post itself.
+        const bool fought_over = mode == "conquest" || mode == "assault";
+        const auto& at = capture && fought_over ? capture->position : object.position;
         ini << "\n[post]\nName = " << (object.get("Label").empty() ? object.name : object.get("Label")) << "\n"
             << std::format("Position = {:.2f} {:.2f}\n", at[0], at[2])
             // The post object itself (its console), on the floor the post
@@ -2656,6 +2755,18 @@ int cmd_export_map(const std::vector<std::string>& args) {
         ++chair_count;
     }
     std::cerr << std::format("turrets: {}; turret chairs: {}\n", turret_count, chair_count);
+    if (std::getenv("BF2_MODE_OBJECTS")) {
+        for (const WorldItem& object : level.objects) {
+            if (object.sublevel == mode_sublevel) {
+                std::cerr << std::format("  object {} ({}) at {:.0f} {:.0f} {:.0f}:", object.name, object.type,
+                                         object.position[0], object.position[1], object.position[2]);
+                for (const auto& [hash, value] : object.properties) {
+                    std::cerr << std::format(" {:08x}={}", hash, value);
+                }
+                std::cerr << "\n";
+            }
+        }
+    }
     std::cerr << std::format("{} ({}): {} command posts\nwrote {}\n", mode, mode_layers, posts, out_dir.string());
     if (posts == 0) {
         throw std::runtime_error("no command posts in " + mode + " (" + mode_layers + ")");

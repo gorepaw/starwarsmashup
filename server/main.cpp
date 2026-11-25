@@ -25,6 +25,18 @@
 // battles at its war terminals, and it launches battle servers in this
 // process (on free UDP ports), fills them with bots, sends the players there
 // and takes them back afterwards. Use it with --db to keep characters.
+//
+// --galaxy <galaxy.ini> (see game/hubs/galaxy.ini) runs every planet it
+// names, each a hub on a world server of its own in this process: the first
+// on --port (its bake and hub are --bake and --hub's, unless given), the
+// others on free ports, with starships between their starports (Stage 13).
+// Each finished battle's telemetry (map, mode, era, sides, winner, tickets,
+// duration, players and bots, kills by weapon) is recorded in the --db file.
+//
+//   swm_server --telemetry <db file> [--last <n>]
+//
+// prints what that telemetry says: win rates by faction, mode and map, K/D,
+// and the deadliest weapons, over the last n battles (default: all).
 
 #include <atomic>
 #include <chrono>
@@ -53,6 +65,7 @@
 #include "swm/core/combat.h"
 #include "swm/core/conquest.h"
 #include "swm/core/heightfield.h"
+#include "swm/core/galaxy.h"
 #include "swm/core/hub.h"
 #include "swm/core/net/udp.h"
 #include "swm/core/server.h"
@@ -67,8 +80,28 @@ int usage() {
     std::cerr << "usage: swm_server [--bake <prefix>] [--db <file>] [--port 7777] [--spawn <swg_x> <swg_z>] "
                  "[--seconds <n>] [--building <file.collision> <swg_x> <swg_y> <swg_z> <yaw_degrees>]... "
                  "[--loadout <file.ini>] [--battlefield <file.ini>] [--bots <n>] "
-                 "[--hub <file.ini>]\n";
+                 "[--hub <file.ini>] [--galaxy <galaxy.ini>]\n"
+                 "       swm_server --telemetry <db file> [--last <n>]\n";
     return 2;
+}
+
+// Stage 11: the battles' telemetry in a database, summed up.
+int telemetry_report(int argc, char** argv) {
+    size_t last = size_t(-1);
+    if (argc == 5 && std::string(argv[3]) == "--last") {
+        last = size_t(std::max(1, std::atoi(argv[4])));
+    } else if (argc != 3) {
+        return usage();
+    }
+    try {
+        swm::core::SqliteCharacterStore store(argv[2]);
+        const auto matches = store.list_matches(last);
+        std::cout << swm::core::format_telemetry_report(swm::core::summarize_telemetry(matches));
+        return 0;
+    } catch (const std::exception& error) {
+        std::cerr << "error: " << error.what() << "\n";
+        return 1;
+    }
 }
 
 double seconds_since(std::chrono::steady_clock::time_point start) {
@@ -78,6 +111,9 @@ double seconds_since(std::chrono::steady_clock::time_point start) {
 } // namespace
 
 int main(int argc, char** argv) {
+    if (argc >= 3 && std::string(argv[1]) == "--telemetry") {
+        return telemetry_report(argc, argv);
+    }
     std::string bake;
     std::string db;
     std::string loadout;
@@ -85,6 +121,8 @@ int main(int argc, char** argv) {
     std::string bf2_items_dir;
     std::string battlefield;
     std::string hub_file;
+    std::string galaxy_file;
+    std::optional<swm::core::GalaxyConfig> galaxy_config;
     int bot_count = 0;
     int port = 7777;
     bool has_spawn = false;
@@ -108,6 +146,8 @@ int main(int argc, char** argv) {
             battlefield = argv[++i];
         } else if (arg == "--hub" && i + 1 < argc) {
             hub_file = argv[++i];
+        } else if (arg == "--galaxy" && i + 1 < argc) {
+            galaxy_file = argv[++i];
         } else if (arg == "--bots" && i + 1 < argc) {
             bot_count = std::atoi(argv[++i]);
         } else if (arg == "--db" && i + 1 < argc) {
@@ -128,6 +168,16 @@ int main(int argc, char** argv) {
         } else {
             return usage();
         }
+    }
+    if (!galaxy_file.empty()) {
+        try {
+            galaxy_config = swm::core::load_galaxy(galaxy_file);
+        } catch (const std::exception& error) {
+            std::cerr << "swm_server: " << error.what() << "\n";
+            return 1;
+        }
+        if (bake.empty()) bake = galaxy_config->planets[0].bake.string();
+        if (hub_file.empty()) hub_file = galaxy_config->planets[0].hub.string();
     }
     if ((bake.empty() && battlefield.empty()) || port <= 0 || port > 65535 || bot_count < 0 || bot_count > 64 ||
         (!hub_file.empty() && !battlefield.empty())) {
@@ -163,9 +213,15 @@ int main(int argc, char** argv) {
         }
         std::optional<swm::core::HubConfig> hub_config;
         const swm::core::BotSkill skill = swm::core::BotSkill::preset("hard");
+        if (galaxy_config) {
+            config.planet = galaxy_config->planets[0].name;
+        }
         if (!hub_file.empty()) {
             hub_config = swm::core::load_hub(hub_file);
             hub_config->bot_skill = skill;
+            if (galaxy_config) {
+                hub_config->planet = galaxy_config->planets[0].stem();
+            }
         }
         if (has_spawn) {
             config.spawn = {-spawn_x, 0, spawn_z};  // Galaxies to game coordinates
@@ -218,6 +274,11 @@ int main(int argc, char** argv) {
             hub = std::make_unique<swm::core::Hub>(server, link.port(), world, std::move(*hub_config), hub_network);
             hub->log = server.log;
         }
+        std::unique_ptr<swm::core::Galaxy> galaxy;
+        if (galaxy_config && hub) {
+            galaxy = std::make_unique<swm::core::Galaxy>(server, link.port(), *galaxy_config, config, store.get(),
+                                                          hub_network, server.log);
+        }
         std::cout << std::format("swm_server {}: UDP port {}, {} Hz, spawn ({:.1f}, {:.1f}) in Galaxies coordinates, {}\n",
                                  swm::core::version(), link.port(), config.tick_rate, -config.spawn.x, config.spawn.z,
                                  db.empty() ? std::string("not saving") : "saving to " + db)
@@ -248,9 +309,32 @@ int main(int argc, char** argv) {
             if (hub) {
                 hub->update(now);
             }
+            if (galaxy) {
+                galaxy->update(now);
+            }
             if (now >= next_status) {
                 next_status += 10;
                 server.log(std::format("tick {}, {} client(s){}", server.tick(), server.client_count(), positions()));
+                // What the ticks cost (Stage 13 server audit).
+                const swm::core::ServerPerf perf = server.take_perf(now);
+                if (perf.ticks > 0) {
+                    const double secs = std::max(perf.window, 1e-6);
+                    std::string wildlife;
+                    if (hub && hub->population()) {
+                        const auto* pop = hub->population();
+                        wildlife = std::format(", wildlife {}/{} groups awake, {} mob(s) asleep", pop->awake_groups(),
+                                               pop->group_count(), pop->dormant_mobs());
+                    }
+                    server.log(std::format(
+                        "perf: tick {:.2f} ms avg, {:.2f} ms worst ({:.0f}% of budget), npcs {:.0f} simulated / {:.0f} "
+                        "frozen per tick, snapshots {:.1f} KB/s out ({} B largest), strings in {:.0f}% of entities{}",
+                        1000.0 * perf.tick_seconds / double(perf.ticks), 1000.0 * perf.worst_tick,
+                        100.0 * perf.tick_seconds / secs, double(perf.npc_ticks) / double(perf.ticks),
+                        double(perf.npc_frozen) / double(perf.ticks), double(perf.snapshot_bytes) / 1024.0 / secs,
+                        perf.largest_snapshot,
+                        perf.entities_sent ? 100.0 * double(perf.static_sent) / double(perf.entities_sent) : 0.0,
+                        wildlife));
+                }
             }
             std::this_thread::sleep_for(std::chrono::milliseconds(1));
         }
@@ -258,6 +342,14 @@ int main(int argc, char** argv) {
         timeEndPeriod(1);
 #endif
         bots.disconnect();
+        if (galaxy) {
+            for (const auto& planet : galaxy_config->planets) {
+                if (swm::core::GameServer* other = galaxy->server(planet.name); other && other != &server) {
+                    other->save_all();
+                }
+            }
+        }
+        galaxy.reset();
         hub.reset();
         server.save_all();
         server.log(std::format("stopped; saved {} connected character(s){}", store ? server.client_count() : 0,

@@ -160,6 +160,58 @@ void put_state(ByteWriter& out, const MoveState& state) {
     }
 }
 
+// What's drawn of someone else's state (Stage 13): floats (a millimeter at
+// a planet's edge), posture as bits, the held weapon and whether it's
+// reloading; not its ammunition, heat, energy or timers.
+void put_remote_state(ByteWriter& out, const MoveState& state) {
+    out.put(float(state.position.x));
+    out.put(float(state.position.y));
+    out.put(float(state.position.z));
+    out.put(float(state.velocity.x));
+    out.put(float(state.velocity.y));
+    out.put(float(state.velocity.z));
+    out.put(state.yaw);
+    out.put(state.pitch);
+    out.put(uint8_t(uint8_t(state.grounded) | (uint8_t(state.sprinting) << 1) | (uint8_t(state.crouched) << 2) |
+                    (uint8_t(state.crouch_held) << 3) | (uint8_t(state.blocking) << 4) |
+                    (uint8_t(state.combat.reload > 0) << 5)));
+    out.put(state.roll);
+    out.put(state.roll_yaw);
+    out.put(state.stagger);
+    out.put(state.vehicle);
+    out.put(state.seat);
+    out.put(state.combat.weapon);
+}
+
+MoveState get_remote_state(ByteReader& in) {
+    MoveState state;
+    state.position.x = in.get<float>();
+    state.position.y = in.get<float>();
+    state.position.z = in.get<float>();
+    state.velocity.x = in.get<float>();
+    state.velocity.y = in.get<float>();
+    state.velocity.z = in.get<float>();
+    state.yaw = in.get<float>();
+    state.pitch = in.get<float>();
+    const uint8_t bits = in.get<uint8_t>();
+    state.grounded = (bits & 1) != 0;
+    state.sprinting = (bits & 2) != 0;
+    state.crouched = (bits & 4) != 0;
+    state.crouch_held = (bits & 8) != 0;
+    state.blocking = (bits & 16) != 0;
+    state.combat.reload = (bits & 32) != 0 ? 1.0 : 0.0;
+    state.roll = in.get<float>();
+    state.roll_yaw = in.get<float>();
+    state.stagger = in.get<float>();
+    state.vehicle = in.get<int8_t>();
+    state.seat = in.get<int8_t>();
+    state.combat.weapon = in.get<uint8_t>();
+    if (state.combat.weapon >= hand_slots) {
+        throw PacketError("bad weapon slot");
+    }
+    return state;
+}
+
 MoveState get_state(ByteReader& in) {
     MoveState state;
     state.position = get_vec3(in);
@@ -251,6 +303,14 @@ void put_match(ByteWriter& out, const MatchState& m) {
         out.put(health);
     }
     out.put(m.clock);
+    out.put(uint8_t(m.mode));
+    out.put(uint8_t(std::min<size_t>(m.flags.size(), 8)));
+    for (size_t i = 0; i < m.flags.size() && i < 8; ++i) {
+        put_vec3(out, m.flags[i].position);
+        out.put(m.flags[i].carrier);
+        out.put(uint8_t(m.flags[i].home));
+        out.put(m.flags[i].dropped_for);
+    }
 }
 
 // A character's team: a side's, or the natives' (2).
@@ -311,6 +371,23 @@ MatchState get_match(ByteReader& in) {
         m.destructibles.push_back(in.get<float>());
     }
     m.clock = in.get<double>();
+    const uint8_t mode = in.get<uint8_t>();
+    if (mode >= game_mode_count) {
+        throw PacketError("bad game mode");
+    }
+    m.mode = GameMode(mode);
+    const size_t flags = in.get<uint8_t>();
+    if (flags > 8) {
+        throw PacketError("too many flags");
+    }
+    for (size_t i = 0; i < flags; ++i) {
+        FlagState flag;
+        flag.position = get_vec3(in);
+        flag.carrier = in.get<uint32_t>();
+        flag.home = in.get<uint8_t>() != 0;
+        flag.dropped_for = in.get<float>();
+        m.flags.push_back(flag);
+    }
     return m;
 }
 
@@ -767,6 +844,7 @@ struct Encoder {
             out.put_string(r.name);
             put_vec3(out, r.position);
             out.put(r.radius);
+            out.put(uint8_t(r.kind));
         }
         out.put(uint8_t(std::min<size_t>(m.factions.size(), 16)));
         for (size_t i = 0; i < m.factions.size() && i < 16; ++i) {
@@ -837,7 +915,12 @@ struct Encoder {
         out.put(uint16_t(m.entities.size()));
         for (const EntityState& entity : m.entities) {
             out.put(entity.id);
-            put_state(out, entity.state);
+            out.put(uint8_t(entity.full_state));
+            if (entity.full_state) {
+                put_state(out, entity.state);
+            } else {
+                put_remote_state(out, entity.state);
+            }
             out.put(entity.health);
             out.put(entity.max_health);
             out.put(entity.shield);
@@ -856,11 +939,15 @@ struct Encoder {
             out.put(entity.colors);
             out.put(entity.species);
             out.put(entity.gender);
-            out.put_string(entity.name);
-            out.put_long_string(entity.appearance);
-            out.put_string(entity.weapon_model);
-            out.put_string(entity.anim_set);
-            out.put_long_string(entity.worn);
+            out.put(entity.static_key);
+            out.put(uint8_t(entity.has_static));
+            if (entity.has_static) {
+                out.put_string(entity.name);
+                out.put_long_string(entity.appearance);
+                out.put_string(entity.weapon_model);
+                out.put_string(entity.anim_set);
+                out.put_long_string(entity.worn);
+            }
         }
         out.put(uint16_t(m.bolts.size()));
         for (const BoltState& bolt : m.bolts) {
@@ -930,6 +1017,8 @@ struct Encoder {
                 out.put(v.gunners[g]);
             }
             out.put(v.owner);
+            out.put(v.towing);
+            out.put(v.tow_wraps);
         }
         const uint8_t ccount = uint8_t(std::min<size_t>(m.corpses.size(), 255));
         out.put(ccount);
@@ -977,6 +1066,7 @@ struct Encoder {
     void operator()(const QueueRequest& m) {
         out.put(uint8_t(Type::queue_request));
         out.put(m.team);
+        out.put(m.mode);
     }
     void operator()(const Transfer& m) {
         out.put(uint8_t(Type::transfer));
@@ -984,6 +1074,7 @@ struct Encoder {
         out.put(m.port);
         out.put(m.ticket);
         out.put_string(m.battlefield);
+        out.put_string(m.planet);
     }
     void operator()(const InventorySync& m) {
         out.put(uint8_t(Type::inventory_sync));
@@ -1301,6 +1392,11 @@ Message decode(std::span<const uint8_t> packet) {
             r.name = in.get_string();
             r.position = get_vec3(in);
             r.radius = in.get<double>();
+            const uint8_t kind = in.get<uint8_t>();
+            if (kind > Recruiter::both) {
+                throw PacketError("bad terminal kind");
+            }
+            r.kind = Recruiter::Kind(kind);
             m.recruiters.push_back(r);
         }
         const size_t fcount = in.get<uint8_t>();
@@ -1381,7 +1477,8 @@ Message decode(std::span<const uint8_t> packet) {
         for (size_t i = 0; i < count; ++i) {
             EntityState entity;
             entity.id = in.get<uint32_t>();
-            entity.state = get_state(in);
+            entity.full_state = in.get<uint8_t>() != 0;
+            entity.state = entity.full_state ? get_state(in) : get_remote_state(in);
             entity.health = in.get<float>();
             entity.max_health = in.get<float>();
             entity.shield = in.get<float>();
@@ -1410,12 +1507,16 @@ Message decode(std::span<const uint8_t> packet) {
             if (entity.gender > 1) {
                 throw PacketError("bad gender");
             }
-            entity.name = in.get_string();
-            entity.appearance = in.get_long_string();
-            entity.weapon_model = in.get_string();
-            entity.anim_set = in.get_string();
-            entity.worn = in.get_long_string();
-            m.entities.push_back(entity);
+            entity.static_key = in.get<uint32_t>();
+            entity.has_static = in.get<uint8_t>() != 0;
+            if (entity.has_static) {
+                entity.name = in.get_string();
+                entity.appearance = in.get_long_string();
+                entity.weapon_model = in.get_string();
+                entity.anim_set = in.get_string();
+                entity.worn = in.get_long_string();
+            }
+            m.entities.push_back(std::move(entity));
         }
         const size_t bolts = in.get<uint16_t>();
         for (size_t i = 0; i < bolts; ++i) {
@@ -1436,7 +1537,7 @@ Message decode(std::span<const uint8_t> packet) {
         for (size_t i = 0; i < events; ++i) {
             CombatEvent event;
             const uint8_t kind = in.get<uint8_t>();
-            if (kind < CombatEvent::hit || kind > CombatEvent::neutralized) {
+            if (kind < CombatEvent::hit || kind > CombatEvent::flag_captured) {
                 throw PacketError("unknown combat event");
             }
             event.kind = CombatEvent::Kind(kind);
@@ -1511,6 +1612,8 @@ Message decode(std::span<const uint8_t> packet) {
                 v.gunners.push_back(in.get<uint32_t>());
             }
             v.owner = in.get<uint32_t>();
+            v.towing = in.get<uint32_t>();
+            v.tow_wraps = in.get<float>();
             m.vehicles.push_back(v);
         }
         const size_t corpses = in.get<uint8_t>();
@@ -1537,7 +1640,11 @@ Message decode(std::span<const uint8_t> packet) {
             throw PacketError("bad queue state");
         }
         m.you.queue = PlayerStatus::Queue(queue);
-        m.you.team = get_character_team(in);
+        // The side queued for: one of a hub's (up to four: the Separatists are 3).
+        m.you.team = in.get<int8_t>();
+        if (m.you.team < -1 || m.you.team > 3) {
+            throw PacketError("bad queued side");
+        }
         m.you.in_queue = in.get<uint16_t>();
         m.you.starts_in = in.get<float>();
         m.you.battlefield = in.get_string();
@@ -1575,6 +1682,10 @@ Message decode(std::span<const uint8_t> packet) {
         if (m.team < -1 || m.team > 3) {
             throw PacketError("bad team");
         }
+        m.mode = in.get<uint8_t>();
+        if (m.mode >= game_mode_count && m.mode != QueueRequest::any_mode) {
+            throw PacketError("bad game mode");
+        }
         message = m;
         break;
     }
@@ -1584,6 +1695,7 @@ Message decode(std::span<const uint8_t> packet) {
         m.port = in.get<uint16_t>();
         m.ticket = in.get<uint64_t>();
         m.battlefield = in.get_string();
+        m.planet = in.get_string();
         message = m;
         break;
     }
@@ -1919,6 +2031,22 @@ Message decode(std::span<const uint8_t> packet) {
         throw PacketError("trailing bytes");
     }
     return message;
+}
+
+uint32_t static_key(const EntityState& entity) {
+    uint32_t hash = 2166136261u;  // FNV-1a
+    const auto mix = [&](std::string_view text) {
+        for (const char c : text) {
+            hash = (hash ^ uint8_t(c)) * 16777619u;
+        }
+        hash = (hash ^ 0x1Fu) * 16777619u;  // a separator, so "ab"+"c" differs from "a"+"bc"
+    };
+    mix(entity.name);
+    mix(entity.appearance);
+    mix(entity.weapon_model);
+    mix(entity.anim_set);
+    mix(entity.worn);
+    return hash == 0 ? 1 : hash;
 }
 
 } // namespace swm::core::net

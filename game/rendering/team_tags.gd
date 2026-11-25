@@ -87,6 +87,13 @@ func forget(id: int) -> void:
 
 func update(camera: Camera3D, delta: float, raycast: Callable) -> void:
 	_time += delta
+	# Tags on what's gone with a world (another planet's, a battle's): forgotten.
+	for id: int in _tags.keys():
+		if not is_instance_valid(_tags[id]["pivot"]):
+			_tags.erase(id)
+			_order.erase(id)
+	if _order.is_empty():
+		_next = 0
 	var eye := camera.global_position
 	# A few rays a frame: is the map between the camera and the hologram?
 	for i in mini(RAYS_PER_FRAME, _order.size()):

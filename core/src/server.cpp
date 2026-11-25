@@ -1,6 +1,7 @@
 #include "swm/core/server.h"
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <format>
 #include <numbers>
@@ -365,8 +366,8 @@ const MoveState* GameServer::state_of(uint32_t entity) const {
     if (const Client* client = find(entity)) {
         return &client->state;
     }
-    const auto npc = std::find_if(npcs_.begin(), npcs_.end(), [&](const Npc& n) { return n.entity == entity; });
-    return npc == npcs_.end() ? nullptr : &npc->state;
+    const Npc* npc = find_npc(entity);
+    return npc == nullptr ? nullptr : &npc->state;
 }
 
 uint32_t GameServer::add_npc(const std::string& name, Vec3 position, double yaw, uint8_t look, uint8_t pose,
@@ -389,6 +390,7 @@ uint32_t GameServer::add_npc(const std::string& name, Vec3 position, double yaw,
     npc.state.yaw = float(yaw);
     npc.state.grounded = true;
     npc.input.yaw = float(yaw);
+    npc_index_[npc.entity] = npcs_.size();
     npcs_.push_back(npc);
     return npc.entity;
 }
@@ -427,22 +429,57 @@ uint32_t GameServer::add_combat_npc(const std::string& name, Vec3 position, doub
     npc.input.yaw = float(yaw);
     CharacterStats own = stats_for(npc.loadout, config_.base_stats);
     reset_loadout(npc.state, npc.loadout, own);
+    npc_index_[npc.entity] = npcs_.size();
     npcs_.push_back(std::move(npc));
     return npcs_.back().entity;
 }
 
 GameServer::Npc* GameServer::find_npc(uint32_t entity) {
-    for (Npc& npc : npcs_) {
-        if (npc.entity == entity) return &npc;
-    }
-    return nullptr;
+    const auto it = npc_index_.find(entity);
+    return it == npc_index_.end() ? nullptr : &npcs_[it->second];
 }
 
 const GameServer::Npc* GameServer::find_npc(uint32_t entity) const {
-    for (const Npc& npc : npcs_) {
-        if (npc.entity == entity) return &npc;
+    const auto it = npc_index_.find(entity);
+    return it == npc_index_.end() ? nullptr : &npcs_[it->second];
+}
+
+void GameServer::remove_npc(uint32_t entity) {
+    const auto it = npc_index_.find(entity);
+    if (it == npc_index_.end()) {
+        return;
     }
-    return nullptr;
+    clear_corpse_loot(entity);
+    const size_t index = it->second;
+    npc_index_.erase(it);
+    if (index + 1 != npcs_.size()) {
+        npcs_[index] = std::move(npcs_.back());
+        npc_index_[npcs_[index].entity] = index;
+    }
+    npcs_.pop_back();
+}
+
+std::vector<Vec3> GameServer::player_positions() const {
+    std::vector<Vec3> out;
+    out.reserve(clients_.size());
+    for (const Client& client : clients_) {
+        if (client.life != Life::waiting) {
+            out.push_back(client.state.position);
+        }
+    }
+    return out;
+}
+
+bool GameServer::npc_awake_at(Vec3 position) const {
+    return conquest_ || config_.npc_sim_radius <= 0 || player_grid_.any_near(position, config_.npc_sim_radius);
+}
+
+ServerPerf GameServer::take_perf(double now) {
+    ServerPerf out = perf_;
+    out.window = perf_since_ < 0 ? double(out.ticks) / config_.tick_rate : now - perf_since_;
+    perf_ = {};
+    perf_since_ = now;
+    return out;
 }
 
 std::optional<GameServer::NpcInfo> GameServer::npc_info(uint32_t entity) const {
@@ -783,13 +820,19 @@ void GameServer::handle(const net::Endpoint& from, const net::Datagram& datagram
     } else if (const auto* request = std::get_if<net::SpawnRequest>(&message)) {
         client->wants_spawn = *request;
     } else if (const auto* queue = std::get_if<net::QueueRequest>(&message)) {
-        // Joining a queue takes standing at a war terminal; leaving doesn't.
-        const bool at_terminal = std::any_of(recruiters_.begin(), recruiters_.end(), [&](const net::Recruiter& r) {
+        // Joining a queue takes standing at a battle terminal (its kind says
+        // ground or space battles); leaving doesn't.
+        const net::Recruiter* terminal = nullptr;
+        for (const net::Recruiter& r : recruiters_) {
             const Vec3 d = client->state.position - r.position;
-            return std::hypot(d.x, d.z) <= r.radius + 1;
-        });
-        if (on_queue && !client->transfer && (queue->team < 0 || (client->life == Life::alive && at_terminal))) {
-            on_queue(client->entity, queue->team);
+            if (std::hypot(d.x, d.z) <= r.radius + 1) {
+                terminal = &r;
+                break;
+            }
+        }
+        if (on_queue && !client->transfer && (queue->team < 0 || (client->life == Life::alive && terminal))) {
+            const uint8_t kind = terminal ? uint8_t(terminal->kind) : uint8_t(net::Recruiter::ground);
+            on_queue(client->entity, queue->team, queue->mode, kind);
         }
     } else if (const auto* ack = std::get_if<net::InventoryAck>(&message)) {
         if (ack->revision == client->inventory_rev) {
@@ -1205,9 +1248,26 @@ GameServer::Client* GameServer::join(const net::Endpoint& from, const std::strin
             say(std::format("inventory load error for {}: {}", name, error.what()));
         }
     }
+    // Off a starship from another planet (Stage 13): at its starport.
+    if (const auto arrival = arrivals_.find(name); arrival != arrivals_.end()) {
+        spawn = world_.clamp(arrival->second);
+        // A height below the world: unknown (the ground there, then).
+        spawn.y = (arrival->second.y < -1e8 ? world_.terrain().height_at(spawn.x, spawn.z) : arrival->second.y) + 1.0;
+        arrivals_.erase(arrival);
+        where = "arriving";
+    }
     const Loadout& initial_lo = loadout_of(joined);
     joined.stats = stats_for(initial_lo, joined.species, config_.base_stats);
     spawn.y = world_.ground_at(spawn.x, spawn.z, spawn.y, joined.stats.move.step_up).height;
+    if (spawn.y < -1e8) {
+        // Nothing under it from there (inside a building, over its rooms'
+        // terrain holes): from over the ground, else the ground itself.
+        const double terrain = world_.terrain().height_at(spawn.x, spawn.z);
+        spawn.y = world_.ground_at(spawn.x, spawn.z, terrain + 2.0, joined.stats.move.step_up).height;
+        if (spawn.y < -1e8) {
+            spawn.y = terrain;
+        }
+    }
     joined.state.position = spawn;
     reset_loadout(joined.state, initial_lo, joined.stats);
     joined.health = joined.stats.max_health;
@@ -1215,6 +1275,16 @@ GameServer::Client* GameServer::join(const net::Endpoint& from, const std::strin
     clients_.push_back(joined);
     say(std::format("{} joined from {} as entity {} ({} character {}) at ({:.2f}, {:.2f}, {:.2f})", name,
                     from.to_string(), joined.entity, where, joined.character, spawn.x, spawn.y, spawn.z));
+    // Stage 13: characters are kept on their planet. One saved on another
+    // is sent there (keeping that location); everyone else is here now.
+    if (!config_.planet.empty()) {
+        Client& here = clients_.back();
+        const bool elsewhere = where != "arriving" && here.location != config_.planet && on_wrong_planet &&
+                               on_wrong_planet(here.entity, here.location);
+        if (!elsewhere) {
+            here.location = config_.planet;
+        }
+    }
     return &clients_.back();
 }
 
@@ -1251,6 +1321,7 @@ void GameServer::save(std::span<const Client> clients) {
 }
 
 void GameServer::step() {
+    const auto tick_started = std::chrono::steady_clock::now();
     const double dt = 1 / config_.tick_rate;
     for (Client& client : clients_) {
         for (size_t i = 0; i < config_.max_inputs_per_tick && !client.queue.empty(); ++i) {
@@ -1274,7 +1345,16 @@ void GameServer::step() {
             client.use_held = use;
         }
     }
+    // Where the players in the world are, for what's near them (Stage 13).
+    player_grid_.clear();
+    for (const Client& client : clients_) {
+        if (client.life != Life::waiting) {
+            player_grid_.insert(client.entity, client.state.position);
+        }
+    }
     // The server's own people, creatures, and bandits, by how they're steered.
+    // Outside a match, those no player is near stand still, unsimulated.
+    const bool freeze_far = !conquest_ && config_.npc_sim_radius > 0;
     if (!npcs_.empty()) {
         const CharacterStats stats = stats_for(config_.loadout, config_.base_stats);
         CharacterStats own = stats;
@@ -1285,6 +1365,11 @@ void GameServer::step() {
             if (npc.actor_kind >= 2 && npc.life != Life::alive) {
                 continue;
             }
+            if (freeze_far && !player_grid_.any_near(npc.state.position, config_.npc_sim_radius)) {
+                ++perf_.npc_frozen;
+                continue;
+            }
+            ++perf_.npc_ticks;
             if (npc.actor_kind >= 2) {
                 own = stats_for(npc.loadout, config_.base_stats);
                 own.move.radius = npc.radius > 0 ? npc.radius : stats.move.radius;
@@ -1402,6 +1487,7 @@ void GameServer::step() {
         }
     }
     update_vehicles(1 / config_.tick_rate);
+    update_tow_cables(1 / config_.tick_rate);  // Stage 11
     advance_bolts();
     if (conquest_) {
         run_match();
@@ -1417,13 +1503,33 @@ void GameServer::step() {
         check_quest_positions();
     }
     update_extractions(now_);
+    update_specialists(1 / config_.tick_rate);
 
     net::Snapshot base_snapshot;
     base_snapshot.server_tick = tick_;
+    // Every entity described once, with and without its strings (Stage 13:
+    // a client is sent each entity's strings only when it may not have them).
+    struct Described {
+        net::EntityState full;
+        net::EntityState lean;  // without its strings
+    };
+    const auto described = [](net::EntityState entity) {
+        entity.static_key = net::static_key(entity);
+        entity.has_static = true;
+        Described out{entity, entity};
+        out.lean.has_static = false;
+        out.lean.name.clear();
+        out.lean.appearance.clear();
+        out.lean.weapon_model.clear();
+        out.lean.anim_set.clear();
+        out.lean.worn.clear();
+        return out;
+    };
+    std::vector<Described> player_entities;
+    player_entities.reserve(clients_.size());
     for (const Client& client : clients_) {
-        base_snapshot.entities.push_back(describe(client));
+        player_entities.push_back(described(describe(client)));
     }
-    const bool filter_npcs = !conquest_ && npcs_.size() > 40;
     const auto make_npc_entity = [&](const Npc& npc) {
         net::EntityState entity;
         entity.id = npc.entity;
@@ -1447,11 +1553,13 @@ void GameServer::step() {
         }
         return entity;
     };
-    if (!filter_npcs) {
-        for (const Npc& npc : npcs_) {
-            if (!npc.hidden) {
-                base_snapshot.entities.push_back(make_npc_entity(npc));
-            }
+    std::vector<Described> npc_entities;
+    npc_entities.reserve(npcs_.size());
+    npc_grid_.clear();
+    for (const Npc& npc : npcs_) {
+        if (!npc.hidden) {
+            npc_grid_.insert(uint32_t(npc_entities.size()), npc.state.position);
+            npc_entities.push_back(described(make_npc_entity(npc)));
         }
     }
     for (const Bolt& bolt : bolts_) {
@@ -1497,15 +1605,76 @@ void GameServer::step() {
         }
         client.status.inventory_rev = client.inventory_rev;
         net::Snapshot client_snapshot = base_snapshot;
-        if (filter_npcs) {
-            constexpr double npc_view_range2 = 240.0 * 240.0;
-            for (const Npc& npc : npcs_) {
-                if (npc.hidden) continue;
-                const double dx = npc.state.position.x - client.state.position.x;
-                const double dz = npc.state.position.z - client.state.position.z;
-                if (dx * dx + dz * dz <= npc_view_range2) {
-                    client_snapshot.entities.push_back(make_npc_entity(npc));
+        // Interest management (Stage 13): outside a match, only what's near.
+        {
+            const bool open_world = !conquest_;
+            const Vec3 at = client.state.position;
+            std::set<uint32_t> seen;
+            const auto d2_to = [&](Vec3 p) {
+                const double dx = p.x - at.x, dz = p.z - at.z;
+                return dx * dx + dz * dz;
+            };
+            // Within radius, or kept while within its margin once sent.
+            const auto in_view = [&](uint32_t id, double d2, double radius) {
+                if (!open_world || radius <= 0 || d2 <= radius * radius) {
+                    return true;
                 }
+                const double outer = radius + config_.view_margin;
+                return d2 <= outer * outer && client.seen_entities.contains(id);
+            };
+            const auto add = [&](const Described& e) {
+                if (e.full.id != client.entity && hidden_from(client.entity, e.full.id)) {
+                    return;  // cloaked or smoked from this client (Stage 12)
+                }
+                auto [it, fresh] = client.sent_static.try_emplace(e.full.id);
+                Client::SentStatic& sent = it->second;
+                bool full = false;
+                if (fresh || sent.key != e.full.static_key) {
+                    sent = {e.full.static_key, tick_, tick_};
+                    full = true;
+                } else if (tick_ - sent.since < 8 || tick_ - sent.last_full >= 90) {
+                    // Again for the first few ticks (in case one's lost), then now and then.
+                    sent.last_full = tick_;
+                    full = true;
+                }
+                client_snapshot.entities.push_back(full ? e.full : e.lean);
+                // Only its own in full: everyone else's as drawn.
+                client_snapshot.entities.back().full_state = e.full.id == client.entity;
+                seen.insert(e.full.id);
+                ++perf_.entities_sent;
+                perf_.static_sent += full ? 1 : 0;
+            };
+            for (const Described& e : player_entities) {
+                if (e.full.id == client.entity || in_view(e.full.id, d2_to(e.full.state.position), config_.player_view_radius)) {
+                    add(e);
+                }
+            }
+            if (!open_world || config_.npc_view_radius <= 0) {
+                for (const Described& e : npc_entities) {
+                    add(e);
+                }
+            } else {
+                npc_grid_.for_each_near(at, config_.npc_view_radius + config_.view_margin,
+                                        [&](uint32_t index, Vec3, double d2) {
+                                            const Described& e = npc_entities[index];
+                                            if (in_view(e.full.id, d2, config_.npc_view_radius)) {
+                                                add(e);
+                                            }
+                                        });
+            }
+            std::erase_if(client.sent_static, [&](const auto& entry) { return !seen.contains(entry.first); });
+            client.seen_entities = std::move(seen);
+            if (open_world && config_.effect_view_radius > 0) {
+                const double r2 = config_.effect_view_radius * config_.effect_view_radius;
+                std::erase_if(client_snapshot.bolts, [&](const net::BoltState& b) {
+                    return b.owner != client.entity && d2_to(b.position) > r2;
+                });
+                std::erase_if(client_snapshot.explosions, [&](const net::Explosion& x) {
+                    return x.owner != client.entity && d2_to(x.position) > r2;
+                });
+                std::erase_if(client_snapshot.impacts, [&](const net::Impact& x) {
+                    return x.owner != client.entity && d2_to(x.position) > r2;
+                });
             }
         }
         if (!corpse_loots_.empty()) {
@@ -1532,8 +1701,15 @@ void GameServer::step() {
             }
         }
         client_snapshot.last_input = client.last_input;
+        client_snapshot.field = field_state_for(client.entity);
         client_snapshot.you = client.status;
-        send(client.endpoint, client_snapshot);
+        {
+            const std::vector<uint8_t> bytes = net::encode(net::Message{std::move(client_snapshot)});
+            ++perf_.snapshots;
+            perf_.snapshot_bytes += bytes.size();
+            perf_.largest_snapshot = std::max(perf_.largest_snapshot, bytes.size());
+            link_.send(client.endpoint, bytes);
+        }
         if (client.inventory_rev != client.acked_inventory_rev &&
             (client.last_sync_tick == 0 || tick_ - client.last_sync_tick >= 8)) {
             send_inventory_sync(client);
@@ -1563,6 +1739,10 @@ void GameServer::step() {
         }
         return gone;
     });
+    const double took = std::chrono::duration<double>(std::chrono::steady_clock::now() - tick_started).count();
+    ++perf_.ticks;
+    perf_.tick_seconds += took;
+    perf_.worst_tick = std::max(perf_.worst_tick, took);
 }
 
 // How far below the lowest terrain a falling soldier dies.
@@ -1629,8 +1809,16 @@ void GameServer::run_match() {
     std::vector<Conquest::Unit> units;
     for (const Client& client : clients_) {
         if (client.life == Life::alive) {
-            units.push_back({client.team, client.state.position});
+            units.push_back({client.team, client.state.position, client.entity, client.state.vehicle < 0});
+            // Stage 12: a slotted Smuggler slices command posts as fast as two
+            // (a second unit that can't carry a flag).
+            if (client.state.vehicle < 0 && specialist_level(client, "smuggler") > 0) {
+                units.push_back({client.team, client.state.position, 0, false});
+            }
         }
+    }
+    if (conquest_->state().phase == Phase::live) {
+        match_live_time_ += dt;
     }
     const auto match_events = conquest_->step(dt, units, clients_.size());
     for (size_t i = 0; i < field.destructibles.size(); ++i) {
@@ -1642,8 +1830,11 @@ void GameServer::run_match() {
             say("the match is live");
             bolts_.clear();
             pickups_.clear();
+            match_live_time_ = 0;
+            match_captures_ = 0;
             for (Client& client : clients_) {
                 client.kills = client.deaths = client.captures = 0;
+                client.weapon_kills.clear();
                 client.battle_profession_xp.clear();
                 return_to_waiting(client);
             }
@@ -1659,6 +1850,12 @@ void GameServer::run_match() {
             say(event.team >= 0 ? std::format("{} won", field.teams[size_t(event.team)].name)
                                 : std::string("the match is a draw"));
             MatchResult result{field.name, event.team, {}};
+            result.mode = field.mode;
+            result.teams = {field.teams[0].name, field.teams[1].name};
+            result.tickets = conquest_->state().tickets;
+            result.scores = conquest_->state().scores;
+            result.duration = match_live_time_;
+            result.captures = match_captures_;
             for (const Client& client : clients_) {
                 say(std::format("  {:<16} {:<12} {} kills, {} deaths, {} captures", client.name,
                                 field.team(client.team).name, client.kills, client.deaths, client.captures));
@@ -1667,6 +1864,10 @@ void GameServer::run_match() {
                                           client.battle_profession_xp,
                                           remaining_unified_ammo(client.state.combat, lo, AmmoClass::standard),
                                           remaining_unified_ammo(client.state.combat, lo, AmmoClass::heavy)});
+                if (const WeaponDef* primary = weapon_in_slot(lo, 0)) {
+                    result.players.back().primary_weapon = primary->name;
+                }
+                result.players.back().weapon_kills = client.weapon_kills;
             }
             if (on_match_ended) {
                 on_match_ended(result);
@@ -1686,6 +1887,32 @@ void GameServer::run_match() {
                                uint32_t(event.team), uint32_t(event.post), 0});
             say(std::format("{} {} {}", field.teams[size_t(event.team)].name,
                             event.kind == MatchEvent::captured ? "captured" : "neutralized", post.name));
+            ++match_captures_;
+            break;
+        }
+        case MatchEvent::flag_taken:
+        case MatchEvent::flag_dropped:
+        case MatchEvent::flag_returned:
+        case MatchEvent::flag_captured: {
+            // CombatEvent: attacker = the soldier (0: none), victim = the flag, damage = the team.
+            const auto kind = event.kind == MatchEvent::flag_taken      ? net::CombatEvent::flag_taken
+                              : event.kind == MatchEvent::flag_dropped  ? net::CombatEvent::flag_dropped
+                              : event.kind == MatchEvent::flag_returned ? net::CombatEvent::flag_returned
+                                                                        : net::CombatEvent::flag_captured;
+            events_.push_back({kind, event.entity, uint32_t(event.post), float(event.team)});
+            if (event.kind == MatchEvent::flag_captured) {
+                ++match_captures_;
+                if (Client* carrier = find(event.entity)) {
+                    ++carrier->captures;
+                }
+            }
+            if (event.team >= 0 && event.team < 2) {
+                const char* what = event.kind == MatchEvent::flag_taken     ? "took a flag"
+                                   : event.kind == MatchEvent::flag_dropped ? "dropped a flag"
+                                   : event.kind == MatchEvent::flag_returned ? "returned their flag"
+                                                                             : "captured a flag";
+                say(std::format("{} {}", field.teams[size_t(event.team)].name, what));
+            }
             break;
         }
         }
@@ -1850,6 +2077,10 @@ void GameServer::fire(Client& shooter, const Shot& shot, double view_tick) {
     const auto classes = vehicle_classes();
     const bool driving = shooter.state.vehicle >= 0 && size_t(shooter.state.vehicle) < classes.size();
     const VehicleSeat* seat = driving ? vehicle_seat(classes[size_t(shooter.state.vehicle)], shooter.state.seat) : nullptr;
+    if (seat != nullptr && seat->tow_lock_range > 0) {
+        fire_tow_cable(shooter, *seat);  // Stage 11: a harpoon, not a bolt
+        return;
+    }
     const WeaponDef* def = weapon_in_slot(seat       ? seat->loadout
                                           : driving ? classes[size_t(shooter.state.vehicle)].loadout
                                                     : loadout_of(shooter),
@@ -2617,6 +2848,13 @@ void GameServer::kill(Client& victim, uint32_t attacker, bool is_flyer) {
     Client* killer = attacker != 0 ? find(attacker) : nullptr;
     if (killer != nullptr && killer != &victim) {
         ++killer->kills;
+        if (conquest_ && killer->state.vehicle < 0) {
+            if (const WeaponDef* w = weapon_in_slot(loadout_of(*killer), killer->state.combat.weapon)) {
+                ++killer->weapon_kills[w->name];
+            }
+        } else if (conquest_ && killer->state.vehicle >= 0) {
+            ++killer->weapon_kills["vehicle"];
+        }
         if (conquest_ && !allied(killer->team, victim.team)) {
             if (const std::string held = held_profession(*killer); !held.empty()) {
                 earn_profession_xp(*killer, held, match_kill_profession_xp);
@@ -2735,8 +2973,22 @@ void GameServer::respawn(Client& client) {
     client.shield_recharge_timer = 0;
     client.shield_disrupt_timer = 0;
     const float yaw = client.state.yaw;
+    const Vec3 fell_at = client.state.position;
     client.state = MoveState{};
-    const std::optional<Vec3> clone_at = client.bound ? client.bound : cloning_facility_;
+    std::optional<Vec3> clone_at = client.bound ? client.bound : cloning_facility_;
+    std::string facility = "Mos Eisley Cloning Facility";
+    if (!client.bound && !cloning_facilities_.empty()) {
+        // The nearest town's (Stage 13).
+        double best = 1e300;
+        for (const auto& [name, at] : cloning_facilities_) {
+            const double d = std::hypot(at.x - fell_at.x, at.z - fell_at.z);
+            if (d < best) {
+                best = d;
+                clone_at = at;
+                facility = name;
+            }
+        }
+    }
     if (!conquest_ && clone_at) {
         const uint32_t slot = client.entity > 0 ? client.entity - 1 : 0;
         Vec3 pos = world_.clamp(*clone_at + Vec3{1.5 * (slot % 4), 0, 0});
@@ -2744,7 +2996,7 @@ void GameServer::respawn(Client& client) {
         pos.y = world_.support_at(pos.x, pos.z, terrain + 1.0, client.stats.move.step_up).height;
         if (pos.y < -1e8) pos.y = terrain;
         client.state.position = pos;
-        notify(client.entity, client.bound ? "Cloned at your cloning terminal" : "Cloned at Mos Eisley Cloning Facility");
+        notify(client.entity, client.bound ? std::string("Cloned at your cloning terminal") : "Cloned at " + facility);
     } else {
         client.state.position = spawn_point(client.entity - 1);
     }

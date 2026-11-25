@@ -53,8 +53,9 @@ void test_load_tatooine_spawns() {
     const WorldSpawns spawns = load_world_spawns(spawns_path);
     CHECK(spawns.creatures.size() == 10);
     CHECK(spawns.bandits.size() == 9);
-    CHECK(spawns.lairs.size() == 21);
-    CHECK(spawns.camps.size() == 8);
+    // Mos Eisley's 21 lairs and 8 camps, and the other towns' (Stage 13).
+    CHECK(spawns.lairs.size() == 64);
+    CHECK(spawns.camps.size() == 21);
 }
 
 void test_creature_behaviors_leash_and_respawn() {
@@ -175,20 +176,20 @@ void test_creature_behaviors_leash_and_respawn() {
     const auto respawned_rat = server.npc_info(rat_id);
     CHECK(respawned_rat && respawned_rat->life == Life::alive && hdist(respawned_rat->state.position, {0, 0, -14}) < 8.0);
 
-    // 3. Passive worrt flees when damaged
-    const Vec3 worrt_start = server.npc_info(worrt_id)->state.position;
+    // 3. Passive worrt flees when damaged (away from whoever shot it)
     MoveState pstate = *server.state_of(client.entity_id());
     pstate.position = {0, 0, 4};
     server.set_state(client.entity_id(), pstate);
     step_sim(0.2, [] {});
+    const Vec3 worrt_start = server.npc_info(worrt_id)->state.position;
     step_sim(0.8, [&] {
         const auto winfo = server.npc_info(worrt_id);
         const auto pst = server.state_of(client.entity_id());
         GameClient::Controls ctrl;
         if (winfo && pst && winfo->health > 50) {
-            const Vec3 d = winfo->state.position - pst->position;
+            const Vec3 d = (winfo->state.position + Vec3{0, 0.5, 0}) - (pst->position + Vec3{0, 1.6, 0});
             ctrl.yaw = float(std::atan2(-d.x, -d.z));
-            ctrl.pitch = -0.04f;
+            ctrl.pitch = float(std::atan2(d.y, std::hypot(d.x, d.z)));
             ctrl.fire = true;
         }
         client.set_input(ctrl);
@@ -196,7 +197,8 @@ void test_creature_behaviors_leash_and_respawn() {
     client.set_input({});
     step_sim(1.2, [] {});
     const Vec3 worrt_after = server.npc_info(worrt_id)->state.position;
-    CHECK(worrt_after.z > worrt_start.z + 2.0);
+    CHECK(server.npc_info(worrt_id)->health < server.npc_info(worrt_id)->max_health);
+    CHECK(hdist(worrt_after, pstate.position) > hdist(worrt_start, pstate.position) + 2.0);
 
     // 4. Herd banthas: shooting one alerts its mate and both advance toward player
     pstate.position = {-12, 0, 0};
@@ -331,11 +333,122 @@ void test_bandit_pvp_disabled_and_cloning() {
     CHECK(saw_cloned);
 }
 
+// Stage 13: NPCs no player is near stand still and aren't sent; lairs sleep
+// (their creatures out of the world) until a player comes near; snapshots
+// carry an entity's strings only now and then.
+void test_interest_and_dormancy() {
+    const Heightfield ground(301, 4.0, -600.0, -600.0, std::vector<float>(301 * 301, 0.0f));
+    const World world(ground);
+    LoopbackHub hub;
+    LoopbackLink srv_link(hub, {1, 1});
+    LoopbackLink cli_link(hub, {2, 1});
+
+    ServerConfig scfg;
+    scfg.spawn = {0, 0, 0};
+    scfg.loadout.weapons[primary_slot] = test_rifle();
+    scfg.pvp_enabled = false;
+    scfg.npc_sim_radius = 150;
+    scfg.npc_view_radius = 100;
+    scfg.view_margin = 10;
+    GameServer server(srv_link, world, scfg);
+    const uint32_t near_npc = server.add_npc("Near Guy", {30, 0, 0}, 0, 1);
+    const uint32_t far_npc = server.add_npc("Far Guy", {400, 0, 0}, 0, 1);
+
+    WorldSpawns spawns;
+    CreatureArchetype worrt;
+    worrt.id = "worrt";
+    worrt.name = "Worrt";
+    worrt.template_path = "object/mobile/shared_worrt.iff";
+    worrt.behavior = CreatureBehavior::passive;
+    spawns.creatures.push_back(worrt);
+    spawns.lairs.push_back({"worrt", {0, 0, 50}, 4.0, 2});    // lair 0: near the player
+    spawns.lairs.push_back({"worrt", {-450, 0, 0}, 4.0, 2});  // lair 1: far away
+    WorldPopulation pop(server, world, nullptr, spawns, nullptr, {{worrt.template_path, uint8_t(2)}});
+    pop.set_activity({.wake_radius = 80, .sleep_margin = 20, .linger = 1.0, .check_interval = 0.25});
+    pop.spawn_all();
+    CHECK(pop.group_count() == 2 && pop.awake_groups() == 0 && pop.dormant_mobs() == 4);
+
+    ClientConfig ccfg;
+    ccfg.server = {1, 1};
+    ccfg.name = "Scout";
+    ccfg.loadout = scfg.loadout;
+    GameClient client(cli_link, world, ccfg);
+
+    double now = 0;
+    const auto step_sim = [&](double secs) {
+        const double end = now + secs;
+        for (; now < end; now += 1.0 / 60.0) {
+            client.update(now);
+            server.update(now);
+            pop.update(now);
+        }
+    };
+    const auto sees = [&](uint32_t id) -> const net::EntityState* {
+        static std::vector<net::EntityState> last;
+        last = client.remotes();
+        for (const net::EntityState& e : last) {
+            if (e.id == id) return &e;
+        }
+        return nullptr;
+    };
+
+    MoveInput walk;
+    walk.forward = 127;
+    server.steer_npc(far_npc, walk);
+    step_sim(1.5);
+    CHECK(client.spawned());
+    server.take_perf(now);
+
+    // The far NPC stands still (no one near) and isn't sent; the near one is, with its name.
+    const Vec3 far_start = server.state_of(far_npc)->position;
+    step_sim(2.0);
+    CHECK(hdist(server.state_of(far_npc)->position, far_start) < 0.01);
+    // (A townsperson's name isn't sent; a creature's is, from the client's cache of strings.)
+    CHECK(sees(near_npc) != nullptr);
+    CHECK(sees(far_npc) == nullptr);
+    // The near lair woke; the far one sleeps, its worrts out of the world.
+    CHECK(pop.lair_awake(0) && !pop.lair_awake(1));
+    CHECK(pop.dormant_mobs() == 2);
+    const std::vector<uint32_t> mobs = pop.mob_entities();
+    CHECK(mobs.size() == 4 && !server.npc_info(mobs[0])->hidden && server.npc_info(mobs[2])->hidden);
+    const net::EntityState* worrt_seen = sees(mobs[0]);
+    CHECK(worrt_seen != nullptr && worrt_seen->name == "Worrt");
+    CHECK(sees(mobs[2]) == nullptr);
+    // Strings ride along only now and then (each entity's first ticks, then every 3 s).
+    const ServerPerf perf = server.take_perf(now);
+    CHECK(perf.snapshots > 0 && perf.entities_sent > 0 && perf.static_sent * 3 < perf.entities_sent);
+    CHECK(perf.npc_frozen > 0 && perf.npc_ticks > 0);
+
+    // Walk over to the far NPC: it's simulated (walks) and sent.
+    MoveState there = *server.state_of(client.entity_id());
+    there.position = {380, 0, 0};
+    server.set_state(client.entity_id(), there);
+    step_sim(1.0);
+    CHECK(hdist(server.state_of(far_npc)->position, far_start) > 1.0);
+    CHECK(sees(far_npc) != nullptr);
+    CHECK(sees(near_npc) == nullptr);
+
+    // Over to the far lair: it wakes, its worrts back in the world.
+    there.position = {-440, 0, 0};
+    server.set_state(client.entity_id(), there);
+    step_sim(1.0);
+    CHECK(pop.lair_awake(1) && !server.npc_info(mobs[2])->hidden && !pop.dormant(mobs[3]));
+    // And back: after lingering, it sleeps again, its worrts home and gone.
+    there.position = {0, 0, 0};
+    server.set_state(client.entity_id(), there);
+    step_sim(0.5);
+    CHECK(pop.lair_awake(1));
+    step_sim(2.0);
+    CHECK(!pop.lair_awake(1) && pop.dormant(mobs[2]) && server.npc_info(mobs[2])->hidden);
+    CHECK(hdist(server.npc_info(mobs[2])->state.position, {-450, 0, 0}) < 6.0);
+}
+
 } // namespace
 
 int main() {
     test_load_tatooine_spawns();
     test_creature_behaviors_leash_and_respawn();
     test_bandit_pvp_disabled_and_cloning();
+    test_interest_and_dormancy();
     return swm::test::finish("wildlife_test");
 }
