@@ -93,7 +93,9 @@ int main() {
     ensure_starter_kit(store, bob.id);
     const auto bob_items = store.list_items(bob.id);
     const auto bob_los = store.list_loadouts(bob.id);
-    CHECK(bob_items.size() == 7 && bob_los.size() == 1);
+    CHECK(bob_items.size() == 8 && bob_los.size() == 1);
+    CHECK(bob_los.size() == 1 && bob_los[0].appearance_ids.count("shirt") == 1 &&
+          bob_los[0].appearance_ids.count("pants") == 1 && bob_los[0].appearance_ids.count("boots_cosmetic") == 1);
     const auto bob_after = *store.find(bob.id);
     CHECK(bob_after.credits == 500 && bob_after.faction_points == 100);
 

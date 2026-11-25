@@ -474,6 +474,8 @@ net::EntityState GameServer::describe(const Client& c) const {
         if (c.loadout < c.worn_per_loadout.size()) {
             out.worn = c.worn_per_loadout[c.loadout];
         }
+    } else if (config_.catalog != nullptr) {
+        out.worn = plain_clothes(*config_.catalog, c.gender);  // a bot's, or a guest's: plain clothes
     }
     return out;
 }

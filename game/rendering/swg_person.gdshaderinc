@@ -12,6 +12,11 @@ uniform vec3 hueb_color : source_color = vec3(1.0);
 uniform bool two_colors = false;
 uniform float roughness = 1.0;
 uniform float metallic = 0.0;
+uniform float grow = 0.0;  // meters out along the normal: worn clothes stand off the skin they cover
+
+void vertex() {
+	VERTEX += NORMAL * grow;
+}
 
 void fragment() {
 	vec4 texel = texture(albedo_texture, UV);

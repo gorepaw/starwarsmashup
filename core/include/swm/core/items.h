@@ -146,4 +146,8 @@ private:
 std::string resolve_worn_models(const ItemCatalog& catalog, const CharacterLoadout& cl,
                                 std::span<const ItemInstance> inventory, Species species, Gender gender);
 
+// Plain clothes (a tunic, pants and boots): what a soldier with no wardrobe of
+// its own, a match bot, wears. Empty if the catalog has none of them.
+std::string plain_clothes(const ItemCatalog& catalog, Gender gender);
+
 } // namespace swm::core

@@ -515,4 +515,15 @@ std::string resolve_worn_models(const ItemCatalog& catalog, const CharacterLoado
     return out;
 }
 
+std::string plain_clothes(const ItemCatalog& catalog, Gender gender) {
+    std::string out;
+    for (const char* id : {"cloth_shirt_tunic", "cloth_pants_cargo", "cloth_boots_leather"}) {
+        const ItemDef* def = catalog.find(id);
+        if (def == nullptr || def->model_path.empty()) continue;
+        if (!out.empty()) out += ',';
+        out += substitute_gender(def->model_path, gender);
+    }
+    return out;
+}
+
 } // namespace swm::core

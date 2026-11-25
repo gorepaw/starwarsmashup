@@ -70,9 +70,13 @@ cant fire while aiming at town npc too
      button is released; and no shot is fired while the reticle is on one of the world's townsfolk
      (game_session.gd _capture_mouse; battle_ui.gd aiming_at_peaceful).
 
-give  a full set of starter clothes and also give the bots iin the matches full starter clothes. Later we will 
+[DONE] give  a full set of starter clothes and also give the bots iin the matches full starter clothes. Later we will 
 come up with some parameters to generate a few hundred generic soldiers and populate matches with them and 
 their unique loadouts, but for now they can all just be in plain clothes.
+  -> A new character now wears a tunic, pants and boots (it was pants and boots, the jacket in the bag).
+     Match bots, and anyone with no loadout of their own, wear the same plain clothes (items.cpp
+     plain_clothes). Characters made before this keep what they have: equip the Tatooine Field Tunic
+     from the shops (40 Cr), or make a new one.
 
 gathering resources is a bit too easy, make it so the gathering takes longer and reuires you stay still, 
 also make it so you need to move after each time
@@ -100,7 +104,10 @@ a more robust starting quest chain to take us around to all of it, as well as te
 In character creator last i checked twileks had two sets of headtails, a deafult one overlaying the cosmetic 
 choice ones.
 
-Seems like the starting pants are too tight a fit, lots of z-fighting witht the skin texture
+[DONE] Seems like the starting pants are too tight a fit, lots of z-fighting witht the skin texture
+  -> Worn clothing now stands 1.5 cm off the body along its normals (a `grow` in the person shader), so it
+     and the skin no longer fight over pixels; a few skin-colored specks remain where the pants' own
+     mesh has gaps.
 
 Our new starting quest/sequence needs to also give us a starting speeder bike pretty quick, its slow to get around
 

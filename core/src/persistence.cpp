@@ -175,6 +175,7 @@ void ensure_starter_kit(CharacterStore& store, PersistentId char_id) {
     const auto grenade = grant("wp_grenade_c22");
     const auto psg = grant("psg_mark1");
     grant("cloth_jacket_rebel");
+    const auto shirt = grant("cloth_shirt_tunic");
     const auto pants = grant("cloth_pants_cargo");
     const auto boots = grant("cloth_boots_leather");
 
@@ -185,6 +186,7 @@ void ensure_starter_kit(CharacterStore& store, PersistentId char_id) {
     lo.sidearm_id = sidearm.id;
     lo.secondary_id = grenade.id;
     lo.gear_ids["deflector_shield"] = psg.id;
+    lo.appearance_ids["shirt"] = shirt.id;
     lo.appearance_ids["pants"] = pants.id;
     lo.appearance_ids["boots_cosmetic"] = boots.id;
     store.save_loadout(char_id, lo);

@@ -8,6 +8,7 @@ extends RefCounted
 const Soldier = preload("res://rendering/soldier.gd")
 const SPECIES_DIR := "res://imported_assets/species"
 const DEFAULT_FALLBACK := "res://imported_assets/characters/stormtrooper/stormtrooper.gltf"
+const CLOTHING_GROW := 0.015  # m: worn clothes stand this far off the skin (no z-fighting with it)
 
 static var _species_by_id: Dictionary = {}
 static var _meta_cache: Dictionary = {}
@@ -273,6 +274,12 @@ static func set_worn_models(character: Dictionary, worn_csv: String) -> void:
 			mi.owner = null
 			holder.add_child(mi)
 			mi.skeleton = NodePath("../..")
+			if rel.begins_with("clothing/"):
+				# Stood off the skin so the two don't fight over the same pixels.
+				for surface in mi.get_surface_override_material_count():
+					var material := mi.get_surface_override_material(surface) as ShaderMaterial
+					if material != null:
+						material.set_shader_parameter("grow", CLOTHING_GROW)
 			if mi.mesh != null and not body_blends.is_empty():
 				for i in mi.mesh.get_blend_shape_count():
 					var bname := String(mi.mesh.get_blend_shape_name(i))
