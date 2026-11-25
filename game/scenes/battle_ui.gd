@@ -299,6 +299,11 @@ func note_fired(entity_id: int) -> void:
 	_fired[entity_id] = 0.0
 
 
+# Whether the reticle is on one of the world's townsfolk (shots are held while it is).
+func aiming_at_peaceful() -> bool:
+	return bool(_aimed.get("peaceful", false))
+
+
 func note_hit() -> void:
 	_hit_flash = 0.15
 	if not _aimed.is_empty():
@@ -747,7 +752,7 @@ func _aim_candidates(client: Object, team: int) -> Array:
 		out.append({"key": "e%d" % int(remote["id"]), "name": str(remote.get("name", "")),
 				"at": (remote["position"] as Vector3) + Vector3.UP * (0.7 if kind == 2 else 1.1),
 				"team": int(remote["team"]), "friend": friend,
-				"hostile": kind >= 2 or (not person and not friend),
+				"hostile": kind >= 2 or (not person and not friend), "peaceful": person and kind < 2,
 				"health": float(remote.get("health", 0.0)), "max_health": float(remote.get("max_health", 0.0))})
 	if in_world and hub_ui_ref != null:
 		for t: Dictionary in client.get_targets():

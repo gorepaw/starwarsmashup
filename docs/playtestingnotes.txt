@@ -42,3 +42,52 @@ witht the vendors and such. they dont actually have any quests though, whats up 
   -> The middle-of-screen messages ("Eliminated", "Eliminated. Respawning...", notices) now use
      Battlefront's own gamefont_large, drop-shadowed and scaled with the screen as Battlefront's are.
      (Bf2Art.godot_font() turns any of its bitmap fonts into a Godot Font for Labels.)
+
+I dont like the circles on the ground around things.
+
+Change the text over a lootable corpse to a bf2 style
+
+Quest objectve tracking is working with people, but not with enemis from the quests given by people. 
+I cant find the valerian whatever at all. and enemies are generally too few and far between. lets also give enemies 
+we need for quests smaller quest objective chevrons overhead and other ones a single white or red chevron 
+depending on neutral or hostile
+
+[DONE] disable primary fire for a brief moment after menuing or speaking i keep firing in town. maybe make it so you
+cant fire while aiming at town npc too
+  -> Taking the mouse back (a menu, a conversation or the pause closing) holds fire for 0.4 s and until the
+     button is released; and no shot is fired while the reticle is on one of the world's townsfolk
+     (game_session.gd _capture_mouse; battle_ui.gd aiming_at_peaceful).
+
+give  a full set of starter clothes and also give the bots iin the matches full starter clothes. Later we will 
+come up with some parameters to generate a few hundred generic soldiers and populate matches with them and 
+their unique loadouts, but for now they can all just be in plain clothes.
+
+gathering resources is a bit too easy, make it so the gathering takes longer and reuires you stay still, 
+also make it so you need to move after each time
+
+we dont need chevrons AND circles for questgivers. lets make an exclaimation point style symbol for non-faction quests,
+some kind of coins symbol for sell points, a chest symbol for nonfaction shops, and some kind of wrench symbol for 
+crafting stations. But keeping the same color scheme for when its faction-associated and uses the faction symbol 
+instead. chevrons become just for quest objectives, not questgivers. and have questgiver icons go away if they have 
+no more quests for you/ make it grey if quests are just too low level.
+
+Speaking of level, how does exp work right now? give me a full rundown. do we need to reconcile a base system 
+with our new professions work?
+
+I want to come up with a purpose for skill trainers, as well as a purpose for each kind of terminal that was in SWG, 
+then i would like all the terminals to be in their normal places intead of clustered in that testing area, and build 
+a more robust starting quest chain to take us around to all of it, as well as teach us about gathering and crafting.
+
+In character creator last i checked twileks had two sets of headtails, a deafult one overlaying the cosmetic 
+choice ones.
+
+Seems like the starting pants are too tight a fit, lots of z-fighting witht the skin texture
+
+Our new starting quest/sequence needs to also give us a starting speeder bike pretty quick, its slow to get around
+
+if you shoot an automatic door leaving a mark, when the door opens, the shot marks stay floating in space
+
+in the main overworld map hovering over things should tell me what they are in a tooltip.
+
+do a very cursory investigation into how hard it would be to let us jump onto the SWG buildings. if it would 
+take very much effort i want to leave it alone.

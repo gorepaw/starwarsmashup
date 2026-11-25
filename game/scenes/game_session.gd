@@ -46,6 +46,7 @@ const AIM_DISTANCE := 40.0
 const MUZZLE_BLEND := 20.0
 const BOT_FIRE_RANGE := 40.0
 const SPAWN_FIRE_LOCKOUT := 0.35
+const MENU_FIRE_LOCKOUT := 0.4  # s no shot is fired after a menu or conversation closes
 
 static var pending_config: Dictionary = {}
 
@@ -673,7 +674,7 @@ func _controls() -> Dictionary:
 	var forward := Input.get_action_strength("move_forward") - Input.get_action_strength("move_back")
 	var right := Input.get_action_strength("move_right") - Input.get_action_strength("move_left")
 	var aim := _aim()
-	var can_fire := _fire_lockout <= 0.0 and not _wait_fire_release
+	var can_fire := _fire_lockout <= 0.0 and not _wait_fire_release and not _battle_ui.aiming_at_peaceful()
 	var is_melee := _weapon < _weapons.size() and str((_weapons[_weapon] as Dictionary).get("projectile", "")) == "melee"
 	var blocking := is_melee and (Input.is_action_pressed("block") or Input.is_action_pressed("grenade"))
 	return {"forward": forward, "right": right, "yaw": aim.x, "pitch": aim.y,
@@ -762,6 +763,11 @@ func _resume() -> void:
 
 
 func _capture_mouse(captured: bool) -> void:
+	if captured and not _mouse_captured:
+		# Back from a menu, a conversation or the pause: the click that closed it
+		# isn't a shot.
+		_fire_lockout = MENU_FIRE_LOCKOUT
+		_wait_fire_release = true
 	_mouse_captured = captured
 	if DisplayServer.get_name().to_lower().contains("headless"):
 		return
@@ -1190,6 +1196,7 @@ func _update_own_audio(own: Dictionary, _game: Dictionary) -> void:
 		elif not overheated and _prev_overheated:
 			_audio.play_2d(str(weapon.get("overheat_stop_sound", "")))
 		if _mouse_captured and Input.is_action_pressed("fire") and _fire_lockout <= 0.0 and not _wait_fire_release \
+				and not _battle_ui.aiming_at_peaceful() \
 				and int(weapon.get("rounds_per_clip", 0)) > 0 and rounds <= 0 and reserve == 0 and not reloading \
 				and _empty_click_cd <= 0.0:
 			_audio.play_2d(str(weapon.get("fire_empty_sound", "com_weap_inf_ammo_empty")))
