@@ -129,9 +129,14 @@ void test_perks() {
     apply_specializations(plain, book, {}, progress);
     CHECK(plain.gear.empty());
 
-    // Routed experience: the slotted, else the weapon's and the armor's.
-    CHECK((routed_professions(book, lo, slots) == slots));
-    CHECK((routed_professions(book, lo, {}) == std::vector<std::string>{"rifles", "light_armor"}));
+    // Routed experience: the weapon's and the armor's, slotted or not.
+    CHECK((routed_professions(book, lo) == std::vector<std::string>{"rifles", "light_armor"}));
+    // The combat level: the higher of the two.
+    std::vector<ProfessionProgress> levels{{"rifles", book.xp_for_level(12)}, {"light_armor", book.xp_for_level(30)}};
+    CHECK(combat_level(book, lo, levels) == 30);
+    levels = {{"rifles", book.xp_for_level(12)}};
+    CHECK(combat_level(book, lo, levels) == 12);
+    CHECK(combat_level(book, lo, {}) == 1);
 
     // Armor classes: the most pieces, the heavier on a tie.
     CHECK(loadout_armor_class(std::vector<std::string>{}) == "none");
@@ -226,11 +231,12 @@ void test_server_professions() {
         const WeaponDef e11 = catalog.resolve_weapon(*catalog.find("wp_rifle_e11"));
         CHECK(near(slotted_spread, e11.yaw_spread * 0.97, 1e-4));  // Rifle Certification, level 2
 
-        // Quest and mission experience goes to the slotted professions.
+        // Quest and mission experience goes to the carried weapon's and the worn armor's professions.
         server.award_profession_xp("Trainee", {{"pistols", 40}}, 60);
         run(0.3);
         CHECK(mine && profession_xp(*mine, "pistols") == 40);
-        CHECK(mine && profession_xp(*mine, "rifles") == 210);
+        CHECK(mine && profession_xp(*mine, "rifles") == 180);
+        CHECK(mine && profession_xp(*mine, "unarmored") == 41);
         client.disconnect();
         run(0.1);
     }
@@ -239,8 +245,8 @@ void test_server_professions() {
         const auto saved = store.find_by_name("Trainee");
         CHECK(saved.has_value());
         const auto progress = saved ? store.list_professions(saved->id) : std::vector<ProfessionProgress>{};
-        CHECK(profession_xp(progress, "rifles") == 210);
-        CHECK(profession_xp(progress, "unarmored") == 11);
+        CHECK(profession_xp(progress, "rifles") == 180);
+        CHECK(profession_xp(progress, "unarmored") == 41);
         CHECK(profession_xp(progress, "pistols") == 40);
         const auto loadouts = saved ? store.list_loadouts(saved->id) : std::vector<CharacterLoadout>{};
         CHECK(loadouts.size() == 1 && loadouts[0].specializations == std::vector<std::string>{"rifles"});
@@ -256,7 +262,8 @@ void test_server_professions() {
         const auto later = saved ? store.list_professions(saved->id) : std::vector<ProfessionProgress>{};
         CHECK(profession_xp(later, "carbines") == 25);
         CHECK(profession_xp(later, "bounty_hunter") == 0);  // not in the game yet
-        CHECK(profession_xp(later, "rifles") == 240);
+        CHECK(profession_xp(later, "rifles") == 195);
+        CHECK(profession_xp(later, "unarmored") == 56);
     }
     std::filesystem::remove(db_path);
 }

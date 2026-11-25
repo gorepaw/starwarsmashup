@@ -153,6 +153,7 @@ void QuestBook::load(const std::filesystem::path& path) {
             def.summary = s.get("Summary").value_or("");
             def.done_text = s.get("Done").value_or("");
             def.repeatable = s.number("Repeatable", 0) != 0;
+            def.level = std::clamp(int(s.number("Level", 1)), 1, 100);
             for (const auto& [key, value] : s.values) {
                 if (same_ci(key, "Requires")) {
                     for (std::string& id : split_list(value)) def.prerequisites.push_back(std::move(id));
@@ -309,6 +310,7 @@ const QuestDef* QuestBook::mission(std::string_view id) const {
         name = gang;
         def.title = "Destroy: " + spawn.name;
     }
+    def.level = 1 + 8 * (tier - 1);  // a tier's creatures and bandits are a few levels' work (ASSUMPTION)
     const double distance = flat_distance(origin_, position);
     const std::string direction = describe_direction(origin_, position);
     def.summary = lair ? std::format("A lair of {} has been reported {} of the city. Clear it out: all {} of them.",

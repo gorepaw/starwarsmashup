@@ -80,11 +80,7 @@ void GameServer::route_xp(Client& client, int64_t xp) {
     if (config_.professions == nullptr || xp <= 0) {
         return;
     }
-    std::vector<std::string> specializations;
-    if (client.loadout < client.char_loadouts.size()) {
-        specializations = client.char_loadouts[client.loadout].specializations;
-    }
-    const std::vector<std::string> ids = routed_professions(*config_.professions, loadout_of(client), specializations);
+    const std::vector<std::string> ids = routed_professions(*config_.professions, loadout_of(client));
     if (ids.empty()) {
         return;
     }
@@ -92,6 +88,10 @@ void GameServer::route_xp(Client& client, int64_t xp) {
     for (const std::string& id : ids) {
         earn_profession_xp(client, id, share);
     }
+}
+
+int GameServer::combat_level_of(const Client& client) const {
+    return config_.professions != nullptr ? combat_level(*config_.professions, loadout_of(client), client.professions) : 1;
 }
 
 void GameServer::save_professions(Client& client) {
@@ -150,7 +150,7 @@ void GameServer::award_profession_xp(const std::string& name, const std::map<std
             if (active != loadouts.end()) {
                 const Species species = species_from_name(saved->species).value_or(Species::human);
                 const Loadout lo = config_.catalog->build_loadout(*active, store_->list_items(saved->id), species);
-                const std::vector<std::string> ids = routed_professions(*book, lo, active->specializations);
+                const std::vector<std::string> ids = routed_professions(*book, lo);
                 for (const std::string& id : ids) {
                     if (const ProfessionDef* def = book->find(id); def && def->available) {
                         add_profession_xp(progress, id, std::max<int64_t>(1, routed / int64_t(ids.size())));

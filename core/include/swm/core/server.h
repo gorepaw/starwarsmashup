@@ -476,6 +476,7 @@ private:
     // Crafting & gathering (server_crafting.cpp).
     void handle_gather_request(Client& client, const net::GatherRequest& request, double now);
     void update_extractions(double now);
+    int combat_level_of(const Client& client) const;
     void finish_extraction(Client& client, ResourceCategory category);
     void handle_craft_request(Client& client, const net::CraftRequest& request);
     void send_crafting_sync(Client& client);

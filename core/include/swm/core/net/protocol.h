@@ -110,6 +110,7 @@ struct QuestInfo {
     int64_t credits = 0, experience = 0, faction_points = 0;
     std::vector<std::string> items;  // reward item def ids
     bool mission = false;
+    uint8_t level = 1;               // the combat level it suits
     std::string step_npc;            // the current step's person (talk_to, deliver)
     std::vector<std::string> targets;  // the current step's kill (or drop) targets, by the names they go by
     float area_radius = 0;           // > 0: they count only this near `waypoint`
@@ -200,6 +201,7 @@ struct PlayerStatus {
     uint8_t active_loadout = 0;
     int8_t switching_loadout = -1;
     float switch_progress = 0.0f;
+    uint8_t combat_level = 1;        // the higher of the levels of the carried weapon's and the worn armor's professions
     float extract_progress = -1.0f;  // an extraction under way: how far along it is (0..1); else -1
     uint32_t inventory_rev = 0;
 

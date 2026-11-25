@@ -51,7 +51,7 @@ func _paint_info() -> void:
 	frame(box, "border_3_pieces")
 	text("gamefont_tiny", "Loadout: %s   [%s] Gear" % [str(info.get("loadout_name", "Standard Issue")), str(info.get("inv_key", "I"))],
 			box.position + Vector2(12, 10) * u, "Left", ACCENT)
-	text("gamefont_tiny", "%d FP   |   %d Cr   |   %d XP" % [int(info.get("fp", 0)), int(info.get("credits", 0)), int(info.get("xp", 0))],
+	text("gamefont_tiny", "%d FP   |   %d Cr   |   Level %d" % [int(info.get("fp", 0)), int(info.get("credits", 0)), int(info.get("level", 1))],
 			box.position + Vector2(12, 30) * u, "Left", TEXT)
 
 

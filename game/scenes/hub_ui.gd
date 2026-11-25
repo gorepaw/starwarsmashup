@@ -613,6 +613,7 @@ func _sync_quests(client: Object) -> Dictionary:
 		_quest_screen.completed = quests.get("completed", [])
 		_quest_screen.tracked = _tracked
 		_quest_screen.player_position = client.get_presented()["position"]
+		_quest_screen.combat_level = int(client.get_player_status().get("combat_level", 1))
 		if _quest_screen.visible and _quest_screen.mode == "offers":
 			if _quest_screen.waiting and int(quests.get("offer_serial", 0)) != _offer_serial:
 				_quest_screen.waiting = false
@@ -1192,7 +1193,7 @@ func update_hub(client: Object, world: Node3D, delta: float, pause_visible: bool
 	_hub_hud.info = {
 		"credits": int(status.get("credits", 0)),
 		"fp": int(status.get("faction_points", 0)),
-		"xp": int(status.get("experience", 0)),
+		"level": int(status.get("combat_level", 1)),
 		"loadout_name": lo_name,
 		"inv_key": _key_name("inventory"),
 	}

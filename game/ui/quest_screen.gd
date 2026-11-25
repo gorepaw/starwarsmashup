@@ -23,6 +23,7 @@ var completed: Array = []    # log: completed quest titles
 var tracked := ""            # the tracked quest's id
 var catalog: Array = []      # item defs, for reward names
 var player_position := Vector3.ZERO
+var combat_level := 1        # yours: quests' levels are shown against it
 
 var _tab := "active"         # log: "active" or "completed"
 var _selected := 0
@@ -147,6 +148,8 @@ func _paint() -> void:
 		var title := str(quest.get("title", ""))
 		var mark := "> " if mode == "log" and str(quest.get("id", "")) == tracked else ""
 		text("gamefont_tiny", mark + title, row.position + Vector2(8, 4) * u, "Left", ACCENT if chosen else TEXT)
+		text("gamefont_tiny", "Lv %d" % int(quest.get("level", 1)), row.position + Vector2(row.size.x - 8 * u, 4 * u),
+				"Right", level_color(int(quest.get("level", 1)), combat_level))
 		var sub := ""
 		if mode == "log":
 			var steps: Array = quest.get("steps", [])
@@ -165,6 +168,21 @@ func _paint() -> void:
 	_paint_detail(quest, detail)
 
 
+# A quest's level against yours: grey when trivial (10 or more below), green
+# well below, white about even, yellow a little above, red well above.
+static func level_color(level: int, mine: int) -> Color:
+	var gap := level - mine
+	if gap <= -10:
+		return Color(0.55, 0.55, 0.58)
+	if gap <= -3:
+		return Color(0.45, 0.85, 0.5)
+	if gap <= 1:
+		return Color(0.92, 0.94, 1.0)
+	if gap <= 4:
+		return Color(1.0, 0.85, 0.3)
+	return Color(1.0, 0.35, 0.3)
+
+
 func _fit(value: String, width: float) -> String:
 	if art.text_width("gamefont_tiny", value, u) <= width:
 		return value
@@ -177,6 +195,8 @@ func _paint_detail(quest: Dictionary, rect: Rect2) -> void:
 	var x := rect.position.x
 	var y := rect.position.y
 	text("gamefont_medium", str(quest.get("title", "")), Vector2(x, y), "Left", ACCENT)
+	text("gamefont_small", "Level %d" % int(quest.get("level", 1)), Vector2(rect.end.x, y + 4 * u), "Right",
+			level_color(int(quest.get("level", 1)), combat_level))
 	y += 26 * u
 	var giver := str(quest.get("giver", ""))
 	var where := ""

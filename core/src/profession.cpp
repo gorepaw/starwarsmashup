@@ -299,15 +299,8 @@ std::vector<std::string> clean_specializations(const ProfessionBook& book, std::
     return out;
 }
 
-std::vector<std::string> routed_professions(const ProfessionBook& book, const Loadout& loadout,
-                                            std::span<const std::string> specializations) {
+std::vector<std::string> routed_professions(const ProfessionBook& book, const Loadout& loadout) {
     std::vector<std::string> out;
-    for (const std::string& id : specializations) {
-        if (book.find(id) != nullptr && std::find(out.begin(), out.end(), id) == out.end()) {
-            out.push_back(id);
-        }
-    }
-    if (!out.empty()) return out;
     for (const int slot : {primary_slot, sidearm_slot}) {
         if (const WeaponDef* w = weapon_in_slot(loadout, slot)) {
             if (const ProfessionDef* def = book.for_archetype(w->archetype)) {
@@ -320,6 +313,14 @@ std::vector<std::string> routed_professions(const ProfessionBook& book, const Lo
         out.push_back(def->id);
     }
     return out;
+}
+
+int combat_level(const ProfessionBook& book, const Loadout& loadout, std::span<const ProfessionProgress> progress) {
+    int level = 1;
+    for (const std::string& id : routed_professions(book, loadout)) {
+        level = std::max(level, book.level_for(profession_xp(progress, id)));
+    }
+    return level;
 }
 
 ProfessionPerk profession_perks(const ProfessionDef& def, int level) {

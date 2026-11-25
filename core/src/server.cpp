@@ -1235,6 +1235,7 @@ void GameServer::step() {
             client.extract_started >= 0.0 && config_.extract_time > 0.0
                 ? float(std::clamp((now_ - client.extract_started) / config_.extract_time, 0.0, 1.0))
                 : -1.0f;
+        client.status.combat_level = uint8_t(std::clamp(combat_level_of(client), 1, 100));
         client.status.inventory_rev = client.inventory_rev;
         net::Snapshot client_snapshot = base_snapshot;
         if (filter_npcs) {

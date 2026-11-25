@@ -78,6 +78,7 @@ void put_quest(ByteWriter& out, const QuestInfo& q) {
         out.put_string(q.items[i]);
     }
     out.put(uint8_t(q.mission));
+    out.put(q.level);
     out.put_string(q.step_npc);
     out.put(uint8_t(std::min<size_t>(q.targets.size(), 32)));
     for (size_t i = 0; i < q.targets.size() && i < 32; ++i) {
@@ -113,6 +114,7 @@ QuestInfo get_quest(ByteReader& in) {
         q.items.push_back(in.get_string());
     }
     q.mission = in.get<uint8_t>() != 0;
+    q.level = in.get<uint8_t>();
     q.step_npc = in.get_string();
     const size_t targets = in.get<uint8_t>();
     if (targets > 32) throw PacketError("too many quest targets");
@@ -753,6 +755,7 @@ struct Encoder {
         out.put(m.you.active_loadout);
         out.put(m.you.switching_loadout);
         out.put(m.you.switch_progress);
+        out.put(m.you.combat_level);
         out.put(m.you.extract_progress);
         out.put(m.you.inventory_rev);
     }
@@ -1240,6 +1243,7 @@ Message decode(std::span<const uint8_t> packet) {
         m.you.active_loadout = in.get<uint8_t>();
         m.you.switching_loadout = in.get<int8_t>();
         m.you.switch_progress = in.get<float>();
+        m.you.combat_level = in.get<uint8_t>();
         m.you.extract_progress = in.get<float>();
         m.you.inventory_rev = in.get<uint32_t>();
         message = std::move(m);

@@ -122,10 +122,18 @@ bool can_specialize(const ProfessionBook& book, std::string_view id);
 std::vector<std::string> clean_specializations(const ProfessionBook& book, std::span<const std::string> ids);
 
 // The professions experience for something done in a loadout goes to when
-// it isn't any one profession's (quests, missions, battles): its slotted
-// professions, or, with none slotted, its primary weapon's and its armor's.
-std::vector<std::string> routed_professions(const ProfessionBook& book, const Loadout& loadout,
-                                            std::span<const std::string> specializations);
+// it isn't any one profession's (quests, missions, battles): the equipped
+// weapon's (the primary's, else the sidearm's) and the armor's.
+std::vector<std::string> routed_professions(const ProfessionBook& book, const Loadout& loadout);
+
+// How strong a character is in a fight: the higher of the levels of the
+// profession of the weapon it carries and of the armor it wears. Quests and
+// missions have levels against it.
+int combat_level(const ProfessionBook& book, const Loadout& loadout, std::span<const ProfessionProgress> progress);
+
+// A quest this many levels below a character's combat level isn't worth
+// their while: its giver is shown grey.
+inline constexpr int quest_trivial_gap = 10;
 
 // A slotted profession's perks at its character's level: its ranks and
 // milestones reached. An armor profession's apply only to armor of its class.

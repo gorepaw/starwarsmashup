@@ -282,6 +282,7 @@ godot::Dictionary SwmClient::get_player_status() const {
         out["switching_loadout"] = int64_t(status.switching_loadout);
         out["switch_progress"] = double(status.switch_progress);
         out["extract_progress"] = double(status.extract_progress);
+        out["combat_level"] = int64_t(status.combat_level);
         out["inventory_rev"] = int64_t(status.inventory_rev);
     }
     return out;
@@ -586,6 +587,7 @@ godot::Dictionary quest_dictionary(const core::net::QuestInfo& q) {
     }
     out["items"] = items;
     out["mission"] = q.mission;
+    out["level"] = int64_t(q.level);
     out["step_npc"] = godot::String::utf8(q.step_npc.c_str());
     godot::PackedStringArray targets;
     for (const std::string& name : q.targets) targets.push_back(godot::String::utf8(name.c_str()));

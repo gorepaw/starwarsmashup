@@ -302,6 +302,7 @@ net::QuestInfo GameServer::describe_quest(const Client& client, const QuestDef& 
     info.giver = def.giver;
     info.summary = def.summary;
     info.mission = def.mission;
+    info.level = uint8_t(std::clamp(def.level, 1, 100));
     info.credits = def.reward.credits;
     info.experience = def.reward.experience;
     info.faction_points = def.reward.faction_points;
@@ -377,8 +378,14 @@ void GameServer::send_quest_sync(Client& client) {
     sync.offer_serial = client.offer_serial;
     sync.offer_note = client.offer_note;
     if (quest_book_ != nullptr) {
+        const int level = combat_level_of(client);
         for (const std::string& giver : quest_book_->givers()) {
-            if (giver != "Mission Terminal" && !quest_book_->offered_by(giver, client.quests).empty()) {
+            // Work worth doing now; work that's too easy for you is as good as none for now.
+            const auto offered = quest_book_->offered_by(giver, client.quests);
+            const bool worth = std::any_of(offered.begin(), offered.end(), [&](const QuestDef* def) {
+                return def->level + quest_trivial_gap > level;
+            });
+            if (giver != "Mission Terminal" && worth) {
                 sync.ready_givers.push_back(giver);
             } else if (giver != "Mission Terminal" && quest_book_->has_work_left(giver, client.quests)) {
                 sync.waiting_givers.push_back(giver);
