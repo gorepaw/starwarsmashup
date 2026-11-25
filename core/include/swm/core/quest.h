@@ -127,6 +127,14 @@ public:
     // (`now` in seconds), never one the character already has.
     std::vector<const QuestDef*> missions(double now, const std::vector<QuestProgress>& journal, size_t count = 6) const;
     bool can_accept(const QuestDef& def, const std::vector<QuestProgress>& journal) const;
+    // Whether `giver` has a quest this journal hasn't finished (not yet open to
+    // them, or under way): the giver isn't done with them.
+    bool has_work_left(std::string_view giver, const std::vector<QuestProgress>& journal) const;
+    // The names creatures and bandits go by that a kill target stands for (a
+    // type id, a gang, "creature", "bandit" or "any"), for marking them.
+    std::vector<std::string> target_names(std::string_view target) const;
+    // The nearest lair or camp of a kill target to `from`, if the hub's world has one.
+    std::optional<Vec3> nearest_of(std::string_view target, Vec3 from) const;
 
     // Events. Each advances whatever the journal's quests are waiting on.
     // `held(item)` counts the items of a def the character carries; `roll()`

@@ -233,6 +233,7 @@ uint32_t GameServer::add_combat_npc(const std::string& name, Vec3 position, doub
     npc.look = look;
     npc.pose = 0;
     npc.actor_kind = spec.actor_kind;
+    npc.passive = spec.passive;
     npc.colors = colors;
     npc.radius = spec.hit_radius;
     npc.max_health = std::max(1.0, spec.max_health);
@@ -1177,6 +1178,7 @@ void GameServer::step() {
         entity.look = npc.look;
         entity.pose = npc.pose;
         entity.actor_kind = npc.actor_kind;
+        entity.passive = npc.passive;
         entity.colors = npc.colors;
         if (npc.actor_kind >= 2) {
             entity.name = npc.name;

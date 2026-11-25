@@ -353,6 +353,57 @@ bool QuestBook::can_accept(const QuestDef& def, const std::vector<QuestProgress>
     return active < max_active_quests && (!def.mission || missions < max_active_missions);
 }
 
+bool QuestBook::has_work_left(std::string_view giver, const std::vector<QuestProgress>& journal) const {
+    for (const QuestDef& def : quests_) {
+        if (!same_ci(def.giver, giver)) continue;
+        const QuestProgress* p = find_progress(journal, def.id);
+        if (p == nullptr || !p->done || def.repeatable) return true;
+    }
+    return false;
+}
+
+std::vector<std::string> QuestBook::target_names(std::string_view target) const {
+    std::vector<std::string> out;
+    if (spawns_ == nullptr || target.empty()) return out;
+    const auto add = [&](const std::string& name) {
+        if (std::find(out.begin(), out.end(), name) == out.end()) out.push_back(name);
+    };
+    for (const CreatureArchetype& c : spawns_->creatures) {
+        if (target_matches(target, KillTags{c.id, "", false})) add(c.name);
+    }
+    for (const BanditArchetype& b : spawns_->bandits) {
+        if (target_matches(target, KillTags{b.id, b.gang, true})) add(b.name);
+    }
+    return out;
+}
+
+std::optional<Vec3> QuestBook::nearest_of(std::string_view target, Vec3 from) const {
+    if (spawns_ == nullptr || target.empty()) return std::nullopt;
+    std::optional<Vec3> best;
+    double best_distance = 0;
+    const auto consider = [&](Vec3 at) {
+        const double d = flat_distance(from, at);
+        if (!best || d < best_distance) {
+            best = at;
+            best_distance = d;
+        }
+    };
+    for (const LairSpawn& lair : spawns_->lairs) {
+        if (target_matches(target, KillTags{lair.type_id, "", false})) consider(lair.position);
+    }
+    for (const CampSpawn& camp : spawns_->camps) {
+        for (const std::string& member : camp.members) {
+            const auto type = std::find_if(spawns_->bandits.begin(), spawns_->bandits.end(),
+                                           [&](const BanditArchetype& b) { return b.id == member; });
+            if (type != spawns_->bandits.end() && target_matches(target, KillTags{type->id, type->gang, true})) {
+                consider(camp.position);
+                break;
+            }
+        }
+    }
+    return best;
+}
+
 std::string QuestBook::why_none(std::string_view giver, const std::vector<QuestProgress>& journal) const {
     if (!offered_by(giver, journal).empty()) return "";
     const std::string name(giver);

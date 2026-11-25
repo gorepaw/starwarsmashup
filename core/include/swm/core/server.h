@@ -196,6 +196,7 @@ public:
                      uint16_t colors = 0, double radius = 0);
     struct NpcCombatSpec {
         uint8_t actor_kind = 1;  // 1=citizen, 2=wild creature, 3=bandit
+        bool passive = false;    // a creature that leaves you be unless you hit it
         double max_health = 100;
         double hit_radius = 0.45;
         double hit_height = 1.8;
@@ -359,6 +360,7 @@ private:
         MoveInput input;
         uint8_t look = 0, pose = 0;
         uint8_t actor_kind = 1;
+        bool passive = false;
         uint16_t colors = 0;
         double radius = 0;  // 0: a person's
         double health = 100;

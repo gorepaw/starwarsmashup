@@ -78,6 +78,12 @@ void put_quest(ByteWriter& out, const QuestInfo& q) {
         out.put_string(q.items[i]);
     }
     out.put(uint8_t(q.mission));
+    out.put_string(q.step_npc);
+    out.put(uint8_t(std::min<size_t>(q.targets.size(), 32)));
+    for (size_t i = 0; i < q.targets.size() && i < 32; ++i) {
+        out.put_string(q.targets[i]);
+    }
+    out.put(q.area_radius);
 }
 
 QuestInfo get_quest(ByteReader& in) {
@@ -107,6 +113,13 @@ QuestInfo get_quest(ByteReader& in) {
         q.items.push_back(in.get_string());
     }
     q.mission = in.get<uint8_t>() != 0;
+    q.step_npc = in.get_string();
+    const size_t targets = in.get<uint8_t>();
+    if (targets > 32) throw PacketError("too many quest targets");
+    for (size_t i = 0; i < targets; ++i) {
+        q.targets.push_back(in.get_string());
+    }
+    q.area_radius = in.get<float>();
     return q;
 }
 
@@ -630,6 +643,7 @@ struct Encoder {
             out.put(entity.look);
             out.put(entity.pose);
             out.put(entity.actor_kind);
+            out.put(uint8_t(entity.passive));
             out.put(entity.colors);
             out.put(entity.species);
             out.put(entity.gender);
@@ -852,6 +866,10 @@ struct Encoder {
         for (size_t i = 0; i < m.ready_givers.size() && i < 255; ++i) {
             out.put_string(m.ready_givers[i]);
         }
+        out.put(uint8_t(std::min<size_t>(m.waiting_givers.size(), 255)));
+        for (size_t i = 0; i < m.waiting_givers.size() && i < 255; ++i) {
+            out.put_string(m.waiting_givers[i]);
+        }
     }
     void operator()(const QuestAck& m) {
         out.put(uint8_t(Type::quest_ack));
@@ -1069,6 +1087,7 @@ Message decode(std::span<const uint8_t> packet) {
             entity.look = in.get<uint8_t>();
             entity.pose = in.get<uint8_t>();
             entity.actor_kind = in.get<uint8_t>();
+            entity.passive = in.get<uint8_t>() != 0;
             entity.colors = in.get<uint16_t>();
             entity.species = in.get<uint8_t>();
             if (entity.species >= species_count) {
@@ -1363,6 +1382,10 @@ Message decode(std::span<const uint8_t> packet) {
         const size_t ready = in.get<uint8_t>();
         for (size_t i = 0; i < ready; ++i) {
             m.ready_givers.push_back(in.get_string());
+        }
+        const size_t waiting = in.get<uint8_t>();
+        for (size_t i = 0; i < waiting; ++i) {
+            m.waiting_givers.push_back(in.get_string());
         }
         message = std::move(m);
         break;

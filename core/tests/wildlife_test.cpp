@@ -53,8 +53,8 @@ void test_load_tatooine_spawns() {
     const WorldSpawns spawns = load_world_spawns(spawns_path);
     CHECK(spawns.creatures.size() == 10);
     CHECK(spawns.bandits.size() == 9);
-    CHECK(spawns.lairs.size() == 16);
-    CHECK(spawns.camps.size() == 6);
+    CHECK(spawns.lairs.size() == 21);
+    CHECK(spawns.camps.size() == 8);
 }
 
 void test_creature_behaviors_leash_and_respawn() {

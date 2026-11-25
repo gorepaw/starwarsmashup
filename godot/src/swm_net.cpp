@@ -78,6 +78,7 @@ void describe(godot::Dictionary& out, const core::net::EntityState& entity) {
     out["look"] = int64_t(entity.look);  // 0: a player; else get_looks()[look - 1]
     out["pose"] = int64_t(entity.pose);  // 0 on their feet, 1 sitting, 2 attacking
     out["actor_kind"] = int64_t(entity.actor_kind);  // 0 player/bot, 1 citizen, 2 creature, 3 bandit
+    out["passive"] = entity.passive;
     out["colors"] = int64_t(entity.colors);  // 0: the look's own colors; else a seed to vary them by
     out["species"] = godot::String::utf8(core::species_def(core::Species(entity.species)).id.c_str());
     out["gender"] = godot::String::utf8(entity.gender == 1 ? "female" : "male");
@@ -584,6 +585,11 @@ godot::Dictionary quest_dictionary(const core::net::QuestInfo& q) {
     }
     out["items"] = items;
     out["mission"] = q.mission;
+    out["step_npc"] = godot::String::utf8(q.step_npc.c_str());
+    godot::PackedStringArray targets;
+    for (const std::string& name : q.targets) targets.push_back(godot::String::utf8(name.c_str()));
+    out["targets"] = targets;
+    out["area_radius"] = double(q.area_radius);
     return out;
 }
 
@@ -752,6 +758,9 @@ godot::Dictionary SwmClient::get_quests() const {
     godot::PackedStringArray ready;
     for (const std::string& giver : sync.ready_givers) ready.push_back(godot::String::utf8(giver.c_str()));
     out["ready_givers"] = ready;
+    godot::PackedStringArray waiting;
+    for (const std::string& giver : sync.waiting_givers) waiting.push_back(godot::String::utf8(giver.c_str()));
+    out["waiting_givers"] = waiting;
     return out;
 }
 

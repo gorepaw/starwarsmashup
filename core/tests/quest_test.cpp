@@ -136,6 +136,50 @@ void test_book_steps() {
     CHECK(!book.abandon(journal, "hunt").changed);  // a finished quest stays finished
 }
 
+// What a kill step means in the world: the names to mark, where to go, and
+// who still has work.
+void test_targets_and_waiting_givers() {
+    WorldSpawns spawns;
+    spawns.creatures.push_back({.id = "womp_rat", .name = "Lesser Womp Rat", .tier = 1});
+    spawns.creatures.push_back({.id = "worrt", .name = "Worrt", .tier = 1});
+    spawns.lairs.push_back({"womp_rat", {0, 0, 300}, 25, 4});
+    spawns.lairs.push_back({"womp_rat", {0, 0, 900}, 25, 4});
+    spawns.bandits.push_back({.id = "thug", .name = "Syndicate Thug", .gang = "Syndicate", .tier = 1});
+    spawns.bandits.push_back({.id = "boss", .name = "Syndicate Boss", .gang = "Syndicate", .tier = 2});
+    spawns.camps.push_back({"Syndicate Camp", {600, 0, 0}, 22, {"thug", "boss"}});
+    QuestBook book;
+    book.set_world(&spawns, {0, 0, 0});
+
+    CHECK(book.target_names("womp_rat") == std::vector<std::string>{"Lesser Womp Rat"});
+    CHECK(book.target_names("Syndicate").size() == 2);
+    CHECK(book.target_names("creature").size() == 2);
+    CHECK(book.target_names("bandit").size() == 2);
+    CHECK(book.target_names("nothing").empty());
+    const auto near = book.nearest_of("womp_rat", {0, 0, 800});
+    CHECK(near && near->z == 900);
+    const auto camp = book.nearest_of("Syndicate", {0, 0, 0});
+    CHECK(camp && camp->x == 600);
+    CHECK(!book.nearest_of("worrt", {0, 0, 0}));
+
+    QuestDef first;
+    first.id = "first";
+    first.giver = "Ana";
+    first.steps = {QuestStep{}};
+    QuestDef second;
+    second.id = "second";
+    second.giver = "Ben";
+    second.prerequisites = {"first"};
+    second.steps = {QuestStep{}};
+    book.add(first);
+    book.add(second);
+    std::vector<QuestProgress> journal;
+    CHECK(book.has_work_left("Ana", journal) && book.has_work_left("Ben", journal));
+    CHECK(book.offered_by("Ben", journal).empty());  // waiting on Ana's
+    journal.push_back({"first", 0, 0, true});
+    CHECK(!book.has_work_left("Ana", journal));       // all done: nothing more
+    CHECK(book.has_work_left("Ben", journal) && !book.offered_by("Ben", journal).empty());
+}
+
 void test_missions() {
     WorldSpawns spawns;
     spawns.creatures.push_back({.id = "womp_rat", .name = "Lesser Womp Rat", .tier = 1, .xp_reward = 30});
@@ -356,6 +400,7 @@ void test_server_quest() {
 int main() {
     test_book_steps();
     test_missions();
+    test_targets_and_waiting_givers();
     test_tatooine_quests();
     test_server_quest();
     return swm::test::finish("quest_test");

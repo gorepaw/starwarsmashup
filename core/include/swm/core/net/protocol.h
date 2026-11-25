@@ -110,6 +110,9 @@ struct QuestInfo {
     int64_t credits = 0, experience = 0, faction_points = 0;
     std::vector<std::string> items;  // reward item def ids
     bool mission = false;
+    std::string step_npc;            // the current step's person (talk_to, deliver)
+    std::vector<std::string> targets;  // the current step's kill (or drop) targets, by the names they go by
+    float area_radius = 0;           // > 0: they count only this near `waypoint`
 
     friend bool operator==(const QuestInfo&, const QuestInfo&) = default;
 };
@@ -237,6 +240,7 @@ struct EntityState {
     uint8_t look = 0;         // 0: a player; else the server's looks[look - 1] (a hub's people)
     uint8_t pose = 0;         // 0: on their feet; 1: sitting; 2: attacking
     uint8_t actor_kind = 0;   // 0: player/match bot; 1: hub citizen; 2: wild creature; 3: bandit
+    bool passive = false;     // a creature that leaves you be unless you hit it
     uint16_t colors = 0;      // a look's colors: 0 its own; else a seed the client varies them by
     uint8_t species = 0;      // index into core::all_species() (0 = human .. 9 = ithorian)
     uint8_t gender = 0;       // 0 = male, 1 = female
@@ -409,6 +413,7 @@ struct QuestSync {
     uint16_t offer_serial = 0;  // changes each time the player talks to a giver or uses a terminal
     std::string offer_note;     // offering nothing: why (QuestBook::why_none)
     std::vector<std::string> ready_givers;  // the quest givers with something for this player now
+    std::vector<std::string> waiting_givers;  // those with work that isn't open to them yet (or is under way)
 
     friend bool operator==(const QuestSync&, const QuestSync&) = default;
 };

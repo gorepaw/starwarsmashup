@@ -334,6 +334,23 @@ net::QuestInfo GameServer::describe_quest(const Client& client, const QuestDef& 
             }
         }
     }
+    if (step.kind == QuestStepKind::talk_to || step.kind == QuestStepKind::deliver) {
+        info.step_npc = step.npc;
+    }
+    // What to kill (or take the drop from): marked in the world, and the
+    // nearest place they live is the waypoint when the step names none.
+    const std::string& prey = step.kind == QuestStepKind::kill ? step.target
+                              : step.kind == QuestStepKind::collect ? step.drop_from
+                                                                    : std::string();
+    if (!prey.empty() && quest_book_ != nullptr) {
+        info.targets = quest_book_->target_names(prey);
+        if (step.where) {
+            info.area_radius = float(step.radius);
+        } else if (const auto nearest = quest_book_->nearest_of(prey, client.state.position)) {
+            info.has_waypoint = true;
+            info.waypoint = *nearest;
+        }
+    }
     return info;
 }
 
@@ -363,6 +380,8 @@ void GameServer::send_quest_sync(Client& client) {
         for (const std::string& giver : quest_book_->givers()) {
             if (giver != "Mission Terminal" && !quest_book_->offered_by(giver, client.quests).empty()) {
                 sync.ready_givers.push_back(giver);
+            } else if (giver != "Mission Terminal" && quest_book_->has_work_left(giver, client.quests)) {
+                sync.waiting_givers.push_back(giver);
             }
         }
     }

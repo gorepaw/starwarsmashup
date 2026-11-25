@@ -216,6 +216,7 @@ void WorldPopulation::spawn_all() {
             const double yaw = random_unit() * 2.0 * std::numbers::pi;
             GameServer::NpcCombatSpec spec;
             spec.actor_kind = 2;
+            spec.passive = arch->behavior == CreatureBehavior::passive;
             spec.max_health = arch->health;
             spec.hit_radius = arch->radius;
             spec.hit_height = arch->height;
