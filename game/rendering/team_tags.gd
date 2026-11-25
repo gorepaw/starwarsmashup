@@ -13,10 +13,13 @@
 #
 # In the world they mark people and places by what they're for: a `tint`
 # (a shop's green, a quest's yellow, crafting's purple) in place of friend
-# and enemy, and the "neutral" side's symbol may be a flat image (a .png: a
-# glowing quad, as Battlefront's command post icon). They're drawn on render
-# layer LAYER (pictures of the world from overhead leave them out).
+# and enemy, and a "side"'s symbol may be a flat image (a .png: a glowing
+# quad, as Battlefront's command post icon; or "gen:<name>", one of
+# PlaceSymbols'). They're drawn on render layer LAYER (pictures of the world
+# from overhead leave them out).
 extends RefCounted
+
+const PlaceSymbols = preload("res://rendering/place_symbols.gd")
 
 const HEIGHT := 2.25           # m over a soldier's feet
 const SIZE_PER_METER := 0.018  # its width, per meter away, so it reads at range
@@ -166,8 +169,12 @@ func _template(side: String) -> Node3D:
 	_templates[side] = null
 	if not _images.has(side):
 		return null
+	if str(_images[side]).begins_with("gen:"):
+		_templates[side] = _flat_template(PlaceSymbols.texture(str(_images[side]).substr(4)))
+		return _templates[side]
 	if str(_images[side]).ends_with(".png"):
-		_templates[side] = _flat_template(_dir.path_join(_images[side]))
+		var path := _dir.path_join(_images[side])
+		_templates[side] = _flat_template(load(path) if ResourceLoader.exists(path) else null)
 		return _templates[side]
 	var document := GLTFDocument.new()
 	var state := GLTFState.new()
@@ -201,8 +208,7 @@ func _template(side: String) -> Node3D:
 
 # A flat symbol (an image): a glowing square, a meter across, drawn as the
 # models are (over anything, both sides).
-func _flat_template(path: String) -> Node3D:
-	var texture: Texture2D = load(path) if ResourceLoader.exists(path) else null
+func _flat_template(texture: Texture2D) -> Node3D:
 	if texture == null:
 		return null
 	var root := Node3D.new()

@@ -22,6 +22,13 @@ const TeamTags = preload("res://rendering/team_tags.gd")
 const TALK_REACH := 4.5     # meters from a quest NPC to talk to them (the server allows 6)
 const OFFER_REACH := 8.0    # an offer closes when you walk further than this from it
 const GIVER_COLOR := Color(1.0, 0.8, 0.35)
+const GIVER_WAITING_COLOR := Color(0.6, 0.65, 0.75, 1.0)  # a giver whose work isn't open to you yet
+const GIVER_DONE := 0
+const GIVER_WAITING := 1
+const GIVER_READY := 2
+const MARKER_RANGE := 160.0  # m a creature's or bandit's chevron shows from
+const WHITE_CHEVRON := Color(0.95, 0.95, 0.95)
+const RED_CHEVRON := Color(1.0, 0.3, 0.25)
 const TERMINAL_COLOR := Color(0.45, 0.85, 1.0)
 const SHOP_COLOR := Color(0.35, 0.92, 0.55)
 const CRAFT_COLOR := Color(0.75, 0.5, 1.0)
@@ -65,10 +72,7 @@ var _shown_loadouts: Array = []    # the loadouts the profession screen was last
 var _settings: Settings
 var _world_root: Node3D
 var _recruiter_nodes: Array = []
-var _qm_nodes: Array = []
-var _vendor_nodes: Array = []
-var _workbench_nodes: Array = []
-var _corpse_nodes: Dictionary = {}  # corpse_entity -> {ring, label}
+var _corpse_nodes: Dictionary = {}  # corpse_entity -> {icon, label}
 var _holograms: TeamTags      # holograms over the world's people and places (null: no insignia exported)
 var _holograms_looked := false
 var _holo_anchors := {}       # place key -> Node3D standing where it is
@@ -84,7 +88,8 @@ var _tracked := ""                 # the tracked quest's id
 var _known_quests := {}            # active quest ids last seen (a new one is tracked)
 var _offer_serial := -1            # the offer serial when we asked; -1: not waiting
 var _offer_at := Vector3.ZERO      # where the offer was asked for
-var _giver_nodes: Dictionary = {}  # npc entity -> Sprite3D over their head
+var _marker_nodes: Dictionary = {}  # key -> Sprite3D: the objective chevrons over people and mobs
+var _single_chevron: AtlasTexture   # one of the objective icon's chevrons
 
 
 func setup(layer: CanvasLayer, world_root: Node3D, art: RefCounted, settings: Settings) -> void:
@@ -360,11 +365,13 @@ func map_places(client: Object) -> Array:
 		out.append({"position": v["position"], "name": str(v["name"]), "kind": "shop", "color": WorldMapScreen.SHOP})
 	for q: Dictionary in client.get_quartermasters():
 		out.append({"position": q["position"], "name": str(q["name"]), "kind": "shop", "color": WorldMapScreen.SHOP})
-	var ready: PackedStringArray = client.get_quests().get("ready_givers", PackedStringArray())
+	var quests: Dictionary = client.get_quests()
 	for npc: Dictionary in client.get_quest_npcs():
 		if bool(npc.get("giver", false)):
-			out.append({"position": npc["position"], "name": str(npc["name"]), "kind": "quest",
-					"color": Color(WorldMapScreen.QUEST, 1.0 if ready.has(str(npc["name"])) else 0.45)})
+			var state := _giver_state(quests, str(npc["name"]))
+			if state != GIVER_DONE:
+				out.append({"position": npc["position"], "name": str(npc["name"]), "kind": "quest",
+						"color": WorldMapScreen.QUEST if state == GIVER_READY else GIVER_WAITING_COLOR})
 	for wb: Dictionary in client.get_workbenches():
 		out.append({"position": wb["position"], "name": str(wb["name"]), "kind": "craft", "color": WorldMapScreen.CRAFT})
 	for r: Dictionary in client.get_recruiters():
@@ -454,28 +461,16 @@ func clear_recruiters() -> void:
 		if is_instance_valid(node):
 			node.queue_free()
 	_recruiter_nodes.clear()
-	for node: Node in _qm_nodes:
-		if is_instance_valid(node):
-			node.queue_free()
-	_qm_nodes.clear()
-	for node: Node in _workbench_nodes:
-		if is_instance_valid(node):
-			node.queue_free()
-	_workbench_nodes.clear()
-	for node: Node in _vendor_nodes:
-		if is_instance_valid(node):
-			node.queue_free()
-	_vendor_nodes.clear()
 	for entry: Dictionary in _corpse_nodes.values():
-		for k in ["ring", "label"]:
+		for k in ["icon", "label"]:
 			var n: Variant = entry.get(k)
 			if n is Node and is_instance_valid(n):
 				(n as Node).queue_free()
 	_corpse_nodes.clear()
-	for node: Node in _giver_nodes.values():
+	for node: Node in _marker_nodes.values():
 		if is_instance_valid(node):
 			node.queue_free()
-	_giver_nodes.clear()
+	_marker_nodes.clear()
 	for entry: Dictionary in _target_nodes.values():
 		var r: Variant = entry.get("root")
 		if r is Node and is_instance_valid(r):
@@ -511,13 +506,6 @@ func add_recruiters(client: Object, world: Node3D) -> void:
 			pillar.mesh = box
 			pillar.material_override = material
 			pillar.position = position + Vector3.UP * 1.1
-			var ring := MeshInstance3D.new()
-			var torus := TorusMesh.new()
-			torus.outer_radius = float(recruiter["radius"])
-			torus.inner_radius = float(recruiter["radius"]) - 0.15
-			ring.mesh = torus
-			ring.material_override = material
-			ring.position = position + Vector3.UP * 0.1
 			var label := Label3D.new()
 			label.text = str(recruiter["name"])
 			label.billboard = BaseMaterial3D.BILLBOARD_ENABLED
@@ -527,63 +515,12 @@ func add_recruiters(client: Object, world: Node3D) -> void:
 			label.outline_size = 8
 			label.modulate = material.albedo_color
 			label.position = position + Vector3.UP * 3.2
-			for node: Node3D in [pillar, ring, label]:
+			for node: Node3D in [pillar, label]:
 				if drawn:
 					node.free()
 					continue
 				_world_root.add_child(node)
 				_recruiter_nodes.append(node)
-
-	if _qm_nodes.is_empty():
-		for qm: Dictionary in client.get_quartermasters():
-			var pos: Vector3 = qm["position"]
-			var col := Color(0.35, 0.75, 1.0) if str(qm.get("faction", "")) == "rebellion" else Color(1.0, 0.45, 0.3)
-			var ring := MeshInstance3D.new()
-			var torus := TorusMesh.new()
-			torus.outer_radius = float(qm["radius"])
-			torus.inner_radius = float(qm["radius"]) - 0.12
-			var mat := StandardMaterial3D.new()
-			mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
-			mat.albedo_color = col
-			ring.mesh = torus
-			ring.material_override = mat
-			ring.position = pos + Vector3.UP * 0.08
-			_world_root.add_child(ring)
-			_qm_nodes.append(ring)
-
-	if _vendor_nodes.is_empty():
-		for v: Dictionary in client.get_vendors():
-			var pos: Vector3 = v["position"]
-			var col := Color(0.95, 0.78, 0.28) if str(v.get("kind", "")) == "junk_dealer" else Color(0.35, 0.92, 0.65)
-			var ring := MeshInstance3D.new()
-			var torus := TorusMesh.new()
-			torus.outer_radius = float(v["radius"])
-			torus.inner_radius = float(v["radius"]) - 0.12
-			var mat := StandardMaterial3D.new()
-			mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
-			mat.albedo_color = col
-			ring.mesh = torus
-			ring.material_override = mat
-			ring.position = pos + Vector3.UP * 0.08
-			_world_root.add_child(ring)
-			_vendor_nodes.append(ring)
-
-	if _workbench_nodes.is_empty():
-		for wb: Dictionary in client.get_workbenches():
-			var pos: Vector3 = wb["position"]
-			var col := Color(0.35, 0.85, 1.0)
-			var ring := MeshInstance3D.new()
-			var torus := TorusMesh.new()
-			torus.outer_radius = float(wb["radius"])
-			torus.inner_radius = float(wb["radius"]) - 0.12
-			var mat := StandardMaterial3D.new()
-			mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
-			mat.albedo_color = col
-			ring.mesh = torus
-			ring.material_override = mat
-			ring.position = pos + Vector3.UP * 0.08
-			_world_root.add_child(ring)
-			_workbench_nodes.append(ring)
 
 
 func at_recruiter(client: Object) -> Dictionary:
@@ -710,10 +647,14 @@ func radar_markers(client: Object) -> Array:
 		var tracked := str(q["id"]) == _tracked
 		out.append({"position": Vector2(at.x, at.z), "kind": "waypoint", "icon": "hud_objective_icon",
 				"color": Color(GIVER_COLOR, 1.0 if tracked else 0.45)})
+	var quests: Dictionary = client.get_quests()
 	for npc: Dictionary in client.get_quest_npcs():
 		if bool(npc.get("giver", false)):
-			var at: Vector3 = npc["position"]
-			out.append({"position": Vector2(at.x, at.z), "kind": "giver", "color": GIVER_COLOR})
+			var state := _giver_state(quests, str(npc["name"]))
+			if state != GIVER_DONE:
+				var at: Vector3 = npc["position"]
+				out.append({"position": Vector2(at.x, at.z), "kind": "giver",
+						"color": GIVER_COLOR if state == GIVER_READY else GIVER_WAITING_COLOR})
 	for t: Dictionary in client.get_mission_terminals():
 		var at: Vector3 = t["position"]
 		out.append({"position": Vector2(at.x, at.z), "kind": "terminal", "color": TERMINAL_COLOR})
@@ -726,7 +667,7 @@ func _update_quest_hud(client: Object) -> void:
 		var here: Vector3 = client.get_presented()["position"]
 		if Vector2(here.x - _offer_at.x, here.z - _offer_at.z).length() > OFFER_REACH:
 			close_all_screens()
-	_update_giver_markers(client)
+	_update_objective_markers(client)
 	var quest := tracked_quest(client)
 	if quest.is_empty():
 		_hub_hud.tracker = {}
@@ -771,34 +712,79 @@ func _screen_marker(camera: Camera3D, at: Vector3, distance: String) -> Dictiona
 	return {"at": center + direction * scale, "onscreen": false, "angle": angle, "distance": distance}
 
 
-# Battlefront's objective chevrons over each quest giver's head: bright over
-# one with work for you now, faint over one whose work waits on another's.
-func _update_giver_markers(client: Object) -> void:
-	if _world_root == null:
+# Battlefront's objective chevrons, for quests' objectives only: over the
+# person a quest wants you to talk to (the chevrons as they are), and over
+# what it wants killed (smaller). Every other creature and bandit wears one
+# chevron: red if it will fight you, white if it leaves you be.
+func _update_objective_markers(client: Object) -> void:
+	if _world_root == null or _hub_hud == null:
 		return
-	if not _giver_nodes.is_empty():
-		var ready: PackedStringArray = client.get_quests().get("ready_givers", PackedStringArray())
-		for npc: Dictionary in client.get_quest_npcs():
-			var sprite: Sprite3D = _giver_nodes.get(int(npc["entity"]))
-			if sprite != null:
-				sprite.modulate = Color(GIVER_COLOR, 1.0 if ready.has(str(npc["name"])) else 0.3)
+	var full: Texture2D = _hub_hud.art.texture("hud_objective_icon")
+	if full == null:
 		return
-	var texture: Texture2D = _hub_hud.art.texture("hud_objective_icon") if _hub_hud != null else null
-	if texture == null:
-		return
+	if _single_chevron == null:
+		_single_chevron = AtlasTexture.new()
+		_single_chevron.atlas = full
+		_single_chevron.region = Rect2(8, 1, 48, 22)  # the icon's top chevron
+	var people := {}
+	var wanted: Array = []
+	for q: Dictionary in client.get_quests().get("active", []):
+		if str(q.get("step_npc", "")) != "":
+			people[str(q["step_npc"])] = true
+		var names: PackedStringArray = q.get("targets", PackedStringArray())
+		if not names.is_empty():
+			wanted.append({"names": names, "at": q.get("waypoint", Vector3.ZERO), "radius": float(q.get("area_radius", 0.0))})
+	var own: Vector3 = client.get_presented()["position"]
+	var seen := {}
 	for npc: Dictionary in client.get_quest_npcs():
-		if not bool(npc.get("giver", false)):
+		if people.has(str(npc["name"])):
+			var key := "n%d" % int(npc["entity"])
+			seen[key] = true
+			_place_marker(key, full, 0.0012, GIVER_COLOR, (npc["position"] as Vector3) + Vector3.UP * (HOLO_HEIGHT + 0.85))
+	for r: Dictionary in client.get_remotes():
+		var kind := int(r.get("actor_kind", 0))
+		if kind < 2 or not bool(r["alive"]) or (r["position"] as Vector3).distance_to(own) > MARKER_RANGE:
 			continue
-		var sprite := Sprite3D.new()
-		sprite.texture = texture
+		var at: Vector3 = r["position"]
+		var height := 1.0 + float(r.get("max_health", 100.0)) / 400.0 + (0.9 if kind == 3 else 0.0)
+		var key := "m%d" % int(r["id"])
+		seen[key] = true
+		if _is_quest_prey(str(r["name"]), at, wanted):
+			_place_marker(key, full, 0.0009, GIVER_COLOR, at + Vector3.UP * height)
+		else:
+			var fights := kind == 3 or not bool(r.get("passive", false))
+			_place_marker(key, _single_chevron, 0.0012, RED_CHEVRON if fights else WHITE_CHEVRON, at + Vector3.UP * height)
+	for key: String in _marker_nodes.keys():
+		if not seen.has(key):
+			if is_instance_valid(_marker_nodes[key]):
+				(_marker_nodes[key] as Node).queue_free()
+			_marker_nodes.erase(key)
+
+
+# Whether a quest wants this one killed: by name, in the step's area if it has one.
+func _is_quest_prey(entity_name: String, at: Vector3, wanted: Array) -> bool:
+	for w: Dictionary in wanted:
+		if not (w["names"] as PackedStringArray).has(entity_name):
+			continue
+		var center: Vector3 = w["at"]
+		if float(w["radius"]) <= 0.0 or Vector2(at.x - center.x, at.z - center.z).length() <= float(w["radius"]):
+			return true
+	return false
+
+
+func _place_marker(key: String, texture: Texture2D, pixel_size: float, color: Color, at: Vector3) -> void:
+	var sprite: Sprite3D = _marker_nodes.get(key)
+	if sprite == null or not is_instance_valid(sprite):
+		sprite = Sprite3D.new()
 		sprite.billboard = BaseMaterial3D.BILLBOARD_ENABLED
 		sprite.fixed_size = true
-		sprite.pixel_size = 0.0012
-		sprite.modulate = GIVER_COLOR
 		sprite.layers = TeamTags.LAYER
-		sprite.position = (npc["position"] as Vector3) + Vector3.UP * (HOLO_HEIGHT + 0.85)
 		_world_root.add_child(sprite)
-		_giver_nodes[int(npc["entity"])] = sprite
+		_marker_nodes[key] = sprite
+	sprite.texture = texture
+	sprite.pixel_size = pixel_size
+	sprite.modulate = color
+	sprite.position = at
 
 
 # The world's holograms (Battlefront's insignia, as over soldiers in a match):
@@ -817,7 +803,8 @@ func _world_holograms() -> TeamTags:
 				and FileAccess.file_exists("res://imported_assets/" + models + "com_icon_imperial.gltf"):
 			var tags := TeamTags.new("res://imported_assets", {"images": {
 					"alliance": models + "com_icon_alliance.gltf", "empire": models + "com_icon_imperial.gltf",
-					"neutral": "hud/textures/hud_flag_icon.png"}})
+					"neutral": "hud/textures/hud_flag_icon.png", "quest": "gen:quest", "coins": "gen:coins",
+					"chest": "gen:chest", "wrench": "hud/textures/hud_active_repair_icon.png"}})
 			if tags.available():
 				_holograms = tags
 			break
@@ -851,8 +838,12 @@ func forget_hologram(id: int) -> void:
 
 
 # Over each shop (vendors, quartermasters: green), quest giver (yellow) and
-# workbench (purple), a hologram of its keeper's side; then all the world's
-# holograms turned, sized and faded for the camera.
+# workbench (purple), a hologram: its keeper's faction's insignia if they
+# have one, else what the place is: an exclamation mark for a quest giver, a
+# stack of coins for somewhere to sell, a chest for a shop, a wrench for
+# crafting. A quest giver with work waiting for you later is grey; with none
+# left, they wear none. Then all the world's holograms turned, sized and
+# faded for the camera.
 func _update_place_holograms(client: Object, delta: float) -> void:
 	if _world_holograms() == null or _world_root == null:
 		return
@@ -866,18 +857,25 @@ func _update_place_holograms(client: Object, delta: float) -> void:
 			by_entity[int(r["id"])] = looks[look - 1]
 	var seen := {}
 	for v: Dictionary in client.get_vendors():
-		_place_hologram("vendor:" + str(v["name"]), v["position"],
-				side_of_template(str(by_name.get(str(v["name"]), ""))), SHOP_COLOR, seen)
+		var side := side_of_template(str(by_name.get(str(v["name"]), "")))
+		var plain := "coins" if str(v.get("kind", "")) == "junk_dealer" else "chest"
+		_place_hologram("vendor:" + str(v["name"]), v["position"], side if side != "neutral" else plain, SHOP_COLOR, seen)
 	for q: Dictionary in client.get_quartermasters():
 		var faction := str(q.get("faction", ""))
 		_place_hologram("qm:" + str(q["name"]), q["position"],
-				"alliance" if faction == "rebellion" else ("empire" if faction == "empire" else "neutral"), SHOP_COLOR, seen)
+				"alliance" if faction == "rebellion" else ("empire" if faction == "empire" else "chest"), SHOP_COLOR, seen)
 	for wb: Dictionary in client.get_workbenches():
-		_place_hologram("workbench:" + str(wb["name"]), wb["position"], "neutral", CRAFT_COLOR, seen)
+		_place_hologram("workbench:" + str(wb["name"]), wb["position"], "wrench", CRAFT_COLOR, seen)
+	var quests: Dictionary = client.get_quests()
 	for npc: Dictionary in client.get_quest_npcs():
 		if bool(npc.get("giver", false)):
+			var state := _giver_state(quests, str(npc["name"]))
+			if state == GIVER_DONE:
+				continue
 			var template := str(by_entity.get(int(npc["entity"]), by_name.get(str(npc["name"]), "")))
-			_place_hologram("giver:" + str(npc["name"]), npc["position"], side_of_template(template), GIVER_COLOR, seen)
+			var side := side_of_template(template)
+			_place_hologram("giver:" + str(npc["name"]), npc["position"], side if side != "neutral" else "quest",
+					GIVER_COLOR if state == GIVER_READY else GIVER_WAITING_COLOR, seen)
 	for key: String in _holo_anchors.keys():
 		if not seen.has(key):
 			_holograms.forget(key.hash())
@@ -886,6 +884,16 @@ func _update_place_holograms(client: Object, delta: float) -> void:
 	var camera := _world_root.get_viewport().get_camera_3d()
 	if camera != null:
 		_holograms.update(camera, delta, client.raycast)
+
+
+# Whether a quest giver has work for you now (GIVER_READY), later or under
+# way (GIVER_WAITING), or none left (GIVER_DONE).
+func _giver_state(quests: Dictionary, giver: String) -> int:
+	if (quests.get("ready_givers", PackedStringArray()) as PackedStringArray).has(giver):
+		return GIVER_READY
+	if (quests.get("waiting_givers", PackedStringArray()) as PackedStringArray).has(giver):
+		return GIVER_WAITING
+	return GIVER_DONE
 
 
 func _place_hologram(key: String, at: Vector3, side: String, color: Color, seen: Dictionary) -> void:
@@ -1209,6 +1217,7 @@ func update_hub(client: Object, world: Node3D, delta: float, pause_visible: bool
 	_hub_hud.queue_redraw()
 
 
+# A lootable corpse: Battlefront's pick-up hand over it, and "Loot" under, in its font.
 func _update_corpse_markers(client: Object) -> void:
 	if _world_root == null:
 		return
@@ -1220,32 +1229,32 @@ func _update_corpse_markers(client: Object) -> void:
 		seen[cid] = true
 		if not _corpse_nodes.has(cid):
 			var pos: Vector3 = c["position"]
-			var ring := MeshInstance3D.new()
-			var torus := TorusMesh.new()
-			torus.outer_radius = 1.25
-			torus.inner_radius = 1.15
-			var mat := StandardMaterial3D.new()
-			mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
-			mat.albedo_color = Color(1.0, 0.85, 0.3)
-			ring.mesh = torus
-			ring.material_override = mat
-			ring.position = pos + Vector3.UP * 0.08
+			var art: RefCounted = _hub_hud.art if _hub_hud != null else null
+			var icon := Sprite3D.new()
+			icon.texture = art.texture("pc_pickup_icon") if art != null else null
+			icon.billboard = BaseMaterial3D.BILLBOARD_ENABLED
+			icon.fixed_size = true
+			icon.pixel_size = 0.0009
+			icon.modulate = Color(1.0, 0.88, 0.35)
+			icon.position = pos + Vector3.UP * 1.3
 			var label := Label3D.new()
-			label.text = "[LOOT]"
+			label.text = art.localize("common.loot") if art != null and art.localize("common.loot") != "common.loot" else "Loot"
 			label.billboard = BaseMaterial3D.BILLBOARD_ENABLED
 			label.fixed_size = true
-			label.pixel_size = 0.0012
-			label.font_size = 20
-			label.outline_size = 6
+			label.pixel_size = 0.0011
+			label.font_size = 32
+			if art != null and art.godot_font("gamefont_small") != null:
+				label.font = art.godot_font("gamefont_small")
+			label.outline_size = 0
 			label.modulate = Color(1.0, 0.88, 0.35)
-			label.position = pos + Vector3.UP * 1.15
-			_world_root.add_child(ring)
+			label.position = pos + Vector3.UP * 0.95
+			_world_root.add_child(icon)
 			_world_root.add_child(label)
-			_corpse_nodes[cid] = {"ring": ring, "label": label}
+			_corpse_nodes[cid] = {"icon": icon, "label": label}
 	for cid: int in _corpse_nodes.keys():
 		if not seen.has(cid):
 			var entry: Dictionary = _corpse_nodes[cid]
-			for k in ["ring", "label"]:
+			for k in ["icon", "label"]:
 				var n: Variant = entry.get(k)
 				if n is Node and is_instance_valid(n):
 					(n as Node).queue_free()

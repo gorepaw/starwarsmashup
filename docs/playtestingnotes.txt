@@ -43,14 +43,26 @@ witht the vendors and such. they dont actually have any quests though, whats up 
      Battlefront's own gamefont_large, drop-shadowed and scaled with the screen as Battlefront's are.
      (Bf2Art.godot_font() turns any of its bitmap fonts into a Godot Font for Labels.)
 
-I dont like the circles on the ground around things.
+[DONE] I dont like the circles on the ground around things.
+  -> The rings around the quartermasters, vendors, workbenches, terminals and lootable corpses are gone;
+     the holograms (and the corpses' pick-up icon) mark them.
 
-Change the text over a lootable corpse to a bf2 style
+[DONE] Change the text over a lootable corpse to a bf2 style
+  -> Battlefront's pick-up hand (pc_pickup_icon) floats over a lootable corpse with "Loot" under it in
+     its gamefont_small.
 
-Quest objectve tracking is working with people, but not with enemis from the quests given by people. 
+[DONE] Quest objectve tracking is working with people, but not with enemis from the quests given by people. 
 I cant find the valerian whatever at all. and enemies are generally too few and far between. lets also give enemies 
 we need for quests smaller quest objective chevrons overhead and other ones a single white or red chevron 
 depending on neutral or hostile
+  -> A kill step (or a collect step whose item drops from enemies) had no waypoint unless the quest gave an
+     area, so the tracker and radar had nothing to point at. Now it points at the nearest lair or camp of
+     what it names (the Valarian Syndicate's camps for Teska Vo's), and the enemies it names wear a small
+     yellow objective chevron (all three arrows) wherever they are in the step's area. Every other creature
+     and bandit wears one chevron: red if it will fight you, white if it's passive (the server now says
+     which). The person a quest wants you to talk to wears the full chevrons.
+     More to find: five more lairs and two more camps, 250-350 m from the city on flat ground, so the
+     first kills are a short walk (core: wildlife; tatooine_spawns.ini).
 
 [DONE] disable primary fire for a brief moment after menuing or speaking i keep firing in town. maybe make it so you
 cant fire while aiming at town npc too
@@ -65,11 +77,18 @@ their unique loadouts, but for now they can all just be in plain clothes.
 gathering resources is a bit too easy, make it so the gathering takes longer and reuires you stay still, 
 also make it so you need to move after each time
 
-we dont need chevrons AND circles for questgivers. lets make an exclaimation point style symbol for non-faction quests,
+[DONE] we dont need chevrons AND circles for questgivers. lets make an exclaimation point style symbol for non-faction quests,
 some kind of coins symbol for sell points, a chest symbol for nonfaction shops, and some kind of wrench symbol for 
 crafting stations. But keeping the same color scheme for when its faction-associated and uses the faction symbol 
 instead. chevrons become just for quest objectives, not questgivers. and have questgiver icons go away if they have 
 no more quests for you/ make it grey if quests are just too low level.
+  -> Quest givers, shops and workbenches now wear a hologram (the circles and the givers' chevrons are gone;
+     chevrons are for objectives only): the faction's insignia where the keeper has one, else an
+     exclamation mark (quests, yellow), a stack of coins (somewhere to sell, green), a chest (a shop,
+     green) or Battlefront's wrench (crafting, purple). A giver with no work left shows nothing; one
+     with work that isn't open to you yet (or whose quest you're on) is grey, on the radar and map too.
+     There are no quest levels in the game yet, so "too low level" isn't there to grey by: that waits on
+     the level question below. (rendering/place_symbols.gd)
 
 Speaking of level, how does exp work right now? give me a full rundown. do we need to reconcile a base system 
 with our new professions work?
