@@ -105,8 +105,12 @@ I want to come up with a purpose for skill trainers, as well as a purpose for ea
 then i would like all the terminals to be in their normal places intead of clustered in that testing area, and build 
 a more robust starting quest chain to take us around to all of it, as well as teach us about gathering and crafting.
 
-In character creator last i checked twileks had two sets of headtails, a deafult one overlaying the cosmetic 
+[DONE] In character creator last i checked twileks had two sets of headtails, a deafult one overlaying the cosmetic 
 choice ones.
+  -> The Twi'lek head model carries its own default lekku; each hair style adds its own (named "..._swap_...",
+     the swap of the head's piece) on top. A style now hides the head piece it swaps, in the creator and
+     in the world (PlayerAppearance.hide_replaced_head_parts). The styles' skull caps still go over the
+     head's own, as the game draws them (hiding that too leaves a hole at the nape).
 
 [DONE] Seems like the starting pants are too tight a fit, lots of z-fighting witht the skin texture
   -> Worn clothing now stands 1.5 cm off the body along its normals (a `grow` in the person shader), so it

@@ -53,11 +53,14 @@ func set_hair(hair_rel_gltf: String, color_overrides: Dictionary) -> void:
 		hair_node = null
 	hair_colors_data.clear()
 	if hair_rel_gltf == "" or model == null:
+		if model != null:
+			PlayerAppearance.hide_replaced_head_parts(model, "")
 		return
 	var sg := "%s_%s" % [str(species_meta.get("species", "human")), str(species_meta.get("gender", "male"))]
 	var gltf_path := SPECIES_DIR.path_join(sg).path_join(hair_rel_gltf)
 	if not FileAccess.file_exists(gltf_path):
 		return
+	PlayerAppearance.hide_replaced_head_parts(model, gltf_path)
 	var doc := GLTFDocument.new()
 	var state := GLTFState.new()
 	if doc.append_from_file(ProjectSettings.globalize_path(gltf_path), state) != OK:

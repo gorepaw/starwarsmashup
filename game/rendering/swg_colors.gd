@@ -64,7 +64,10 @@ static func _apply_impl(model: Node, colors: Dictionary, seed: int, overrides: D
 		if mesh_instance.mesh == null:
 			continue
 		var item := String(mesh_instance.name)
+		var hidden: Dictionary = mesh_instance.get_meta("hidden_surfaces", {})  # (a hair style's replaced head parts)
 		for surface in mesh_instance.mesh.get_surface_count():
+			if hidden.has(surface):
+				continue
 			var original := mesh_instance.mesh.surface_get_material(surface) as BaseMaterial3D
 			if original == null or not materials.has(original.resource_name):
 				continue

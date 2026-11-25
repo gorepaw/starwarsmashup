@@ -13,6 +13,7 @@ const CLOTHING_GROW := 0.015  # m: worn clothes stand this far off the skin (no 
 static var _species_by_id: Dictionary = {}
 static var _meta_cache: Dictionary = {}
 static var _colors_cache: Dictionary = {}
+static var _invisible_material: Material
 
 
 static func _ensure_species_table() -> void:
@@ -135,6 +136,11 @@ static func load_character(species_id: String, gender: String, appearance_json: 
 					if blends.has(bname):
 						mi.set_blend_shape_value(i, clampf(float(blends[bname]), 0.0, 1.0))
 
+		# The hair style replaces the head's own default pieces.
+		var chosen_hair := str(appearance.get("hair", ""))
+		hide_replaced_head_parts(model, SPECIES_DIR.path_join(sg).path_join("hairs").path_join(chosen_hair + ".gltf")
+				if chosen_hair != "" else "")
+
 		# Palette & face markings.
 		var color_overrides: Dictionary = appearance.get("colors", {})
 		var colors_data := _load_gltf_colors(gltf_path)
@@ -161,6 +167,52 @@ static func load_character(species_id: String, gender: String, appearance_json: 
 		"eye_height": eye_height,
 		"crouched_eye_height": crouched_eye,
 	}
+
+
+# A hair style may be drawn in place of a piece of the head's own: a Twi'lek's
+# default lekku, which the style's own replace ("twk_m_leccu_swap_hcs16" swaps
+# "twk_m_leccu"; its skull cap, "twk_m_skull_hs9", goes over the head's own).
+# Hides the pieces of the model's head the style (`hair_gltf`, its file; ""
+# shows them all again) swaps, so two sets of lekku don't stand one over the other.
+static func hide_replaced_head_parts(model: Node, hair_gltf: String) -> void:
+	var replaced := {}
+	if hair_gltf != "" and FileAccess.file_exists(hair_gltf):
+		var parsed: Variant = JSON.parse_string(FileAccess.get_file_as_string(hair_gltf))
+		if parsed is Dictionary:
+			for material: Dictionary in (parsed as Dictionary).get("materials", []):
+				var material_name := str(material.get("name", ""))
+				var swap := material_name.find("_swap")
+				if swap > 0:
+					replaced[material_name.substr(0, swap)] = true
+	for node: Node in model.find_children("*", "MeshInstance3D", true, false):
+		var mi := node as MeshInstance3D
+		if mi.mesh == null:
+			continue
+		var hidden := {}
+		for surface in mi.mesh.get_surface_count():
+			var source := mi.mesh.surface_get_material(surface)
+			if source != null and replaced.has(source.resource_name):
+				hidden[surface] = true
+		var before: Dictionary = mi.get_meta("hidden_surfaces", {})
+		if hidden.is_empty() and before.is_empty():
+			continue
+		for surface: int in before:
+			mi.set_surface_override_material(surface, null)  # (its colors are applied again after)
+		if hidden.is_empty():
+			mi.remove_meta("hidden_surfaces")
+			continue
+		mi.set_meta("hidden_surfaces", hidden)
+		for surface: int in hidden:
+			mi.set_surface_override_material(surface, _invisible())
+
+
+static func _invisible() -> Material:
+	if _invisible_material == null:
+		var material := StandardMaterial3D.new()
+		material.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+		material.albedo_color = Color(1, 1, 1, 0)
+		_invisible_material = material
+	return _invisible_material
 
 
 static func _attach_hair(model: Node3D, hair_gltf: String, color_overrides: Dictionary) -> Node3D:
