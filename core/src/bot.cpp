@@ -140,8 +140,11 @@ void Bot::choose_spawn(GameClient& client) {
     const MatchState& match = *client.match();
     const int team = client.self().team;
     const auto& loadouts = field.team(team).loadouts;
-    // Mostly the first loadout, sometimes another.
-    const size_t loadout = random() < 0.5 ? 0 : size_t(random() * double(loadouts.size())) % loadouts.size();
+    const size_t avail_loadouts =
+        client.custom_loadouts().empty() ? loadouts.size() : client.custom_loadouts().size();
+    // Mostly the first loadout, sometimes another across all available loadouts.
+    const size_t loadout =
+        avail_loadouts == 0 ? 0 : (random() < 0.5 ? 0 : size_t(random() * double(avail_loadouts)) % avail_loadouts);
     if (team == natives_team) {
         // A native: any post it may spawn at (Conquest::can_spawn's rule),
         // at random.
@@ -359,14 +362,8 @@ constexpr double dropped_reach = 25;     // m: a dropped pickup further than thi
 constexpr double nearby_pickup = 10;     // m: grab a close dropped pack even when only lightly hurt/spent
 constexpr double powerup_patience = 25;  // s: gives up on one after this
 
-BotSkill BotSkill::preset(std::string_view difficulty) {
-    if (difficulty == "easy") {
-        return {.aim_error = 5.0, .reaction = 0.8, .fire_range = 45, .cover = 0.3, .dodge = 0};
-    }
-    if (difficulty == "hard") {
-        return {.aim_error = 1.2, .reaction = 0.25, .fire_range = 80, .cover = 1.0, .dodge = 0.35};
-    }
-    return {};
+BotSkill BotSkill::preset(std::string_view /*difficulty*/) {
+    return {.aim_error = 1.2, .reaction = 0.25, .fire_range = 80, .cover = 1.0, .dodge = 0.35};
 }
 
 std::optional<Vec3> find_cover_spot(const World& world, const NavGrid* nav, const Battlefield* field,
@@ -1331,15 +1328,27 @@ int Bot::find_breach(const GameClient& client, const World& world, Vec3 destinat
 
 BotPlayers::BotPlayers(int count, const World& world, const ClientConfig& base, LinkFactory open_link,
                        BotSkill skill)
+    : BotPlayers([&] {
+          std::vector<ClientConfig> cfgs;
+          cfgs.reserve(size_t(std::max(0, count)));
+          for (int i = 0; i < count; ++i) {
+              ClientConfig c = base;
+              c.name = std::format("Bot {}", i + 1);
+              cfgs.push_back(std::move(c));
+          }
+          return cfgs;
+      }(), world, base, std::move(open_link), skill) {}
+
+BotPlayers::BotPlayers(std::span<const ClientConfig> custom_bots, const World& world, const ClientConfig& base,
+                       LinkFactory open_link, BotSkill skill)
     : world_(world) {
     if (base.battlefield) {
         navigation_ = std::make_shared<NavGrid>(world, *base.battlefield);
         destructibles_ = base.battlefield->destructibles;
         destroyed_.assign(destructibles_.size(), 0);
     }
-    for (int i = 0; i < count; ++i) {
-        ClientConfig config = base;
-        config.name = std::format("Bot {}", i + 1);
+    for (size_t i = 0; i < custom_bots.size(); ++i) {
+        ClientConfig config = custom_bots[i];
         auto link = open_link ? open_link() : std::make_unique<net::UdpLink>();
         players_.push_back(std::make_unique<Player>(std::move(link), world, std::move(config), uint64_t(i + 1)));
         players_.back()->bot.set_navigation(navigation_);
@@ -1352,8 +1361,8 @@ BotPlayers::BotPlayers(int count, const World& world, const ClientConfig& base, 
         config.name = std::format("{} {}", base.battlefield->natives->team.name, i + 1);
         config.team = natives_team;
         auto link = open_link ? open_link() : std::make_unique<net::UdpLink>();
-        players_.push_back(
-            std::make_unique<Player>(std::move(link), world, std::move(config), uint64_t(count + i + 1)));
+        players_.push_back(std::make_unique<Player>(std::move(link), world, std::move(config),
+                                                    uint64_t(custom_bots.size() + size_t(i) + 1)));
         players_.back()->bot.set_navigation(navigation_);
         players_.back()->bot.set_skill(skill);
     }

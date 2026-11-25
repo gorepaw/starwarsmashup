@@ -72,18 +72,20 @@ func _initialize() -> void:
 	var loadouts: Array = store.list_loadouts(cid)
 	assert(loadouts.size() == 1 and int(loadouts[0]["primary_id"]) > 0)
 
-	# Earn FP & buy DLT-20A
+	# Earn FP & Credits; buy cosmetic cloth_jacket_rebel with FP and wp_rifle_dlt20a with Credits
 	var rewarded: Dictionary = store.add_rewards(cid, 250, 200, 300)
 	assert(int(rewarded["faction_points"]) == 300 and int(rewarded["credits"]) == 800)
-	var bought: Dictionary = store.buy_item(cid, "wp_rifle_dlt20a", true)
-	assert(not bought.is_empty() and str(bought["def_id"]) == "wp_rifle_dlt20a")
+	var bought_fp: Dictionary = store.buy_item(cid, "cloth_jacket_rebel", true)
+	assert(not bought_fp.is_empty() and str(bought_fp["def_id"]) == "cloth_jacket_rebel")
+	var bought_cr: Dictionary = store.buy_item(cid, "wp_rifle_dlt20a", false)
+	assert(not bought_cr.is_empty() and str(bought_cr["def_id"]) == "wp_rifle_dlt20a")
 	store.close()
 
 	var store2: SwmCharacterStore = ClassDB.instantiate("SwmCharacterStore")
 	assert(store2.open(db_path) == OK)
 	var chars2: Array = store2.list_characters()
-	assert(chars2.size() == 1 and int(chars2[0]["faction_points"]) == 150)
-	assert(store2.list_items(cid).size() == items.size() + 1)
+	assert(chars2.size() == 1 and int(chars2[0]["faction_points"]) == 250 and int(chars2[0]["credits"]) == 300)
+	assert(store2.list_items(cid).size() == items.size() + 2)
 	var computed: Dictionary = store.compute_loadout_stats("wookiee", loadouts[0], items, true)
 	assert(float(computed.get("max_health", 0.0)) > 450.0, "expected Wookiee trait health bonus")
 	store2.close()
@@ -156,13 +158,14 @@ func _process(_delta: float) -> bool:
 				_cleanup_fail()
 				return true
 			return false
-		assert(client.get_quartermasters().size() == 2, "expected 2 quartermasters in Mos Eisley")
+		assert(client.get_quartermasters().size() == 4, "expected 4 quartermasters in Mos Eisley")
+		assert(client.get_factions().size() == 4, "expected 4 factions in Mos Eisley")
 		assert(client.get_targets().size() == 4, "expected 4 range targets in Mos Eisley")
 		assert(client.get_character_loadouts().size() == 1, "expected starter loadout")
-		# Save Loadout 1
+		# Save Loadout 4 (5th slot)
 		var inv: Array = client.get_inventory()
 		var lo1 := {
-			"slot_index": 1,
+			"slot_index": 4,
 			"name": "Recon",
 			"primary_id": int(inv[0]["id"]),
 			"sidearm_id": int(inv[1]["id"]),
@@ -170,7 +173,7 @@ func _process(_delta: float) -> bool:
 			"gear_ids": {},
 			"appearance_ids": {},
 		}
-		client.save_loadout(1, lo1)
+		client.save_loadout(4, lo1)
 		_step = 1
 		return false
 

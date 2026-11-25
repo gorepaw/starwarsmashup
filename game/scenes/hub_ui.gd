@@ -41,7 +41,7 @@ const HOLO_HEIGHT := 2.6   # m over a place's ground, its hologram
 const PLACE_HOLO_SCALE := 2.5  # a place's hologram, as big as a soldier's this many times (ASSUMPTION, by eye)
 const TARGET_HOLO_ID := 1 << 40  # practice targets' hologram ids, past any entity's
 
-signal queue_requested(side: int, mode: String)
+signal queue_requested(side: int)
 signal item_bought(def_id: String, use_fp: bool)
 signal loadout_saved(slot_index: int, loadout: Dictionary)
 signal loadout_activated(slot_index: int)
@@ -116,8 +116,8 @@ func setup(layer: CanvasLayer, world_root: Node3D, art: RefCounted, settings: Se
 	layer.add_child(_hub_hud)
 	_terminal_screen = WarTerminalScreen.new(art)
 	_terminal_screen.visible = false
-	_terminal_screen.side_chosen.connect(func(side: int, mode: String) -> void: queue_requested.emit(side, mode))
-	_terminal_screen.leave_requested.connect(func() -> void: queue_requested.emit(-1, "standard"))
+	_terminal_screen.side_chosen.connect(func(side: int) -> void: queue_requested.emit(side))
+	_terminal_screen.leave_requested.connect(func() -> void: queue_requested.emit(-1))
 	_terminal_screen.closed.connect(close_terminal)
 	layer.add_child(_terminal_screen)
 
@@ -1011,8 +1011,13 @@ func _update_place_holograms(client: Object, delta: float) -> void:
 	for qi in qms.size():
 		var q: Dictionary = qms[qi]
 		var faction := str(q.get("faction", ""))
-		_place_hologram("qm:%d" % qi, q["position"],
-				"alliance" if faction == "rebellion" else ("empire" if faction == "empire" else "chest"), SHOP_COLOR, seen)
+		var sym := "chest"
+		match faction:
+			"rebellion": sym = "alliance"
+			"empire": sym = "empire"
+			"republic": sym = "republic"
+			"separatists": sym = "cis"
+		_place_hologram("qm:%d" % qi, q["position"], sym, SHOP_COLOR, seen)
 	var wbs: Array = client.get_workbenches()
 	for wbi in wbs.size():
 		var wb: Dictionary = wbs[wbi]
@@ -1131,6 +1136,7 @@ func _sync_screen_data(client: Object) -> void:
 	if _qm_screen != null:
 		_qm_screen.credits = int(status.get("credits", 0))
 		_qm_screen.faction_points = int(status.get("faction_points", 0))
+		_qm_screen.reputation = client.get_reputation()
 		_qm_screen.inventory = inv
 		var cur_lo: Dictionary = {}
 		for lo: Dictionary in los:
@@ -1365,8 +1371,6 @@ func update_hub(client: Object, world: Node3D, delta: float, pause_visible: bool
 		_terminal_screen.title = str(terminal["name"])
 		_terminal_screen.sides = sides
 		_terminal_screen.queued = queued
-		if queued >= 0:
-			_terminal_screen.queue_mode = str(status.get("queue_mode", "standard"))
 		_terminal_screen.battlefield = str(status.get("battlefield", ""))
 		_terminal_screen.starts_in = float(status.get("starts_in", 0))
 		_terminal_screen.in_queue = int(status.get("in_queue", 0))
@@ -1394,7 +1398,6 @@ func update_hub(client: Object, world: Node3D, delta: float, pause_visible: bool
 		tip = "Press %s to loot %s (%d %s)" % [_key_name("interact"), corpse["name"], n_items, "item" if n_items == 1 else "items"]
 	_hub_hud.tooltip = tip
 	_hub_hud.queue = {} if queued < 0 or queued >= sides.size() else {"side": sides[queued]["name"],
-			"mode": str(status.get("queue_mode", "standard")),
 			"icon": sides[queued]["icon"], "battlefield": str(status.get("battlefield", "")),
 			"starts_in": float(status.get("starts_in", 0)), "in_queue": int(status.get("in_queue", 0)),
 			"leave_key": _key_name("leave_queue")}
@@ -1486,18 +1489,21 @@ func _update_corpse_markers(client: Object) -> void:
 func _update_hub_text_hud(client: Object, center_label: Label, match_label: RichTextLabel) -> void:
 	var factions: PackedStringArray = client.get_factions()
 	var status: Dictionary = client.get_player_status()
-	if status.get("queue", "none") == "queued" and factions.size() == 2:
+	if status.get("queue", "none") == "queued" and factions.size() >= 2:
 		var where := str(status.get("battlefield", ""))
-		match_label.text = "[center]Queued (%s) for the %s: %d in the queue, the battle%s starts in %d s\n[X] leave the queue[/center]" % [
-				str(status.get("queue_mode", "standard")),
-				factions[int(status["team"])], status["in_queue"], " on " + where if where != "" else "",
+		var tidx := int(status["team"])
+		var tname := str(factions[tidx]) if tidx >= 0 and tidx < factions.size() else ""
+		match_label.text = "[center]Queued for the %s: %d in the queue, the battle%s starts in %d s\n[X] leave the queue[/center]" % [
+				tname, status["in_queue"], " on " + where if where != "" else "",
 				ceili(status["starts_in"])]
 		return
 	match_label.text = ""
 	var terminal := at_recruiter(client)
-	if not terminal.is_empty() and factions.size() == 2 and center_label.text == "":
-		center_label.text = "%s\n[F] fight for the %s     [G] fight for the %s" % [
-				terminal["name"], factions[0], factions[1]]
+	if not terminal.is_empty() and factions.size() >= 2 and center_label.text == "":
+		var opts: PackedStringArray = []
+		for i in mini(factions.size(), 4):
+			opts.append("[%d] %s" % [i + 1, str(factions[i])])
+		center_label.text = "%s\n%s" % [terminal["name"], "   ".join(opts)]
 
 
 func _mission_terminal_color(kind: String) -> Color:

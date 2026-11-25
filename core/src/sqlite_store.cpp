@@ -108,6 +108,7 @@ SqliteCharacterStore::SqliteCharacterStore(const std::filesystem::path& path) {
                  " owner_id INTEGER NOT NULL,"
                  " def_id TEXT NOT NULL,"
                  " quality REAL NOT NULL DEFAULT 0.5,"
+                 " quantity INTEGER NOT NULL DEFAULT 1,"
                  " custom_name TEXT NOT NULL DEFAULT '',"
                  " color_json TEXT NOT NULL DEFAULT '{}'"
                  ") STRICT");
@@ -153,9 +154,15 @@ SqliteCharacterStore::SqliteCharacterStore(const std::filesystem::path& path) {
                  " exp_quality_pct INTEGER NOT NULL DEFAULT 50,"
                  " PRIMARY KEY (owner_id, name)"
                  ") STRICT");
+            exec("CREATE TABLE IF NOT EXISTS faction_reputation ("
+                 " owner_id INTEGER NOT NULL,"
+                 " faction_id TEXT NOT NULL,"
+                 " reputation INTEGER NOT NULL DEFAULT 0,"
+                 " PRIMARY KEY (owner_id, faction_id)"
+                 ") STRICT");
             exec(("PRAGMA user_version = " + std::to_string(schema_version)).c_str());
             exec("COMMIT");
-        } else if (version == 1 || version == 2) {
+        } else if (version >= 1 && version <= 6) {
             exec("BEGIN");
             if (version == 1) {
                 exec("ALTER TABLE characters ADD COLUMN species TEXT NOT NULL DEFAULT 'human'");
@@ -163,143 +170,77 @@ SqliteCharacterStore::SqliteCharacterStore(const std::filesystem::path& path) {
                 exec("ALTER TABLE characters ADD COLUMN location TEXT NOT NULL DEFAULT 'Mos Eisley'");
                 exec("ALTER TABLE characters ADD COLUMN appearance TEXT NOT NULL DEFAULT '{}'");
             }
-            exec("ALTER TABLE characters ADD COLUMN credits INTEGER NOT NULL DEFAULT 0");
-            exec("ALTER TABLE characters ADD COLUMN faction_points INTEGER NOT NULL DEFAULT 0");
-            exec("ALTER TABLE characters ADD COLUMN experience INTEGER NOT NULL DEFAULT 0");
-            exec("ALTER TABLE characters ADD COLUMN active_loadout INTEGER NOT NULL DEFAULT 0");
-            exec("CREATE TABLE IF NOT EXISTS items ("
-                 " id INTEGER PRIMARY KEY AUTOINCREMENT,"
+            if (version <= 2) {
+                exec("ALTER TABLE characters ADD COLUMN credits INTEGER NOT NULL DEFAULT 0");
+                exec("ALTER TABLE characters ADD COLUMN faction_points INTEGER NOT NULL DEFAULT 0");
+                exec("ALTER TABLE characters ADD COLUMN experience INTEGER NOT NULL DEFAULT 0");
+                exec("ALTER TABLE characters ADD COLUMN active_loadout INTEGER NOT NULL DEFAULT 0");
+                exec("CREATE TABLE IF NOT EXISTS items ("
+                     " id INTEGER PRIMARY KEY AUTOINCREMENT,"
+                     " owner_id INTEGER NOT NULL,"
+                     " def_id TEXT NOT NULL,"
+                     " quality REAL NOT NULL DEFAULT 0.5,"
+                     " quantity INTEGER NOT NULL DEFAULT 1,"
+                     " custom_name TEXT NOT NULL DEFAULT '',"
+                     " color_json TEXT NOT NULL DEFAULT '{}'"
+                     ") STRICT");
+                exec("CREATE TABLE IF NOT EXISTS loadouts ("
+                     " owner_id INTEGER NOT NULL,"
+                     " slot_index INTEGER NOT NULL,"
+                     " name TEXT NOT NULL,"
+                     " primary_id INTEGER NOT NULL DEFAULT 0,"
+                     " sidearm_id INTEGER NOT NULL DEFAULT 0,"
+                     " secondary_id INTEGER NOT NULL DEFAULT 0,"
+                     " gear_json TEXT NOT NULL DEFAULT '{}',"
+                     " appearance_json TEXT NOT NULL DEFAULT '{}',"
+                     " PRIMARY KEY (owner_id, slot_index)"
+                     ") STRICT");
+            }
+            if (version <= 3) {
+                exec("CREATE TABLE IF NOT EXISTS quests ("
+                     " owner_id INTEGER NOT NULL,"
+                     " quest_id TEXT NOT NULL,"
+                     " step INTEGER NOT NULL DEFAULT 0,"
+                     " count INTEGER NOT NULL DEFAULT 0,"
+                     " done INTEGER NOT NULL DEFAULT 0,"
+                     " PRIMARY KEY (owner_id, quest_id)"
+                     ") STRICT");
+            }
+            if (version <= 4) {
+                exec("ALTER TABLE loadouts ADD COLUMN specializations TEXT NOT NULL DEFAULT ''");
+                exec("ALTER TABLE loadouts ADD COLUMN companion TEXT NOT NULL DEFAULT ''");
+                exec("CREATE TABLE IF NOT EXISTS professions ("
+                     " owner_id INTEGER NOT NULL,"
+                     " profession_id TEXT NOT NULL,"
+                     " xp INTEGER NOT NULL DEFAULT 0,"
+                     " PRIMARY KEY (owner_id, profession_id)"
+                     ") STRICT");
+            }
+            if (version <= 5) {
+                exec("CREATE TABLE IF NOT EXISTS material_vault ("
+                     " owner_id INTEGER NOT NULL,"
+                     " resource_id TEXT NOT NULL,"
+                     " amount INTEGER NOT NULL DEFAULT 0,"
+                     " PRIMARY KEY (owner_id, resource_id)"
+                     ") STRICT");
+                exec("CREATE TABLE IF NOT EXISTS recipe_presets ("
+                     " owner_id INTEGER NOT NULL,"
+                     " name TEXT NOT NULL,"
+                     " schematic_id TEXT NOT NULL,"
+                     " resource_ids TEXT NOT NULL DEFAULT '',"
+                     " enhancement_defs TEXT NOT NULL DEFAULT '',"
+                     " exp_quality_pct INTEGER NOT NULL DEFAULT 50,"
+                     " PRIMARY KEY (owner_id, name)"
+                     ") STRICT");
+            }
+            if (version >= 3 && version <= 6) {
+                exec("ALTER TABLE items ADD COLUMN quantity INTEGER NOT NULL DEFAULT 1");
+            }
+            exec("CREATE TABLE IF NOT EXISTS faction_reputation ("
                  " owner_id INTEGER NOT NULL,"
-                 " def_id TEXT NOT NULL,"
-                 " quality REAL NOT NULL DEFAULT 0.5,"
-                 " custom_name TEXT NOT NULL DEFAULT '',"
-                 " color_json TEXT NOT NULL DEFAULT '{}'"
-                 ") STRICT");
-            exec("CREATE TABLE IF NOT EXISTS loadouts ("
-                 " owner_id INTEGER NOT NULL,"
-                 " slot_index INTEGER NOT NULL,"
-                 " name TEXT NOT NULL,"
-                 " primary_id INTEGER NOT NULL DEFAULT 0,"
-                 " sidearm_id INTEGER NOT NULL DEFAULT 0,"
-                 " secondary_id INTEGER NOT NULL DEFAULT 0,"
-                 " gear_json TEXT NOT NULL DEFAULT '{}',"
-                 " appearance_json TEXT NOT NULL DEFAULT '{}',"
-                 " PRIMARY KEY (owner_id, slot_index)"
-                 ") STRICT");
-            exec("CREATE TABLE IF NOT EXISTS quests ("
-                 " owner_id INTEGER NOT NULL,"
-                 " quest_id TEXT NOT NULL,"
-                 " step INTEGER NOT NULL DEFAULT 0,"
-                 " count INTEGER NOT NULL DEFAULT 0,"
-                 " done INTEGER NOT NULL DEFAULT 0,"
-                 " PRIMARY KEY (owner_id, quest_id)"
-                 ") STRICT");
-            // Version 5: loadouts' Active Specialization and Companion Slots, and professions.
-            exec("ALTER TABLE loadouts ADD COLUMN specializations TEXT NOT NULL DEFAULT ''");
-            exec("ALTER TABLE loadouts ADD COLUMN companion TEXT NOT NULL DEFAULT ''");
-            exec("CREATE TABLE IF NOT EXISTS professions ("
-                 " owner_id INTEGER NOT NULL,"
-                 " profession_id TEXT NOT NULL,"
-                 " xp INTEGER NOT NULL DEFAULT 0,"
-                 " PRIMARY KEY (owner_id, profession_id)"
-                 ") STRICT");
-            exec("CREATE TABLE IF NOT EXISTS material_vault ("
-                 " owner_id INTEGER NOT NULL,"
-                 " resource_id TEXT NOT NULL,"
-                 " amount INTEGER NOT NULL DEFAULT 0,"
-                 " PRIMARY KEY (owner_id, resource_id)"
-                 ") STRICT");
-            exec("CREATE TABLE IF NOT EXISTS recipe_presets ("
-                 " owner_id INTEGER NOT NULL,"
-                 " name TEXT NOT NULL,"
-                 " schematic_id TEXT NOT NULL,"
-                 " resource_ids TEXT NOT NULL DEFAULT '',"
-                 " enhancement_defs TEXT NOT NULL DEFAULT '',"
-                 " exp_quality_pct INTEGER NOT NULL DEFAULT 50,"
-                 " PRIMARY KEY (owner_id, name)"
-                 ") STRICT");
-            exec(("PRAGMA user_version = " + std::to_string(schema_version)).c_str());
-            exec("COMMIT");
-        } else if (version == 3) {
-            exec("BEGIN");
-            exec("CREATE TABLE IF NOT EXISTS quests ("
-                 " owner_id INTEGER NOT NULL,"
-                 " quest_id TEXT NOT NULL,"
-                 " step INTEGER NOT NULL DEFAULT 0,"
-                 " count INTEGER NOT NULL DEFAULT 0,"
-                 " done INTEGER NOT NULL DEFAULT 0,"
-                 " PRIMARY KEY (owner_id, quest_id)"
-                 ") STRICT");
-            // Version 5: loadouts' Active Specialization and Companion Slots, and professions.
-            exec("ALTER TABLE loadouts ADD COLUMN specializations TEXT NOT NULL DEFAULT ''");
-            exec("ALTER TABLE loadouts ADD COLUMN companion TEXT NOT NULL DEFAULT ''");
-            exec("CREATE TABLE IF NOT EXISTS professions ("
-                 " owner_id INTEGER NOT NULL,"
-                 " profession_id TEXT NOT NULL,"
-                 " xp INTEGER NOT NULL DEFAULT 0,"
-                 " PRIMARY KEY (owner_id, profession_id)"
-                 ") STRICT");
-            exec("CREATE TABLE IF NOT EXISTS material_vault ("
-                 " owner_id INTEGER NOT NULL,"
-                 " resource_id TEXT NOT NULL,"
-                 " amount INTEGER NOT NULL DEFAULT 0,"
-                 " PRIMARY KEY (owner_id, resource_id)"
-                 ") STRICT");
-            exec("CREATE TABLE IF NOT EXISTS recipe_presets ("
-                 " owner_id INTEGER NOT NULL,"
-                 " name TEXT NOT NULL,"
-                 " schematic_id TEXT NOT NULL,"
-                 " resource_ids TEXT NOT NULL DEFAULT '',"
-                 " enhancement_defs TEXT NOT NULL DEFAULT '',"
-                 " exp_quality_pct INTEGER NOT NULL DEFAULT 50,"
-                 " PRIMARY KEY (owner_id, name)"
-                 ") STRICT");
-            exec(("PRAGMA user_version = " + std::to_string(schema_version)).c_str());
-            exec("COMMIT");
-        } else if (version == 4) {
-            exec("BEGIN");
-            // Version 5: loadouts' Active Specialization and Companion Slots, and professions.
-            exec("ALTER TABLE loadouts ADD COLUMN specializations TEXT NOT NULL DEFAULT ''");
-            exec("ALTER TABLE loadouts ADD COLUMN companion TEXT NOT NULL DEFAULT ''");
-            exec("CREATE TABLE IF NOT EXISTS professions ("
-                 " owner_id INTEGER NOT NULL,"
-                 " profession_id TEXT NOT NULL,"
-                 " xp INTEGER NOT NULL DEFAULT 0,"
-                 " PRIMARY KEY (owner_id, profession_id)"
-                 ") STRICT");
-            exec("CREATE TABLE IF NOT EXISTS material_vault ("
-                 " owner_id INTEGER NOT NULL,"
-                 " resource_id TEXT NOT NULL,"
-                 " amount INTEGER NOT NULL DEFAULT 0,"
-                 " PRIMARY KEY (owner_id, resource_id)"
-                 ") STRICT");
-            exec("CREATE TABLE IF NOT EXISTS recipe_presets ("
-                 " owner_id INTEGER NOT NULL,"
-                 " name TEXT NOT NULL,"
-                 " schematic_id TEXT NOT NULL,"
-                 " resource_ids TEXT NOT NULL DEFAULT '',"
-                 " enhancement_defs TEXT NOT NULL DEFAULT '',"
-                 " exp_quality_pct INTEGER NOT NULL DEFAULT 50,"
-                 " PRIMARY KEY (owner_id, name)"
-                 ") STRICT");
-            exec(("PRAGMA user_version = " + std::to_string(schema_version)).c_str());
-            exec("COMMIT");
-        } else if (version == 5) {
-            exec("BEGIN");
-            exec("CREATE TABLE IF NOT EXISTS material_vault ("
-                 " owner_id INTEGER NOT NULL,"
-                 " resource_id TEXT NOT NULL,"
-                 " amount INTEGER NOT NULL DEFAULT 0,"
-                 " PRIMARY KEY (owner_id, resource_id)"
-                 ") STRICT");
-            exec("CREATE TABLE IF NOT EXISTS recipe_presets ("
-                 " owner_id INTEGER NOT NULL,"
-                 " name TEXT NOT NULL,"
-                 " schematic_id TEXT NOT NULL,"
-                 " resource_ids TEXT NOT NULL DEFAULT '',"
-                 " enhancement_defs TEXT NOT NULL DEFAULT '',"
-                 " exp_quality_pct INTEGER NOT NULL DEFAULT 50,"
-                 " PRIMARY KEY (owner_id, name)"
+                 " faction_id TEXT NOT NULL,"
+                 " reputation INTEGER NOT NULL DEFAULT 0,"
+                 " PRIMARY KEY (owner_id, faction_id)"
                  ") STRICT");
             exec(("PRAGMA user_version = " + std::to_string(schema_version)).c_str());
             exec("COMMIT");
@@ -327,9 +268,10 @@ SqliteCharacterStore::SqliteCharacterStore(const std::filesystem::path& path) {
                                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
         update_ = prepare(db_, "UPDATE characters SET x = ?, y = ?, z = ?, yaw = ?, location = ?, appearance = ? WHERE id = ?");
         delete_ = prepare(db_, "DELETE FROM characters WHERE id = ?");
-        list_items_ = prepare(db_, "SELECT id, owner_id, def_id, quality, custom_name, color_json FROM items WHERE owner_id = ? ORDER BY id ASC");
-        grant_item_ = prepare(db_, "INSERT INTO items (owner_id, def_id, quality, custom_name, color_json) VALUES (?, ?, ?, ?, ?)");
+        list_items_ = prepare(db_, "SELECT id, owner_id, def_id, quality, quantity, custom_name, color_json FROM items WHERE owner_id = ? ORDER BY id ASC");
+        grant_item_ = prepare(db_, "INSERT INTO items (owner_id, def_id, quality, quantity, custom_name, color_json) VALUES (?, ?, ?, ?, ?, ?)");
         remove_item_ = prepare(db_, "DELETE FROM items WHERE id = ?");
+        update_item_quantity_ = prepare(db_, "UPDATE items SET quantity = ? WHERE id = ?");
         remove_items_by_owner_ = prepare(db_, "DELETE FROM items WHERE owner_id = ?");
         list_loadouts_ = prepare(db_, "SELECT slot_index, name, primary_id, sidearm_id, secondary_id, gear_json, appearance_json, "
                                       "specializations, companion FROM loadouts WHERE owner_id = ? ORDER BY slot_index ASC");
@@ -359,6 +301,9 @@ SqliteCharacterStore::SqliteCharacterStore(const std::filesystem::path& path) {
                                     "enhancement_defs = excluded.enhancement_defs, exp_quality_pct = excluded.exp_quality_pct");
         delete_preset_ = prepare(db_, "DELETE FROM recipe_presets WHERE owner_id = ? AND name = ?");
         remove_presets_by_owner_ = prepare(db_, "DELETE FROM recipe_presets WHERE owner_id = ?");
+        list_reputation_ = prepare(db_, "SELECT faction_id, reputation FROM faction_reputation WHERE owner_id = ?");
+        insert_reputation_ = prepare(db_, "INSERT INTO faction_reputation (owner_id, faction_id, reputation) VALUES (?, ?, ?)");
+        remove_reputation_by_owner_ = prepare(db_, "DELETE FROM faction_reputation WHERE owner_id = ?");
     } catch (...) {
         close();
         throw;
@@ -372,19 +317,21 @@ SqliteCharacterStore::~SqliteCharacterStore() {
 void SqliteCharacterStore::close() {
     for (sqlite3_stmt* statement :
          {find_, find_by_name_, list_all_, insert_, update_, delete_, list_items_, grant_item_, remove_item_,
-          remove_items_by_owner_, list_loadouts_, save_loadout_, remove_loadouts_by_owner_, update_economy_,
-          list_quests_, insert_quest_, remove_quests_by_owner_, list_professions_, insert_profession_,
+          update_item_quantity_, remove_items_by_owner_, list_loadouts_, save_loadout_, remove_loadouts_by_owner_,
+          update_economy_, list_quests_, insert_quest_, remove_quests_by_owner_, list_professions_, insert_profession_,
           remove_professions_by_owner_, list_materials_, insert_material_, remove_materials_by_owner_,
-          list_presets_, save_preset_, delete_preset_, remove_presets_by_owner_}) {
+          list_presets_, save_preset_, delete_preset_, remove_presets_by_owner_, list_reputation_, insert_reputation_,
+          remove_reputation_by_owner_}) {
         sqlite3_finalize(statement);
     }
     find_ = find_by_name_ = list_all_ = insert_ = update_ = delete_ = nullptr;
-    list_items_ = grant_item_ = remove_item_ = remove_items_by_owner_ = nullptr;
+    list_items_ = grant_item_ = remove_item_ = update_item_quantity_ = remove_items_by_owner_ = nullptr;
     list_loadouts_ = save_loadout_ = remove_loadouts_by_owner_ = update_economy_ = nullptr;
     list_quests_ = insert_quest_ = remove_quests_by_owner_ = nullptr;
     list_professions_ = insert_profession_ = remove_professions_by_owner_ = nullptr;
     list_materials_ = insert_material_ = remove_materials_by_owner_ = nullptr;
     list_presets_ = save_preset_ = delete_preset_ = remove_presets_by_owner_ = nullptr;
+    list_reputation_ = insert_reputation_ = remove_reputation_by_owner_ = nullptr;
     sqlite3_close(db_);
     db_ = nullptr;
 }
@@ -585,6 +532,13 @@ bool SqliteCharacterStore::remove(PersistentId id) {
             fail(db_, "delete character presets");
         }
     }
+    {
+        Reset r7{remove_reputation_by_owner_};
+        sqlite3_bind_int64(remove_reputation_by_owner_, 1, sqlite3_int64(id));
+        if (sqlite3_step(remove_reputation_by_owner_) != SQLITE_DONE) {
+            fail(db_, "delete character reputation");
+        }
+    }
     Reset reset{delete_};
     sqlite3_bind_int64(delete_, 1, sqlite3_int64(id));
     if (sqlite3_step(delete_) != SQLITE_DONE) {
@@ -610,8 +564,9 @@ std::vector<ItemInstance> SqliteCharacterStore::list_items(PersistentId owner_id
         inst.owner_id = PersistentId(sqlite3_column_int64(list_items_, 1));
         inst.def_id = col_str(2);
         inst.quality = sqlite3_column_double(list_items_, 3);
-        inst.custom_name = col_str(4);
-        inst.color_json = col_str(5);
+        inst.quantity = std::max(1, sqlite3_column_int(list_items_, 4));
+        inst.custom_name = col_str(5);
+        inst.color_json = col_str(6);
         out.push_back(std::move(inst));
     }
     return out;
@@ -620,12 +575,14 @@ std::vector<ItemInstance> SqliteCharacterStore::list_items(PersistentId owner_id
 ItemInstance SqliteCharacterStore::grant_item(const ItemInstance& item) {
     ItemInstance copy = item;
     if (copy.color_json.empty()) copy.color_json = "{}";
+    if (copy.quantity <= 0) copy.quantity = 1;
     Reset reset{grant_item_};
     sqlite3_bind_int64(grant_item_, 1, sqlite3_int64(copy.owner_id));
     sqlite3_bind_text(grant_item_, 2, copy.def_id.c_str(), int(copy.def_id.size()), SQLITE_TRANSIENT);
     sqlite3_bind_double(grant_item_, 3, copy.quality);
-    sqlite3_bind_text(grant_item_, 4, copy.custom_name.c_str(), int(copy.custom_name.size()), SQLITE_TRANSIENT);
-    sqlite3_bind_text(grant_item_, 5, copy.color_json.c_str(), int(copy.color_json.size()), SQLITE_TRANSIENT);
+    sqlite3_bind_int(grant_item_, 4, copy.quantity);
+    sqlite3_bind_text(grant_item_, 5, copy.custom_name.c_str(), int(copy.custom_name.size()), SQLITE_TRANSIENT);
+    sqlite3_bind_text(grant_item_, 6, copy.color_json.c_str(), int(copy.color_json.size()), SQLITE_TRANSIENT);
     if (sqlite3_step(grant_item_) != SQLITE_DONE) {
         fail(db_, "grant_item " + copy.def_id);
     }
@@ -638,6 +595,16 @@ bool SqliteCharacterStore::remove_item(PersistentId item_id) {
     sqlite3_bind_int64(remove_item_, 1, sqlite3_int64(item_id));
     if (sqlite3_step(remove_item_) != SQLITE_DONE) {
         fail(db_, "remove_item");
+    }
+    return sqlite3_changes(db_) > 0;
+}
+
+bool SqliteCharacterStore::update_item_quantity(PersistentId item_id, int quantity) {
+    Reset reset{update_item_quantity_};
+    sqlite3_bind_int(update_item_quantity_, 1, quantity);
+    sqlite3_bind_int64(update_item_quantity_, 2, sqlite3_int64(item_id));
+    if (sqlite3_step(update_item_quantity_) != SQLITE_DONE) {
+        fail(db_, "update_item_quantity");
     }
     return sqlite3_changes(db_) > 0;
 }
@@ -901,6 +868,44 @@ bool SqliteCharacterStore::delete_preset(PersistentId owner_id, const std::strin
     sqlite3_bind_text(delete_preset_, 2, name.c_str(), int(name.size()), SQLITE_TRANSIENT);
     if (sqlite3_step(delete_preset_) != SQLITE_DONE) fail(db_, "delete_preset");
     return sqlite3_changes(db_) > 0;
+}
+
+std::map<std::string, int64_t> SqliteCharacterStore::list_reputation(PersistentId owner_id) {
+    Reset reset{list_reputation_};
+    sqlite3_bind_int64(list_reputation_, 1, sqlite3_int64(owner_id));
+    std::map<std::string, int64_t> out;
+    for (;;) {
+        const int step = sqlite3_step(list_reputation_);
+        if (step == SQLITE_DONE) break;
+        if (step != SQLITE_ROW) fail(db_, "list_reputation");
+        const auto* faction = reinterpret_cast<const char*>(sqlite3_column_text(list_reputation_, 0));
+        if (faction && *faction) {
+            out[faction] = sqlite3_column_int64(list_reputation_, 1);
+        }
+    }
+    return out;
+}
+
+void SqliteCharacterStore::save_reputation(PersistentId owner_id, const std::map<std::string, int64_t>& reputation) {
+    exec("BEGIN");
+    try {
+        {
+            Reset reset{remove_reputation_by_owner_};
+            sqlite3_bind_int64(remove_reputation_by_owner_, 1, sqlite3_int64(owner_id));
+            if (sqlite3_step(remove_reputation_by_owner_) != SQLITE_DONE) fail(db_, "save_reputation");
+        }
+        for (const auto& [faction, rep] : reputation) {
+            Reset reset{insert_reputation_};
+            sqlite3_bind_int64(insert_reputation_, 1, sqlite3_int64(owner_id));
+            sqlite3_bind_text(insert_reputation_, 2, faction.c_str(), int(faction.size()), SQLITE_TRANSIENT);
+            sqlite3_bind_int64(insert_reputation_, 3, rep);
+            if (sqlite3_step(insert_reputation_) != SQLITE_DONE) fail(db_, "save_reputation");
+        }
+        exec("COMMIT");
+    } catch (...) {
+        sqlite3_exec(db_, "ROLLBACK", nullptr, nullptr, nullptr);
+        throw;
+    }
 }
 
 } // namespace swm::core

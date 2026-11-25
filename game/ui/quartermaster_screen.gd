@@ -9,17 +9,27 @@ signal item_bought(def_id: String, use_fp: bool)
 signal closed
 
 const CATEGORIES := [
-	["all", "All"],
-	["weapon", "Weapons"],
-	["armor", "Armor"],
-	["deflector_shield", "Shields"],
-	["clothing", "Clothing"],
+	["all", "All Cosmetics"],
+	["full_body", "Full-Body"],
+	["helmet", "Helmets"],
+	["body", "Uniforms & Armor Looks"],
+]
+
+const REP_THRESHOLDS := [
+	["Hated", -42000],
+	["Unfriendly", -3000],
+	["Neutral", 0],
+	["Friendly", 3000],
+	["Honored", 9000],
+	["Revered", 21000],
+	["Exalted", 42000],
 ]
 
 var title := "Quartermaster"
 var faction := "neutral"
 var faction_points := 0
 var credits := 0
+var reputation: Dictionary = {}    # faction_id -> int rep
 var catalog: Array = []          # from SwmCharacterStore.get_catalog()
 var inventory: Array = []        # owned items
 var active_loadout: Dictionary = {}
@@ -51,21 +61,41 @@ func _gui_input(event: InputEvent) -> void:
 	super._gui_input(event)
 
 
+func _rep_info(fac: String) -> Dictionary:
+	var val := int(reputation.get(fac.to_lower(), 0))
+	var idx := 0
+	for i in REP_THRESHOLDS.size():
+		if val >= int(REP_THRESHOLDS[i][1]):
+			idx = i
+	var tier_name := str(REP_THRESHOLDS[idx][0])
+	var floor_v := int(REP_THRESHOLDS[idx][1])
+	var next_v := int(REP_THRESHOLDS[idx + 1][1]) if idx + 1 < REP_THRESHOLDS.size() else 42000
+	var next_name := str(REP_THRESHOLDS[idx + 1][0]) if idx + 1 < REP_THRESHOLDS.size() else "Max"
+	var frac := 1.0 if idx + 1 >= REP_THRESHOLDS.size() else clampf(float(val - floor_v) / maxf(1.0, float(next_v - floor_v)), 0.0, 1.0)
+	return {"val": val, "tier": tier_name, "next_v": next_v, "next_name": next_name, "frac": frac}
+
+
 func _paint() -> void:
 	draw_rect(Rect2(Vector2.ZERO, size), Color(0, 0, 0, 0.55))
-	var box := centered(740, 490, Vector2(0, 10))
+	var box := centered(780, 515, Vector2(0, 10))
 	text("gamefont_large", title, Vector2(size.x * 0.5, box.position.y - 42 * u), "Center", ACCENT)
 	frame(box)
 
 	var x := box.position.x + 18 * u
 	var y := box.position.y + 14 * u
-	text("gamefont_medium", "Faction: %s" % faction.capitalize(), Vector2(x, y), "Left", TEXT)
-	text("gamefont_medium", "%d FP   |   %d Credits" % [faction_points, credits], Vector2(box.end.x - 18 * u, y), "Right", ACCENT)
-
-	y += 32 * u
+	var rinfo := _rep_info(faction)
+	text("gamefont_medium", "Faction: %s   [%s: %d]" % [faction.capitalize(), rinfo["tier"], int(rinfo["val"])],
+			Vector2(x, y), "Left", TEXT)
+	text("gamefont_medium", "%d FP   |   Cosmetic Requisitions" % faction_points,
+			Vector2(box.end.x - 18 * u, y), "Right", ACCENT)
+	y += 24 * u
+	var rep_bar := Rect2(x, y, box.size.x - 36 * u, 6 * u)
+	draw_rect(rep_bar, Color(0.08, 0.1, 0.14, 0.9))
+	draw_rect(Rect2(rep_bar.position, Vector2(rep_bar.size.x * float(rinfo["frac"]), rep_bar.size.y)), Color(0.35, 0.78, 0.98, 0.9))
+	y += 14 * u
 	var cx := x
 	for cat: Array in CATEGORIES:
-		var bw := 112.0 * u
+		var bw := 142.0 * u if cat[0] == "body" else 112.0 * u
 		button(Rect2(cx, y, bw, 28 * u), cat[1], "cat:" + cat[0], _category == cat[0])
 		cx += bw + 8 * u
 	button(Rect2(box.end.x - 110 * u, y, 92 * u, 28 * u), "Close", "close", false, true)
@@ -79,12 +109,19 @@ func _paint() -> void:
 
 	for def: Dictionary in catalog:
 		var kind := str(def.get("kind", ""))
-		if kind == "junk" or kind == "supply":
+		if kind != "clothing":
+			continue
+		if int(def.get("cost_fp", 0)) <= 0:
 			continue
 		var df := str(def.get("faction", "neutral"))
 		if df != "neutral" and faction != "neutral" and df != faction:
 			continue
-		if _category != "all" and kind != _category:
+		var slot := str(def.get("slot", ""))
+		if _category == "full_body" and slot != "full_body":
+			continue
+		elif _category == "helmet" and slot != "helmet":
+			continue
+		elif _category == "body" and slot in ["full_body", "helmet"]:
 			continue
 		_filtered.append(def)
 
@@ -93,6 +130,7 @@ func _paint() -> void:
 
 	var list_w := box.size.x - 36 * u
 	var row_h := 36.0 * u
+	var cur_rep := int(rinfo["val"])
 	for row_i in _rows_visible:
 		var idx := _scroll + row_i
 		if idx >= _filtered.size():
@@ -110,13 +148,18 @@ func _paint() -> void:
 		if owned_n > 0:
 			name_str += "  [Owned x%d]" % owned_n
 		text("gamefont_small", name_str, Vector2(x + 12 * u, ry + 8 * u), "Left", ACCENT if owned_n > 0 else TEXT)
-		text("gamefont_tiny", "%s (%s)" % [str(def.get("kind", "")).capitalize(), str(def.get("slot", ""))],
-				Vector2(x + 370 * u, ry + 11 * u), "Left", DIM)
+		var req_rank := str(def.get("required_rank", "Neutral"))
+		var req_rep := int(def.get("required_rep", 0))
+		var rank_ok := cur_rep >= req_rep
+		var slot_label := str(def.get("slot", "")).replace("_", " ").capitalize()
+		text("gamefont_tiny", "%s  |  Req: %s" % [slot_label, req_rank],
+				Vector2(x + 370 * u, ry + 11 * u), "Left", DIM if rank_ok else Color(1.0, 0.45, 0.35))
 
 		var cost_fp := int(def.get("cost_fp", 0))
-		var can_fp := faction_points >= cost_fp
-		button(Rect2(box.end.x - 164 * u, ry + 4 * u, 136 * u, 28 * u),
-				"Buy %d FP" % cost_fp, "buy_fp:" + did, false, false, can_fp)
+		var can_fp := rank_ok and faction_points >= cost_fp
+		var btn_label := ("Buy %d FP" % cost_fp) if rank_ok else ("Need %s" % req_rank)
+		button(Rect2(box.end.x - 168 * u, ry + 4 * u, 140 * u, 28 * u),
+				btn_label, "buy_fp:" + did, false, false, can_fp)
 
 	if _filtered.size() > _rows_visible:
 		text("gamefont_tiny", "Scroll mouse wheel (%d-%d of %d)" % [_scroll + 1, mini(_scroll + _rows_visible, _filtered.size()), _filtered.size()],

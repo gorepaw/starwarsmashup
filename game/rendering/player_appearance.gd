@@ -62,15 +62,23 @@ static func _load_gltf_colors(gltf_path: String) -> Dictionary:
 	return _colors_cache[os_path]
 
 
+static func override_path_from_worn(worn_csv: String) -> String:
+	if worn_csv.begins_with("override:"):
+		return worn_csv.substr(9).strip_edges()
+	return ""
+
+
 static func load_character(species_id: String, gender: String, appearance_json: String,
-		fallback_gltf: String = "") -> Dictionary:
+		fallback_gltf: String = "", override_rel: String = "") -> Dictionary:
 	var sp := species_id.to_lower() if species_id != "" else "human"
 	var gen := "female" if gender.to_lower() == "female" else "male"
 	var sg := "%s_%s" % [sp, gen]
+	var override_gltf := ("res://imported_assets/" + override_rel) if override_rel != "" else ""
+	var has_override := override_gltf != "" and FileAccess.file_exists(override_gltf)
 	var species_gltf := SPECIES_DIR.path_join(sg).path_join(sg + ".gltf")
-	var use_species := FileAccess.file_exists(species_gltf) and (
+	var use_species := not has_override and FileAccess.file_exists(species_gltf) and (
 			not appearance_json.is_empty() or sp != "human" or fallback_gltf == "")
-	var gltf_path := species_gltf if use_species else (fallback_gltf if fallback_gltf != "" else DEFAULT_FALLBACK)
+	var gltf_path := override_gltf if has_override else (species_gltf if use_species else (fallback_gltf if fallback_gltf != "" else DEFAULT_FALLBACK))
 	if not FileAccess.file_exists(gltf_path):
 		gltf_path = DEFAULT_FALLBACK
 
@@ -284,7 +292,7 @@ static func set_worn_models(character: Dictionary, worn_csv: String) -> void:
 	character["worn_holder"] = null
 	character["helmet_nodes"] = []
 
-	var paths := worn_csv.split(",", false)
+	var paths: PackedStringArray = PackedStringArray() if worn_csv.begins_with("override:") else worn_csv.split(",", false)
 	var sp_id := str(character.get("species", ""))
 	_set_wookiee_fur_hidden(model as Node3D, sp_id == "wookiee" and not paths.is_empty())
 	if paths.is_empty():

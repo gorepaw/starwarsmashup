@@ -66,7 +66,7 @@ std::atomic<bool> stop_requested = false;
 int usage() {
     std::cerr << "usage: swm_server [--bake <prefix>] [--db <file>] [--port 7777] [--spawn <swg_x> <swg_z>] "
                  "[--seconds <n>] [--building <file.collision> <swg_x> <swg_y> <swg_z> <yaw_degrees>]... "
-                 "[--loadout <file.ini>] [--battlefield <file.ini>] [--bots <n>] [--difficulty easy|normal|hard] "
+                 "[--loadout <file.ini>] [--battlefield <file.ini>] [--bots <n>] "
                  "[--hub <file.ini>]\n";
     return 2;
 }
@@ -86,7 +86,6 @@ int main(int argc, char** argv) {
     std::string battlefield;
     std::string hub_file;
     int bot_count = 0;
-    std::string difficulty = "normal";
     int port = 7777;
     bool has_spawn = false;
     double spawn_x = 0, spawn_z = 0, run_for = 0;
@@ -111,8 +110,6 @@ int main(int argc, char** argv) {
             hub_file = argv[++i];
         } else if (arg == "--bots" && i + 1 < argc) {
             bot_count = std::atoi(argv[++i]);
-        } else if (arg == "--difficulty" && i + 1 < argc) {
-            difficulty = argv[++i];
         } else if (arg == "--db" && i + 1 < argc) {
             db = argv[++i];
         } else if (arg == "--port" && i + 1 < argc) {
@@ -165,7 +162,7 @@ int main(int argc, char** argv) {
             }
         }
         std::optional<swm::core::HubConfig> hub_config;
-        const swm::core::BotSkill skill = swm::core::BotSkill::preset(difficulty);
+        const swm::core::BotSkill skill = swm::core::BotSkill::preset("hard");
         if (!hub_file.empty()) {
             hub_config = swm::core::load_hub(hub_file);
             hub_config->bot_skill = skill;

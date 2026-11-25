@@ -35,6 +35,7 @@ public:
     godot::Error load_catalog(const godot::String& catalog_ini, const godot::String& bf2_items_dir);
     godot::Array get_catalog() const;
     godot::Array list_items(int64_t char_id);
+    godot::Dictionary get_reputation(int64_t char_id);
     godot::Dictionary grant_item(int64_t char_id, const godot::String& def_id, double quality);
     bool remove_item(int64_t item_id);
     godot::Array list_loadouts(int64_t char_id);

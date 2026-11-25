@@ -68,6 +68,7 @@ public:
     virtual std::vector<ItemInstance> list_items(PersistentId owner_id) = 0;
     virtual ItemInstance grant_item(const ItemInstance& item) = 0;
     virtual bool remove_item(PersistentId item_id) = 0;
+    virtual bool update_item_quantity(PersistentId item_id, int quantity) = 0;
     virtual std::vector<CharacterLoadout> list_loadouts(PersistentId owner_id) = 0;
     virtual void save_loadout(PersistentId owner_id, const CharacterLoadout& loadout) = 0;
     virtual void update_economy(PersistentId id, int64_t credits, int64_t faction_points, int64_t experience,
@@ -86,6 +87,9 @@ public:
     virtual std::vector<RecipePreset> list_presets(PersistentId owner_id) = 0;
     virtual void save_preset(PersistentId owner_id, const RecipePreset& preset) = 0;
     virtual bool delete_preset(PersistentId owner_id, const std::string& name) = 0;
+    // Per-character faction reputation standing across all 4 playable factions.
+    virtual std::map<std::string, int64_t> list_reputation(PersistentId owner_id) = 0;
+    virtual void save_reputation(PersistentId owner_id, const std::map<std::string, int64_t>& reputation) = 0;
 };
 
 // Keeps everything in memory, for tests.
@@ -101,6 +105,7 @@ public:
     std::vector<ItemInstance> list_items(PersistentId owner_id) override;
     ItemInstance grant_item(const ItemInstance& item) override;
     bool remove_item(PersistentId item_id) override;
+    bool update_item_quantity(PersistentId item_id, int quantity) override;
     std::vector<CharacterLoadout> list_loadouts(PersistentId owner_id) override;
     void save_loadout(PersistentId owner_id, const CharacterLoadout& loadout) override;
     void update_economy(PersistentId id, int64_t credits, int64_t faction_points, int64_t experience,
@@ -114,6 +119,8 @@ public:
     std::vector<RecipePreset> list_presets(PersistentId owner_id) override;
     void save_preset(PersistentId owner_id, const RecipePreset& preset) override;
     bool delete_preset(PersistentId owner_id, const std::string& name) override;
+    std::map<std::string, int64_t> list_reputation(PersistentId owner_id) override;
+    void save_reputation(PersistentId owner_id, const std::map<std::string, int64_t>& reputation) override;
     std::string get_extra(PersistentId owner_id, const std::string& key) override;
     void set_extra(PersistentId owner_id, const std::string& key, const std::string& value) override;
 
@@ -128,6 +135,7 @@ private:
     std::map<PersistentId, std::vector<ProfessionProgress>> professions_;
     std::map<PersistentId, std::vector<MaterialStack>> materials_;
     std::map<PersistentId, std::vector<RecipePreset>> presets_;
+    std::map<PersistentId, std::map<std::string, int64_t>> reputation_;
 };
 
 // Grants the standard-issue starter kit and Loadout 0 if the character has no items yet.

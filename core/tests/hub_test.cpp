@@ -59,7 +59,7 @@ void test_hub_file() {
     CHECK(hub.recruiters[0].position == Vec3(-3460, 0, -4835));
     // Without Sides, the first battlefield's teams; a battlefield without a side's team is refused.
     std::ofstream(dir / "plain.ini") << "[hub]\nBattlefield = fields/swamp.ini\n[recruiter]\nPosition = 0 0\n";
-    CHECK(load_hub(dir / "plain.ini").sides == (std::array<std::string, 2>{"Rebellion", "Empire"}));
+    CHECK(load_hub(dir / "plain.ini").sides == (std::vector<std::string>{"Rebellion", "Empire"}));
     std::ofstream(dir / "mixed.ini") << "[hub]\nBattlefield = fields/swamp.ini\nBattlefield = fields/clones.ini\n"
                                         "[recruiter]\nPosition = 0 0\n";
     bool refused = false;
@@ -124,7 +124,7 @@ void test_queue_battle_and_back() {
     config.name = "Test Hub";
     config.recruiters = {{"Terminal", {0, 0, 20}, 4}};
     config.sides = {"Empire", "Rebellion"};
-    config.battlefields = {{"test_field", small_field(), teams_for_sides(small_field(), config.sides)}};
+    config.battlefields = {{"test_field", small_field(), teams_for_sides(small_field(), std::array<std::string, 2>{"Empire", "Rebellion"})}};
     config.team_size = 2;
     config.queue_time = 2;
     config.return_delay = 2;
@@ -433,11 +433,13 @@ void test_stage4_hub_loop() {
             << "[item]\nId = wp_grenade_c22\nName = C-22\nKind = weapon\nArchetype = grenade\nSlot = secondary\n"
             << "Faction = neutral\nCostFactionPoints = 0\nCostCredits = 60\nModel = weapons/wp_grenade_c22/wp_grenade_c22.gltf\n"
             << "[item]\nId = wp_rifle_t21\nName = T-21\nKind = weapon\nArchetype = rifle_auto\nSlot = primary\n"
-            << "Faction = empire\nCostFactionPoints = 50\nCostCredits = 200\nDamageMult = 1.25\n"
+            << "Faction = empire\nCostFactionPoints = 0\nCostCredits = 200\nDamageMult = 1.25\n"
             << "Model = weapons/wp_rifle_t21/wp_rifle_t21.gltf\n"
             << "[item]\nId = psg_mark1\nName = PSG Mk I\nKind = deflector_shield\nSlot = deflector_shield\n"
             << "Faction = neutral\nCostFactionPoints = 0\nCostCredits = 100\nModifier = mitigation_laser + 0.08\n"
             << "[item]\nId = cloth_jacket_rebel\nName = Jacket\nKind = clothing\nSlot = jacket\nFaction = neutral\n"
+            << "[item]\nId = cloth_imp_uniform\nName = Imperial Officer Jacket\nKind = clothing\nSlot = jacket\n"
+            << "Faction = empire\nCostFactionPoints = 50\nCostCredits = 0\n"
             << "[item]\nId = cloth_pants_cargo\nName = Pants\nKind = clothing\nSlot = pants\nFaction = neutral\n"
             << "[item]\nId = cloth_boots_leather\nName = Boots\nKind = clothing\nSlot = boots_cosmetic\nFaction = neutral\n";
     }
@@ -472,6 +474,7 @@ void test_stage4_hub_loop() {
     hub_cfg.battlefields = {{"dunes", field, {0, 1}}};
     hub_cfg.recruiters = {{"Terminal", {0, 0, 0}, 10}};
     hub_cfg.quartermasters = {{"Imperial QM", "empire", {0, 0, 0}, 10}};
+    hub_cfg.vendors = {{"Mos Eisley Gear", "gear_vendor", {0, 0, 0}, 10, ""}};
     hub_cfg.range_targets = {{"Range Dummy", {0, 0, -15}, {0, 0, -15}, 0, 100, 0.0, 0.5}};
     hub_cfg.team_size = 1;
     hub_cfg.queue_time = 0.05;
@@ -524,12 +527,16 @@ void test_stage4_hub_loop() {
     session.client().set_input({});
     CHECK(session.client().targets()[0].health < start_hp || !session.client().targets()[0].alive);
 
-    // Buy an item from the quartermaster (costs 50 FP).
+    // Quartermaster sells FP cosmetic rewards only; Gear Vendor sells weapons for Credits.
     const size_t before_buy = session.client().items().size();
-    session.client().buy_item("wp_rifle_t21", true);
+    session.client().buy_item("cloth_imp_uniform", true);
     step_for(0.35);
     CHECK(session.client().items().size() == before_buy + 1);
     CHECK(session.client().player_status().faction_points == 50);
+    session.client().buy_item("wp_rifle_t21", false);
+    step_for(0.35);
+    CHECK(session.client().items().size() == before_buy + 2);
+    CHECK(session.client().player_status().credits == 300);
 
     // Save Loadout 1 with the high-quality T-21 and switch to it in the hub (takes 3s).
     CharacterLoadout lo1;
@@ -544,8 +551,8 @@ void test_stage4_hub_loop() {
     CHECK(session.client().player_status().active_loadout == 1);
     CHECK(session.client().loadout().name == "Heavy");
 
-    // Queue in Gear mode -> match receives custom loadouts with +8% quality!
-    session.client().queue(0, QueueMode::gear);
+    // Queue -> match always runs under Gear-Matters rules with +8% quality!
+    session.client().queue(0);
     bool checked_gear = false;
     for (double limit = now + 4.0; now < limit; now += 1.0 / 60) {
         session.update(now);
@@ -562,6 +569,38 @@ void test_stage4_hub_loop() {
     CHECK(checked_gear);
 }
 
+void test_stock_bot_roster() {
+    auto root = std::filesystem::current_path();
+    while (!root.empty() && !std::filesystem::exists(root / "game" / "items" / "swg_catalog.ini")) {
+        auto parent = root.parent_path();
+        if (parent == root) break;
+        root = parent;
+    }
+    ItemCatalog catalog;
+    catalog.load(root / "game" / "items" / "swg_catalog.ini");
+    const auto roster = build_stock_bot_roster(&catalog, 7);
+    CHECK(roster.size() == 96);
+    for (std::string_view faction : playable_factions) {
+        const auto pool = roster_for_faction(roster, faction);
+        CHECK(pool.size() == 24);
+        bool saw_non_empty_worn = true;
+        for (const BotProfileEntry* b : pool) {
+            CHECK(b->loadouts.size() == size_t(max_character_loadouts));
+            CHECK(b->worn_per_loadout.size() == size_t(max_character_loadouts));
+            for (size_t i = 0; i < b->worn_per_loadout.size(); ++i) {
+                saw_non_empty_worn &= !b->worn_per_loadout[i].empty();
+                CHECK(b->loadouts[i].unified_standard_ammo < 0);
+                CHECK(b->loadouts[i].unified_heavy_ammo < 0);
+            }
+        }
+        CHECK(saw_non_empty_worn);
+    }
+    const auto rep = roster_for_faction(roster, "republic");
+    CHECK(!rep.empty() && rep[0]->worn_per_loadout[0].find("rep_inf_") != std::string::npos);
+    const auto cis = roster_for_faction(roster, "separatists");
+    CHECK(!cis.empty() && cis[0]->worn_per_loadout[0].find("cis_inf_") != std::string::npos);
+}
+
 int main() {
     test_hub_file();
     test_creature_body();
@@ -569,5 +608,6 @@ int main() {
     test_people();
     test_wookiee_profile_in_battle();
     test_stage4_hub_loop();
+    test_stock_bot_roster();
     return swm::test::finish("hub_test");
 }

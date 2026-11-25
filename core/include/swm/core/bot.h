@@ -18,14 +18,14 @@ class NavGrid;
 class World;
 
 struct BotSkill {
-    double aim_error = 2.5;    // degrees: how far its aim wanders
-    double reaction = 0.4;     // seconds from spotting an enemy to shooting
-    double fire_range = 60;    // m
-    double cover = 0.7;        // 0..1: how often it takes cover to reload or when hurt
-    double dodge = 0.15;       // 0..1: how often it rolls aside in a fight (every few seconds)
+    double aim_error = 1.2;    // degrees: locked to Hard difficulty
+    double reaction = 0.25;    // seconds from spotting an enemy to shooting
+    double fire_range = 80;    // m
+    double cover = 1.0;        // 0..1: how often it takes cover to reload or when hurt
+    double dodge = 0.35;       // 0..1: how often it rolls aside in a fight (every few seconds)
 
-    // "easy", "normal" or "hard" (anything else: normal).
-    static BotSkill preset(std::string_view difficulty);
+    // Match bots are locked to Hard difficulty.
+    static BotSkill preset(std::string_view difficulty = "hard");
 };
 
 // How fast (of full speed) to go from `position` heading for `path[corner]`:
@@ -209,6 +209,8 @@ public:
     // (default: a UDP socket on a free port). Throws if one can't be opened.
     BotPlayers(int count, const World& world, const ClientConfig& base, LinkFactory open_link = {},
                BotSkill skill = {});
+    BotPlayers(std::span<const ClientConfig> custom_bots, const World& world, const ClientConfig& base,
+               LinkFactory open_link = {}, BotSkill skill = {});
     // Every bot's skill, from now on.
     void set_skill(BotSkill skill);
     void update(double now);

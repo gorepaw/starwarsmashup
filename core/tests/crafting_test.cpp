@@ -35,8 +35,10 @@ void test_crafting_book() {
     book.load_resources(root / "game" / "crafting" / "resources.ini");
     book.load_schematics(root / "game" / "crafting" / "schematics.ini");
     CHECK(book.resources().size() == 16);
-    CHECK(book.schematics().size() == 21);
+    CHECK(book.schematics().size() == 26);
     CHECK(book.work_orders().size() == 5);
+    const SchematicDef* std_ammo_sch = book.find_schematic("sch_ammo_tibanna_standard");
+    CHECK(std_ammo_sch != nullptr && std_ammo_sch->output_count == 100);
 
     CHECK(resource_category_label(ResourceCategory::mineral) == "Mineral");
     CHECK(resource_stat_label(ResourceStat::conductivity) == "Conductivity");

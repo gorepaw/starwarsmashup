@@ -58,6 +58,7 @@ bool MemoryCharacterStore::remove(PersistentId id) {
     professions_.erase(id);
     materials_.erase(id);
     presets_.erase(id);
+    reputation_.erase(id);
     std::erase_if(items_, [id](const auto& kv) { return kv.second.owner_id == id; });
     return characters_.erase(id) > 0;
 }
@@ -82,6 +83,13 @@ ItemInstance MemoryCharacterStore::grant_item(const ItemInstance& item) {
 
 bool MemoryCharacterStore::remove_item(PersistentId item_id) {
     return items_.erase(item_id) > 0;
+}
+
+bool MemoryCharacterStore::update_item_quantity(PersistentId item_id, int quantity) {
+    auto it = items_.find(item_id);
+    if (it == items_.end()) return false;
+    it->second.quantity = quantity;
+    return true;
 }
 
 std::vector<CharacterLoadout> MemoryCharacterStore::list_loadouts(PersistentId owner_id) {
@@ -159,6 +167,15 @@ bool MemoryCharacterStore::delete_preset(PersistentId owner_id, const std::strin
     return std::erase_if(it->second, [&](const RecipePreset& p) { return p.name == name; }) > 0;
 }
 
+std::map<std::string, int64_t> MemoryCharacterStore::list_reputation(PersistentId owner_id) {
+    const auto it = reputation_.find(owner_id);
+    return it == reputation_.end() ? std::map<std::string, int64_t>{} : it->second;
+}
+
+void MemoryCharacterStore::save_reputation(PersistentId owner_id, const std::map<std::string, int64_t>& reputation) {
+    reputation_[owner_id] = reputation;
+}
+
 std::string MemoryCharacterStore::get_extra(PersistentId owner_id, const std::string& key) {
     const auto owner = extras_.find(owner_id);
     if (owner == extras_.end()) return {};
@@ -185,6 +202,7 @@ void ensure_starter_kit(CharacterStore& store, PersistentId char_id) {
     const auto sidearm = grant("wp_pistol_dh17");
     const auto grenade = grant("wp_grenade_c22");
     const auto psg = grant("psg_mark1");
+    const auto ammo_std = store.grant_item({0, char_id, "ammo_tibanna_standard", 0.5, "", "{}", 250});
     grant("cloth_jacket_rebel");
     const auto shirt = grant("cloth_shirt_tunic");
     const auto pants = grant("cloth_pants_cargo");
@@ -197,6 +215,7 @@ void ensure_starter_kit(CharacterStore& store, PersistentId char_id) {
     lo.sidearm_id = sidearm.id;
     lo.secondary_id = grenade.id;
     lo.gear_ids["deflector_shield"] = psg.id;
+    lo.gear_ids["ammo_standard"] = ammo_std.id;
     lo.appearance_ids["shirt"] = shirt.id;
     lo.appearance_ids["pants"] = pants.id;
     lo.appearance_ids["boots_cosmetic"] = boots.id;

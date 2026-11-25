@@ -131,12 +131,13 @@ public:
     // The match's vehicle classes (the battlefield's).
     std::span<const VehicleClass> vehicle_classes() const;
     const std::vector<net::CorpseLootState>& corpses() const { return corpses_; }
-    const std::array<std::string, 2>& factions() const { return factions_; }
+    const std::vector<std::string>& factions() const { return factions_; }
+    const std::map<std::string, int64_t>& reputation() const { return reputation_; }
     // How the server's people look (an entity's look - 1 indexes these).
     const std::vector<std::string>& looks() const { return looks_; }
-    // Queue for a battle on a side (0 or 1) while at a war terminal, or
+    // Queue for a battle on a side (0..3) while at a war terminal, or
     // leave the queue (-1). Repeated until the server's status shows it.
-    void queue(int team, QueueMode mode = QueueMode::standard);
+    void queue(int team);
     // Authoritative inventory & loadouts synced from the server.
     uint32_t inventory_rev() const { return inventory_rev_; }
     const std::vector<ItemInstance>& items() const { return items_; }
@@ -260,11 +261,11 @@ private:
     std::vector<net::TargetState> targets_;
     std::vector<net::VehicleState> vehicles_;
     std::vector<net::CorpseLootState> corpses_;
-    std::array<std::string, 2> factions_;
+    std::vector<std::string> factions_;
+    std::map<std::string, int64_t> reputation_;
     std::vector<std::string> looks_;
     net::PlayerStatus player_status_;
     int wanted_queue_ = -2;  // -2: no request
-    QueueMode wanted_queue_mode_ = QueueMode::standard;
     double last_queue_request_ = -1e9;
     uint32_t inventory_rev_ = 0;
     std::vector<ItemInstance> items_;

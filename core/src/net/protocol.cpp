@@ -573,8 +573,10 @@ struct Encoder {
             put_vec3(out, r.position);
             out.put(r.radius);
         }
-        out.put_string(m.factions[0]);
-        out.put_string(m.factions[1]);
+        out.put(uint8_t(std::min<size_t>(m.factions.size(), 16)));
+        for (size_t i = 0; i < m.factions.size() && i < 16; ++i) {
+            out.put_string(m.factions[i]);
+        }
         out.put(uint8_t(std::min<size_t>(m.looks.size(), 255)));
         for (size_t i = 0; i < m.looks.size() && i < 255; ++i) {
             out.put_string(m.looks[i]);
@@ -755,7 +757,6 @@ struct Encoder {
         }
         out.put(uint8_t(m.you.queue));
         out.put(m.you.team);
-        out.put(uint8_t(m.you.queue_mode));
         out.put(m.you.in_queue);
         out.put(m.you.starts_in);
         out.put_string(m.you.battlefield);
@@ -780,7 +781,6 @@ struct Encoder {
     void operator()(const QueueRequest& m) {
         out.put(uint8_t(Type::queue_request));
         out.put(m.team);
-        out.put(uint8_t(m.mode));
     }
     void operator()(const Transfer& m) {
         out.put(uint8_t(Type::transfer));
@@ -798,6 +798,7 @@ struct Encoder {
             out.put(inst.owner_id);
             out.put_string(inst.def_id);
             out.put(float(inst.quality));
+            out.put(uint16_t(std::clamp(inst.quantity, 1, 65535)));
             out.put_string(inst.custom_name);
             out.put_string(inst.color_json);
         }
@@ -831,8 +832,14 @@ struct Encoder {
             out.put(inst.id);
             out.put_string(inst.def_id);
             out.put(float(inst.quality));
+            out.put(uint16_t(std::clamp(inst.quantity, 1, 65535)));
             out.put_string(inst.custom_name);
             out.put_string(inst.color_json);
+        }
+        out.put(uint8_t(std::min<size_t>(m.reputation.size(), 32)));
+        for (const auto& [faction, rep] : m.reputation) {
+            out.put_string(faction);
+            out.put(rep);
         }
     }
 
@@ -1031,8 +1038,11 @@ Message decode(std::span<const uint8_t> packet) {
             r.radius = in.get<double>();
             m.recruiters.push_back(r);
         }
-        m.factions[0] = in.get_string();
-        m.factions[1] = in.get_string();
+        const size_t fcount = in.get<uint8_t>();
+        if (fcount > 16) throw PacketError("too many factions");
+        for (size_t i = 0; i < fcount; ++i) {
+            m.factions.push_back(in.get_string());
+        }
         const size_t looks = in.get<uint8_t>();
         for (size_t i = 0; i < looks; ++i) {
             m.looks.push_back(in.get_string());
@@ -1263,11 +1273,6 @@ Message decode(std::span<const uint8_t> packet) {
         }
         m.you.queue = PlayerStatus::Queue(queue);
         m.you.team = get_character_team(in);
-        const uint8_t qmode = in.get<uint8_t>();
-        if (qmode > uint8_t(QueueMode::gear)) {
-            throw PacketError("bad queue mode");
-        }
-        m.you.queue_mode = QueueMode(qmode);
         m.you.in_queue = in.get<uint16_t>();
         m.you.starts_in = in.get<float>();
         m.you.battlefield = in.get_string();
@@ -1300,12 +1305,10 @@ Message decode(std::span<const uint8_t> packet) {
     }
     case Type::queue_request: {
         QueueRequest m;
-        m.team = get_team(in);
-        const uint8_t mode = in.get<uint8_t>();
-        if (mode > uint8_t(QueueMode::gear)) {
-            throw PacketError("bad queue mode");
+        m.team = in.get<int8_t>();
+        if (m.team < -1 || m.team > 3) {
+            throw PacketError("bad team");
         }
-        m.mode = QueueMode(mode);
         message = m;
         break;
     }
@@ -1329,6 +1332,7 @@ Message decode(std::span<const uint8_t> packet) {
             inst.owner_id = in.get<uint64_t>();
             inst.def_id = in.get_string();
             inst.quality = in.get<float>();
+            inst.quantity = std::max<int>(1, in.get<uint16_t>());
             inst.custom_name = in.get_string();
             inst.color_json = in.get_string();
             m.items.push_back(std::move(inst));
@@ -1367,9 +1371,16 @@ Message decode(std::span<const uint8_t> packet) {
             inst.id = in.get<uint64_t>();
             inst.def_id = in.get_string();
             inst.quality = in.get<float>();
+            inst.quantity = std::max<int>(1, in.get<uint16_t>());
             inst.custom_name = in.get_string();
             inst.color_json = in.get_string();
             m.bank_items.push_back(std::move(inst));
+        }
+        const size_t rep_count = in.get<uint8_t>();
+        if (rep_count > 32) throw PacketError("too many reputation entries");
+        for (size_t i = 0; i < rep_count; ++i) {
+            const std::string faction = in.get_string();
+            m.reputation[faction] = in.get<int64_t>();
         }
         message = std::move(m);
         break;

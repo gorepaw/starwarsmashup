@@ -261,7 +261,9 @@ Quat matrix_quat(const std::array<float, 9>& c) {
 
 ModelExport export_model(const AssetLibrary& library, std::string_view name, const std::filesystem::path& model_dir,
                          const std::filesystem::path& texture_dir, std::set<std::string>& textures_written,
-                         const std::vector<ModelClip>& clips) {
+                         const std::vector<ModelClip>& clips,
+                         const std::map<std::string, std::string>& bone_rename,
+                         std::string_view out_name) {
     const UcfbNode* modl = library.model(name);
     if (modl == nullptr) {
         throw std::runtime_error("no model " + std::string(name));
@@ -390,12 +392,29 @@ ModelExport export_model(const AssetLibrary& library, std::string_view name, con
     gltf.nodes.push_back(node);
     gltf.scene_nodes = {0};
     if (animated) {
+        if (!bone_rename.empty()) {
+            const bool has_weapon = std::any_of(skeleton.bones.begin(), skeleton.bones.end(),
+                                                [](const ModelBone& b) { return lowercase(b.name) == "hp_weapons"; });
+            if (!has_weapon) {
+                const auto hand = std::find_if(skeleton.bones.begin(), skeleton.bones.end(),
+                                               [](const ModelBone& b) { return lowercase(b.name) == "bone_r_hand"; });
+                if (hand != skeleton.bones.end()) {
+                    skeleton.bones.push_back(ModelBone{.name = "hp_weapons",
+                                                       .parent = hand->name,
+                                                       .rotation = {1, 0, 0, 0, 1, 0, 0, 0, 1},
+                                                       .position = {-0.142f, -0.008f, 0.109f}});
+                }
+            }
+        }
         // A node per bone, under its parent (or the root), at its rest
         // transform; mirrored as the vertices are.
         std::map<std::string, int> bone_nodes;
         for (const ModelBone& bone : skeleton.bones) {
             swg::Gltf::Node b;
             b.name = lowercase(bone.name);
+            if (const auto r = bone_rename.find(b.name); r != bone_rename.end()) {
+                b.name = r->second;
+            }
             b.translation = to_gltf(Vec3{bone.position[0], bone.position[1], bone.position[2]});
             b.rotation = to_gltf(matrix_quat(bone.rotation));
             if (const auto it = bone_meshes.find(bone.name); it != bone_meshes.end()) {
@@ -473,7 +492,8 @@ ModelExport export_model(const AssetLibrary& library, std::string_view name, con
         }
     }
     std::filesystem::create_directories(model_dir);
-    gltf.write(model_dir / (lowercase(name) + ".gltf"));
+    const std::string file_stem = lowercase(out_name.empty() ? name : out_name);
+    gltf.write(model_dir / (file_stem + ".gltf"));
     return result;
 }
 

@@ -80,12 +80,6 @@ func _paint_options() -> void:
 	_slider(Vector2(x, y), "Music", "music_volume", settings.music_volume, "%d%%" % roundi(settings.music_volume * 100.0))
 	y += 28 * u
 	_slider(Vector2(x, y), "Voice", "voice_volume", settings.voice_volume, "%d%%" % roundi(settings.voice_volume * 100.0))
-	y += 34 * u
-	text("gamefont_medium", "Bots", Vector2(x, y), "Left", ACCENT)
-	y += 26 * u
-	text("gamefont_small", "Difficulty", Vector2(x, y + 3 * u), "Left", TEXT)
-	button(Rect2(Vector2(x + 140 * u, y - 2 * u), Vector2(160, 26) * u), settings.bot_difficulty.capitalize(),
-			"difficulty", false)
 	# Right: controls.
 	var cx := box.position.x + 400 * u
 	var cy := box.position.y + 56 * u
@@ -138,10 +132,6 @@ func _on_click(id: String, at: Vector2) -> void:
 			_page = "options"
 		"leave":
 			leave_requested.emit()
-		"difficulty":
-			# Easy, Normal, Hard, round again.
-			var i: int = Settings.DIFFICULTIES.find(settings.bot_difficulty)
-			settings.bot_difficulty = Settings.DIFFICULTIES[(i + 1) % Settings.DIFFICULTIES.size()]
 		"back":
 			_rebinding = ""
 			settings.save_file()

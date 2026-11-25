@@ -81,7 +81,9 @@ struct ModelClip {
 // Throws std::runtime_error if there's no such model.
 ModelExport export_model(const AssetLibrary& library, std::string_view name, const std::filesystem::path& model_dir,
                          const std::filesystem::path& texture_dir, std::set<std::string>& textures_written,
-                         const std::vector<ModelClip>& clips = {});
+                         const std::vector<ModelClip>& clips = {},
+                         const std::map<std::string, std::string>& bone_rename = {},
+                         std::string_view out_name = {});
 
 // A model's collision, in its model space (Battlefront coordinates): its
 // collision mesh, and its primitives as triangles (boxes, 12-sided

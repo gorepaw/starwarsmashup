@@ -50,6 +50,26 @@ func load_species(species_id: String, gender: String) -> Dictionary:
 	return species_meta
 
 
+func load_override(rel_gltf: String) -> void:
+	clear()
+	var gltf_path := "res://imported_assets/" + rel_gltf
+	if not FileAccess.file_exists(gltf_path):
+		return
+	var doc := GLTFDocument.new()
+	var state := GLTFState.new()
+	if doc.append_from_file(ProjectSettings.globalize_path(gltf_path), state) != OK:
+		return
+	model = doc.generate_scene(state) as Node3D
+	if model == null:
+		return
+	model.rotation.y = yaw
+	add_child(model)
+	colors_data = SwgColors.load_colors(ProjectSettings.globalize_path(gltf_path))
+	_skeleton = model.find_child("Skeleton3D", true, false) as Skeleton3D
+	_index_meshes()
+	_play_idle()
+
+
 func set_hair(hair_rel_gltf: String, color_overrides: Dictionary) -> void:
 	if hair_node != null and is_instance_valid(hair_node):
 		hair_node.queue_free()

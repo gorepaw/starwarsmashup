@@ -25,10 +25,13 @@ const GEAR_SLOTS := [
 	["belt", "Belt"],
 	["leggings", "Leggings"],
 	["boots", "Boots"],
+	["ammo_standard", "Std Ammo"],
+	["ammo_heavy", "Heavy Ammo"],
 	["mount", "Mount / Speeder"],
 ]
 
 const APPEARANCE_SLOTS := [
+	["full_body", "Full Body"],
 	["helmet", "Helmet (Look)"],
 	["jacket", "Jacket"],
 	["shirt", "Shirt"],
@@ -41,6 +44,7 @@ const CATEGORIES := [
 	["weapon", "Weapons"],
 	["armor", "Armor"],
 	["deflector_shield", "Shields"],
+	["ammo", "Ammo"],
 	["clothing", "Clothing"],
 	["misc", "Junk/Med"],
 ]
@@ -120,7 +124,7 @@ func _setup_viewport() -> void:
 
 
 func open_screen() -> void:
-	_edit_slot = clampi(active_loadout_idx, 0, 2)
+	_edit_slot = clampi(active_loadout_idx, 0, 4)
 	_confirm_destroy_id = 0
 	_dragging_inst = {}
 	_drag_active = false
@@ -186,22 +190,32 @@ func _inst_by_id(id: int) -> Dictionary:
 func _sync_stage() -> void:
 	if _stage == null:
 		return
-	var key := "%s|%s|%s" % [species, gender, appearance_json]
+	var lo := _current_loadout()
+	var ov_rel := ""
+	var fb_id := int((lo.get("appearance_ids", {}) as Dictionary).get("full_body", 0))
+	if fb_id > 0:
+		var fb_inst := _inst_by_id(fb_id)
+		if not fb_inst.is_empty():
+			var fb_def: Dictionary = _def_by_id.get(str(fb_inst.get("def_id", "")), {})
+			ov_rel = str(fb_def.get("model", "")).replace("{g}", "f" if gender == "female" else "m")
+	var key := "%s|%s|%s|%s" % [species, gender, appearance_json, ov_rel]
 	if key != _stage_key:
 		_stage_key = key
-		_stage.load_species(species, gender)
-		var app: Dictionary = {}
-		var parsed: Variant = JSON.parse_string(appearance_json)
-		if parsed is Dictionary:
-			app = parsed
-		_stage.apply_appearance(app, 0.88, 1.12, 1.78)
-		var hair_id := str(app.get("hair", ""))
-		if hair_id != "":
-			_stage.set_hair("hairs/" + hair_id + ".gltf", app.get("colors", {}))
+		if ov_rel != "":
+			_stage.load_override(ov_rel)
+		else:
+			_stage.load_species(species, gender)
+			var app: Dictionary = {}
+			var parsed: Variant = JSON.parse_string(appearance_json)
+			if parsed is Dictionary:
+				app = parsed
+			_stage.apply_appearance(app, 0.88, 1.12, 1.78)
+			var hair_id := str(app.get("hair", ""))
+			if hair_id != "":
+				_stage.set_hair("hairs/" + hair_id + ".gltf", app.get("colors", {}))
 		_stage_worn_key = ""
 
-	var lo := _current_loadout()
-	var worn := _resolve_stage_worn(lo)
+	var worn := [] if ov_rel != "" else _resolve_stage_worn(lo)
 	var weapon_model := ""
 	var prim := _inst_by_id(int(lo.get("primary_id", 0)))
 	if not prim.is_empty():
@@ -312,11 +326,11 @@ func _paint() -> void:
 
 	var x := box.position.x + 16 * u
 	var y := box.position.y + 12 * u
-	for s in 3:
-		var lbl := "Loadout %d%s" % [s + 1, " *" if s == active_loadout_idx else ""]
-		button(Rect2(x + s * 130 * u, y, 122 * u, 28 * u), lbl, "tab:%d" % s, _edit_slot == s)
+	for s in 5:
+		var lbl := "L%d%s" % [s + 1, " *" if s == active_loadout_idx else ""]
+		button(Rect2(x + s * 86 * u, y, 80 * u, 28 * u), lbl, "tab:%d" % s, _edit_slot == s)
 
-	button(Rect2(x + 400 * u, y, 140 * u, 28 * u),
+	button(Rect2(x + 438 * u, y, 134 * u, 28 * u),
 			"Active" if _edit_slot == active_loadout_idx else "Activate Loadout",
 			"activate", false, false, _edit_slot != active_loadout_idx)
 	text("gamefont_small", "%d FP  |  %d Cr  |  %d XP" % [faction_points, credits, experience],
@@ -347,8 +361,8 @@ func _paint_paperdoll(box: Rect2) -> void:
 	var lo := _current_loadout()
 	text("gamefont_small", "%s (%s)" % [str(lo.get("name", "Loadout")), species.capitalize()],
 			Vector2(x, y + 4 * u), "Left", ACCENT)
-	button(Rect2(box.end.x - 188 * u, y, 86 * u, 24 * u), "Gear", "pmode:gear", _paperdoll_mode == "gear")
-	button(Rect2(box.end.x - 96 * u, y, 86 * u, 24 * u), "Look", "pmode:appearance", _paperdoll_mode == "appearance")
+	button(Rect2(box.end.x - 246 * u, y, 108 * u, 24 * u), "Gear (Combat)", "pmode:gear", _paperdoll_mode == "gear")
+	button(Rect2(box.end.x - 134 * u, y, 130 * u, 24 * u), "Cosmetic Override", "pmode:appearance", _paperdoll_mode == "appearance")
 
 	var slots_y := y + 32 * u
 	_slot_rects.clear()
@@ -417,10 +431,11 @@ func _paint_inventory(box: Rect2) -> void:
 	var x := box.position.x + 10 * u
 	var y := box.position.y + 10 * u
 	var cx := x
+	var row_w := box.size.x - 20 * u
+	var cat_bw := maxf(48.0 * u, (row_w - float(CATEGORIES.size() - 1) * 3.0 * u) / float(CATEGORIES.size()))
 	for cat: Array in CATEGORIES:
-		var bw := 61.0 * u
-		button(Rect2(cx, y, bw, 24 * u), cat[1], "icat:" + cat[0], _category == cat[0])
-		cx += bw + 3 * u
+		button(Rect2(cx, y, cat_bw, 24 * u), cat[1], "icat:" + cat[0], _category == cat[0])
+		cx += cat_bw + 3 * u
 	y += 30 * u
 	cx = x
 	for s_entry: Array in [["name", "Name"], ["kind", "Kind"], ["slot", "Slot"], ["quality", "Quality"]]:
@@ -453,7 +468,6 @@ func _paint_inventory(box: Rect2) -> void:
 	_scroll = clampi(_scroll, 0, maxi(0, _filtered.size() - _rows_visible))
 	_hover_inst = {}
 	var row_h := 36.0 * u
-	var row_w := box.size.x - 20 * u
 	for row_i in _rows_visible:
 		var idx := _scroll + row_i
 		if idx >= _filtered.size():
@@ -477,6 +491,9 @@ func _paint_inventory(box: Rect2) -> void:
 			sub_txt = "Junk | Sell: %d Cr" % int(def.get("sell_value", 0))
 		elif kind == "supply":
 			sub_txt = "Supply | +%d HP" % roundi(float(def.get("heal_amount", 0.0)))
+		elif kind == "ammo":
+			var cap := 99 if str(def.get("ammo_class", "")) == "heavy" else 999
+			sub_txt = "Ammo | %d / %d rounds %s" % [int(inst.get("quantity", 1)), cap, used_in]
 		elif kind == "quest":
 			sub_txt = "Quest item"
 		elif kind == "vehicle":
@@ -546,7 +563,7 @@ func _is_compatible(def: Dictionary, slot: String, is_app: bool) -> bool:
 		return false
 	if kind == "weapon":
 		return dslot == slot
-	if kind == "armor" or kind == "deflector_shield":
+	if kind == "armor" or kind == "deflector_shield" or kind == "ammo":
 		return dslot == slot
 	if kind == "vehicle":
 		return slot == "mount"

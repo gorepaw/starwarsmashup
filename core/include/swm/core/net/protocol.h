@@ -19,7 +19,7 @@ namespace swm::core::net {
 // Every packet starts with a magic number, the protocol version and a message
 // type. Peers drop packets with another version. Bump it on any wire change.
 inline constexpr uint16_t protocol_magic = 0x4D53;  // "SM"
-inline constexpr uint16_t protocol_version = 33;
+inline constexpr uint16_t protocol_version = 34;
 inline constexpr uint8_t droid_explosion_weapon = 0xFF;  // Explosion::weapon sentinel for destroyed health/ammo droids
 // ...for a destroyed object (Battlefield::destructibles); clients draw it
 // from the object's own explosion as they see it go.
@@ -160,7 +160,7 @@ struct Welcome {
     PersistentId character_id = 0;  // the saved character; 0 if the server doesn't save
     // A hub's war terminals, and the sides its battles are fought between.
     std::vector<Recruiter> recruiters;
-    std::array<std::string, 2> factions;
+    std::vector<std::string> factions;
     // How its people look (a Galaxies object template each): an entity's
     // look is an index into these, plus one.
     std::vector<std::string> looks;
@@ -172,10 +172,9 @@ struct Welcome {
 };
 
 // Client -> hub, repeated until the hub's PlayerStatus shows it: queue for a
-// battle on a side (0 or 1), near a war terminal; -1 leaves the queue.
+// battle on a side (0..3), near a war terminal; -1 leaves the queue.
 struct QueueRequest {
     int8_t team = -1;
-    QueueMode mode = QueueMode::standard;
 };
 
 // Server -> client, repeated until the client leaves: go to another server
@@ -194,7 +193,6 @@ struct PlayerStatus {
     enum Queue : uint8_t { none, queued };
     Queue queue = none;
     int8_t team = -1;          // queued for
-    QueueMode queue_mode = QueueMode::standard;
     uint16_t in_queue = 0;     // players queued for the next battle
     float starts_in = 0;       // seconds until it starts
     std::string battlefield;   // where it's fought (its name)
@@ -362,7 +360,7 @@ struct Snapshot {
 // Either direction: leaving.
 struct Goodbye {};
 
-// Server -> client: authoritative inventory, saved loadouts, and resolved combat loadouts.
+// Server -> client: authoritative inventory, saved loadouts, resolved combat loadouts, and faction standing.
 struct InventorySync {
     uint32_t revision = 0;
     std::vector<ItemInstance> items;
@@ -370,6 +368,7 @@ struct InventorySync {
     std::vector<Loadout> resolved_loadouts;
     int64_t bank_credits = 0;
     std::vector<ItemInstance> bank_items;  // the bank's: their ids are its own
+    std::map<std::string, int64_t> reputation;
 
     friend bool operator==(const InventorySync&, const InventorySync&) = default;
 };

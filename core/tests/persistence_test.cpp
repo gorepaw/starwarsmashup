@@ -95,6 +95,14 @@ void test_store(CharacterStore& store) {
     CHECK(updated_wke && updated_wke->credits == 1500 && updated_wke->faction_points == 320 &&
           updated_wke->experience == 450 && updated_wke->active_loadout == 1);
 
+    CHECK(store.update_item_quantity(i1.id, 450));
+    const auto items_after_qty = store.list_items(created_wke.id);
+    CHECK(!items_after_qty.empty() && items_after_qty[0].quantity == 450);
+
+    std::map<std::string, int64_t> rep{{"rebellion", 3500}, {"empire", -1750}, {"republic", 0}, {"separatists", 0}};
+    store.save_reputation(created_wke.id, rep);
+    CHECK(store.list_reputation(created_wke.id) == rep);
+
     CHECK(store.remove_item(i2.id));
     CHECK(store.list_items(created_wke.id).size() == 1);
 

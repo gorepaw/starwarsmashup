@@ -57,19 +57,22 @@ void test_protocol() {
 
     const Message hello = decode(encode(Hello{"trooper"}));
     CHECK(std::get_if<Hello>(&hello) != nullptr && std::get<Hello>(hello).name == "trooper");
-    const Message welcome = decode(encode(Welcome{3, 30, 77, 0, {}, {"Rebellion", "Empire"}, {},
+    const Message welcome = decode(encode(Welcome{3, 30, 77, 0, {}, {"Rebellion", "Empire", "Republic", "Separatists"}, {},
                                                   {{"Imperial Quartermaster", "empire", {1, 2, 3}, 4.0}}}));
     CHECK(std::get<Welcome>(welcome).entity_id == 3 && std::get<Welcome>(welcome).server_tick == 77 &&
+          std::get<Welcome>(welcome).factions.size() == 4 &&
           std::get<Welcome>(welcome).quartermasters.size() == 1);
     CHECK(std::holds_alternative<Goodbye>(decode(encode(Goodbye{}))));
 
     // Stage 4 messages round-trip
-    const Message qreq = decode(encode(QueueRequest{1, QueueMode::gear}));
-    CHECK(std::get<QueueRequest>(qreq).team == 1 && std::get<QueueRequest>(qreq).mode == QueueMode::gear);
+    const Message qreq = decode(encode(QueueRequest{1}));
+    CHECK(std::get<QueueRequest>(qreq).team == 1);
 
     InventorySync isync;
     isync.revision = 4;
-    isync.items.push_back({10, 1, "wp_rifle_e11", 0.85f, "", "{}"});
+    isync.items.push_back({10, 1, "wp_rifle_e11", 0.85f, "", "{}", 1});
+    isync.reputation["rebellion"] = 3500;
+    isync.reputation["empire"] = -1750;
     CharacterLoadout cl;
     cl.slot_index = 1;
     cl.name = "Heavy";

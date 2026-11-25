@@ -1,6 +1,7 @@
 # Game simulation library. Pure C++: no Godot headers (see docs/ARCHITECTURE.md).
 add_library(swm_core STATIC
   src/bot.cpp
+  src/bot_roster.cpp
   src/build_info.cpp
   src/client.cpp
   src/combat.cpp

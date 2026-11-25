@@ -119,6 +119,7 @@ void CraftingBook::parse_schematics(const Ini& ini, const std::string& where) {
             def.required_level = std::clamp(int(s.number("RequiredLevel", 1)), 1, 100);
             def.output_item = s.get("Output").value_or("");
             if (def.output_item.empty()) throw std::runtime_error(where + " (" + def.id + "): missing Output");
+            def.output_count = std::max(1, int(s.number("OutputCount", 1)));
             def.base_xp = std::max<int64_t>(10, int64_t(s.number("BaseXP", 60)));
             def.enhancement_slots = std::clamp(int(s.number("Enhancements", 1)), 0, 2);
             for (const auto& [k, v] : s.values) {

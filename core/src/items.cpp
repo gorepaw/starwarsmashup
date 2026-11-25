@@ -188,6 +188,7 @@ std::optional<ItemKind> item_kind_from_name(std::string_view name) {
     if (name == "quest") return ItemKind::quest;
     if (name == "vehicle") return ItemKind::vehicle;
     if (name == "enhancement") return ItemKind::enhancement;
+    if (name == "ammo") return ItemKind::ammo;
     return std::nullopt;
 }
 
@@ -202,9 +203,113 @@ std::string_view item_kind_name(ItemKind k) {
     case ItemKind::quest: return "quest";
     case ItemKind::vehicle: return "vehicle";
     case ItemKind::enhancement: return "enhancement";
+    case ItemKind::ammo: return "ammo";
     }
     return "weapon";
 }
+
+namespace {
+
+std::string ascii_lower(std::string_view text) {
+    std::string out(text);
+    for (char& c : out) {
+        if (c >= 'A' && c <= 'Z') c = char(c - 'A' + 'a');
+    }
+    return out;
+}
+
+} // namespace
+
+std::string normalize_faction(std::string_view faction) {
+    const std::string f = ascii_lower(faction);
+    if (f == "rebel" || f == "rebellion" || f == "alliance") return "rebellion";
+    if (f == "imp" || f == "empire" || f == "imperial") return "empire";
+    if (f == "rep" || f == "republic") return "republic";
+    if (f == "cis" || f == "sep" || f == "separatist" || f == "separatists") return "separatists";
+    if (f == "neutral" || f.empty()) return "neutral";
+    return f;
+}
+
+std::string opposing_faction(std::string_view faction) {
+    const std::string f = normalize_faction(faction);
+    if (f == "rebellion") return "empire";
+    if (f == "empire") return "rebellion";
+    if (f == "republic") return "separatists";
+    if (f == "separatists") return "republic";
+    return {};
+}
+
+int64_t clamp_reputation(int64_t reputation) {
+    return std::clamp<int64_t>(reputation, -42000, 42999);
+}
+
+RepTier reputation_tier(int64_t reputation) {
+    if (reputation < -3000) return RepTier::hated;
+    if (reputation < 0) return RepTier::unfriendly;
+    if (reputation < 3000) return RepTier::neutral;
+    if (reputation < 9000) return RepTier::friendly;
+    if (reputation < 21000) return RepTier::honored;
+    if (reputation < 42000) return RepTier::revered;
+    return RepTier::exalted;
+}
+
+std::string_view reputation_tier_name(RepTier tier) {
+    switch (tier) {
+    case RepTier::hated: return "Hated";
+    case RepTier::unfriendly: return "Unfriendly";
+    case RepTier::neutral: return "Neutral";
+    case RepTier::friendly: return "Friendly";
+    case RepTier::honored: return "Honored";
+    case RepTier::revered: return "Revered";
+    case RepTier::exalted: return "Exalted";
+    }
+    return "Neutral";
+}
+
+std::optional<RepTier> reputation_tier_from_name(std::string_view name) {
+    const std::string low = ascii_lower(name);
+    if (low == "hated") return RepTier::hated;
+    if (low == "unfriendly") return RepTier::unfriendly;
+    if (low == "neutral") return RepTier::neutral;
+    if (low == "friendly") return RepTier::friendly;
+    if (low == "honored") return RepTier::honored;
+    if (low == "revered") return RepTier::revered;
+    if (low == "exalted") return RepTier::exalted;
+    return std::nullopt;
+}
+
+int64_t reputation_threshold(RepTier tier) {
+    switch (tier) {
+    case RepTier::hated: return -42000;
+    case RepTier::unfriendly: return -3000;
+    case RepTier::neutral: return 0;
+    case RepTier::friendly: return 3000;
+    case RepTier::honored: return 9000;
+    case RepTier::revered: return 21000;
+    case RepTier::exalted: return 42000;
+    }
+    return 0;
+}
+
+namespace {
+
+void apply_bolt_color(WeaponDef& target, std::string_view color_name) {
+    if (color_name == "blue") {
+        target.bolt_color = {0.25, 0.55, 1.0, 0.85};
+        target.bolt_texture = "com_sfx_laser_blue";
+    } else if (color_name == "green") {
+        target.bolt_color = {0.25, 0.95, 0.35, 0.85};
+        target.bolt_texture = "com_sfx_laser_green";
+    } else if (color_name == "yellow") {
+        target.bolt_color = {1.0, 0.85, 0.2, 0.85};
+        target.bolt_texture = "com_sfx_laser_yellow";
+    } else if (color_name == "red") {
+        target.bolt_color = {1.0, 0.25, 0.25, 0.85};
+        target.bolt_texture = "com_sfx_laser_red";
+    }
+}
+
+} // namespace
 
 void ItemCatalog::load(const std::filesystem::path& catalog_ini, const std::filesystem::path& bf2_items_dir) {
     items_.clear();
@@ -232,6 +337,12 @@ void ItemCatalog::load(const std::filesystem::path& catalog_ini, const std::file
         }
         def.kind = *kind;
 
+        if (const auto ac_str = s.get("AmmoClass")) {
+            const auto ac = ammo_class_from_name(*ac_str);
+            if (!ac) throw std::runtime_error(where + ": unknown AmmoClass '" + *ac_str + "' on " + def.id);
+            def.ammo_class = *ac;
+        }
+        def.ammo_batch = std::max(1, int(s.number("AmmoBatch", def.ammo_class == AmmoClass::heavy ? 12 : 100)));
         if (def.kind == ItemKind::weapon) {
             const std::string arch_str = s.get("Archetype").value_or("rifle_auto");
             const auto arch = weapon_archetype_from_name(arch_str);
@@ -251,11 +362,22 @@ void ItemCatalog::load(const std::filesystem::path& catalog_ini, const std::file
             else if (def.kind == ItemKind::quest) default_slot = "quest";
             else if (def.kind == ItemKind::enhancement) default_slot = "enhancement";
             else if (def.kind == ItemKind::vehicle) default_slot = "vehicle";
+            else if (def.kind == ItemKind::ammo) {
+                if (def.ammo_class == AmmoClass::none) def.ammo_class = AmmoClass::standard;
+                default_slot = def.ammo_class == AmmoClass::heavy ? "ammo_heavy" : "ammo_standard";
+            }
             def.slot = s.get("Slot").value_or(default_slot);
             def.anim_set.clear();
         }
 
-        def.faction = s.get("Faction").value_or("neutral");
+        def.faction = normalize_faction(s.get("Faction").value_or("neutral"));
+        if (const auto rank_str = s.get("RequiredRank")) {
+            const auto parsed_rank = reputation_tier_from_name(*rank_str);
+            if (!parsed_rank) {
+                throw std::runtime_error(where + ": unknown RequiredRank '" + *rank_str + "' on " + def.id);
+            }
+            def.required_rank = *parsed_rank;
+        }
         def.cost_faction_points = int64_t(s.number("CostFactionPoints", 0));
         def.cost_credits = int64_t(s.number("CostCredits", 0));
         if (s.get("SellValue")) {
@@ -354,22 +476,19 @@ WeaponDef ItemCatalog::resolve_weapon(const ItemDef& def, double quality, bool a
     if (w.projectile == Projectile::melee) {
         w.melee_range *= def.range_mult;
     }
+    if (def.ammo_class != AmmoClass::none) {
+        w.ammo_class = def.ammo_class;
+    } else if (def.archetype == WeaponArchetype::heavy_launcher) {
+        w.ammo_class = AmmoClass::heavy;
+    } else if (w.projectile == Projectile::melee || def.archetype == WeaponArchetype::grenade) {
+        w.ammo_class = AmmoClass::none;
+    } else {
+        w.ammo_class = AmmoClass::standard;
+    }
     if (def.damage_type) {
         w.damage_type = *def.damage_type;
     }
-    if (def.bolt_color_name == "blue") {
-        w.bolt_color = {0.25, 0.55, 1.0, 0.85};
-        w.bolt_texture = "com_sfx_laser_blue";
-    } else if (def.bolt_color_name == "green") {
-        w.bolt_color = {0.25, 0.95, 0.35, 0.85};
-        w.bolt_texture = "com_sfx_laser_green";
-    } else if (def.bolt_color_name == "yellow") {
-        w.bolt_color = {1.0, 0.85, 0.2, 0.85};
-        w.bolt_texture = "com_sfx_laser_yellow";
-    } else if (def.bolt_color_name == "red") {
-        w.bolt_color = {1.0, 0.25, 0.25, 0.85};
-        w.bolt_texture = "com_sfx_laser_red";
-    }
+    apply_bolt_color(w, def.bolt_color_name);
     w.modifiers = def.modifiers;
     return w;
 }
@@ -432,11 +551,46 @@ Loadout ItemCatalog::build_loadout(const CharacterLoadout& cl, std::span<const I
 
     if (!out.weapons[primary_slot] && !out.weapons[sidearm_slot]) {
         out.weapons[primary_slot] = WeaponDef{};
+        out.weapons[primary_slot]->ammo_class = AmmoClass::standard;
     }
+
+    // Unified ammo stacks (standard & heavy) with horizontal sidegrade properties.
+    const auto catalog_has_ammo = [&](AmmoClass ac) {
+        for (const ItemDef& d : items_) {
+            if (d.kind == ItemKind::ammo && d.ammo_class == ac) return true;
+        }
+        return false;
+    };
+    out.unified_standard_ammo = catalog_has_ammo(AmmoClass::standard) ? 0 : -1;
+    out.unified_heavy_ammo = catalog_has_ammo(AmmoClass::heavy) ? 0 : -1;
+    const auto apply_ammo_slot = [&](std::string_view slot_key, AmmoClass expected_ac) {
+        const auto git = cl.gear_ids.find(std::string(slot_key));
+        if (git == cl.gear_ids.end() || git->second == 0) return;
+        const ItemInstance* inst = find_inst(git->second);
+        if (inst == nullptr) return;
+        const ItemDef* adef = find(inst->def_id);
+        if (adef == nullptr || adef->kind != ItemKind::ammo || adef->ammo_class != expected_ac) return;
+        out.set_unified_ammo(expected_ac, std::clamp(inst->quantity, 0, max_ammo_for(expected_ac)));
+        for (auto& opt_w : out.weapons) {
+            if (!opt_w || opt_w->ammo_class != expected_ac) continue;
+            opt_w->damage *= adef->damage_mult;
+            opt_w->damage_final *= adef->damage_mult;
+            opt_w->explosion_damage *= adef->damage_mult;
+            opt_w->shot_delay /= std::max(0.1, adef->rate_mult);
+            opt_w->heat_per_shot *= adef->heat_mult;
+            opt_w->yaw_spread *= adef->spread_mult;
+            opt_w->pitch_spread *= adef->spread_mult;
+            opt_w->spread_per_shot *= adef->spread_mult;
+            if (adef->damage_type) opt_w->damage_type = *adef->damage_type;
+            apply_bolt_color(*opt_w, adef->bolt_color_name);
+        }
+    };
+    apply_ammo_slot("ammo_standard", AmmoClass::standard);
+    apply_ammo_slot("ammo_heavy", AmmoClass::heavy);
     return out;
 }
 
-BattleReward compute_battle_reward(bool won, bool draw, uint16_t kills, uint16_t captures, QueueMode mode) {
+BattleReward compute_battle_reward(bool won, bool draw, uint16_t kills, uint16_t captures) {
     BattleReward r;
     if (won) {
         r = {250, 100, 200};
@@ -448,10 +602,9 @@ BattleReward compute_battle_reward(bool won, bool draw, uint16_t kills, uint16_t
     r.xp += int64_t(kills) * 25 + int64_t(captures) * 60;
     r.faction_points += int64_t(kills) * 10 + int64_t(captures) * 25;
     r.credits += int64_t(kills) * 15 + int64_t(captures) * 40;
-    if (mode == QueueMode::gear) {
-        r.faction_points = int64_t(std::llround(double(r.faction_points) * 1.15));
-        r.credits = int64_t(std::llround(double(r.credits) * 1.15));
-    }
+    // Gear-Matters rules always award +15% faction points & credits.
+    r.faction_points = int64_t(std::llround(double(r.faction_points) * 1.15));
+    r.credits = int64_t(std::llround(double(r.credits) * 1.15));
     return r;
 }
 
@@ -485,6 +638,15 @@ std::string resolve_worn_models(const ItemCatalog& catalog, const CharacterLoado
         }
         return nullptr;
     };
+
+    // A full-body cosmetic override replaces the entire worn appearance layer.
+    if (const auto full = cl.appearance_ids.find("full_body"); full != cl.appearance_ids.end()) {
+        if (const ItemInstance* inst = find_inst(full->second)) {
+            if (const ItemDef* def = catalog.find(inst->def_id); def && !def->model_path.empty()) {
+                return "override:" + substitute_gender(def->model_path, gender);
+            }
+        }
+    }
 
     // Appearance slots visually override their matching armor slots.
     std::map<std::string, std::string> visual_by_slot;

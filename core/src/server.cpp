@@ -32,7 +32,7 @@ bool GameServer::match_over() const {
            conquest_->state().time_left <= 0;
 }
 
-void GameServer::set_recruiters(std::vector<net::Recruiter> recruiters, std::array<std::string, 2> factions) {
+void GameServer::set_recruiters(std::vector<net::Recruiter> recruiters, std::vector<std::string> factions) {
     recruiters_ = std::move(recruiters);
     factions_ = std::move(factions);
 }
@@ -100,7 +100,7 @@ std::vector<Loadout> GameServer::build_player_loadouts(uint32_t entity, bool app
     return out;
 }
 
-void GameServer::award_battle_rewards(const std::string& name, const BattleReward& reward) {
+void GameServer::award_battle_rewards(const std::string& name, const std::string& faction, const BattleReward& reward) {
     if (store_ == nullptr) {
         return;
     }
@@ -110,16 +110,185 @@ void GameServer::award_battle_rewards(const std::string& name, const BattleRewar
             const int64_t fp = saved->faction_points + reward.faction_points;
             const int64_t xp = saved->experience + reward.xp;
             store_->update_economy(saved->id, cr, fp, xp, saved->active_loadout);
+            std::map<std::string, int64_t> rep = store_->list_reputation(saved->id);
+            const std::string norm = normalize_faction(faction);
+            if (!norm.empty() && norm != "neutral") {
+                rep[norm] = clamp_reputation(rep[norm] + reward.faction_points);
+                const std::string opp = opposing_faction(norm);
+                if (!opp.empty()) {
+                    rep[opp] = clamp_reputation(rep[opp] - reward.faction_points / 2);
+                }
+                store_->save_reputation(saved->id, rep);
+            }
             for (Client& c : clients_) {
                 if (c.name == name) {
                     c.credits = cr;
                     c.faction_points = fp;
                     c.experience = xp;
+                    c.reputation = rep;
+                    ++c.inventory_rev;
+                    c.last_sync_tick = 0;
                 }
             }
         }
     } catch (const std::exception& e) {
         say(std::format("reward save error for {}: {}", name, e.what()));
+    }
+}
+
+namespace {
+
+bool apply_ammo_quantities(CharacterStore* store, PersistentId char_id, std::vector<ItemInstance>& items,
+                           std::vector<CharacterLoadout>& char_loadouts, size_t active_slot,
+                           int rem_std, int rem_hvy, bool& scrubbed) {
+    bool changed = false;
+    scrubbed = false;
+    if (store == nullptr || char_id == 0 || char_loadouts.empty()) return false;
+    const CharacterLoadout& cl = char_loadouts[std::min(active_slot, char_loadouts.size() - 1)];
+    for (const auto& [slot_key, new_qty] :
+         {std::pair<const char*, int>{"ammo_standard", rem_std},
+          std::pair<const char*, int>{"ammo_heavy", rem_hvy}}) {
+        if (new_qty < 0) continue;
+        const auto git = cl.gear_ids.find(slot_key);
+        if (git == cl.gear_ids.end() || git->second == 0) continue;
+        const auto it = std::find_if(items.begin(), items.end(),
+                                     [&](const ItemInstance& inst) { return inst.id == git->second; });
+        if (it == items.end() || it->quantity == new_qty) continue;
+        changed = true;
+        if (new_qty > 0) {
+            it->quantity = new_qty;
+            store->update_item_quantity(it->id, new_qty);
+        } else {
+            const uint64_t dead_id = it->id;
+            store->remove_item(dead_id);
+            items.erase(it);
+            for (CharacterLoadout& lo : char_loadouts) {
+                bool lo_chg = false;
+                for (auto g = lo.gear_ids.begin(); g != lo.gear_ids.end();) {
+                    if (g->second == dead_id) { g = lo.gear_ids.erase(g); lo_chg = true; }
+                    else ++g;
+                }
+                if (lo_chg) store->save_loadout(char_id, lo);
+            }
+            scrubbed = true;
+        }
+    }
+    return changed;
+}
+
+} // namespace
+
+void GameServer::apply_match_ammo_consumption(const std::string& name, int remaining_std_ammo,
+                                              int remaining_hvy_ammo) {
+    if (store_ == nullptr || (remaining_std_ammo < 0 && remaining_hvy_ammo < 0)) {
+        return;
+    }
+    try {
+        Client* live = nullptr;
+        for (Client& c : clients_) {
+            if (c.name == name) {
+                live = &c;
+                break;
+            }
+        }
+        if (live != nullptr && live->character != 0) {
+            bool scrubbed = false;
+            if (apply_ammo_quantities(store_, live->character, live->items, live->char_loadouts, live->loadout,
+                                      remaining_std_ammo, remaining_hvy_ammo, scrubbed)) {
+                rebuild_client_loadouts(*live);
+                live->synced_std_ammo = remaining_std_ammo;
+                live->synced_hvy_ammo = remaining_hvy_ammo;
+                ++live->inventory_rev;
+                live->last_sync_tick = 0;
+            }
+            return;
+        }
+        if (const auto saved = store_->find_by_name(name)) {
+            auto items = store_->list_items(saved->id);
+            auto los = store_->list_loadouts(saved->id);
+            bool scrubbed = false;
+            apply_ammo_quantities(store_, saved->id, items, los, size_t(std::max(0, saved->active_loadout)),
+                                  remaining_std_ammo, remaining_hvy_ammo, scrubbed);
+        }
+    } catch (const std::exception& e) {
+        say(std::format("ammo sync error for {}: {}", name, e.what()));
+    }
+}
+
+ItemInstance GameServer::grant_stacked_item(Client& client, const ItemDef& def, int delta_qty, double quality) {
+    if (store_ == nullptr || client.character == 0) {
+        return {};
+    }
+    const int add_qty = std::max(1, delta_qty);
+    if (def.kind == ItemKind::ammo && def.ammo_class != AmmoClass::none) {
+        const int cap = max_ammo_for(def.ammo_class);
+        for (ItemInstance& inst : client.items) {
+            if (inst.def_id == def.id && inst.quantity < cap) {
+                const int next_qty = std::min(cap, inst.quantity + add_qty);
+                inst.quantity = next_qty;
+                store_->update_item_quantity(inst.id, next_qty);
+                rebuild_client_loadouts(client);
+                if (!client.char_loadouts.empty()) {
+                    const auto& cl = client.char_loadouts[std::min(client.loadout, client.char_loadouts.size() - 1)];
+                    const auto git = cl.gear_ids.find(def.slot);
+                    if (git != cl.gear_ids.end() && git->second == inst.id) {
+                        int clip_sum = 0;
+                        const Loadout& lo = loadout_of(client);
+                        for (int s = 0; s < weapon_slots; ++s) {
+                            if (const WeaponDef* w = weapon_in_slot(lo, s); w && w->ammo_class == def.ammo_class) {
+                                clip_sum += std::max<int>(0, client.state.combat.weapons[size_t(s)].rounds);
+                            }
+                        }
+                        const int spare = std::max(0, next_qty - clip_sum);
+                        for (int s = 0; s < weapon_slots; ++s) {
+                            if (const WeaponDef* w = weapon_in_slot(lo, s); w && w->ammo_class == def.ammo_class) {
+                                client.state.combat.weapons[size_t(s)].reserve = int16_t(spare);
+                            }
+                        }
+                        if (def.ammo_class == AmmoClass::standard) client.synced_std_ammo = next_qty;
+                        else if (def.ammo_class == AmmoClass::heavy) client.synced_hvy_ammo = next_qty;
+                    }
+                }
+                return inst;
+            }
+        }
+        ItemInstance created = store_->grant_item({0, client.character, def.id, quality, "", "{}", std::min(cap, add_qty)});
+        client.items.push_back(created);
+        return created;
+    }
+    ItemInstance created = store_->grant_item({0, client.character, def.id, quality, "", "{}", 1});
+    client.items.push_back(created);
+    return created;
+}
+
+void GameServer::sync_client_ammo(Client& client, bool flush_now) {
+    if (conquest_ || store_ == nullptr || client.character == 0 || client.custom_loadouts.empty()) {
+        return;
+    }
+    const Loadout& lo = loadout_of(client);
+    const int rem_std = remaining_unified_ammo(client.state.combat, lo, AmmoClass::standard);
+    const int rem_hvy = remaining_unified_ammo(client.state.combat, lo, AmmoClass::heavy);
+    if (rem_std == client.synced_std_ammo && rem_hvy == client.synced_hvy_ammo && !flush_now) {
+        return;
+    }
+    if (!flush_now && client.ammo_sync_timer < 0.5 && rem_std != 0 && rem_hvy != 0) {
+        return;
+    }
+    client.ammo_sync_timer = 0.0;
+    client.synced_std_ammo = rem_std;
+    client.synced_hvy_ammo = rem_hvy;
+    for (Loadout& cur : client.custom_loadouts) {
+        if (rem_std >= 0) cur.unified_standard_ammo = rem_std;
+        if (rem_hvy >= 0) cur.unified_heavy_ammo = rem_hvy;
+    }
+    bool scrubbed = false;
+    if (apply_ammo_quantities(store_, client.character, client.items, client.char_loadouts, client.loadout,
+                              rem_std, rem_hvy, scrubbed)) {
+        if (scrubbed) {
+            rebuild_client_loadouts(client);
+            reset_loadout(client.state, loadout_of(client), client.stats);
+        }
+        ++client.inventory_rev;
     }
 }
 
@@ -536,6 +705,7 @@ void GameServer::send_inventory_sync(Client& client) {
     sync.resolved_loadouts = client.custom_loadouts;
     sync.bank_credits = client.bank_credits;
     sync.bank_items = client.bank_items;
+    sync.reputation = client.reputation;
     send(client.endpoint, sync);
     client.last_sync_tick = tick_;
 }
@@ -618,7 +788,7 @@ void GameServer::handle(const net::Endpoint& from, const net::Datagram& datagram
             return std::hypot(d.x, d.z) <= r.radius + 1;
         });
         if (on_queue && !client->transfer && (queue->team < 0 || (client->life == Life::alive && at_terminal))) {
-            on_queue(client->entity, queue->team, queue->mode);
+            on_queue(client->entity, queue->team);
         }
     } else if (const auto* ack = std::get_if<net::InventoryAck>(&message)) {
         if (ack->revision == client->inventory_rev) {
@@ -677,6 +847,7 @@ void GameServer::handle(const net::Endpoint& from, const net::Datagram& datagram
             if (clean.name.empty()) {
                 clean.name = "Loadout " + std::to_string(clean.slot_index + 1);
             }
+            sync_client_ammo(*client, true);
             store_->save_loadout(client->character, clean);
             client->char_loadouts = store_->list_loadouts(client->character);
             rebuild_client_loadouts(*client);
@@ -699,39 +870,66 @@ void GameServer::handle(const net::Endpoint& from, const net::Datagram& datagram
         if (!conquest_ && store_ != nullptr && config_.catalog != nullptr && client->character != 0) {
             const ItemDef* def = config_.catalog->find(buy->def_id);
             if (def != nullptr && def->kind != ItemKind::junk) {
-                const bool near_qm = std::any_of(quartermasters_.begin(), quartermasters_.end(),
-                                                 [&](const net::Quartermaster& q) {
+                const net::Quartermaster* matched_qm = nullptr;
+                for (const net::Quartermaster& q : quartermasters_) {
                     const Vec3 d = client->state.position - q.position;
-                    const bool faction_ok = def->faction == "neutral" || q.faction == "neutral" || def->faction == q.faction;
-                    return faction_ok && std::hypot(d.x, d.z) <= q.radius + 1.5;
-                });
+                    if (std::hypot(d.x, d.z) > q.radius + 1.5) continue;
+                    const std::string qf = normalize_faction(q.faction);
+                    const bool faction_ok = def->faction == "neutral" || qf == "neutral" || def->faction == qf;
+                    if (faction_ok) {
+                        matched_qm = &q;
+                        break;
+                    }
+                }
                 const bool near_gear_vendor = std::any_of(vendors_.begin(), vendors_.end(),
                                                           [&](const net::Vendor& v) {
-                    // A gear vendor sells anything neutral; a garage, vehicles.
-                    if (!((v.kind == "gear_vendor" && def->faction == "neutral") ||
+                    // Gear vendors sell combat gear, weapons, supplies & enhancements for Credits; garages sell vehicles.
+                    if (!((v.kind == "gear_vendor" && def->cost_credits > 0) ||
                           (v.kind == "garage" && def->kind == ItemKind::vehicle))) return false;
                     const Vec3 d = client->state.position - v.position;
                     return std::hypot(d.x, d.z) <= v.radius + 1.5;
                 });
-                if (buy->use_faction_points && near_qm && client->faction_points >= def->cost_faction_points) {
-                    client->faction_points -= def->cost_faction_points;
-                    store_->update_economy(client->character, client->credits, client->faction_points,
-                                           client->experience, int(client->loadout));
-                    store_->grant_item({0, client->character, def->id, 0.5, "", "{}"});
-                    client->items = store_->list_items(client->character);
-                    ++client->inventory_rev;
-                    client->last_sync_tick = 0;
-                    notify(client->entity, "Purchased " + def->display_name);
-                } else if (!buy->use_faction_points && (near_qm || near_gear_vendor) &&
+                if (buy->use_faction_points && matched_qm != nullptr) {
+                    if (def->kind != ItemKind::clothing) {
+                        notify(client->entity, "Quartermasters only issue cosmetic rewards for Faction Points");
+                    } else if (def->cost_faction_points <= 0) {
+                        notify(client->entity, def->display_name + " is not available for Faction Points");
+                    } else {
+                        const std::string qf = normalize_faction(matched_qm->faction);
+                        const std::string rep_faction = def->faction != "neutral" ? def->faction : qf;
+                        const int64_t rep_val = rep_faction != "neutral" && client->reputation.contains(rep_faction)
+                                                    ? client->reputation.at(rep_faction)
+                                                    : 0;
+                        if (reputation_tier(rep_val) < def->required_rank) {
+                            notify(client->entity,
+                                   std::format("Requires {} standing", reputation_tier_name(def->required_rank)));
+                        } else if (client->faction_points >= def->cost_faction_points) {
+                            client->faction_points -= def->cost_faction_points;
+                            store_->update_economy(client->character, client->credits, client->faction_points,
+                                                   client->experience, int(client->loadout));
+                            store_->grant_item({0, client->character, def->id, 0.5, "", "{}", 1});
+                            client->items = store_->list_items(client->character);
+                            ++client->inventory_rev;
+                            client->last_sync_tick = 0;
+                            notify(client->entity, std::format("Purchased {} (-{} FP)", def->display_name,
+                                                               def->cost_faction_points));
+                        }
+                    }
+                } else if (!buy->use_faction_points && near_gear_vendor &&
                            def->cost_credits > 0 && client->credits >= def->cost_credits) {
+                    sync_client_ammo(*client, true);
                     client->credits -= def->cost_credits;
                     store_->update_economy(client->character, client->credits, client->faction_points,
                                            client->experience, int(client->loadout));
-                    store_->grant_item({0, client->character, def->id, 0.5, "", "{}"});
+                    const int qty = def->kind == ItemKind::ammo ? def->ammo_batch : 1;
+                    grant_stacked_item(*client, *def, qty, 0.5);
                     client->items = store_->list_items(client->character);
                     ++client->inventory_rev;
                     client->last_sync_tick = 0;
-                    notify(client->entity, std::format("Purchased {} (-{} Cr)", def->display_name, def->cost_credits));
+                    notify(client->entity, def->kind == ItemKind::ammo
+                                               ? std::format("Purchased {} x{} (-{} Cr)", def->display_name, qty,
+                                                             def->cost_credits)
+                                               : std::format("Purchased {} (-{} Cr)", def->display_name, def->cost_credits));
                 }
             }
         }
@@ -971,6 +1169,10 @@ GameServer::Client* GameServer::join(const net::Endpoint& from, const std::strin
                 joined.loadout = size_t(std::max(0, refreshed->active_loadout));
             }
             joined.items = store_->list_items(joined.character);
+            joined.reputation = store_->list_reputation(joined.character);
+            for (const std::string_view pf : playable_factions) {
+                joined.reputation.try_emplace(std::string(pf), 0);
+            }
             joined.char_loadouts = store_->list_loadouts(joined.character);
             rebuild_client_loadouts(joined);
             joined.inventory_rev = 1;
@@ -1112,6 +1314,7 @@ void GameServer::step() {
                 } else {
                     client.switch_remaining -= dt;
                     if (client.switch_remaining <= 0.0) {
+                        sync_client_ammo(client, true);
                         client.loadout = size_t(client.switching_to);
                         client.switching_to = -1;
                         client.switch_remaining = 0.0;
@@ -1121,6 +1324,8 @@ void GameServer::step() {
                         client.shield_recharge_timer = 0;
                         client.shield_disrupt_timer = 0;
                         reset_loadout(client.state, loadout_of(client), client.stats);
+                        client.synced_std_ammo = remaining_unified_ammo(client.state.combat, loadout_of(client), AmmoClass::standard);
+                        client.synced_hvy_ammo = remaining_unified_ammo(client.state.combat, loadout_of(client), AmmoClass::heavy);
                         if (store_ != nullptr && client.character != 0) {
                             try {
                                 store_->update_economy(client.character, client.credits, client.faction_points,
@@ -1145,6 +1350,29 @@ void GameServer::step() {
         if (client.shield_recharge_timer <= 0 && client.shield_disrupt_timer <= 0 &&
             client.shield < client.stats.shield_capacity && client.stats.shield_recharge > 0) {
             client.shield = std::min(client.stats.shield_capacity, client.shield + client.stats.shield_recharge * dt);
+        }
+        if (!conquest_) {
+            client.ammo_sync_timer += dt;
+            sync_client_ammo(client, false);
+            if (client.state.vehicle < 0) {
+                if (const WeaponDef* sec = weapon_in_slot(loadout_of(client), secondary_slot); sec && sec->ammo > 0) {
+                    const int clip = std::max(1, sec->rounds_per_clip);
+                    const int full = sec->ammo * clip;
+                    WeaponState& sw = client.state.combat.weapons[secondary_slot];
+                    int cur = std::max<int>(0, sw.rounds) + std::max<int>(0, sw.reserve);
+                    if (cur < full) {
+                        client.secondary_recharge_timer += dt;
+                        while (client.secondary_recharge_timer >= 20.0 && cur < full) {
+                            client.secondary_recharge_timer -= 20.0;
+                            if (sw.rounds < clip) ++sw.rounds;
+                            else sw.reserve = int16_t(std::max<int>(0, sw.reserve) + 1);
+                            ++cur;
+                        }
+                    } else {
+                        client.secondary_recharge_timer = 0.0;
+                    }
+                }
+            }
         }
     }
 
@@ -1417,8 +1645,11 @@ void GameServer::run_match() {
             for (const Client& client : clients_) {
                 say(std::format("  {:<16} {:<12} {} kills, {} deaths, {} captures", client.name,
                                 field.team(client.team).name, client.kills, client.deaths, client.captures));
+                const Loadout& lo = loadout_of(client);
                 result.players.push_back({client.name, client.team, client.kills, client.deaths, client.captures,
-                                          client.battle_profession_xp});
+                                          client.battle_profession_xp,
+                                          remaining_unified_ammo(client.state.combat, lo, AmmoClass::standard),
+                                          remaining_unified_ammo(client.state.combat, lo, AmmoClass::heavy)});
             }
             if (on_match_ended) {
                 on_match_ended(result);
@@ -1560,6 +1791,15 @@ void GameServer::spawn_at_post(Client& client, size_t loadout_index, size_t post
                      ? position.y
                      : world_.terrain().height_at(position.x, position.z);
         face_yaw = std::atan2(-(position.x - post.position.x), -(position.z - post.position.z));
+    }
+    if (conquest_ && client.spawn_count > 0 && !client.custom_loadouts.empty()) {
+        const Loadout& prev = loadout_of(client);
+        const int rem_std = remaining_unified_ammo(client.state.combat, prev, AmmoClass::standard);
+        const int rem_hvy = remaining_unified_ammo(client.state.combat, prev, AmmoClass::heavy);
+        for (Loadout& lo : client.custom_loadouts) {
+            if (rem_std >= 0 && lo.unified_standard_ammo >= 0) lo.unified_standard_ammo = rem_std;
+            if (rem_hvy >= 0 && lo.unified_heavy_ammo >= 0) lo.unified_heavy_ammo = rem_hvy;
+        }
     }
     client.loadout = loadout_index;
     const Loadout& loadout = loadout_of(client);
@@ -2459,6 +2699,7 @@ Vec3 GameServer::spawn_point(uint32_t index) const {
 }
 
 void GameServer::respawn(Client& client) {
+    sync_client_ammo(client, true);
     client.life = Life::alive;
     client.health = client.stats.max_health;
     client.shield = client.stats.shield_capacity;
@@ -2486,6 +2727,11 @@ void GameServer::respawn(Client& client) {
 }
 
 void GameServer::drop_silent(double now) {
+    for (Client& client : clients_) {
+        if (now - client.last_heard > config_.client_timeout) {
+            sync_client_ammo(client, true);
+        }
+    }
     std::erase_if(clients_, [&](const Client& client) {
         const bool silent = now - client.last_heard > config_.client_timeout;
         if (silent) {

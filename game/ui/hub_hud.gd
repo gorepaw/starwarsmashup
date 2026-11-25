@@ -149,8 +149,7 @@ func _paint_queue() -> void:
 	frame(box)
 	art.draw_icon(self, str(queue.get("icon", "")), Rect2(box.position + Vector2(14, 16) * u, Vector2(56, 56) * u), ACCENT)
 	var x := box.position.x + 82 * u
-	var qmode := str(queue.get("mode", "standard")).capitalize()
-	text("gamefont_tiny", "Queued (%s) for the %s" % [qmode, queue.get("side", "")], Vector2(x, box.position.y + 12 * u), "Left", DIM)
+	text("gamefont_tiny", "Queued for the %s" % queue.get("side", ""), Vector2(x, box.position.y + 12 * u), "Left", DIM)
 	var where := str(queue.get("battlefield", ""))
 	text("gamefont_medium", where if where != "" else "Choosing a battlefield", Vector2(x, box.position.y + 30 * u),
 			"Left", TEXT)

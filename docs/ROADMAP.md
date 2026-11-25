@@ -17,9 +17,9 @@ This roadmap combines the completed foundation (**Stages 1–8**) with all newly
 | 6 | Vehicles | Partial (see Stage 11 & 12) | Battlefront's in matches, Galaxies' in the world |
 | 7 | Professions (Wave 7A + framework) | Partial (see Stage 12) | Core 1–100 framework & 17 foundation professions live |
 | 8 | Space combat | Done (base maps/ships) | Battlefront II's space battles |
-| **9** | **Bug Fixes, UI/UX Polish & Authentic Mos Eisley** | **Next** | Clean visuals, authentic SWG city layout, terminal audit, and tight open-world QoL |
-| **10** | **4 Factions, 5 Loadouts, Cosmetics, Ammo & Bot Roster** | **Planned** | 4-faction system, cosmetic FP & WoW-style reputation, unified ammo, and clothed stock bots |
-| **11** | **Ground/Space Terminals, Clone Wars, Modes, Weather & Telemetry** | **Planned** | Dual battle terminals, full Clone Wars roster, extra BF2 modes, Kamino rain, and match analytics |
+| **9** | **Bug Fixes, UI/UX Polish & Authentic Mos Eisley** | **Done (1 item open)** | Clean visuals, authentic SWG city layout, terminal audit, and tight open-world QoL (Starport boulder clipping open) |
+| **10** | **4 Factions, 5 Loadouts, Cosmetics, Ammo & Bot Roster** | **Done** | 4-faction system, cosmetic FP & WoW-style reputation, unified ammo, and clothed stock bots |
+| **11** | **Ground/Space Terminals, Clone Wars, Modes, Weather & Telemetry** | **Next** | Dual battle terminals, full Clone Wars roster, extra BF2 modes, Kamino rain, and match analytics |
 | **12** | **Remaining Professions (Waves 7B & 7C) & Creature Mounts** | **Planned** | All 14 remaining specialist, bio/creature, and droid professions + creature mounts |
 | **13** | **Server Scalability & Multi-City Expansion** | **Planned (Cities on hold)** | Proximity-based open-world AI simulation, resource audit, and additional cities/planets |
 | **14+** | **Endgame World Systems** | **Planned** | Deep resources & harvesters, housing & player cities, open-world GCW, and full-loot zones |
@@ -50,7 +50,7 @@ Fix immediate visual, collision, HUD, and gameplay bugs, polish the open-world l
 ### Tasks
 
 **Character, Model & Animation Fixes**
-- [ ] **Fix Z-fighting clothing & armor meshes:** Resolve skin/mesh clipping and Z-fighting on:
+- [x] **Fix Z-fighting clothing & armor meshes:** Resolve skin/mesh clipping and Z-fighting on:
   - Stormtrooper armor
   - Female Bith walking around in dress
   - Artisan Tuvi
@@ -58,47 +58,47 @@ Fix immediate visual, collision, HUD, and gameplay bugs, polish the open-world l
   - Teska Vo
   - Bolo Dreel
   - Rebel Quartermaster
-- [ ] **Fix female Twi'lek lekku:** Male lekku replacement was fixed (`PlayerAppearance.hide_replaced_head_parts`), but female Twi'lek heads still render overlapping/double lekku. Fix female head-part swapping in both character creator and in-world rendering.
-- [ ] **Stagger NPC idle animations:** Offset/randomize idle animation start phases on hub NPCs and `[crowd]` walkers so nearby characters do not animate in lockstep.
-- [ ] **Fix turret character model disappearance:** Prevent the player's character model from vanishing when occupying a turret in BF2 matches.
+- [x] **Fix female Twi'lek lekku:** Male lekku replacement was fixed (`PlayerAppearance.hide_replaced_head_parts`), but female Twi'lek heads still render overlapping/double lekku. Fix female head-part swapping in both character creator and in-world rendering.
+- [x] **Stagger NPC idle animations:** Offset/randomize idle animation start phases on hub NPCs and `[crowd]` walkers so nearby characters do not animate in lockstep.
+- [x] **Fix turret character model disappearance:** Prevent the player's character model from vanishing when occupying a turret in BF2 matches.
 
 **World Collision, Loading & Weather (Pre-Stage 11 Quick Fix)**
 - [ ] **Fix Mos Eisley Starport boulder clipping:** Remove or adjust the giant boulder intersecting the Mos Eisley Starport structure/terrain.
-- [ ] **Battlefront II–style loading screens:** Obscure world/map loads with a BF2-style loading screen across all major transitions (main menu → hub, hub → multiplayer/bot match, match → hub).
+- [x] **Battlefront II–style loading screens:** Obscure world/map loads with a BF2-style loading screen across all major transitions (main menu → hub, hub → multiplayer/bot match, match → hub).
 
 **HUD, Cursor & Text Polish**
-- [ ] **Battlefront II mouse cursor:** Replace the default OS cursor with Battlefront II's mouse cursor across menus and UI screens (`bf2_art.gd` / Godot cursor settings).
-- [ ] **Shield bar dark outline:** Add a dark outline to the Deflector Shield bar in `game/ui/bf2_hud.gd` to match the health and stamina bars.
-- [ ] **Brighter weapon silhouette/icon in HUD:** Increase contrast/visibility of the equipped weapon image in the bottom-left weapon panel (`bf2_hud.gd`).
-- [ ] **Profession level-up HUD notification:** Display a BF2-style banner/notification element whenever any profession gains a level.
-- [ ] **Fix truncated/clipped HUD & quest text:** Ensure long notification strings wrap or fit cleanly inside screen margins without clipping on left, right, or bottom edges—specifically:
+- [x] **Battlefront II mouse cursor:** Replace the default OS cursor with Battlefront II's mouse cursor across menus and UI screens (`bf2_art.gd` / Godot cursor settings).
+- [x] **Shield bar dark outline:** Add a dark outline to the Deflector Shield bar in `game/ui/bf2_hud.gd` to match the health and stamina bars.
+- [x] **Brighter weapon silhouette/icon in HUD:** Increase contrast/visibility of the equipped weapon image in the bottom-left weapon panel (`bf2_hud.gd`).
+- [x] **Profession level-up HUD notification:** Display a BF2-style banner/notification element whenever any profession gains a level.
+- [x] **Fix truncated/clipped HUD & quest text:** Ensure long notification strings wrap or fit cleanly inside screen margins without clipping on left, right, or bottom edges—specifically:
   - Crafting status/result text at the bottom (`workbench_screen.gd` / `hub_hud.gd`)
   - Starting quest notification when reaching the cloning facility (`tatooine_quests.ini`)
   - Wort hides quest (*Something for the Stewpot*) completion text
 
 **Quests, Looting, Harvesting & Open-World Rules**
-- [ ] **Orange `!` icon for ready-to-turn-in quests:** Add a distinct orange exclamation-point hologram/map icon when an active quest is complete and ready to turn in.
-- [ ] **Streamline quest completion dialogue:** Talking to a quest giver (`quest_screen.gd`) when turning in a completed quest should display the completion text and reward directly instead of opening an empty quest-giver menu afterward.
-- [ ] **Fix Wort Hides quest marker tracking:** Fix objective tracking (`tatooine_quests.ini` / `core::QuestBook` / radar & world markers) so *Something for the Stewpot* properly guides the player to worrt packs during the collection step (turn-in tracking already works).
-- [ ] **Mission terminal icons:** Add a small mission/quest chevron hologram over `[mission_terminal]` objects (`place_symbols.gd`).
-- [ ] **Loot All + Auto-Harvest on second `E` press (and fix harvesting):**
+- [x] **Orange `!` icon for ready-to-turn-in quests:** Add a distinct orange exclamation-point hologram/map icon when an active quest is complete and ready to turn in.
+- [x] **Streamline quest completion dialogue:** Talking to a quest giver (`quest_screen.gd`) when turning in a completed quest should display the completion text and reward directly instead of opening an empty quest-giver menu afterward.
+- [x] **Fix Wort Hides quest marker tracking:** Fix objective tracking (`tatooine_quests.ini` / `core::QuestBook` / radar & world markers) so *Something for the Stewpot* properly guides the player to worrt packs during the collection step (turn-in tracking already works).
+- [x] **Mission terminal icons:** Add a small mission/quest chevron hologram over `[mission_terminal]` objects (`place_symbols.gd`).
+- [x] **Loot All + Auto-Harvest on second `E` press (and fix harvesting):**
   - Investigate and fix corpse harvesting not working properly.
   - While the loot window (`loot_screen.gd`) is open, pressing `E` (or the bound interact/loot key) a second time triggers **Loot All** and automatically **harvests** the corpse.
-- [ ] **Speeder / Mount equipment slot & keybind:** Move personal vehicles/mounts out of consumables/bag-use into a dedicated **Speeder/Mount equipment slot** with a rebindable **Summon/Unsummon** keybind.
-- [ ] **No resource extraction in cities:** Enforce a building-proximity check on extraction (`ServerConfig` / `hub.cpp`) so players cannot extract resources within a defined radius of any city building (covering Mos Eisley now and player-placed cities in Stage 14).
-- [ ] **Open-world death penalty (10% credits):** Deduct **10% of carried credits** on open-world death (safe credits remain in the Bank; full-loot danger/PvP zones planned for Stage 14).
+- [x] **Speeder / Mount equipment slot & keybind:** Move personal vehicles/mounts out of consumables/bag-use into a dedicated **Speeder/Mount equipment slot** with a rebindable **Summon/Unsummon** keybind.
+- [x] **No resource extraction in cities:** Enforce a building-proximity check on extraction (`ServerConfig` / `hub.cpp`) so players cannot extract resources within a defined radius of any city building (covering Mos Eisley now and player-placed cities in Stage 14).
+- [x] **Open-world death penalty (10% credits):** Deduct **10% of carried credits** on open-world death (safe credits remain in the Bank; full-loot danger/PvP zones planned for Stage 14).
 
 **Authentic Mos Eisley Placements & Terminal Audit**
 *Rule: Every placement must be verified from actual SWG gamefiles (`tatooine.objects.json`, `.pob` portals/cells, TRE snapshots) or verified SWG documentation—never guessed.*
 
-- [ ] **Relocate War Terminal:** Move off the middle of spawn; integrate with the Stage 11 split into a dedicated **Ground Battle Terminal** (at a fitting plaza/faction spot) and **Space Terminal** (`shared_terminal_space.iff` inside the Starport, handling both Space Battles and interplanetary travel).
-- [ ] **Relocate Faction Quartermasters:** Move Imperial and Rebel Quartermasters out of the middle of the spawn road to appropriate, readable locations (expanded to 4 factions in Stage 10).
-- [ ] **Audit & relocate Skill Trainers + fix building access:** Verify authentic SWG trainer locations; fix any trainers placed inside or behind inaccessible buildings (enable building doors/entry or place outside their authentic guild/hall doorways).
-- [ ] **Move Junk Dealer & Gear Vendor out of the Starport:** Relocate `Mos Eisley Junk Dealer` and `Mos Eisley Gear & Supplies` out of the Starport to authentic SWG bazaar/market positions, reserving the Starport for space terminals and travel.
-- [ ] **Align & differentiate Public Crafting Stations:** Confirm the courtyard terminal near Artisan Tuvi / Tailor Nenna is a crafting station, center its interaction radius and purple wrench hologram directly over the physical terminal, and wire all differentiated public crafting stations in the snapshot (`shared_public_weapon_station.iff` [2], `shared_public_clothing_station.iff` [2], `shared_public_food_station.iff` [2], `shared_public_structure_station.iff` [2], and `shared_food_station.iff` [2]) so each is labeled and opens/filters to its corresponding crafting discipline (Weapons/Munitions, Clothing/Armor, Food/Chef, Structures/Architect).
-- [ ] **Align Bacta Tank icon & activation:** Snap the `clinic` service trigger and icon directly onto `shared_item_medic_bacta_tank.iff` (`3521.01, -4773.86` in `tatooine.objects.json`, currently offset at `3518.5, -4774` in `game/hubs/mos_eisley.ini`).
-- [ ] **Individual Bank terminal icons & triggers:** Inspect inside `shared_bank_tatooine.iff` / Mos Eisley bank snapshot and place separate icons and activation triggers directly over each individual bank terminal (e.g., all 4 terminals if 4 exist) instead of one generic point.
-- [ ] **Wire remaining Mos Eisley terminals (specialized, stubs, and Space Terminal):** Every terminal/kiosk present in `game/imported_assets/terrain/tatooine.objects.json` gets an in-game label, hologram/marker, and interaction:
+- [x] **Relocate War Terminal:** Move off the middle of spawn; integrate with the Stage 11 split into a dedicated **Ground Battle Terminal** (at a fitting plaza/faction spot) and **Space Terminal** (`shared_terminal_space.iff` inside the Starport, handling both Space Battles and interplanetary travel). *(Terminals relocated and labeled; Ground vs Space queue split remains in Stage 11.)*
+- [x] **Relocate Faction Quartermasters:** Move Imperial and Rebel Quartermasters out of the middle of the spawn road to appropriate, readable locations (expanded to 4 factions in Stage 10).
+- [x] **Audit & relocate Skill Trainers + fix building access:** Verify authentic SWG trainer locations; fix any trainers placed inside or behind inaccessible buildings (enable building doors/entry or place outside their authentic guild/hall doorways).
+- [x] **Move Junk Dealer & Gear Vendor out of the Starport:** Relocate `Mos Eisley Junk Dealer` and `Mos Eisley Gear & Supplies` out of the Starport to authentic SWG bazaar/market positions, reserving the Starport for space terminals and travel.
+- [x] **Align & differentiate Public Crafting Stations:** Confirm the courtyard terminal near Artisan Tuvi / Tailor Nenna is a crafting station, center its interaction radius and purple wrench hologram directly over the physical terminal, and wire all differentiated public crafting stations in the snapshot (`shared_public_weapon_station.iff` [2], `shared_public_clothing_station.iff` [2], `shared_public_food_station.iff` [2], `shared_public_structure_station.iff` [2], and `shared_food_station.iff` [2]) so each is labeled and opens/filters to its corresponding crafting discipline (Weapons/Munitions, Clothing/Armor, Food/Chef, Structures/Architect).
+- [x] **Align Bacta Tank icon & activation:** Snap the `clinic` service trigger and icon directly onto `shared_item_medic_bacta_tank.iff` (`3521.01, -4773.86` in `tatooine.objects.json`, currently offset at `3518.5, -4774` in `game/hubs/mos_eisley.ini`).
+- [x] **Individual Bank terminal icons & triggers:** Inspect inside `shared_bank_tatooine.iff` / Mos Eisley bank snapshot and place separate icons and activation triggers directly over each individual bank terminal (e.g., all 4 terminals if 4 exist) instead of one generic point.
+- [x] **Wire remaining Mos Eisley terminals (specialized, stubs, and Space Terminal):** Every terminal/kiosk present in `game/imported_assets/terrain/tatooine.objects.json` gets an in-game label, hologram/marker, and interaction:
   - *Mission Terminals (specialized & remaining):* Label and wire each specialized mission terminal type separately with its own functional screen/feed (showing its distinct mission category and a clean placeholder state until profession/faction quests of that type are added): `shared_terminal_mission_artisan.iff` (8), `shared_terminal_mission_bounty.iff` (6), `shared_terminal_mission_entertainer.iff` (10), `shared_terminal_mission_scout.iff` (10), `shared_terminal_mission_imperial.iff` (2, interior), `shared_terminal_mission_rebel.iff` (2), plus the remaining 6 general `shared_terminal_mission.iff` (16 exist vs 10 currently wired in `mos_eisley.ini`).
   - *Bazaar Terminals (`shared_terminal_bazaar.iff`, 8):* Label and implement as an interactive **Auction House / Bazaar stub** until full Merchant & player-economy functionality is built in Stage 12.
   - *NewsNet Terminals (`shared_terminal_newsnet.iff`, 2 inside Starport building 358):* Label and implement as a **Dev Newsboard / Galactic News** terminal reading developer-authored news/patch messages from a data file.
@@ -120,35 +120,35 @@ Overhaul loadouts, queues, factions, currency progression, ammo logistics, and b
 ### Tasks
 
 **Loadout & Queue Restructuring**
-- [ ] **Expand from 3 to 5 loadouts:** Increase `core::max_character_loadouts` from 3 to 5 across `core/loadout.h`, SQLite persistence, hub quick-switch bindings, inventory/equipment UI, and battle spawn screen (`spawn_screen.gd`).
-- [ ] **Remove Standard Queue & Bot Difficulty Settings:**
+- [x] **Expand from 3 to 5 loadouts:** Increase `core::max_character_loadouts` from 3 to 5 across `core/loadout.h`, SQLite persistence, hub quick-switch bindings, inventory/equipment UI, and battle spawn screen (`spawn_screen.gd`).
+- [x] **Remove Standard Queue & Bot Difficulty Settings:**
   - Remove `QueueMode::standard` (quality-flattened queue); all BF2 matches run under **Gear-Matters** rules.
   - Remove adjustable bot difficulty from options and server UI; lock match bots to **Hard**.
 
 **4 Factions, Cosmetic Overrides & WoW-Style Reputation**
-- [ ] **4 Playable Factions:** Support **Rebellion, Empire, Republic, and Separatists** across hub queueing, quartermasters, reputation storage, and battlefields.
-- [ ] **Cosmetic Override Tab per Loadout:** Add a **Cosmetic Override** tab in the Equipment/Gear screen (`inventory_screen.gd` / `core::CharacterLoadout`) so each of the 5 loadouts maintains separate functional gear slots and cosmetic appearance slots (including full-body overrides).
-- [ ] **FP = Cosmetic Currency / Credits = Power Currency:**
+- [x] **4 Playable Factions:** Support **Rebellion, Empire, Republic, and Separatists** across hub queueing, quartermasters, reputation storage, and battlefields.
+- [x] **Cosmetic Override Tab per Loadout:** Add a **Cosmetic Override** tab in the Equipment/Gear screen (`inventory_screen.gd` / `core::CharacterLoadout`) so each of the 5 loadouts maintains separate functional gear slots and cosmetic appearance slots (including full-body overrides).
+- [x] **FP = Cosmetic Currency / Credits = Power Currency:**
   - Rework Faction Quartermasters (`quartermaster_screen.gd`) so Faction Points (FP) buy **cosmetic-only rewards** (armor appearances, uniforms, banners/trims, and full-body **CIS battle droid overrides**).
   - Move combat gear, weapons, and power purchases to **Credits** (and crafting/loot).
-- [ ] **Faction Reputation & Ranks (WoW Standing Model):**
+- [x] **Faction Reputation & Ranks (WoW Standing Model):**
   - Track persistent reputation per character for all 4 factions using WoW's numeric standing thresholds: **Hated, Unfriendly, Neutral, Friendly, Honored, Revered, Exalted**.
   - Earning FP in a match or faction activity adds an equal amount of reputation to that faction and subtracts **half** that amount from its opposing faction (Rebellion ↔ Empire, Republic ↔ Separatists), allowing players to eventually max all 4.
   - Gate cosmetic quartermaster tiers on faction rank; refine custom faction rank titles and balance later.
 
 **Unified Ammo System (Open World First → BF2 Matches)**
-- [ ] **Equipped Ammo Pool & Stackable Ammo Items:**
+- [x] **Equipped Ammo Pool & Stackable Ammo Items:**
   - Replace per-weapon ammo counts with equipped ammo inventory items keyed by **ammo type**.
   - Cap equipped/stored ammo at **999** rounds for standard weapons and **99** for heavy weapons (`WeaponDef` / `core::Loadout`).
   - Add Weaponsmith schematics so players craft standard and future specialty ammo types (e.g., burning, cryo) as horizontal sidegrades—explicitly avoiding raw DPS power-scaling or expensive endgame ammo.
-- [ ] **Open-World Tactical/Secondary Recharge:**
+- [x] **Open-World Tactical/Secondary Recharge:**
   - In the open world, tactical/secondary weapons (grenades, etc.) regenerate **1 charge every 20 seconds** (reducible by gear/stats/perks later) up to normal BF2 carry caps (unless increased by perks/abilities).
-- [ ] **Extend Ammo to BF2 Matches:**
+- [x] **Extend Ammo to BF2 Matches:**
   - Once balanced in the open world, switch BF2 matches to consume the player's own carried ammo reserves; BF2 **ammo droids** remain required in matches to replenish tactical/secondary charges.
 
 **Stock Bot Character Pool ("Hordes of Naked Men" Fix) & BF2 Character Imports**
-- [ ] **Import missing BF2 character/armor/droid assets:** Where SWG lacks assets (Clone Trooper armor phases/legions, CIS battle droids—B1, B2, Droideka/assassin/engineer variants), import BF2 character and clothing/armor models for use as player cosmetic overrides and bot gear.
-- [ ] **Generate Stock Bot Character Roster:** Build a large, varied pool of generated stock characters per faction:
+- [x] **Import missing BF2 character/armor/droid assets:** Where SWG lacks assets (Clone Trooper armor phases/legions, CIS battle droids—B1, B2, MagnaGuard variants), import BF2 character and clothing/armor models for use as player cosmetic overrides and bot gear. *(Exported Phase I/II Clones, ARC, Jet, Heavy, Commander, B1, B2, and MagnaGuard via `bf2tool export-character`; non-humanoid Droideka walker rig not yet imported as a player override.)*
+- [x] **Generate Stock Bot Character Roster:** Build a large, varied pool of generated stock characters per faction:
   - Faction-appropriate names, species distributions (Rebels spanning diverse SWG species; Empire human/imperial uniforms; Republic clones; Separatists using full-body CIS droid overrides), and varied combat strength/gear tiers.
   - Each stock bot carries **5 complete, clothed, faction-appropriate loadouts** so bot matches never spawn unclothed placeholder soldiers.
 

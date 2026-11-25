@@ -136,10 +136,9 @@ public:
     // How the server's people look: Galaxies object templates; a remote's
     // look (1 and up) indexes these from 1.
     godot::PackedStringArray get_looks() const;
-    // Queue for a battle on a side (0 or 1) at a war terminal; -1 leaves the queue.
-    // `mode` is "standard" or "gear".
-    void queue(int64_t team, const godot::String& mode = "standard");
-    // {queue ("none" or "queued"), team, queue_mode, in_queue, starts_in, battlefield,
+    // Queue for a battle on a side (0..3) at a war terminal; -1 leaves the queue.
+    void queue(int64_t team);
+    // {queue ("none" or "queued"), team, in_queue, starts_in, battlefield,
     // notice_id, notice, credits, faction_points, experience, active_loadout,
     // switching_loadout, switch_progress, inventory_rev}.
     godot::Dictionary get_player_status() const;
@@ -155,8 +154,9 @@ public:
     godot::Array get_vehicles() const;
     // Nearby lootable corpses: [{entity_id, name, position, items: [{slot, def_id, quality}]}].
     godot::Array get_corpses() const;
-    // Authoritative inventory & loadouts synced from the server.
+    // Authoritative inventory, reputation & loadouts synced from the server.
     godot::Array get_inventory() const;
+    godot::Dictionary get_reputation() const;
     godot::Array get_character_loadouts() const;
     godot::Array get_custom_loadouts() const;
     void save_loadout(int64_t slot_index, const godot::Dictionary& loadout);
@@ -268,11 +268,8 @@ public:
     // Runs a conquest match on this battlefield (as SwmClient.set_battlefield).
     // Call before start().
     godot::Error set_battlefield(const godot::String& path);
-    // Adds bots, connected like players, when the server starts.
+    // Adds bots, connected like players, when the server starts (locked to Hard difficulty).
     void set_bots(int64_t count);
-    // How well bots play: "easy", "normal" or "hard" (core::BotSkill::preset),
-    // here and in a hub's battles; any time.
-    void set_bot_difficulty(const godot::String& difficulty);
     // Makes the server a hub (a hub file, an OS path; see game/hubs/): its
     // war terminals queue players for battles it launches. Call before start().
     godot::Error set_hub(const godot::String& path);

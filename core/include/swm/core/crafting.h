@@ -69,6 +69,7 @@ struct SchematicDef {
     std::string profession = "weaponsmith";
     int required_level = 1;
     std::string output_item;
+    int output_count = 1;
     int64_t base_xp = 60;
     int enhancement_slots = 1;  // 0..2 optional enhancement modules
     std::vector<SchematicSlot> slots;

@@ -34,7 +34,7 @@ func _initialize() -> void:
 	var sch: Array = store.get_schematics()
 	var wo: Array = store.get_work_orders()
 	assert(res.size() == 16, "expected 16 resources, got %d" % res.size())
-	assert(sch.size() == 21, "expected 21 schematics, got %d" % sch.size())
+	assert(sch.size() == 26, "expected 26 schematics, got %d" % sch.size())
 	assert(wo.size() == 5, "expected 5 work orders, got %d" % wo.size())
 
 	var scan: Dictionary = store.scan_terrain("mineral", -3520.0, -4790.0, 60.0, 17)

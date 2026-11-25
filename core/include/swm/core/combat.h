@@ -92,6 +92,10 @@ bool resupply(MoveState& state, const Loadout& loadout, double fraction);
 // up to full. Returns whether anything changed.
 bool resupply_clips(MoveState& state, const Loadout& loadout, int clips);
 
+// Total remaining unified ammo rounds (loaded clip + shared reserve) for
+// `ac`, or -1 if `loadout` does not track `ac` via unified ammo.
+int remaining_unified_ammo(const CombatState& combat, const Loadout& loadout, AmmoClass ac);
+
 // An explosion's damage to a body standing at `feet`, before mitigation: full
 // within the inner radius of the body, falling linearly to nothing at the
 // outer radius.

@@ -51,9 +51,8 @@ const Loadout& GameClient::loadout() const {
     return config_.loadout;
 }
 
-void GameClient::queue(int team, QueueMode mode) {
-    wanted_queue_ = std::clamp(team, -1, 1);
-    wanted_queue_mode_ = mode;
+void GameClient::queue(int team) {
+    wanted_queue_ = std::clamp(team, -1, 3);
     last_queue_request_ = -1e9;
 }
 
@@ -281,12 +280,11 @@ void GameClient::update(double now) {
     if (status_ == Status::connected && wanted_queue_ != -2 && now - last_queue_request_ >= 0.5) {
         const bool done = wanted_queue_ < 0 ? player_status_.queue == net::PlayerStatus::none
                                             : player_status_.queue == net::PlayerStatus::queued &&
-                                                  player_status_.team == wanted_queue_ &&
-                                                  player_status_.queue_mode == wanted_queue_mode_;
+                                                  player_status_.team == wanted_queue_;
         if (done) {
             wanted_queue_ = -2;
         } else {
-            link_.send(config_.server, net::encode(net::QueueRequest{int8_t(wanted_queue_), wanted_queue_mode_}));
+            link_.send(config_.server, net::encode(net::QueueRequest{int8_t(wanted_queue_)}));
             last_queue_request_ = now;
         }
     }
@@ -355,6 +353,7 @@ void GameClient::handle(const net::Datagram& datagram, double now) {
                 custom_loadouts_ = sync->resolved_loadouts;
                 bank_credits_ = sync->bank_credits;
                 bank_items_ = sync->bank_items;
+                reputation_ = sync->reputation;
                 if (spawned_) {
                     const Species sp = Species(std::min<size_t>(self_.species, species_count - 1));
                     character_stats_ = stats_for(loadout(), sp, config_.base_stats);

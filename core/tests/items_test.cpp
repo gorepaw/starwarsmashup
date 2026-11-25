@@ -93,17 +93,17 @@ int main() {
     ensure_starter_kit(store, bob.id);
     const auto bob_items = store.list_items(bob.id);
     const auto bob_los = store.list_loadouts(bob.id);
-    CHECK(bob_items.size() == 8 && bob_los.size() == 1);
-    CHECK(bob_los.size() == 1 && bob_los[0].appearance_ids.count("shirt") == 1 &&
+    CHECK(bob_items.size() == 9 && bob_los.size() == 1);
+    CHECK(!bob_los.empty() && bob_los[0].gear_ids.count("ammo_standard") == 1 &&
+          bob_los[0].appearance_ids.count("shirt") == 1 &&
           bob_los[0].appearance_ids.count("pants") == 1 && bob_los[0].appearance_ids.count("boots_cosmetic") == 1);
     const auto bob_after = *store.find(bob.id);
     CHECK(bob_after.credits == 500 && bob_after.faction_points == 100);
 
-    // Reward calculation: Standard vs Gear
-    const BattleReward std_win = compute_battle_reward(true, false, 4, 2, QueueMode::standard);
-    const BattleReward gear_win = compute_battle_reward(true, false, 4, 2, QueueMode::gear);
-    CHECK(std_win.xp == 470 && std_win.faction_points == 190 && std_win.credits == 340);
-    CHECK(gear_win.faction_points > std_win.faction_points && gear_win.credits > std_win.credits);
+    // Reward calculation: always Gear-Matters rules (+15% FP & Credits).
+    const BattleReward gear_win = compute_battle_reward(true, false, 4, 2);
+    CHECK(gear_win.xp == 470 && gear_win.faction_points == 218 && gear_win.credits == 391);
+    static_assert(max_character_loadouts == 5);
 
     // Worn models: appearance overrides armor visually; Wookiee skips armor chest
     const std::filesystem::path worn_ini = "swm_worn_test_catalog.ini";
@@ -123,6 +123,48 @@ int main() {
     CHECK(resolve_worn_models(worn_cat, wcl, winv, Species::wookiee, Gender::male).empty());
     wcl.appearance_ids["jacket"] = 2;
     CHECK(resolve_worn_models(worn_cat, wcl, winv, Species::human, Gender::male) == "clothing/jacket_rebel_m.gltf");
+
+    // Reputation standing helpers + opposing faction calculation
+    CHECK(normalize_faction("CIS") == "separatists" && normalize_faction("Imperial") == "empire");
+    CHECK(opposing_faction("rebellion") == "empire" && opposing_faction("republic") == "separatists");
+    CHECK(reputation_tier(-3500) == RepTier::hated && reputation_tier(-100) == RepTier::unfriendly);
+    CHECK(reputation_tier(0) == RepTier::neutral && reputation_tier(3000) == RepTier::friendly);
+    CHECK(reputation_tier(9000) == RepTier::honored && reputation_tier(21000) == RepTier::revered);
+    CHECK(reputation_tier(42000) == RepTier::exalted);
+
+    // Unified ammo: caps (999 standard / 99 heavy) and horizontal sidegrades
+    const std::filesystem::path ammo_ini = "swm_ammo_test_catalog.ini";
+    {
+        std::ofstream out(ammo_ini);
+        out << "[item]\nId = r1\nKind = weapon\nArchetype = rifle_auto\nSlot = primary\n"
+            << "[item]\nId = h1\nKind = weapon\nArchetype = heavy_launcher\nSlot = primary\n"
+            << "[item]\nId = a_burn\nKind = ammo\nAmmoClass = standard\nAmmoBatch = 100\n"
+            << "DamageMult = 1.15\nRateMult = 0.87\nDamageType = laser\nBoltColor = red\n"
+            << "[item]\nId = a_hvy\nKind = ammo\nAmmoClass = heavy\nAmmoBatch = 12\n";
+    }
+    ItemCatalog ammo_cat;
+    ammo_cat.load(ammo_ini);
+    std::filesystem::remove(ammo_ini);
+    std::vector<ItemInstance> ainv{
+        {1, 1, "r1", 0.5, "", "{}", 1},
+        {2, 1, "a_burn", 0.5, "", "{}", 1500},
+        {3, 1, "h1", 0.5, "", "{}", 1},
+        {4, 1, "a_hvy", 0.5, "", "{}", 150},
+    };
+    CharacterLoadout acl;
+    acl.primary_id = 1;
+    acl.gear_ids["ammo_standard"] = 2;
+    const Loadout std_lo = ammo_cat.build_loadout(acl, ainv, Species::human, false);
+    CHECK(std_lo.unified_standard_ammo == max_standard_ammo);
+    CHECK(std_lo.weapons[primary_slot] && std_lo.weapons[primary_slot]->ammo_class == AmmoClass::standard);
+    CHECK(std::abs(std_lo.weapons[primary_slot]->damage - WeaponDef{}.damage * 1.15) < 1e-6);
+
+    CharacterLoadout hcl;
+    hcl.primary_id = 3;
+    hcl.gear_ids["ammo_heavy"] = 4;
+    const Loadout hvy_lo = ammo_cat.build_loadout(hcl, ainv, Species::human, false);
+    CHECK(hvy_lo.unified_heavy_ammo == max_heavy_ammo);
+    CHECK(hvy_lo.weapons[primary_slot] && hvy_lo.weapons[primary_slot]->ammo_class == AmmoClass::heavy);
 
     return swm::test::finish("items_test");
 }

@@ -37,15 +37,15 @@ func _paint_units(box: Rect2) -> void:
 	var y := box.position.y + 12 * u
 	art.draw_icon(self, str(side.get("icon", "")), Rect2(Vector2(x, y), Vector2(30, 30) * u), side.get("color", Color.WHITE))
 	text("gamefont_medium", str(side.get("name", "")), Vector2(x + 40 * u, y + 5 * u), "Left", side.get("color", TEXT))
-	y += 46 * u
+	y += 42 * u
 	for i in loadouts.size():
 		var entry: Dictionary = loadouts[i]
-		button(Rect2(Vector2(x, y), Vector2(box.size.x - 32 * u, 32 * u)), "%d  %s" % [i + 1, entry["name"]],
+		button(Rect2(Vector2(x, y), Vector2(box.size.x - 32 * u, 28 * u)), "%d  %s" % [i + 1, entry["name"]],
 				"unit:%d" % i, i == loadout)
-		y += 38 * u
+		y += 32 * u
 	if loadout < loadouts.size():
 		var chosen: Dictionary = loadouts[loadout]
-		y += 8 * u
+		y += 6 * u
 		for weapon: String in chosen["weapons"]:
 			text("gamefont_small", weapon, Vector2(x + 6 * u, y), "Left", DIM)
 			y += 18 * u

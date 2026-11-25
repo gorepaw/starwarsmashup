@@ -794,6 +794,49 @@ void test_melee_combat() {
     CHECK(arena.a.predicted().stagger > 0.0f);
 }
 
+void test_unified_ammo() {
+    Loadout lo;
+    lo.weapons[primary_slot]->ammo_class = AmmoClass::standard;
+    lo.weapons[primary_slot]->rounds_per_clip = 10;
+    WeaponDef pistol;
+    pistol.ammo_class = AmmoClass::standard;
+    pistol.rounds_per_clip = 0;
+    pistol.shot_delay = 0.2;
+    pistol.heat_per_shot = 0.0;
+    lo.weapons[sidearm_slot] = pistol;
+    WeaponDef gren;
+    gren.ammo_class = AmmoClass::none;
+    gren.ammo = 2;
+    gren.rounds_per_clip = 1;
+    lo.weapons[secondary_slot] = gren;
+    lo.unified_standard_ammo = 25;
+
+    MoveState state;
+    reset_loadout(state, lo, stats_for(lo));
+    CHECK(state.combat.weapons[primary_slot].rounds == 10);
+    CHECK(state.combat.weapons[primary_slot].reserve == 15);
+    CHECK(state.combat.weapons[sidearm_slot].reserve == 15);
+    CHECK(remaining_unified_ammo(state.combat, lo, AmmoClass::standard) == 25);
+
+    uint32_t seq = 0;
+    // Switch (12 ticks) + 3 shots at 0.2s (~7 ticks each) = 28 ticks -> 3 shots fired, 12 reserve left.
+    CHECK(hold(state, lo, MoveInput::fire, 28, seq, sidearm_slot) == 3);
+    CHECK(state.combat.weapons[sidearm_slot].reserve == 12);
+    CHECK(state.combat.weapons[primary_slot].reserve == 12);
+    CHECK(remaining_unified_ammo(state.combat, lo, AmmoClass::standard) == 22);
+
+    // Expend grenade and check ammo droid resupply: refills grenade, leaves unified standard untouched!
+    state.combat.weapons[secondary_slot].rounds = 0;
+    CHECK(resupply(state, lo, 0.5));
+    CHECK(state.combat.weapons[secondary_slot].rounds == 1);
+    CHECK(remaining_unified_ammo(state.combat, lo, AmmoClass::standard) == 22);
+
+    // Exhaust standard ammo completely.
+    hold(state, lo, MoveInput::fire, 120, seq, sidearm_slot);
+    CHECK(state.combat.weapons[sidearm_slot].reserve == 0);
+    CHECK(hold(state, lo, MoveInput::fire, 15, seq, sidearm_slot) == 0);
+}
+
 } // namespace
 
 int main() {
@@ -816,5 +859,6 @@ int main() {
     test_armor_in_combat();
     test_deflector_shield();
     test_melee_combat();
+    test_unified_ammo();
     return swm::test::finish("combat_test");
 }

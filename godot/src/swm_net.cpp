@@ -256,10 +256,9 @@ godot::PackedStringArray SwmClient::get_factions() const {
     return out;
 }
 
-void SwmClient::queue(int64_t team, const godot::String& mode) {
+void SwmClient::queue(int64_t team) {
     if (client()) {
-        const core::QueueMode qmode = mode == "gear" ? core::QueueMode::gear : core::QueueMode::standard;
-        client()->queue(int(team), qmode);
+        client()->queue(int(team));
     }
 }
 
@@ -269,7 +268,6 @@ godot::Dictionary SwmClient::get_player_status() const {
         const core::net::PlayerStatus& status = client()->player_status();
         out["queue"] = status.queue == core::net::PlayerStatus::queued ? "queued" : "none";
         out["team"] = int64_t(status.team);
-        out["queue_mode"] = status.queue_mode == core::QueueMode::gear ? "gear" : "standard";
         out["in_queue"] = int64_t(status.in_queue);
         out["starts_in"] = double(status.starts_in);
         out["battlefield"] = godot::String::utf8(status.battlefield.c_str());
@@ -425,9 +423,23 @@ godot::Array SwmClient::get_inventory() const {
             entry["owner_id"] = int64_t(inst.owner_id);
             entry["def_id"] = godot::String::utf8(inst.def_id.c_str());
             entry["quality"] = inst.quality;
+            entry["quantity"] = int64_t(inst.quantity);
             entry["custom_name"] = godot::String::utf8(inst.custom_name.c_str());
             entry["color_json"] = godot::String::utf8(inst.color_json.c_str());
             out.push_back(entry);
+        }
+    }
+    return out;
+}
+
+godot::Dictionary SwmClient::get_reputation() const {
+    godot::Dictionary out;
+    if (client()) {
+        for (const std::string_view pf : core::playable_factions) {
+            out[godot::String::utf8(pf.data(), int(pf.size()))] = int64_t(0);
+        }
+        for (const auto& [faction, rep] : client()->reputation()) {
+            out[godot::String::utf8(faction.c_str())] = int64_t(rep);
         }
     }
     return out;
@@ -1633,9 +1645,10 @@ void SwmClient::_bind_methods() {
     ClassDB::bind_method(D_METHOD("get_vehicles"), &SwmClient::get_vehicles);
     ClassDB::bind_method(D_METHOD("get_corpses"), &SwmClient::get_corpses);
     ClassDB::bind_method(D_METHOD("get_factions"), &SwmClient::get_factions);
-    ClassDB::bind_method(D_METHOD("queue", "team", "mode"), &SwmClient::queue, DEFVAL("standard"));
+    ClassDB::bind_method(D_METHOD("queue", "team"), &SwmClient::queue);
     ClassDB::bind_method(D_METHOD("get_player_status"), &SwmClient::get_player_status);
     ClassDB::bind_method(D_METHOD("get_inventory"), &SwmClient::get_inventory);
+    ClassDB::bind_method(D_METHOD("get_reputation"), &SwmClient::get_reputation);
     ClassDB::bind_method(D_METHOD("get_character_loadouts"), &SwmClient::get_character_loadouts);
     ClassDB::bind_method(D_METHOD("get_custom_loadouts"), &SwmClient::get_custom_loadouts);
     ClassDB::bind_method(D_METHOD("save_loadout", "slot_index", "loadout"), &SwmClient::save_loadout);
@@ -1718,19 +1731,6 @@ godot::Error SwmServer::set_loadout(const godot::String& path) {
 
 godot::Error SwmServer::set_battlefield(const godot::String& path) {
     return load_battlefield_file(battlefield_, path);
-}
-
-void SwmServer::set_bot_difficulty(const godot::String& difficulty) {
-    bot_skill_ = core::BotSkill::preset(difficulty.utf8().get_data());
-    if (bots_) {
-        bots_->set_skill(bot_skill_);
-    }
-    if (hub_config_) {
-        hub_config_->bot_skill = bot_skill_;
-    }
-    if (hub_) {
-        hub_->set_bot_skill(bot_skill_);
-    }
 }
 
 void SwmServer::set_bots(int64_t count) {
@@ -1876,7 +1876,6 @@ void SwmServer::_bind_methods() {
     ClassDB::bind_method(D_METHOD("set_loadout", "path"), &SwmServer::set_loadout);
     ClassDB::bind_method(D_METHOD("set_battlefield", "path"), &SwmServer::set_battlefield);
     ClassDB::bind_method(D_METHOD("set_bots", "count"), &SwmServer::set_bots);
-    ClassDB::bind_method(D_METHOD("set_bot_difficulty", "difficulty"), &SwmServer::set_bot_difficulty);
     ClassDB::bind_method(D_METHOD("set_hub", "path"), &SwmServer::set_hub);
     ClassDB::bind_method(D_METHOD("set_catalog", "catalog_ini", "bf2_items_dir"), &SwmServer::set_catalog);
     ClassDB::bind_method(D_METHOD("set_professions", "path"), &SwmServer::set_professions);

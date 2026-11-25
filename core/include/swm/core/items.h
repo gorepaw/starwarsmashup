@@ -14,12 +14,22 @@
 
 namespace swm::core {
 
-enum class ItemKind : uint8_t { weapon, armor, deflector_shield, clothing, junk, supply, quest, enhancement, vehicle };
+enum class ItemKind : uint8_t { weapon, armor, deflector_shield, clothing, junk, supply, quest, enhancement, vehicle, ammo };
 
-enum class QueueMode : uint8_t { standard = 0, gear = 1 };
+inline constexpr std::array<std::string_view, 4> playable_factions{"rebellion", "empire", "republic", "separatists"};
+
+enum class RepTier : uint8_t { hated = 0, unfriendly, neutral, friendly, honored, revered, exalted };
+
+std::string normalize_faction(std::string_view faction);
+std::string opposing_faction(std::string_view faction);
+RepTier reputation_tier(int64_t reputation);
+std::string_view reputation_tier_name(RepTier tier);
+std::optional<RepTier> reputation_tier_from_name(std::string_view name);
+int64_t reputation_threshold(RepTier tier);
+int64_t clamp_reputation(int64_t reputation);
 
 inline constexpr double loadout_switch_time = 3.0;
-inline constexpr int max_character_loadouts = 3;
+inline constexpr int max_character_loadouts = 5;
 
 struct BattleReward {
     int64_t xp = 0;
@@ -29,7 +39,7 @@ struct BattleReward {
     friend bool operator==(const BattleReward&, const BattleReward&) = default;
 };
 
-BattleReward compute_battle_reward(bool won, bool draw, uint16_t kills, uint16_t captures, QueueMode mode);
+BattleReward compute_battle_reward(bool won, bool draw, uint16_t kills, uint16_t captures);
 
 enum class WeaponArchetype : uint8_t {
     rifle_auto,
@@ -64,11 +74,14 @@ struct ItemDef {
     std::string slot = "primary";
     WeaponArchetype archetype = WeaponArchetype::rifle_auto;
     std::string anim_set = "rifle";
-    std::string faction = "neutral";  // neutral | empire | rebellion
+    std::string faction = "neutral";  // neutral | empire | rebellion | republic | separatists
+    RepTier required_rank = RepTier::neutral;
     int64_t cost_faction_points = 0;
     int64_t cost_credits = 0;
     int64_t sell_value = 0;
     double heal_amount = 0.0;
+    AmmoClass ammo_class = AmmoClass::none;
+    int ammo_batch = 100;
     std::string armor_class;  // armor: light, medium or heavy (its armor profession's)
     std::string vehicle;      // a vehicle: its class (a world vehicle class file's Name), called by using it
     std::string model_path;  // relative to game/imported_assets/, may contain {g} for m/f
@@ -102,11 +115,12 @@ struct ItemInstance {
     double quality = 0.5;  // 0..1; 0.5 is standard-issue baseline (±8% in Gear queue)
     std::string custom_name;
     std::string color_json = "{}";
+    int quantity = 1;
 
     friend bool operator==(const ItemInstance&, const ItemInstance&) = default;
 };
 
-// One of a character's up to 3 saved loadouts.
+// One of a character's up to 5 saved loadouts.
 struct CharacterLoadout {
     int slot_index = 0;
     std::string name = "Loadout 1";

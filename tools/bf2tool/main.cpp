@@ -58,6 +58,7 @@ constexpr const char* usage = R"(usage:
   bf2tool export-hud <_lvl_pc dir> -o <out dir>
   bf2tool export-effects <_lvl_pc dir> -o <out dir> [--map <map>]...
   bf2tool export-audio <_lvl_pc dir> -o <out dir>
+  bf2tool export-character <_lvl_pc dir> <side> <model_or_class> -o <out dir> [--name <out_name>]
 )";
 
 std::vector<uint8_t> read_file(const std::filesystem::path& path);
@@ -3365,6 +3366,181 @@ int cmd_check(const std::vector<std::string>& args) {
     return failures.empty() ? 0 : 1;
 }
 
+int cmd_export_character(const std::vector<std::string>& args) {
+    if (args.size() < 3) {
+        std::cerr << usage;
+        return 2;
+    }
+    const std::filesystem::path dir = args[0];
+    const std::filesystem::path out_dir = option(args, "-o");
+    if (out_dir.empty()) {
+        std::cerr << usage;
+        return 2;
+    }
+    const std::filesystem::path explicit_lvl = dir / (args[1] + ".lvl");
+    const std::filesystem::path side_lvl =
+        std::filesystem::exists(explicit_lvl) ? explicit_lvl : dir / "side" / (args[1] + ".lvl");
+    AssetLibrary library;
+    for (const std::filesystem::path& path : {side_lvl, dir / "ingame.lvl"}) {
+        if (std::filesystem::exists(path)) {
+            library.add(read_file(path));
+        }
+    }
+
+    const std::string target = lowercase(args[2]);
+    std::string model_name = target;
+    std::string anim_prefix = "human";
+    if (library.classes().find(target) != nullptr) {
+        try {
+            const OdfClass cls = library.classes().resolve(target);
+            if (const auto g = cls.get("GeometryName")) model_name = lowercase(*g);
+            if (const auto a = cls.get("AnimationName")) anim_prefix = lowercase(*a);
+        } catch (...) {
+        }
+    }
+    if (library.model(model_name) == nullptr) {
+        throw std::runtime_error(model_name + " model not found in " + side_lvl.string());
+    }
+    if (model_name.find("bdroid") != std::string::npos && model_name.find("sbdroid") == std::string::npos) {
+        anim_prefix = "bdroid";
+    } else if (model_name.find("sbdroid") != std::string::npos) {
+        anim_prefix = "sbdroid";
+    } else if (model_name.find("magnaguard") != std::string::npos) {
+        anim_prefix = "magnaguard";
+    }
+
+    struct LoadedBank {
+        std::string prefix;
+        bool native = false;
+        std::vector<Animation> anims;
+    };
+    std::vector<LoadedBank> banks;
+    const auto load_bank = [&](const std::string& bank_name, const std::string& prefix, bool native) {
+        if (const UcfbNode* zaa = library.animation_bank(bank_name)) {
+            if (const UcfbNode* bin = zaa->child("BIN_")) {
+                banks.push_back({prefix, native, parse_animation_bank(bin->data)});
+            }
+        }
+    };
+    if (anim_prefix != "human") {
+        load_bank(anim_prefix, anim_prefix, true);
+        if (anim_prefix == "magnaguard") {
+            load_bank("bdroid", "bdroid", false);
+        }
+    }
+    for (const char* hb : {"human_0", "human_1", "human_2", "human_3", "human_4"}) {
+        load_bank(hb, "human", anim_prefix == "human");
+    }
+
+    static const std::vector<std::string> required_clips = {
+        "human_rifle_stand_idle_emote_full",
+        "human_rifle_stand_runforward",
+        "human_rifle_stand_runbackward",
+        "human_rifle_stand_shoot_full",
+        "human_rifle_stand_reload_full",
+        "human_rifle_stand_shoot_secondary_full",
+        "human_rifle_stand_hitfront",
+        "human_rifle_stand_death_forward",
+        "human_rifle_stand_death_backward",
+        "human_rifle_crouch_idle_emote_full",
+        "human_rifle_crouch_walkforward",
+        "human_rifle_crouch_walkbackward",
+        "human_rifle_crouch_shoot_full",
+        "human_rifle_crouch_reload_full",
+        "human_rifle_diveforward",
+        "human_rifle_jump",
+        "human_rifle_fall",
+        "human_rifle_landsoft",
+        "human_pistol_stand_runforward",
+        "human_pistol_stand_shoot",
+        "human_pistol_stand_reload",
+        "human_pistol_crouch_walkforward",
+        "human_pistol_crouch_shoot",
+        "human_pistol_crouch_reload",
+        "human_bazooka_stand_idle_emote",
+        "human_bazooka_stand_runforward",
+        "human_bazooka_stand_runbackward",
+        "human_bazooka_stand_shoot_full",
+        "human_bazooka_stand_reload_full",
+        "human_bazooka_crouch_idle_emote",
+        "human_bazooka_crouch_walkforward",
+        "human_bazooka_crouch_walkbackward",
+        "human_bazooka_crouch_shoot",
+        "human_bazooka_crouch_reload",
+    };
+
+    const auto find_clip = [&](const std::string& target_clip) -> std::optional<ModelClip> {
+        const std::string suffix = target_clip.rfind("human_", 0) == 0 ? target_clip.substr(6) : target_clip;
+        std::vector<std::string> suffix_variants = {suffix};
+        if (suffix.size() > 5 && suffix.compare(suffix.size() - 5, 5, "_full") == 0) {
+            suffix_variants.push_back(suffix.substr(0, suffix.size() - 5));
+        }
+        if (suffix == "rifle_stand_idle_emote_full") {
+            suffix_variants.push_back("rifle_stand_idle_emote");
+            suffix_variants.push_back("rifle_stand_idle");
+        }
+        for (const LoadedBank& bank : banks) {
+            for (const std::string& sv : suffix_variants) {
+                const uint32_t h = name_hash(bank.prefix + "_" + sv);
+                for (const Animation& anim : bank.anims) {
+                    if (anim.name_hash == h) {
+                        Animation copy = anim;
+                        if (!bank.native && anim_prefix != "human") {
+                            for (AnimationTrack& t : copy.tracks) {
+                                t.translations.clear();
+                            }
+                        }
+                        return ModelClip{target_clip, std::move(copy)};
+                    }
+                }
+            }
+        }
+        return std::nullopt;
+    };
+
+    std::vector<ModelClip> clips;
+    for (const std::string& name : required_clips) {
+        if (auto clip = find_clip(name)) {
+            clips.push_back(std::move(*clip));
+        }
+    }
+
+    static const std::map<std::string, std::string> bone_rename{
+        {"bone_root", "root"},
+        {"bone_a_spine", "spine1"},
+        {"bone_b_spine", "spine2"},
+        {"bone_ribcage", "spine3"},
+        {"bone_neck", "neck"},
+        {"bone_head", "Head"},
+        {"bone_l_clavicle", "lClav"},
+        {"bone_l_upperarm", "lArm"},
+        {"bone_l_forearm", "lForeArm"},
+        {"bone_l_hand", "lWrist"},
+        {"bone_r_clavicle", "rClav"},
+        {"bone_r_upperarm", "rArm"},
+        {"bone_r_forearm", "rForeArm"},
+        {"bone_r_hand", "rWrist"},
+        {"hp_weapons", "hold_r"},
+        {"bone_l_thigh", "lThigh"},
+        {"bone_l_calf", "lShin"},
+        {"bone_l_foot", "lAnkle"},
+        {"bone_l_toe", "lToe"},
+        {"bone_r_thigh", "rThigh"},
+        {"bone_r_calf", "rShin"},
+        {"bone_r_foot", "rAnkle"},
+        {"bone_r_toe", "rToe"},
+    };
+
+    const std::string opt_name = option(args, "--name");
+    const std::string out_name = opt_name.empty() ? target : lowercase(opt_name);
+    std::set<std::string> textures_written;
+    const ModelExport written = export_model(library, model_name, out_dir, out_dir, textures_written, clips,
+                                             bone_rename, out_name);
+    std::cout << std::format("exported {} -> {}/{}.gltf ({} segments, {} clips, {} textures)\n", model_name,
+                             out_dir.string(), out_name, written.segments, clips.size(), textures_written.size());
+    return 0;
+}
+
 } // namespace
 
 int main(int argc, char** argv) {
@@ -3410,6 +3586,9 @@ int main(int argc, char** argv) {
         }
         if (command == "export-vehicle") {
             return cmd_export_vehicle(args);
+        }
+        if (command == "export-character") {
+            return cmd_export_character(args);
         }
     } catch (const std::exception& e) {
         std::cerr << "error: " << e.what() << "\n";

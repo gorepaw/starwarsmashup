@@ -91,6 +91,35 @@ enum class Projectile : uint8_t { bolt, missile, grenade, melee };
 std::string default_weapon_model(std::string_view name);
 std::string default_anim_set(std::string_view name, bool missile);
 
+enum class AmmoClass : uint8_t { none, standard, heavy };
+inline constexpr int max_standard_ammo = 999;
+inline constexpr int max_heavy_ammo = 99;
+
+inline constexpr int max_ammo_for(AmmoClass ac) {
+    switch (ac) {
+    case AmmoClass::standard: return max_standard_ammo;
+    case AmmoClass::heavy: return max_heavy_ammo;
+    case AmmoClass::none: return 0;
+    }
+    return 0;
+}
+
+inline constexpr std::string_view ammo_class_name(AmmoClass ac) {
+    switch (ac) {
+    case AmmoClass::none: return "none";
+    case AmmoClass::standard: return "standard";
+    case AmmoClass::heavy: return "heavy";
+    }
+    return "none";
+}
+
+inline std::optional<AmmoClass> ammo_class_from_name(std::string_view name) {
+    if (name == "none") return AmmoClass::none;
+    if (name == "standard") return AmmoClass::standard;
+    if (name == "heavy") return AmmoClass::heavy;
+    return std::nullopt;
+}
+
 struct WeaponDef {
     std::string name = "imp_weap_inf_rifle";
     // What soldiers hold: its model (game/imported_assets/-relative glTF:
@@ -108,6 +137,7 @@ struct WeaponDef {
     // accelerating), or a grenade (thrown or lobbed: bounces, and explodes on
     // impact or when its fuse runs out).
     Projectile projectile = Projectile::bolt;
+    AmmoClass ammo_class = AmmoClass::none;
     int ammo = 0;                    // WeaponAmmo: clips carried, the first loaded; 0: unlimited
     double shot_delay = 0.166;       // ShotDelay, seconds between shots
     int rounds_per_clip = 50;        // RoundsPerClip; 0: no clip (heat only)
@@ -224,6 +254,19 @@ struct Loadout {
     // What its armor makes it: none, light, medium or heavy (empty: not
     // known, Battlefront's own). Says which armor profession it levels.
     std::string armor_class;
+    // Unified ammo inventory reserves (-1 = legacy BF2 per-weapon reserves).
+    int unified_standard_ammo = -1;
+    int unified_heavy_ammo = -1;
+
+    int unified_ammo(AmmoClass ac) const {
+        if (ac == AmmoClass::standard) return unified_standard_ammo;
+        if (ac == AmmoClass::heavy) return unified_heavy_ammo;
+        return -1;
+    }
+    void set_unified_ammo(AmmoClass ac, int amount) {
+        if (ac == AmmoClass::standard) unified_standard_ammo = amount;
+        else if (ac == AmmoClass::heavy) unified_heavy_ammo = amount;
+    }
 };
 
 // The weapon in a slot, if the loadout has one.

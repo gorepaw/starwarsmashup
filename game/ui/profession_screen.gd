@@ -40,7 +40,7 @@ var _loadout := 0            # whose slots are shown
 
 
 func open_screen() -> void:
-	_loadout = clampi(active_loadout, 0, 2)
+	_loadout = clampi(active_loadout, 0, 4)
 	_selected = 0
 	_scroll = 0
 	_detail_scroll = 0
@@ -249,15 +249,15 @@ func _paint_slots(rect: Rect2) -> void:
 	var x := rect.position.x + 10 * u
 	var y := rect.position.y + 8 * u
 	text("gamefont_small", "Specializations", Vector2(x, y), "Left", ACCENT)
-	var tab_x := x + 170 * u
-	for slot in 3:
+	var tab_x := x + 150 * u
+	for slot in 5:
 		var lo := _loadout_dict(slot)
-		var label := str(lo.get("name", "Loadout %d" % (slot + 1)))
+		var label := "L%d: %s" % [slot + 1, str(lo.get("name", "Loadout %d" % (slot + 1)))]
 		if slot == active_loadout:
 			label += " *"
-		button(Rect2(tab_x, y - 2 * u, 170 * u, 24 * u), label, "loadout:%d" % slot, _loadout == slot, false,
+		button(Rect2(tab_x, y - 2 * u, 134 * u, 24 * u), label, "loadout:%d" % slot, _loadout == slot, false,
 				not lo.is_empty())
-		tab_x += 176 * u
+		tab_x += 138 * u
 	y += 30 * u
 	var slotted := _slotted(_loadout)
 	var w := (rect.size.x - 20 * u - (slots) * 8 * u) / (slots + 1)

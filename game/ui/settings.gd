@@ -39,6 +39,8 @@ const ACTIONS := [
 	["loadout_1", "Loadout 1", KEY_F5],
 	["loadout_2", "Loadout 2", KEY_F6],
 	["loadout_3", "Loadout 3", KEY_F7],
+	["loadout_4", "Loadout 4", KEY_F8],
+	["loadout_5", "Loadout 5", KEY_F9],
 ]
 
 var bindings := {}           # action -> physical keycode (int) or "mouse:<button>"
@@ -52,8 +54,6 @@ var master_volume := 0.8
 var sfx_volume := 1.0
 var music_volume := 0.65
 var voice_volume := 1.0
-var bot_difficulty := "normal"  # easy, normal or hard: bots on a server this game hosts
-const DIFFICULTIES := ["easy", "normal", "hard"]
 
 
 func _init() -> void:
@@ -74,9 +74,6 @@ func load_file() -> void:
 		sfx_volume = clampf(float(file.get_value("audio", "sfx", sfx_volume)), 0.0, 1.0)
 		music_volume = clampf(float(file.get_value("audio", "music", music_volume)), 0.0, 1.0)
 		voice_volume = clampf(float(file.get_value("audio", "voice", voice_volume)), 0.0, 1.0)
-		bot_difficulty = str(file.get_value("bots", "difficulty", bot_difficulty))
-		if not DIFFICULTIES.has(bot_difficulty):
-			bot_difficulty = "normal"
 		for action: Array in ACTIONS:
 			bindings[action[0]] = file.get_value("controls", action[0], bindings[action[0]])
 	apply()
@@ -94,7 +91,6 @@ func save_file() -> void:
 	file.set_value("audio", "sfx", sfx_volume)
 	file.set_value("audio", "music", music_volume)
 	file.set_value("audio", "voice", voice_volume)
-	file.set_value("bots", "difficulty", bot_difficulty)
 	for action: Array in ACTIONS:
 		file.set_value("controls", action[0], bindings[action[0]])
 	file.save(PATH)

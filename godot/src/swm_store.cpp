@@ -39,6 +39,7 @@ godot::Dictionary to_dict(const core::ItemInstance& inst) {
     out["owner_id"] = int64_t(inst.owner_id);
     out["def_id"] = godot::String::utf8(inst.def_id.c_str());
     out["quality"] = inst.quality;
+    out["quantity"] = int64_t(inst.quantity);
     out["custom_name"] = godot::String::utf8(inst.custom_name.c_str());
     out["color_json"] = godot::String::utf8(inst.color_json.c_str());
     return out;
@@ -135,10 +136,22 @@ godot::Dictionary to_dict(const core::ItemDef& d, const core::ItemCatalog& catal
     out["archetype"] = godot::String::utf8(core::weapon_archetype_info(d.archetype).id.c_str());
     out["anim_set"] = godot::String::utf8(d.anim_set.c_str());
     out["faction"] = godot::String::utf8(d.faction.c_str());
+    out["required_rank"] = godot::String::utf8(std::string(core::reputation_tier_name(d.required_rank)).c_str());
+    out["required_rep"] = int64_t(core::reputation_threshold(d.required_rank));
     out["cost_fp"] = int64_t(d.cost_faction_points);
     out["cost_credits"] = int64_t(d.cost_credits);
     out["sell_value"] = int64_t(d.sell_value);
     out["heal_amount"] = d.heal_amount;
+    out["ammo_class"] = godot::String::utf8(std::string(core::ammo_class_name(d.ammo_class)).c_str());
+    out["ammo_batch"] = int64_t(d.ammo_batch);
+    out["damage_mult"] = d.damage_mult;
+    out["rate_mult"] = d.rate_mult;
+    out["heat_mult"] = d.heat_mult;
+    out["spread_mult"] = d.spread_mult;
+    if (d.damage_type) {
+        const std::string_view dt = core::damage_type_name(*d.damage_type);
+        out["damage_type"] = godot::String::utf8(dt.data(), int(dt.size()));
+    }
     out["model"] = godot::String::utf8(d.model_path.c_str());
 
     godot::Array mods;
@@ -311,6 +324,22 @@ bool SwmCharacterStore::remove_item(int64_t item_id) {
         last_error_ = e.what();
         return false;
     }
+}
+
+godot::Dictionary SwmCharacterStore::get_reputation(int64_t char_id) {
+    godot::Dictionary out;
+    for (const std::string_view pf : core::playable_factions) {
+        out[godot::String::utf8(pf.data(), int(pf.size()))] = int64_t(0);
+    }
+    if (!store_) return out;
+    try {
+        for (const auto& [faction, rep] : store_->list_reputation(core::PersistentId(char_id))) {
+            out[godot::String::utf8(faction.c_str())] = int64_t(rep);
+        }
+    } catch (const std::exception& e) {
+        last_error_ = e.what();
+    }
+    return out;
 }
 
 godot::Array SwmCharacterStore::list_loadouts(int64_t char_id) {
@@ -710,7 +739,7 @@ godot::Dictionary SwmCharacterStore::buy_item(int64_t char_id, const godot::Stri
             credits -= def->cost_credits;
         }
         store_->update_economy(ch->id, credits, fp, ch->experience, ch->active_loadout);
-        return to_dict(store_->grant_item({0, ch->id, id_str, 0.5, "", "{}"}));
+        return to_dict(store_->grant_item({0, ch->id, id_str, 0.5, "", "{}", 1}));
     } catch (const std::exception& e) {
         last_error_ = e.what();
         return {};
@@ -797,6 +826,7 @@ void SwmCharacterStore::_bind_methods() {
     ClassDB::bind_method(D_METHOD("load_catalog", "catalog_ini", "bf2_items_dir"), &SwmCharacterStore::load_catalog);
     ClassDB::bind_method(D_METHOD("get_catalog"), &SwmCharacterStore::get_catalog);
     ClassDB::bind_method(D_METHOD("list_items", "char_id"), &SwmCharacterStore::list_items);
+    ClassDB::bind_method(D_METHOD("get_reputation", "char_id"), &SwmCharacterStore::get_reputation);
     ClassDB::bind_method(D_METHOD("grant_item", "char_id", "def_id", "quality"), &SwmCharacterStore::grant_item);
     ClassDB::bind_method(D_METHOD("remove_item", "item_id"), &SwmCharacterStore::remove_item);
     ClassDB::bind_method(D_METHOD("list_loadouts", "char_id"), &SwmCharacterStore::list_loadouts);

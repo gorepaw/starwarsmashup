@@ -12,6 +12,7 @@
 #include <vector>
 
 #include "swm/core/bot.h"
+#include "swm/core/bot_roster.h"
 #include "swm/core/crafting.h"
 #include "swm/core/loot.h"
 #include "swm/core/nav.h"
@@ -29,7 +30,8 @@ class World;
 struct HubBattlefield {
     std::string id;                  // the file's name without .ini: clients load the same file
     Battlefield field;
-    std::array<int, 2> teams{0, 1};  // the battlefield's team for each of the hub's sides
+    std::array<int, 2> teams{0, 1};  // the battlefield's team indices matching `sides`
+    std::array<int, 2> sides{0, 1};  // indices into HubConfig::sides for this battlefield's two sides
 };
 
 // One of a hub's people (an [npc]): standing or sitting somewhere, or
@@ -71,9 +73,8 @@ struct HubConfig {
     std::vector<net::Quartermaster> quartermasters;
     std::vector<net::Vendor> vendors;
     std::vector<HubRangeTarget> range_targets;
-    // The sides players queue for. Each battlefield has teams by these
-    // names, in either order (Battlefront's team 1 attacks on some maps).
-    std::array<std::string, 2> sides;
+    // The sides players queue for (2 factions, or 4 covering both GCW and Clone Wars).
+    std::vector<std::string> sides;
     std::vector<HubBattlefield> battlefields;  // each battle is on one, at random
     int team_size = 8;           // soldiers per team; bots fill the places players don't
     BotSkill bot_skill;          // theirs (the players' difficulty setting, when they host)
@@ -172,7 +173,6 @@ private:
     struct Battle {
         std::shared_ptr<const World> world;  // null: the hub's; outlives the server and bots below
         HubBattlefield field;
-        QueueMode mode = QueueMode::standard;
         int id = 0;
         uint16_t port = 0;
         std::unique_ptr<net::Link> link;
@@ -194,7 +194,7 @@ private:
         std::shared_future<std::shared_ptr<const World>> world;
     };
 
-    void queue(uint32_t entity, int team, QueueMode mode);
+    void queue(uint32_t entity, int team);
     // Someone who walks: the crowd wandering, or a set piece's route.
     struct Walker {
         uint32_t entity = 0;
@@ -209,12 +209,13 @@ private:
     void add_people();
     void walk_people();
     std::optional<Vec3> wander_point();
-    void choose_next(QueueMode mode);
-    bool next_ready(QueueMode mode);
-    void start_battle(QueueMode mode);
+    void choose_next(std::pair<int, int> pair);
+    bool next_ready(std::pair<int, int> pair);
+    void start_battle(std::pair<int, int> pair);
     void send(Battle& battle, const Queued& player);
-    bool has_room(const Battle& battle, int side, QueueMode mode) const;
+    bool has_room(const Battle& battle, int side) const;
     bool players_connected(const Battle& battle) const;
+    std::pair<int, int> queue_pair_for_side(int side) const;
     void say(const std::string& text) const;
 
     GameServer& server_;
@@ -222,9 +223,9 @@ private:
     const World& world_;
     HubConfig config_;
     HubNetwork& network_;
-    std::array<std::vector<Queued>, 2> queues_;
+    std::map<std::pair<int, int>, std::vector<Queued>> queues_;
     std::vector<std::unique_ptr<Battle>> battles_;
-    std::array<std::optional<Next>, 2> next_;  // after config_: its loading refers to a battlefield there
+    std::map<std::pair<int, int>, Next> next_;  // after config_: its loading refers to a battlefield there
     std::string last_battlefield_;
     std::map<std::string, std::weak_ptr<const World>> worlds_;  // battlefield id -> loaded world
     std::unique_ptr<NavGrid> streets_;  // where the hub's people walk
@@ -234,6 +235,7 @@ private:
     bool people_added_ = false;
     std::map<std::string, std::string> notices_;  // player -> how their battle went, for when they're back
     std::optional<MatchResult> last_result_;
+    std::vector<BotProfileEntry> bot_roster_;
     std::mt19937_64 random_{std::random_device{}()};
     uint64_t loot_rng_ = 0x4C4F4F5448554231ull;
     int next_battle_ = 1;

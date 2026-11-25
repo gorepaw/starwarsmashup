@@ -16,6 +16,7 @@ const BUY_CATEGORIES := [
 	["weapon", "Weapons"],
 	["armor", "Armor"],
 	["deflector_shield", "Shields"],
+	["ammo", "Ammo"],
 	["clothing", "Clothing"],
 	["supply", "Supplies"],
 	["vehicle", "Vehicles"],
@@ -152,9 +153,7 @@ func _paint() -> void:
 			owned_counts[did] = int(owned_counts.get(did, 0)) + 1
 		for def: Dictionary in catalog:
 			var kind := str(def.get("kind", ""))
-			if kind == "junk":
-				continue
-			if str(def.get("faction", "neutral")) != "neutral":
+			if kind == "junk" or kind == "quest":
 				continue
 			if int(def.get("cost_credits", 0)) <= 0:
 				continue
@@ -174,12 +173,15 @@ func _paint() -> void:
 				_hover_def = def
 			frame(r, "border_3_pieces", Color(0.75, 0.88, 1.0) if hovered else Color(0.85, 0.85, 0.9))
 			var did := str(def.get("id", ""))
+			var kind_s := str(def.get("kind", ""))
 			var owned_n := int(owned_counts.get(did, 0))
 			var name_str := str(def.get("name", did))
+			if kind_s == "ammo":
+				name_str += " (x%d)" % int(def.get("ammo_batch", 100))
 			if owned_n > 0:
 				name_str += "  [Owned x%d]" % owned_n
 			text("gamefont_small", name_str, Vector2(x + 12 * u, ry + 8 * u), "Left", ACCENT if owned_n > 0 else TEXT)
-			text("gamefont_tiny", "%s" % str(def.get("kind", "")).replace("_", " ").capitalize(),
+			text("gamefont_tiny", "%s" % kind_s.replace("_", " ").capitalize(),
 					Vector2(x + 390 * u, ry + 11 * u), "Left", DIM)
 			var cost := int(def.get("cost_credits", 0))
 			button(Rect2(box.end.x - 164 * u, ry + 4 * u, 136 * u, 28 * u),

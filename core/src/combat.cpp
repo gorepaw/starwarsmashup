@@ -48,11 +48,35 @@ std::optional<double> ballistic_pitch(double speed, double gravity, double dx, d
 void reset_loadout(MoveState& state, const Loadout& loadout, const CharacterStats& stats) {
     state.combat = {};
     state.combat.weapon = uint8_t(weapon_in_slot(loadout, primary_slot) ? primary_slot : sidearm_slot);
+    int pools[3] = {-1, loadout.unified_standard_ammo, loadout.unified_heavy_ammo};
+    for (int i = 1; i <= 2; ++i) {
+        if (pools[i] >= 0) {
+            pools[i] = std::min(pools[i], max_ammo_for(AmmoClass(i)));
+        }
+    }
     for (int slot = 0; slot < weapon_slots; ++slot) {
         if (const WeaponDef* def = weapon_in_slot(loadout, slot)) {
             WeaponState& w = state.combat.weapons[size_t(slot)];
-            w.rounds = int16_t(def->rounds_per_clip);
-            w.reserve = def->ammo > 0 ? int16_t((def->ammo - 1) * def->rounds_per_clip) : int16_t(-1);
+            const AmmoClass ac = def->ammo_class;
+            if (ac != AmmoClass::none && loadout.unified_ammo(ac) >= 0) {
+                int& pool = pools[size_t(ac)];
+                if (def->rounds_per_clip > 0) {
+                    w.rounds = int16_t(std::min(def->rounds_per_clip, std::max(0, pool)));
+                    pool -= w.rounds;
+                } else {
+                    w.rounds = 0;
+                }
+            } else {
+                w.rounds = int16_t(def->rounds_per_clip);
+                w.reserve = def->ammo > 0 ? int16_t((def->ammo - 1) * def->rounds_per_clip) : int16_t(-1);
+            }
+        }
+    }
+    for (int slot = 0; slot < weapon_slots; ++slot) {
+        if (const WeaponDef* def = weapon_in_slot(loadout, slot)) {
+            if (def->ammo_class != AmmoClass::none && loadout.unified_ammo(def->ammo_class) >= 0) {
+                state.combat.weapons[size_t(slot)].reserve = int16_t(std::max(0, pools[size_t(def->ammo_class)]));
+            }
         }
     }
     state.energy = stats.move.max_energy;
@@ -60,6 +84,17 @@ void reset_loadout(MoveState& state, const Loadout& loadout, const CharacterStat
 }
 
 namespace {
+
+void sync_unified_pool(CombatState& combat, const Loadout& loadout, AmmoClass ac, int new_reserve) {
+    if (ac == AmmoClass::none || loadout.unified_ammo(ac) < 0) return;
+    for (int slot = 0; slot < weapon_slots; ++slot) {
+        if (const WeaponDef* def = weapon_in_slot(loadout, slot)) {
+            if (def->ammo_class == ac) {
+                combat.weapons[size_t(slot)].reserve = int16_t(std::max(0, new_reserve));
+            }
+        }
+    }
+}
 
 // Refills a clip from what's carried.
 void refill(WeaponState& w, const WeaponDef& def) {
@@ -77,6 +112,10 @@ bool add_ammo(MoveState& state, const Loadout& loadout, auto amount_for) {
         const WeaponDef* def = weapon_in_slot(loadout, slot);
         WeaponState& w = state.combat.weapons[size_t(slot)];
         if (def == nullptr || def->ammo <= 0 || w.reserve < 0) {
+            continue;
+        }
+        // Unified-ammo slots consume carried player inventory stacks rather than regenerating from droids.
+        if (def->ammo_class != AmmoClass::none && loadout.unified_ammo(def->ammo_class) >= 0) {
             continue;
         }
         const int given = amount_for(*def);
@@ -123,6 +162,23 @@ bool resupply_clips(MoveState& state, const Loadout& loadout, int clips) {
         return false;
     }
     return add_ammo(state, loadout, [&](const WeaponDef& def) { return clips * def.rounds_per_clip; });
+}
+
+int remaining_unified_ammo(const CombatState& combat, const Loadout& loadout, AmmoClass ac) {
+    if (ac == AmmoClass::none || loadout.unified_ammo(ac) < 0) {
+        return -1;
+    }
+    int reserve = -1;
+    int clip_sum = 0;
+    for (int slot = 0; slot < weapon_slots; ++slot) {
+        if (const WeaponDef* def = weapon_in_slot(loadout, slot); def && def->ammo_class == ac) {
+            const WeaponState& w = combat.weapons[size_t(slot)];
+            if (reserve < 0) reserve = std::max<int>(0, w.reserve);
+            clip_sum += std::max<int>(0, w.rounds);
+        }
+    }
+    // If no weapon of this AmmoClass is equipped in `loadout`, carry over the loadout's initial pool unchanged.
+    return reserve < 0 ? loadout.unified_ammo(ac) : (reserve + clip_sum);
 }
 
 std::optional<Shot> simulate_weapons(MoveState& state, const MoveInput& pressed, const Loadout& loadout, double dt) {
@@ -183,9 +239,11 @@ std::optional<Shot> simulate_weapons(MoveState& state, const MoveInput& pressed,
         if (c.reload <= 0) {
             c.reload = 0;
             refill(weapon, def);
+            sync_unified_pool(c, loadout, def.ammo_class, weapon.reserve);
         }
     }
     const bool uses_clip = def.rounds_per_clip > 0;
+    const bool uses_unified = def.ammo_class != AmmoClass::none && loadout.unified_ammo(def.ammo_class) >= 0;
     const bool can_reload = uses_clip && weapon.rounds < def.rounds_per_clip && weapon.reserve != 0;
     if (can_reload && c.reload == 0 && input.held(MoveInput::reload)) {
         c.reload = def.reload_time;
@@ -198,6 +256,9 @@ std::optional<Shot> simulate_weapons(MoveState& state, const MoveInput& pressed,
         if (can_reload) {
             c.reload = def.reload_time;  // pulling the trigger on an empty clip reloads
         }
+        return std::nullopt;
+    }
+    if (!uses_clip && uses_unified && def.projectile != Projectile::melee && weapon.reserve <= 0) {
         return std::nullopt;
     }
     if (weapon.overheated) {
@@ -220,9 +281,14 @@ std::optional<Shot> simulate_weapons(MoveState& state, const MoveInput& pressed,
         }
         return Shot{state.position + Vec3{0, eye_height_of(state), 0}, {aim_direction(input.yaw, input.pitch)}, c.weapon};
     }
-    const int pellets = uses_clip ? std::min<int>(def.shots_per_salvo, weapon.rounds) : def.shots_per_salvo;
+    const int pellets = uses_clip
+        ? std::min<int>(def.shots_per_salvo, weapon.rounds)
+        : (uses_unified ? std::min<int>(def.shots_per_salvo, std::max<int>(0, weapon.reserve)) : def.shots_per_salvo);
     if (uses_clip) {
         weapon.rounds = int16_t(weapon.rounds - pellets);
+    } else if (uses_unified) {
+        weapon.reserve = int16_t(std::max<int>(0, weapon.reserve - pellets));
+        sync_unified_pool(c, loadout, def.ammo_class, weapon.reserve);
     }
     if (def.heat_per_shot > 0) {
         weapon.heat = float(std::min(1.0, weapon.heat + def.heat_per_shot));

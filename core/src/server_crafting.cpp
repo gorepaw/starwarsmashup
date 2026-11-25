@@ -337,11 +337,18 @@ void GameServer::handle_craft_request(Client& client, const net::CraftRequest& r
             book.preview_craft(*sch, req.resource_ids, int(enh_ids.size()), lv, req.exp_quality_pct);
         double best_q = 0.0;
         std::string last_outcome = "Success";
+        const ItemDef* out_def = config_.catalog->find(sch->output_item);
+        const int unit_count = sch->output_count > 1 ? sch->output_count
+                                                     : (out_def && out_def->kind == ItemKind::ammo ? out_def->ammo_batch : 1);
         for (int i = 0; i < batch; ++i) {
             const auto [q, outcome] = CraftingBook::roll_craft_quality(preview, random_unit());
             best_q = std::max(best_q, q);
             last_outcome = outcome;
-            client.items.push_back(store_->grant_item({0, client.character, sch->output_item, q, "", "{}"}));
+            if (out_def != nullptr && (unit_count > 1 || out_def->kind == ItemKind::ammo)) {
+                grant_stacked_item(client, *out_def, unit_count, q);
+            } else {
+                client.items.push_back(store_->grant_item({0, client.character, sch->output_item, q, "", "{}"}));
+            }
         }
         save_materials(client);
         ++client.inventory_rev;

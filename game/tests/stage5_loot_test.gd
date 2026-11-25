@@ -94,7 +94,7 @@ func _process(_delta: float) -> bool:
 	for v: Dictionary in vendors:
 		kinds.append(str(v.get("kind", "")))
 	assert(kinds.has("junk_dealer") and kinds.has("gear_vendor"), "missing junk_dealer or gear_vendor")
-	assert(client.get_quartermasters().size() == 2, "expected 2 quartermasters")
+	assert(client.get_quartermasters().size() == 4, "expected 4 quartermasters")
 	print("Stage 5 Milestone 3 Mos Eisley vendors: OK")
 	_cleanup(0)
 	return true

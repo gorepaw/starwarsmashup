@@ -64,8 +64,30 @@ static func build_lines(def: Dictionary, inst: Dictionary, store: Object, equipp
 	var faction := str(def.get("faction", "neutral")).capitalize()
 	lines.append({"text": "%s | %s | %s" % [kind.replace("_", " ").capitalize(), slot.replace("_", " ").capitalize(), faction],
 			"color": Bf2Screen.DIM})
-	if not inst.is_empty() and kind != "junk" and kind != "supply" and kind != "quest":
+	if not inst.is_empty() and kind != "junk" and kind != "supply" and kind != "quest" and kind != "ammo":
 		lines.append({"text": "Quality: %d%%" % roundi(quality * 100.0), "color": Bf2Screen.ACCENT})
+	if kind == "ammo":
+		var ac := str(def.get("ammo_class", "standard")).capitalize()
+		var cap := 99 if ac == "Heavy" else 999
+		if not inst.is_empty():
+			lines.append({"text": "%s Ammo: %d / %d rounds" % [ac, int(inst.get("quantity", 1)), cap], "color": Bf2Screen.ACCENT})
+		else:
+			lines.append({"text": "%s Ammo Pack: x%d (Max %d)" % [ac, int(def.get("ammo_batch", 100)), cap], "color": Bf2Screen.ACCENT})
+		var dm := float(def.get("damage_mult", 1.0))
+		var rm := float(def.get("rate_mult", 1.0))
+		var hm := float(def.get("heat_mult", 1.0))
+		var sm := float(def.get("spread_mult", 1.0))
+		var dt_s := str(def.get("damage_type", ""))
+		if dt_s != "":
+			lines.append({"text": "Damage Type: %s" % dt_s.capitalize(), "color": Bf2Screen.TEXT})
+		if absf(dm - 1.0) > 1e-3:
+			lines.append({"text": "Shot Damage: %+d%%" % roundi((dm - 1.0) * 100.0), "color": GOOD if dm > 1.0 else BAD})
+		if absf(rm - 1.0) > 1e-3:
+			lines.append({"text": "Fire Rate: %+d%%" % roundi((rm - 1.0) * 100.0), "color": GOOD if rm > 1.0 else BAD})
+		if absf(hm - 1.0) > 1e-3:
+			lines.append({"text": "Heat / Shot: %+d%%" % roundi((hm - 1.0) * 100.0), "color": GOOD if hm < 1.0 else BAD})
+		if absf(sm - 1.0) > 1e-3:
+			lines.append({"text": "Spread: %+d%%" % roundi((sm - 1.0) * 100.0), "color": GOOD if sm < 1.0 else BAD})
 	if kind == "supply":
 		var heal := float(def.get("heal_amount", 0.0))
 		if heal > 0.0:

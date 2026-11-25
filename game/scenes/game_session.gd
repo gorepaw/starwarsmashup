@@ -88,7 +88,6 @@ var _weapons: Array = []
 var _weapon := 0
 var _battlefield: Dictionary = {}
 var _crouch_view := 0.0
-var _bot_difficulty := ""
 var _zoom_step := 0
 var _zoom := 1.0
 var _zoom_weapon := -1
@@ -228,8 +227,6 @@ func start_session(config: Dictionary) -> bool:
 			_emit_or_menu(1)
 			return false
 		_server.set_bots(int(_config.get("bots", 0)))
-		_server.set_bot_difficulty(_settings.bot_difficulty)
-		_bot_difficulty = _settings.bot_difficulty
 		var hub_path := str(_config.get("hub", ""))
 		if hub_path != "" and _server.set_hub(_os_path(hub_path)) != OK:
 			_emit_or_menu(1)
@@ -338,9 +335,6 @@ func step_frame(delta: float) -> void:
 		if _loading_screen != null:
 			_loading_screen.visible = false
 	if _server != null:
-		if _settings.bot_difficulty != _bot_difficulty:
-			_bot_difficulty = _settings.bot_difficulty
-			_server.set_bot_difficulty(_bot_difficulty)
 		_server.update()
 	if _bot != "conquest":
 		_client.set_input(_controls())
@@ -534,8 +528,11 @@ func _input(event: InputEvent) -> void:
 		elif event.is_action_pressed("leave_queue"):
 			_client.queue(-1)
 		elif event is InputEventKey and event.pressed and not event.echo \
-				and (event as InputEventKey).physical_keycode in [KEY_1, KEY_2]:
-			_client.queue(0 if (event as InputEventKey).physical_keycode == KEY_1 else 1)
+				and (event as InputEventKey).physical_keycode in [KEY_1, KEY_2, KEY_3, KEY_4]:
+			var kc := (event as InputEventKey).physical_keycode
+			var sidx := kc - KEY_1
+			if sidx < _client.get_factions().size():
+				_client.queue(sidx)
 		return
 	if escape and _pause_menu != null:
 		_capture_mouse(false)
@@ -572,7 +569,7 @@ func _input(event: InputEvent) -> void:
 		elif key in [KEY_SPACE, KEY_ENTER]:
 			_request_spawn()
 	elif event.is_action_pressed("leave_queue") and not _client.get_recruiters().is_empty():
-		_client.queue(-1, "standard")
+		_client.queue(-1)
 	elif event.is_action_pressed("inventory") and not event.is_echo() and _hub_ui != null \
 			and _client.get_match().is_empty() and not _client.get_recruiters().is_empty():
 		_capture_mouse(not _hub_ui.toggle_inventory(_client))
@@ -602,6 +599,10 @@ func _input(event: InputEvent) -> void:
 		_client.switch_loadout(1)
 	elif event.is_action_pressed("loadout_3") and not event.is_echo() and _client.get_match().is_empty():
 		_client.switch_loadout(2)
+	elif event.is_action_pressed("loadout_4") and not event.is_echo() and _client.get_match().is_empty():
+		_client.switch_loadout(3)
+	elif event.is_action_pressed("loadout_5") and not event.is_echo() and _client.get_match().is_empty():
+		_client.switch_loadout(4)
 	elif event.is_action_pressed("summon_mount") and not event.is_echo() and _client.get_match().is_empty():
 		_toggle_equipped_mount()
 	elif event.is_action_pressed("interact") and not event.is_echo() and _hub_ui != null:
@@ -900,9 +901,11 @@ func _spawn_native_model() -> Dictionary:
 	return character
 
 
-func _spawn_character_model(species_id: String, gender: String, appearance_json: String) -> Dictionary:
-	var character := PlayerAppearance.load_character(species_id, gender, appearance_json, _character_path)
+func _spawn_character_model(species_id: String, gender: String, appearance_json: String, worn_csv := "") -> Dictionary:
+	var ov := PlayerAppearance.override_path_from_worn(worn_csv)
+	var character := PlayerAppearance.load_character(species_id, gender, appearance_json, _character_path, ov)
 	if not character.is_empty():
+		character["worn_override"] = ov
 		add_child(character["model"])
 	return character
 
@@ -911,10 +914,12 @@ func _ensure_character_appearance(character: Dictionary, state: Dictionary, is_o
 	var sp := str(state.get("species", "human"))
 	var gen := str(state.get("gender", "male"))
 	var app := str(state.get("appearance", ""))
+	var ov := PlayerAppearance.override_path_from_worn(str(state.get("worn", "")))
 	if sp == str(character.get("species", "")) and gen == str(character.get("gender", "")) \
-			and str(character.get("raw_appearance", "")) == app:
+			and str(character.get("raw_appearance", "")) == app \
+			and str(character.get("worn_override", "")) == ov:
 		return
-	var replacement := PlayerAppearance.load_character(sp, gen, app, _character_path)
+	var replacement := PlayerAppearance.load_character(sp, gen, app, _character_path, ov)
 	if replacement.is_empty():
 		return
 	var old_model: Variant = character.get("model")
@@ -923,6 +928,7 @@ func _ensure_character_appearance(character: Dictionary, state: Dictionary, is_o
 	for k: String in replacement:
 		character[k] = replacement[k]
 	character["raw_appearance"] = app
+	character["worn_override"] = ov
 	add_child(character["model"])
 	if is_own:
 		PlayerAppearance.set_first_person(character, _first_person)
@@ -942,7 +948,8 @@ func _update_remotes(own_team: int) -> void:
 					_spawn_character_model(
 					str(remote.get("species", "human")),
 					str(remote.get("gender", "male")),
-					str(remote.get("appearance", "")))
+					str(remote.get("appearance", "")),
+					str(remote.get("worn", "")))
 			if character.is_empty():
 				continue
 			character["raw_appearance"] = str(remote.get("appearance", ""))
@@ -1668,7 +1675,7 @@ func _setup_scene() -> void:
 	_hub_ui = HubUI.new()
 	add_child(_hub_ui)
 	_hub_ui.setup(layer, self, _battle_ui.art(), _settings)
-	_hub_ui.queue_requested.connect(func(side: int, mode: String) -> void: _client.queue(side, mode))
+	_hub_ui.queue_requested.connect(func(side: int) -> void: _client.queue(side))
 	_hub_ui.item_bought.connect(func(def_id: String, use_fp: bool) -> void: _client.buy_item(def_id, use_fp))
 	_hub_ui.loadout_saved.connect(func(slot: int, lo: Dictionary) -> void: _client.save_loadout(slot, lo))
 	_hub_ui.loadout_activated.connect(func(slot: int) -> void: _client.switch_loadout(slot))

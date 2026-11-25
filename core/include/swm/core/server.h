@@ -73,6 +73,8 @@ struct PlayerResult {
     int team = -1;
     uint16_t kills = 0, deaths = 0, captures = 0;
     std::map<std::string, int64_t> profession_xp;  // earned in the match, by profession
+    int remaining_std_ammo = -1;
+    int remaining_hvy_ammo = -1;
 };
 
 struct MatchResult {
@@ -140,7 +142,7 @@ public:
 
     // The war terminals players can queue at and the sides they queue for,
     // told to clients as they join.
-    void set_recruiters(std::vector<net::Recruiter> recruiters, std::array<std::string, 2> factions);
+    void set_recruiters(std::vector<net::Recruiter> recruiters, std::vector<std::string> factions);
     // Faction quartermasters in a hub, told to clients as they join.
     void set_quartermasters(std::vector<net::Quartermaster> quartermasters);
     // Open-world vendors (junk dealers, gear/supplies vendors) in a hub.
@@ -163,8 +165,10 @@ public:
     // Resolves a connected hub player's saved loadouts (with or without quality).
     std::vector<Loadout> build_player_loadouts(uint32_t entity, bool apply_quality,
                                                std::vector<std::string>* out_worn = nullptr) const;
-    // Persists battle rewards for a player by name and updates live balance if connected.
-    void award_battle_rewards(const std::string& name, const BattleReward& reward);
+    // Persists battle rewards & faction reputation for a player by name and updates live balance if connected.
+    void award_battle_rewards(const std::string& name, const std::string& faction, const BattleReward& reward);
+    // Syncs remaining unified ammo quantities back from a finished battle to the player's equipped stacks.
+    void apply_match_ammo_consumption(const std::string& name, int remaining_std_ammo, int remaining_hvy_ammo);
     // Professions: experience a player earned in a match (by profession), and
     // `routed` more for the professions their active loadout routes it to
     // (routed_professions); saved, and shown if they're here.
@@ -252,7 +256,7 @@ public:
     std::function<std::optional<int>(const std::string& name, uint64_t ticket, int team)> admit;
     std::function<void(uint32_t entity, const std::string& name)> on_join;
     // A player standing at a war terminal asked to queue for a side (-1: leave).
-    std::function<void(uint32_t entity, int team, QueueMode mode)> on_queue;
+    std::function<void(uint32_t entity, int team)> on_queue;
     // A match just ended.
     std::function<void(const MatchResult&)> on_match_ended;
 
@@ -288,6 +292,7 @@ private:
         int64_t credits = 0;
         int64_t faction_points = 0;
         int64_t experience = 0;
+        std::map<std::string, int64_t> reputation;
         std::vector<ItemInstance> items;
         std::vector<CharacterLoadout> char_loadouts;
         std::vector<Loadout> custom_loadouts;
@@ -318,6 +323,10 @@ private:
         double shield = 0;
         double shield_recharge_timer = 0;
         double shield_disrupt_timer = 0;
+        double secondary_recharge_timer = 0;
+        double ammo_sync_timer = 0;
+        int synced_std_ammo = -1;
+        int synced_hvy_ammo = -1;
         std::vector<MaterialStack> materials;
         std::vector<RecipePreset> presets;
         uint32_t crafting_rev = 0;
@@ -461,6 +470,8 @@ private:
     void return_to_waiting(Client& client);
     void rebuild_client_loadouts(Client& client);
     void scrub_item_from_loadouts(Client& client, uint64_t item_id);
+    ItemInstance grant_stacked_item(Client& client, const ItemDef& def, int delta_qty, double quality);
+    void sync_client_ammo(Client& client, bool flush_now);
     void send_inventory_sync(Client& client);
     // Vehicles (server_vehicles.cpp).
     std::span<const VehicleClass> vehicle_classes() const;
@@ -551,7 +562,7 @@ private:
     std::vector<uint32_t> spawned_;     // per vehicle spawn: its vehicle (0: none)
     Phase vehicles_phase_ = Phase::warmup;
     std::vector<RangeTarget> targets_;
-    std::array<std::string, 2> factions_;
+    std::vector<std::string> factions_;
     uint32_t tick_ = 0;
     uint32_t next_entity_ = 1;
     uint32_t next_bolt_ = 1;
