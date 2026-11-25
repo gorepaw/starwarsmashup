@@ -3,7 +3,8 @@
 # picture about a meter a pixel), north up, with its places marked: where to
 # shop, who gives quests, where to craft, the terminals, your quest's
 # waypoint and you. A list beside it names them (nearest first in each kind),
-# and hovering one rings it on the map. The mouse wheel zooms: 300 m, 700 m,
+# and hovering one rings it on the map; hovering a marker on the map names it
+# in a tooltip. The mouse wheel zooms: 300 m, 700 m,
 # 1.6 km across, then the whole planet (its ground preview, as the radar's).
 # In Battlefront II's frames and fonts.
 #
@@ -34,6 +35,7 @@ var waypoint := {}
 var planet := {}
 
 var _zoom := 0
+var _mouse := Vector2.ZERO
 var _picture: Texture2D
 var _picture_center := Vector3.ZERO
 var _picture_extent := 0.0
@@ -161,6 +163,7 @@ func _paint() -> void:
 		if not map_rect.grow(-4 * u).has_point(at):
 			continue
 		_marker(at, place, i == hovered)
+		region(Rect2(at - Vector2(8, 8) * u, Vector2(16, 16) * u), "place:%d" % i)
 	if not waypoint.is_empty():
 		var at := _to_map(waypoint["position"], view, map_rect)
 		if map_rect.has_point(at):
@@ -219,6 +222,17 @@ func _paint() -> void:
 	text("gamefont_tiny", ("The planet" if planet_view else scale) + "    Mouse wheel: zoom    M / Esc: close",
 			Vector2(map_rect.position.x, map_rect.end.y + 4 * u), "Left", DIM)
 
+	# What the cursor is over, named beside it.
+	if hovered >= 0 and hovered < places.size() and map_rect.has_point(_mouse):
+		var place: Dictionary = places[hovered]
+		var meters := _distance(place)
+		var kind_label := ""
+		for kind: Array in KINDS:
+			if kind[0] == str(place.get("kind", "")):
+				kind_label = str(kind[1])
+		_tooltip(str(place.get("name", "")), "%s  -  %s" % [kind_label,
+				"%d m" % roundi(meters) if meters < 1000 else "%.1f km" % (meters / 1000.0)], place.get("color", TEXT))
+
 
 # A place's marker: a dot in its kind's color, outlined; a quest giver's is
 # Battlefront's objective chevron. Hovered (in the list), ringed.
@@ -234,6 +248,20 @@ func _marker(at: Vector2, place: Dictionary, hovered: bool) -> void:
 		return
 	draw_circle(at, 5.0 * u, Color(0, 0, 0, 0.75))
 	draw_circle(at, 3.8 * u, color)
+
+
+# A tooltip by the cursor, in Battlefront's frame: a name, and under it a line of detail.
+func _tooltip(name: String, detail: String, color: Color) -> void:
+	var width := maxf(art.text_width("gamefont_small", name, u), art.text_width("gamefont_tiny", detail, u)) + 24 * u
+	var box := Rect2(_mouse + Vector2(16, 14) * u, Vector2(width, 40 * u))
+	if box.end.x > size.x:
+		box.position.x = _mouse.x - 16 * u - box.size.x
+	if box.end.y > size.y:
+		box.position.y = _mouse.y - 14 * u - box.size.y
+	draw_rect(box, Color(0.04, 0.05, 0.07, 0.92))
+	frame(box)
+	text("gamefont_small", name, box.position + Vector2(12, 5) * u, "Left", color)
+	text("gamefont_tiny", detail, box.position + Vector2(12, 23) * u, "Left", DIM)
 
 
 func _distance(place: Dictionary) -> float:
@@ -255,6 +283,8 @@ func _on_click(id: String, _at: Vector2) -> void:
 
 
 func _gui_input(event: InputEvent) -> void:
+	if event is InputEventMouseMotion:
+		_mouse = (event as InputEventMouseMotion).position
 	if event is InputEventMouseButton and event.pressed \
 			and (event as InputEventMouseButton).button_index in [MOUSE_BUTTON_WHEEL_UP, MOUSE_BUTTON_WHEEL_DOWN]:
 		var last := ZOOMS.size() if not planet.is_empty() else ZOOMS.size() - 1
@@ -265,3 +295,5 @@ func _gui_input(event: InputEvent) -> void:
 		accept_event()
 		return
 	super._gui_input(event)
+	if event is InputEventMouseMotion and _hover.begins_with("place:"):
+		queue_redraw()  # (the tooltip follows the cursor)

@@ -123,7 +123,9 @@ Our new starting quest/sequence needs to also give us a starting speeder bike pr
   -> A mark made on a door (a Galaxies sliding door, or a Battlefront one) is now hung on the door and
      slides with it. (bf2_effects.gd _stick_to_door; tests/door_scorch_test.gd)
 
-in the main overworld map hovering over things should tell me what they are in a tooltip.
+[DONE] in the main overworld map hovering over things should tell me what they are in a tooltip.
+  -> Hovering a marker on the map (not just a line in the list) rings it, lights its line and names it in a
+     Battlefront-framed tooltip beside the cursor: its name, its kind and how far it is.
 
 do a very cursory investigation into how hard it would be to let us jump onto the SWG buildings. if it would 
 take very much effort i want to leave it alone.
