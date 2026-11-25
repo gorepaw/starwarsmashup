@@ -89,7 +89,7 @@ func _process(_delta: float) -> bool:
 		return false
 
 	var vendors: Array = client.get_vendors()
-	assert(vendors.size() == 2, "expected 2 vendors in Mos Eisley, got %d" % vendors.size())
+	assert(vendors.size() >= 2, "expected at least 2 vendors in Mos Eisley, got %d" % vendors.size())
 	var kinds: Array = []
 	for v: Dictionary in vendors:
 		kinds.append(str(v.get("kind", "")))

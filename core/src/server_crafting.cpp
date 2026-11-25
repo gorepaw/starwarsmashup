@@ -79,6 +79,10 @@ void GameServer::handle_gather_request(Client& client, const net::GatherRequest&
 
     if (req.action == net::GatherRequest::extract_terrain) {
         if (client.extract_started >= 0.0) return;  // already at it
+        if (world_.near_structure(client.state.position, 40.0)) {
+            notify(client.entity, "Cannot extract resources inside a city or near buildings.");
+            return;
+        }
         const ResourceCategory cat = ResourceCategory(req.category);
         if (client.has_extracted) {
             const Vec3 d = client.state.position - client.last_extract_site;
@@ -111,8 +115,12 @@ void GameServer::handle_gather_request(Client& client, const net::GatherRequest&
                                      [&](const CorpseLoot& c) { return c.npc_entity == corpse_id; });
         if (it == corpse_loots_.end()) return;
         const Vec3 d = client.state.position - it->position;
-        if (d.x * d.x + d.z * d.z > 64.0) return;
+        if (d.x * d.x + d.z * d.z > 64.0) {
+            notify(client.entity, "Move closer to harvest.");
+            return;
+        }
         harvested_corpses_.insert(corpse_id);
+        it->harvested = true;
 
         const bool salvage = is_bandit_name(it->name);
         const ResourceCategory cat = salvage ? ResourceCategory::salvage : ResourceCategory::organic;
@@ -122,6 +130,10 @@ void GameServer::handle_gather_request(Client& client, const net::GatherRequest&
         for (const ResourceDef& r : book.resources()) {
             if (r.category == cat) choices.push_back(&r);
         }
+        const std::string corpse_name = it->name;
+        if (it->items.empty()) {
+            corpse_loots_.erase(it);
+        }
         if (choices.empty()) return;
         const ResourceDef* picked = choices[size_t(corpse_id) % choices.size()];
         const int64_t qty = std::max<int64_t>(3, 4 + lv / 12);
@@ -130,7 +142,7 @@ void GameServer::handle_gather_request(Client& client, const net::GatherRequest&
         ++client.crafting_rev;
         client.crafting_sync_tick = 0;
         earn_profession_xp(client, prof, 28);
-        notify(client.entity, std::format("{} {}x {} from {}", salvage ? "Salvaged" : "Harvested", qty, picked->name, it->name));
+        notify(client.entity, std::format("{} {}x {} from {}", salvage ? "Salvaged" : "Harvested", qty, picked->name, corpse_name));
         return;
     }
 

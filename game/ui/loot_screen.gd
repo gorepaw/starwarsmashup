@@ -12,6 +12,7 @@ signal closed
 var corpse: Dictionary = {}  # {entity_id, name, position, items: [{slot, def_id, quality}]}
 var catalog: Array = []
 var store: Object = null
+var feedback := ""
 
 var _def_by_id: Dictionary = {}
 var _mouse_pos := Vector2.ZERO
@@ -101,7 +102,9 @@ func _paint() -> void:
 
 	if items.size() > _rows_visible:
 		text("gamefont_tiny", "Scroll (%d-%d of %d)" % [_scroll + 1, mini(_scroll + _rows_visible, items.size()), items.size()],
-				Vector2(box.get_center().x, box.end.y - 22 * u), "Center", DIM)
+				Vector2(box.end.x - 18 * u, box.end.y - 22 * u), "Right", DIM)
+	if feedback != "":
+		text("gamefont_tiny", feedback, Vector2(x, box.end.y - 22 * u), "Left", ACCENT)
 
 	if not _hover_entry.is_empty():
 		var hdid := str(_hover_entry.get("def_id", ""))

@@ -13,6 +13,7 @@ var tooltip := ""     # e.g. "Press E to use the War Terminal"; empty: none
 var queue := {}       # {side, mode, icon, battlefield, starts_in, in_queue, leave_key}; empty: not queued
 var notice := ""      # e.g. "Victory at Endor: 3 kills, 1 deaths, 2 captures"
 var notice_alpha := 0.0
+var level_up := {}    # {title, detail, alpha}: BF2-style profession level-up banner
 var info := {}        # {credits, fp, xp, loadout_name, inv_key}
 var switching := {}   # {name, progress}: non-empty while channeling a loadout switch
 var tracker := {}     # the tracked quest: {title, step, progress, distance, log_key}; empty: none
@@ -44,6 +45,8 @@ func _paint() -> void:
 		_paint_switching()
 	if notice != "" and notice_alpha > 0:
 		_paint_notice()
+	if not level_up.is_empty() and float(level_up.get("alpha", 0.0)) > 0.0:
+		_paint_level_up()
 
 
 func _paint_info() -> void:
@@ -85,17 +88,19 @@ func _paint_tracker() -> void:
 		y += 15 * u
 
 
-func _wrap_line(value: String, width: float) -> PackedStringArray:
+func _wrap_line(value: String, width: float, font_name := "gamefont_tiny") -> PackedStringArray:
 	var lines := PackedStringArray()
-	var line := ""
-	for word in value.split(" ", false):
-		var candidate := word if line == "" else line + " " + word
-		if line != "" and art.text_width("gamefont_tiny", candidate, u) > width:
+	for para in value.split("\n"):
+		var line := ""
+		for word in para.split(" ", false):
+			var candidate := word if line == "" else line + " " + word
+			if line != "" and art.text_width(font_name, candidate, u) > width:
+				lines.append(line)
+				line = word
+			else:
+				line = candidate
+		if line != "":
 			lines.append(line)
-			line = word
-		else:
-			line = candidate
-	lines.append(line)
 	return lines
 
 
@@ -164,12 +169,48 @@ func _paint_notice() -> void:
 		if notice.begins_with(outcome + " "):
 			headline = outcome
 			detail = notice.substr(outcome.length() + 1).trim_prefix("at ")
+	var max_w := minf(size.x - 80 * u, 680 * u)
+	if detail == "" and art.text_width("gamefont_large", headline, u) > max_w:
+		var lines := _wrap_line(headline, max_w, "gamefont_small")
+		var top_w := size.y * 0.22
+		var lh: float = art.line_height("gamefont_small", u) + 3 * u
+		var pad_x := 20 * u
+		var box_w := minf(max_w + pad_x * 2.0, size.x - 40 * u)
+		var box := Rect2(Vector2((size.x - box_w) * 0.5, top_w - 10 * u),
+				Vector2(box_w, lines.size() * lh + 20 * u))
+		draw_rect(box, Color(0.03, 0.05, 0.09, 0.72 * notice_alpha))
+		for line in lines:
+			text("gamefont_small", line, Vector2(size.x * 0.5, top_w), "Center", Color(ACCENT, notice_alpha))
+			top_w += lh
+		return
 	var color := VICTORY if headline == "Victory" else (DEFEAT if headline == "Defeat" else ACCENT)
 	color.a = notice_alpha
 	var top := size.y * 0.24
 	text("gamefont_large", headline, Vector2(size.x * 0.5, top), "Center", color, 1.4 if detail != "" else 1.0)
 	if detail != "":
-		text("gamefont_small", detail, Vector2(size.x * 0.5, top + 48 * u), "Center", Color(TEXT, notice_alpha))
+		var dy := top + 48 * u
+		var dlh: float = art.line_height("gamefont_small", u) + 3 * u
+		for line in _wrap_line(detail, max_w, "gamefont_small"):
+			text("gamefont_small", line, Vector2(size.x * 0.5, dy), "Center", Color(TEXT, notice_alpha))
+			dy += dlh
+
+
+func _paint_level_up() -> void:
+	var alpha := clampf(float(level_up.get("alpha", 0.0)), 0.0, 1.0)
+	var title_txt := str(level_up.get("title", "PROFESSION LEVEL UP"))
+	var detail_txt := str(level_up.get("detail", ""))
+	var max_w := minf(size.x - 100 * u, 460 * u)
+	var lines := _wrap_line(detail_txt, max_w - 28 * u, "gamefont_small")
+	var lh: float = art.line_height("gamefont_small", u) + 2 * u
+	var box_h := (44 + maxi(1, lines.size()) * 20) * u
+	var box := Rect2(Vector2((size.x - max_w) * 0.5, 86 * u), Vector2(max_w, box_h))
+	frame(box, "border_3_pieces", Color(1.0, 0.95, 0.8, alpha))
+	text("gamefont_medium", title_txt, Vector2(box.get_center().x, box.position.y + 10 * u),
+			"Center", Color(ACCENT, alpha))
+	var ly := box.position.y + 36 * u
+	for ln in lines:
+		text("gamefont_small", ln, Vector2(box.get_center().x, ly), "Center", Color(TEXT, alpha))
+		ly += lh
 
 
 func _paint_scanner() -> void:

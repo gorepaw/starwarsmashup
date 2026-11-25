@@ -14,6 +14,7 @@ const TerrainTool = preload("res://tools/render_terrain.gd")
 const TATOOINE_SKY = preload("res://rendering/tatooine_sky.gdshader")
 const Bf2Audio = preload("res://audio/bf2_audio.gd")
 const GameSession = preload("res://scenes/game_session.gd")
+const LoadingScreen = preload("res://ui/loading_screen.gd")
 
 const HUD_DIR := "res://imported_assets/hud"
 const AUDIO_DIR := "res://imported_assets/audio"
@@ -32,6 +33,7 @@ var _menu_overlay: Control
 var _settings_screen: Control
 var _load_screen: Control
 var _creator_screen: Control
+var _loading_screen: LoadingScreen
 var _mode := "main"
 var _orbit_time := 0.0
 var _status_msg := ""
@@ -41,6 +43,7 @@ func _ready() -> void:
 	_settings = Settings.new()
 	_settings.load_file()
 	_art = Bf2Art.load_from(HUD_DIR)
+	Bf2Art.apply_cursor(_art)
 	_audio = Bf2Audio.new(self, AUDIO_DIR)
 	_audio.apply_volumes(_settings)
 
@@ -168,6 +171,9 @@ func _setup_ui() -> void:
 		scr.clicked.connect(func(_id: String) -> void:
 			if _audio != null:
 				_audio.play_2d("shell_select_unit"))
+	_loading_screen = LoadingScreen.new(_art)
+	_loading_screen.visible = false
+	layer.add_child(_loading_screen)
 
 
 func _show_mode(mode: String) -> void:
@@ -226,6 +232,15 @@ func _launch_character(record: Dictionary) -> void:
 		"appearance": str(record.get("appearance", "{}")),
 		"return_to_menu": true,
 	}
+	LoadingScreen.pending = {
+		"title": "MOS EISLEY, TATOOINE",
+		"subtitle": "Entering as %s..." % char_name,
+		"icon": "hud_flag_icon",
+	}
+	if _loading_screen != null and not DisplayServer.get_name().to_lower().contains("headless"):
+		_loading_screen.show_loading("MOS EISLEY, TATOOINE", "Entering as %s..." % char_name, "hud_flag_icon")
+		await get_tree().process_frame
+		await get_tree().process_frame
 	get_tree().change_scene_to_file("res://scenes/game_session.tscn")
 
 

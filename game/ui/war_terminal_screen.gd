@@ -17,16 +17,44 @@ var battlefield := ""    # where the next battle is fought, once chosen
 var starts_in := 0.0     # seconds
 var in_queue := 0
 var keys := {}           # {leave, close}: key names for the hints
+const TRAVEL_DESTS := ["Naboo (Theed)", "Corellia (Coronet)", "Dantooine", "Lok", "Endor", "Yavin 4"]
+var _space_tab := "battles"
+
+
+func _is_space() -> bool:
+	return title.to_lower().contains("space")
 
 
 func _paint() -> void:
 	draw_rect(Rect2(Vector2.ZERO, size), Color(0, 0, 0, 0.5))
-	var box := centered(560, 410, Vector2(0, 14))
+	var is_space := _is_space()
+	var box := centered(600, 440, Vector2(0, 14)) if is_space else centered(560, 410, Vector2(0, 14))
 	text("gamefont_large", title, Vector2(size.x * 0.5, box.position.y - 44 * u), "Center", ACCENT)
 	frame(box)
+	if is_space:
+		button(Rect2(box.position.x + 24 * u, box.position.y + 12 * u, 160 * u, 26 * u),
+				"Space Battles", "stab:battles", _space_tab == "battles")
+		button(Rect2(box.position.x + 192 * u, box.position.y + 12 * u, 196 * u, 26 * u),
+				"Interplanetary Travel", "stab:travel", _space_tab == "travel")
+		if _space_tab == "travel":
+			text("gamefont_medium", "Interplanetary Shuttle & Starfighter Travel",
+					Vector2(box.get_center().x, box.position.y + 54 * u), "Center", TEXT)
+			text("gamefont_tiny", "Select a sector destination (Stub — Cross-planet travel coming soon):",
+					Vector2(box.get_center().x, box.position.y + 82 * u), "Center", DIM)
+			for di in TRAVEL_DESTS.size():
+				var col := di % 2
+				var row := di / 2
+				var br := Rect2(box.position.x + (36 + col * 268) * u, box.position.y + (116 + row * 48) * u, 252 * u, 38 * u)
+				button(br, "%s  [Offline]" % TRAVEL_DESTS[di], "travel:%d" % di, false, false, false)
+			text("gamefont_tiny", "Ticket counters & hyperdrive routes will activate once additional planets are linked.",
+					Vector2(box.get_center().x, box.end.y - 84 * u), "Center", ACCENT)
+			button(Rect2(Vector2(box.get_center().x - 80 * u, box.end.y - 50 * u), Vector2(160, 32) * u), "Back", "close")
+			text("gamefont_tiny", "%s  close" % keys.get("close", "Esc"), Vector2(size.x * 0.5, box.end.y + 14 * u), "Center", DIM)
+			return
+	var top_off := 36.0 * u if is_space else 0.0
 	var heading := "Choose a side" if queued < 0 else "Queued (%s) for the %s" % [queue_mode.capitalize(), _side_name(queued)]
-	text("gamefont_medium", heading, Vector2(box.get_center().x, box.position.y + 16 * u), "Center", TEXT)
-	var mode_y := box.position.y + 44 * u
+	text("gamefont_medium", heading, Vector2(box.get_center().x, box.position.y + 16 * u + top_off), "Center", TEXT)
+	var mode_y := box.position.y + 44 * u + top_off
 	button(Rect2(Vector2(box.get_center().x - 166 * u, mode_y), Vector2(160, 28) * u),
 			"Standard Queue", "mode:standard", queue_mode == "standard", false, queued < 0)
 	button(Rect2(Vector2(box.get_center().x + 6 * u, mode_y), Vector2(160, 28) * u),
@@ -35,10 +63,11 @@ func _paint() -> void:
 			else "Quality counts (+8% crafted band, +15% rewards)"
 	text("gamefont_tiny", mode_desc, Vector2(box.get_center().x, mode_y + 32 * u), "Center", DIM)
 	var card_w := 240.0
+	var side_x0 := 44.0 if is_space else 24.0
 	for i in sides.size():
-		var card := Rect2(box.position + Vector2(24 + i * (card_w + 32), 96) * u, Vector2(card_w, 196) * u)
+		var card := Rect2(box.position + Vector2(side_x0 + i * (card_w + 32), 96) * u + Vector2(0, top_off), Vector2(card_w, 196) * u)
 		_paint_side(card, i)
-	var bottom := Rect2(box.position + Vector2(24, 308) * u, Vector2(512, 82) * u)
+	var bottom := Rect2(box.position + Vector2(24, 308) * u + Vector2(0, top_off), Vector2(box.size.x - 48 * u, 82 * u))
 	if queued >= 0:
 		var where := "The battle on %s" % battlefield if battlefield != "" else "The battle"
 		var when := "starts in %d" % ceili(starts_in) if starts_in > 0.5 else "is starting"
@@ -81,7 +110,9 @@ func _side_name(i: int) -> String:
 
 
 func _on_click(id: String, _at: Vector2) -> void:
-	if id == "mode:standard":
+	if id.begins_with("stab:"):
+		_space_tab = id.substr(5)
+	elif id == "mode:standard":
 		queue_mode = "standard"
 	elif id == "mode:gear":
 		queue_mode = "gear"

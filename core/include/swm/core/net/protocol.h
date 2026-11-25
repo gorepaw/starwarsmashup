@@ -19,7 +19,7 @@ namespace swm::core::net {
 // Every packet starts with a magic number, the protocol version and a message
 // type. Peers drop packets with another version. Bump it on any wire change.
 inline constexpr uint16_t protocol_magic = 0x4D53;  // "SM"
-inline constexpr uint16_t protocol_version = 32;
+inline constexpr uint16_t protocol_version = 33;
 inline constexpr uint8_t droid_explosion_weapon = 0xFF;  // Explosion::weapon sentinel for destroyed health/ammo droids
 // ...for a destroyed object (Battlefield::destructibles); clients draw it
 // from the object's own explosion as they see it go.
@@ -85,16 +85,18 @@ struct QuestNpc {
 // its generated missions.
 struct MissionTerminal {
     std::string name;
-    Vec3 position;  // game space
+    Vec3 position;                 // game space
     double radius = 3;
+    std::string kind = "general";  // "general", "artisan", "bounty", "entertainer", "scout", "imperial", "rebel"
 
     friend bool operator==(const MissionTerminal&, const MissionTerminal&) = default;
 };
 
 struct Workbench {
     std::string name;
-    Vec3 position;  // game space
+    Vec3 position;                 // game space
     double radius = 4;
+    std::string kind = "general";  // "general", "weapon", "clothing", "food", "structure"
 
     friend bool operator==(const Workbench&, const Workbench&) = default;
 };

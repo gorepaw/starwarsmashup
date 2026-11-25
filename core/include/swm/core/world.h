@@ -141,6 +141,8 @@ public:
     // the ground inside one (Yavin's minitemple, a stepped pyramid) is no
     // place to stand.
     bool inside_solid(Vec3 point, double reach) const;
+    // True if `point` lies within `radius` (XZ) of any placed building or city structure solid.
+    bool near_structure(Vec3 point, double radius) const;
 
     // Destructible `index` destroyed (its triangles gone, its wreck's
     // there) or standing (as at first). The server sets this from its match

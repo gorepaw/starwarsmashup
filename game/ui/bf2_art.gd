@@ -19,6 +19,22 @@ var _fonts := {}
 var _strings := {}
 var _styles := {}
 var _godot_fonts := {}
+static var _cursor_applied := false
+
+
+static func apply_cursor(art: RefCounted) -> void:
+	if _cursor_applied or art == null or DisplayServer.get_name().to_lower().contains("headless"):
+		return
+	var tex: Texture2D = art.texture("mousecursor")
+	if tex == null:
+		return
+	var img := tex.get_image()
+	if img != null and not img.is_empty():
+		var scaled := img.duplicate() as Image
+		scaled.resize(img.get_width() * 2, img.get_height() * 2, Image.INTERPOLATE_NEAREST)
+		var cursor_tex := ImageTexture.create_from_image(scaled)
+		Input.set_custom_mouse_cursor(cursor_tex, Input.CURSOR_ARROW, Vector2(6, 2))
+		_cursor_applied = true
 
 
 static func load_from(directory: String) -> RefCounted:

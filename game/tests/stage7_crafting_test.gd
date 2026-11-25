@@ -12,9 +12,11 @@ const GameSession = preload("res://scenes/game_session.gd")
 var _session: GameSession
 var _screen: WorkbenchScreen
 var _db := ""
+var _desert_hub := ""
 var _frames := 0
 var _phase := "screen"
 var _phase_frames := 0
+var _phase_sec := 0.0
 
 
 func _initialize() -> void:
@@ -59,9 +61,10 @@ func _initialize() -> void:
 	print("Stage 7 crafting store & workbench screen: OK")
 
 
-func _process(_delta: float) -> bool:
+func _process(delta: float) -> bool:
 	_frames += 1
 	_phase_frames += 1
+	_phase_sec += delta
 	match _phase:
 		"screen":
 			if _screen == null:
@@ -82,12 +85,37 @@ func _process(_delta: float) -> bool:
 			var hub_ui: Node = _session.get("_hub_ui")
 			assert(hub_ui.toggle_scanner(), "scanner did not turn on")
 			assert(hub_ui.extract_scanner(client), "scanner extract failed")
+			_next("city_blocked")
+		"city_blocked":
+			var client: Object = _session.get_client()
+			var notice := str(client.get_player_status().get("notice", ""))
+			if not notice.contains("Cannot extract"):
+				if _phase_frames > 240:
+					printerr("FAIL: expected city extraction block notice, got '%s'" % notice)
+					_cleanup(1)
+				return false
+			_session.leave_session()
+			_session.queue_free()
+			_session = null
+			_write_desert_hub()
+			_start_session("hubs/stage7_desert_temp.ini")
+			_next("desert_join")
+		"desert_join":
+			var client: Object = _session.get_client()
+			if client == null or not client.is_spawned():
+				if _phase_frames > 600:
+					printerr("FAIL: client did not spawn in desert hub")
+					_cleanup(1)
+				return false
+			var hub_ui: Node = _session.get("_hub_ui")
+			assert(hub_ui.toggle_scanner(), "desert scanner did not turn on")
+			assert(hub_ui.extract_scanner(client), "desert scanner extract failed")
 			_next("extracted")
 		"extracted":
 			var client: Object = _session.get_client()
 			var mats: Array = client.get_materials()
 			if mats.is_empty():
-				if _phase_frames > 300:
+				if _phase_sec > 10.0:
 					printerr("FAIL: no materials arrived after extraction")
 					_cleanup(1)
 				return false
@@ -98,7 +126,7 @@ func _process(_delta: float) -> bool:
 			var client: Object = _session.get_client()
 			var presets: Array = client.get_presets()
 			if presets.is_empty():
-				if _phase_frames > 300:
+				if _phase_sec > 5.0:
 					printerr("FAIL: recipe preset did not sync")
 					_cleanup(1)
 				return false
@@ -116,9 +144,17 @@ func _process(_delta: float) -> bool:
 func _next(phase: String) -> void:
 	_phase = phase
 	_phase_frames = 0
+	_phase_sec = 0.0
 
 
-func _start_session() -> void:
+func _write_desert_hub() -> void:
+	_desert_hub = ProjectSettings.globalize_path("res://hubs/stage7_desert_temp.ini")
+	var f := FileAccess.open(_desert_hub, FileAccess.WRITE)
+	f.store_string("[hub]\nName = Dune Camp\nSpawn = 3500 -5200\nSides = Rebellion, Empire\nBattlefield = ../battlefields/coruscant.ini\nResources = ../crafting/resources.ini\nSchematics = ../crafting/schematics.ini\n\n[recruiter]\nName = Desert Terminal\nPosition = 3500 -5300\nRadius = 4\n\n[workbench]\nName = Desert Workbench\nPosition = 3500 -5200\nRadius = 4\n")
+	f.close()
+
+
+func _start_session(hub_path := "hubs/mos_eisley.ini") -> void:
 	_db = ProjectSettings.globalize_path("res://stage7_crafting_temp.sqlite")
 	_remove_db()
 	GameSession.pending_config = {
@@ -126,7 +162,7 @@ func _start_session() -> void:
 				else "imported_assets/terrain/tatooine_mos_eisley",
 		"host": 0,
 		"db": _db,
-		"hub": "hubs/mos_eisley.ini",
+		"hub": hub_path,
 		"name": "Stage7Crafter",
 		"species": "human",
 		"gender": "male",
@@ -149,4 +185,6 @@ func _cleanup(code: int) -> void:
 		_session.queue_free()
 		_session = null
 	_remove_db()
+	if _desert_hub != "" and FileAccess.file_exists(_desert_hub):
+		DirAccess.remove_absolute(_desert_hub)
 	quit(code)

@@ -292,6 +292,12 @@ void test_extraction_rules() {
     client.set_input({});
     run(8.0);
     CHECK(total() == first);
+
+    BuildingCollision pad;
+    pad.floors.push_back({{-2, 0, -2}, {2, 0, -2}, {2, 0, 2}});
+    world.add_building(pad, {.position = {0, 0, 0}});
+    CHECK(world.near_structure({10, 0, 10}, 40.0));
+    CHECK(!world.near_structure({100, 0, 100}, 40.0));
 }
 
 int main() {

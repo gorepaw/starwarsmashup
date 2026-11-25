@@ -185,6 +185,7 @@ void QuestBook::load(const std::filesystem::path& path) {
             step.count = std::max(1, int(s.number("Count", 1)));
             step.drop_from = s.get("DropFrom").value_or("");
             step.drop_chance = std::clamp(s.number("DropChance", 0), 0.0, 1.0);
+            step.track = s.get("Track").value_or("");
             Vec3 point;
             double radius = 0;
             if (const auto position = s.get("Position"); position && galaxies_point(*position, point)) {

@@ -22,6 +22,19 @@ const FACE_SHADER := preload("res://rendering/swg_face.gdshader")
 const FACE_LAYERS := 8       # swg_face.gdshader's MAX_LAYERS
 const VARIED_ENTRIES := 64   # a varied color is one of a palette's first this many
 const SMALLEST_VARIED := 8   # smaller palettes keep their defaults
+const CLOTHING_GROW := 0.015
+const ARMOR_GROW := 0.018
+
+
+static func worn_grow_for_material(mat_name: String) -> float:
+	var n := mat_name.to_lower()
+	for prefix: String in ["armor_", "belt_", "bandolier_", "utility_belt_", "boots_", "gloves_", "helmet_", "goggles_"]:
+		if n.begins_with(prefix):
+			return ARMOR_GROW
+	for prefix: String in ["shirt_", "dress_", "skirt_", "pants_", "vest_", "jacket_", "shoes_", "robe_", "hat_", "apron_", "cloak_"]:
+		if n.begins_with(prefix):
+			return CLOTHING_GROW
+	return 0.0
 
 
 # The colors exported with a character's model (its .gltf's path); empty if
@@ -89,6 +102,9 @@ static func _apply_impl(model: Node, colors: Dictionary, seed: int, overrides: D
 			if entry.has("HUEB"):
 				material.set_shader_parameter("two_colors", true)
 				material.set_shader_parameter("hueb_color", _color(entry["HUEB"], item, seed, palettes, overrides))
+			var grow := worn_grow_for_material(original.resource_name)
+			if grow > 0.0:
+				material.set_shader_parameter("grow", grow)
 			mesh_instance.set_surface_override_material(surface, material)
 
 

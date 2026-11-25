@@ -101,24 +101,6 @@ HubConfig load_hub(const std::filesystem::path& path) {
     hub.team_size = std::clamp(int(main->number("TeamSize", hub.team_size)), 1, 32);
     hub.queue_time = std::max(0.0, main->number("QueueTime", hub.queue_time));
     hub.return_delay = std::max(0.0, main->number("ReturnDelay", hub.return_delay));
-    for (const Ini::Section& s : ini.sections()) {
-        if (s.name != "recruiter") {
-            continue;
-        }
-        net::Recruiter recruiter;
-        recruiter.name = s.get("Name").value_or("War Terminal");
-        std::istringstream fields(s.get("Position").value_or(""));
-        double x = 0, z = 0;
-        if (!(fields >> x >> z)) {
-            throw std::runtime_error(where + ": recruiter " + recruiter.name + " needs Position = x z");
-        }
-        recruiter.position = {-x, 0, z};  // Galaxies to game coordinates
-        recruiter.radius = s.number("Radius", recruiter.radius);
-        hub.recruiters.push_back(recruiter);
-    }
-    if (hub.recruiters.empty()) {
-        throw std::runtime_error(where + ": no [recruiter] sections");
-    }
     // Its people. A look per template, in the order they come.
     const auto look_of = [&](const std::string& template_name) {
         const auto it = std::find(hub.looks.begin(), hub.looks.end(), template_name);
@@ -172,16 +154,27 @@ HubConfig load_hub(const std::filesystem::path& path) {
             qm.position = point(s.get("Position").value_or(""), "a [quartermaster]'s Position");
             qm.radius = s.number("Radius", qm.radius);
             hub.quartermasters.push_back(std::move(qm));
+        } else if (s.name == "recruiter") {
+            net::Recruiter r;
+            r.name = s.get("Name").value_or("War Terminal");
+            r.position = point(s.get("Position").value_or(""), "a [recruiter]'s Position");
+            r.position.y = s.number("Height", 0.0);
+            r.radius = s.number("Radius", r.radius);
+            hub.recruiters.push_back(std::move(r));
         } else if (s.name == "mission_terminal") {
             net::MissionTerminal t;
             t.name = s.get("Name").value_or("Mission Terminal");
+            t.kind = s.get("Type").value_or("general");
             t.position = point(s.get("Position").value_or(""), "a [mission_terminal]'s Position");
+            t.position.y = s.number("Height", 0.0);
             t.radius = s.number("Radius", 3);
             hub.mission_terminals.push_back(std::move(t));
         } else if (s.name == "workbench") {
             net::Workbench wb;
             wb.name = s.get("Name").value_or("Workbench");
+            wb.kind = s.get("Type").value_or("general");
             wb.position = point(s.get("Position").value_or(""), "a [workbench]'s Position");
+            wb.position.y = s.number("Height", 0.0);
             wb.radius = s.number("Radius", 4);
             hub.workbenches.push_back(std::move(wb));
         } else if (s.name == "vendor") {
@@ -189,15 +182,18 @@ HubConfig load_hub(const std::filesystem::path& path) {
             v.name = s.get("Name").value_or("Vendor");
             v.kind = s.get("Type").value_or("gear_vendor");
             v.position = point(s.get("Position").value_or(""), "a [vendor]'s Position");
+            v.position.y = s.number("Height", 0.0);
             v.radius = s.number("Radius", v.radius);
             hub.vendors.push_back(std::move(v));
         } else if (s.name == "service") {
-            // A service point: Type = trainer (Profession = ids, comma-separated), bank, clinic or cloning.
+            // A service point: Type = trainer (Profession = ids, comma-separated), bank, clinic, cloning,
+            // bazaar, newsnet, gambling or data_terminal.
             net::Vendor v;
             v.name = s.get("Name").value_or("Service");
             v.kind = s.get("Type").value_or("bank");
-            v.detail = s.get("Profession").value_or("");
+            v.detail = s.get("Profession").value_or(s.get("Detail").value_or(""));
             v.position = point(s.get("Position").value_or(""), "a [service]'s Position");
+            v.position.y = s.number("Height", 0.0);
             v.radius = s.number("Radius", v.radius);
             hub.vendors.push_back(std::move(v));
         } else if (s.name == "target") {
@@ -225,6 +221,9 @@ HubConfig load_hub(const std::filesystem::path& path) {
             hub.crowd.center = {-x, 0, z};
             hub.crowd.radius = radius;
         }
+    }
+    if (hub.recruiters.empty()) {
+        throw std::runtime_error(where + ": no [recruiter] sections");
     }
     if (const auto spawns = main->get("Spawns")) {
         hub.spawns = load_world_spawns(path.parent_path() / *spawns);
@@ -270,28 +269,29 @@ Hub::Hub(GameServer& server, uint16_t port, const World& world, HubConfig config
     if (config_.cloning_facility) {
         server_.set_cloning_facility(*config_.cloning_facility);
     }
+    const auto snap_floor = [&](Vec3& p) {
+        const double reach = p.y > 0.1 ? p.y : 7.8;
+        p = world_.clamp(p);
+        const World::Ground g = world_.ground_at(p.x, p.z, reach, 0.5);
+        p.y = g.on_floor ? g.height : world_.terrain().height_at(p.x, p.z);
+    };
     for (net::Recruiter& recruiter : config_.recruiters) {
-        recruiter.position = world_.clamp(recruiter.position);
-        recruiter.position.y = world_.terrain().height_at(recruiter.position.x, recruiter.position.z);
+        snap_floor(recruiter.position);
     }
     server_.set_recruiters(config_.recruiters, config_.sides);
     for (net::Quartermaster& qm : config_.quartermasters) {
-        qm.position = world_.clamp(qm.position);
-        qm.position.y = world_.terrain().height_at(qm.position.x, qm.position.z);
+        snap_floor(qm.position);
     }
     server_.set_quartermasters(config_.quartermasters);
     for (net::Vendor& v : config_.vendors) {
-        v.position = world_.clamp(v.position);
-        v.position.y = world_.terrain().height_at(v.position.x, v.position.z);
+        snap_floor(v.position);
     }
     server_.set_vendors(config_.vendors);
     for (net::MissionTerminal& t : config_.mission_terminals) {
-        t.position = world_.clamp(t.position);
-        t.position.y = world_.terrain().height_at(t.position.x, t.position.z);
+        snap_floor(t.position);
     }
     for (net::Workbench& wb : config_.workbenches) {
-        wb.position = world_.clamp(wb.position);
-        wb.position.y = world_.terrain().height_at(wb.position.x, wb.position.z);
+        snap_floor(wb.position);
     }
     server_.set_crafting(&config_.crafting, config_.workbenches);
     if (config_.spawns) {
@@ -409,7 +409,9 @@ void Hub::add_people() {
     std::vector<net::QuestNpc> quest_npcs;
     for (const HubPerson& person : config_.people) {
         Vec3 at = person.position;
-        at.y = world_.terrain().height_at(at.x, at.z);
+        const double reach = at.y > 0.1 ? at.y : 7.8;
+        const World::Ground g = world_.ground_at(at.x, at.z, reach, 0.5);
+        at.y = g.on_floor ? g.height : world_.terrain().height_at(at.x, at.z);
         const uint32_t entity =
             server_.add_npc(person.name, at, person.yaw, uint8_t(person.look + 1), person.pose, 0, person.radius);
         const auto named = [&](const std::string& name) { return name == person.name; };

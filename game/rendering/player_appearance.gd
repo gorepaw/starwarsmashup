@@ -9,6 +9,8 @@ const Soldier = preload("res://rendering/soldier.gd")
 const SPECIES_DIR := "res://imported_assets/species"
 const DEFAULT_FALLBACK := "res://imported_assets/characters/stormtrooper/stormtrooper.gltf"
 const CLOTHING_GROW := 0.015  # m: worn clothes stand this far off the skin (no z-fighting with it)
+const ARMOR_GROW := 0.018
+const WOOKIEE_CLOTHING_GROW := 0.025
 
 static var _species_by_id: Dictionary = {}
 static var _meta_cache: Dictionary = {}
@@ -153,6 +155,10 @@ static func load_character(species_id: String, gender: String, appearance_json: 
 			var hair_gltf := SPECIES_DIR.path_join(sg).path_join("hairs").path_join(hair_id + ".gltf")
 			if FileAccess.file_exists(hair_gltf):
 				hair_node = _attach_hair(model, hair_gltf, color_overrides)
+	else:
+		var colors_data := _load_gltf_colors(gltf_path)
+		if not colors_data.is_empty():
+			SwgColors.apply(model, colors_data, 0)
 
 	var eye_height := base_eye * height_mult
 	var crouched_eye := eye_height * (1.1 / 1.6)
@@ -184,6 +190,8 @@ static func hide_replaced_head_parts(model: Node, hair_gltf: String) -> void:
 				var swap := material_name.find("_swap")
 				if swap > 0:
 					replaced[material_name.substr(0, swap)] = true
+				elif material_name.contains("leccu") or material_name.contains("lekku"):
+					replaced[material_name] = true
 	for node: Node in model.find_children("*", "MeshInstance3D", true, false):
 		var mi := node as MeshInstance3D
 		if mi.mesh == null:
@@ -277,6 +285,8 @@ static func set_worn_models(character: Dictionary, worn_csv: String) -> void:
 	character["helmet_nodes"] = []
 
 	var paths := worn_csv.split(",", false)
+	var sp_id := str(character.get("species", ""))
+	_set_wookiee_fur_hidden(model as Node3D, sp_id == "wookiee" and not paths.is_empty())
 	if paths.is_empty():
 		var hair: Variant = character.get("hair", null)
 		var fp := character.has("soldier") and character["soldier"] != null and (character["soldier"] as Soldier).first_person
@@ -326,12 +336,17 @@ static func set_worn_models(character: Dictionary, worn_csv: String) -> void:
 			mi.owner = null
 			holder.add_child(mi)
 			mi.skeleton = NodePath("../..")
-			if rel.begins_with("clothing/"):
+			var grow := 0.0
+			if rel.begins_with("armor/"):
+				grow = ARMOR_GROW
+			elif rel.begins_with("clothing/"):
+				grow = WOOKIEE_CLOTHING_GROW if sp_id == "wookiee" else CLOTHING_GROW
+			if grow > 0.0:
 				# Stood off the skin so the two don't fight over the same pixels.
 				for surface in mi.get_surface_override_material_count():
 					var material := mi.get_surface_override_material(surface) as ShaderMaterial
 					if material != null:
-						material.set_shader_parameter("grow", CLOTHING_GROW)
+						material.set_shader_parameter("grow", grow)
 			if mi.mesh != null and not body_blends.is_empty():
 				for i in mi.mesh.get_blend_shape_count():
 					var bname := String(mi.mesh.get_blend_shape_name(i))
@@ -346,3 +361,14 @@ static func set_worn_models(character: Dictionary, worn_csv: String) -> void:
 	var hair: Variant = character.get("hair", null)
 	if hair is Node3D and is_instance_valid(hair):
 		(hair as Node3D).visible = not fp and helmets.is_empty()
+
+
+static func _set_wookiee_fur_hidden(model: Node3D, hidden: bool) -> void:
+	for n: Node in model.find_children("*", "MeshInstance3D", true, false):
+		var mi := n as MeshInstance3D
+		if mi.mesh == null:
+			continue
+		for surface in mi.mesh.get_surface_count():
+			var source := mi.mesh.surface_get_material(surface)
+			if source != null and source.resource_name.begins_with("wke_alpha"):
+				mi.set_surface_override_material(surface, _invisible() if hidden else null)

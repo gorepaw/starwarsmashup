@@ -5,6 +5,9 @@ class_name CharacterStage
 extends Node3D
 
 const SPECIES_DIR := "res://imported_assets/species"
+const CLOTHING_GROW := 0.015
+const ARMOR_GROW := 0.018
+const WOOKIEE_CLOTHING_GROW := 0.025
 
 var model: Node3D
 var hair_node: Node3D
@@ -137,7 +140,27 @@ func set_worn_models(worn_paths: Array, weapon_model: String) -> void:
 	if model == null or _skeleton == null:
 		return
 
+	var sp_id := str(species_meta.get("species", "human"))
 	var has_helmet := false
+	if model != null:
+		for mi: MeshInstance3D in _meshes:
+			if mi.mesh == null:
+				continue
+			for surface in mi.mesh.get_surface_count():
+				var src := mi.mesh.surface_get_material(surface)
+				if src != null and src.resource_name.begins_with("wke_alpha"):
+					mi.set_surface_override_material(surface, null)
+		if sp_id == "wookiee" and not worn_paths.is_empty():
+			var invis := StandardMaterial3D.new()
+			invis.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+			invis.albedo_color = Color(1, 1, 1, 0)
+			for mi: MeshInstance3D in _meshes:
+				if mi.mesh == null:
+					continue
+				for surface in mi.mesh.get_surface_count():
+					var src := mi.mesh.surface_get_material(surface)
+					if src != null and src.resource_name.begins_with("wke_alpha"):
+						mi.set_surface_override_material(surface, invis)
 	if not worn_paths.is_empty():
 		var body_blends := {}
 		for mi: MeshInstance3D in _meshes:
@@ -176,6 +199,16 @@ func set_worn_models(worn_paths: Array, weapon_model: String) -> void:
 				mi.owner = null
 				holder.add_child(mi)
 				mi.skeleton = NodePath("../..")
+				var grow := 0.0
+				if rel.begins_with("armor/"):
+					grow = ARMOR_GROW
+				elif rel.begins_with("clothing/"):
+					grow = WOOKIEE_CLOTHING_GROW if sp_id == "wookiee" else CLOTHING_GROW
+				if grow > 0.0:
+					for surface in mi.get_surface_override_material_count():
+						var material := mi.get_surface_override_material(surface) as ShaderMaterial
+						if material != null:
+							material.set_shader_parameter("grow", grow)
 				if mi.mesh != null and not body_blends.is_empty():
 					for i in mi.mesh.get_blend_shape_count():
 						var bname := String(mi.mesh.get_blend_shape_name(i))

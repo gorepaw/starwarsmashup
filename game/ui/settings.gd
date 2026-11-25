@@ -35,6 +35,7 @@ const ACTIONS := [
 	["professions", "Professions", KEY_K],
 	["scanner", "Multi-Scanner", KEY_G],
 	["workbench", "Workbench & Material Vault", KEY_B],
+	["summon_mount", "Mount / Speeder", KEY_H],
 	["loadout_1", "Loadout 1", KEY_F5],
 	["loadout_2", "Loadout 2", KEY_F6],
 	["loadout_3", "Loadout 3", KEY_F7],

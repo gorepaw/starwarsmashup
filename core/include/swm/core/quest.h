@@ -42,6 +42,8 @@ struct QuestStep {
     // of `drop_from` (as a kill step's target) gives the item with this chance.
     std::string drop_from;
     double drop_chance = 0;
+    // Optional tracking target (e.g. for collect steps whose items drop via loot tables).
+    std::string track;
 };
 
 struct QuestReward {

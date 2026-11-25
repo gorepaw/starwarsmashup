@@ -145,7 +145,11 @@ void GameServer::apply_quests(Client& client, QuestEffects effects) {
             if (def->reward.experience > 0) reward += std::format(" +{} XP", def->reward.experience);
             if (def->reward.faction_points > 0) reward += std::format(" +{} FP", def->reward.faction_points);
             for (const std::string& item : def->reward.items) reward += ", " + item_name(item);
-            notes.push_back("Quest complete: " + def->title + (reward.empty() ? "" : " (" + reward.substr(1) + ")"));
+            std::string line = "Quest complete: " + def->title + (reward.empty() ? "" : " (" + reward.substr(1) + ")");
+            if (!def->done_text.empty()) {
+                line = def->done_text + "\n" + line;
+            }
+            notes.push_back(std::move(line));
             say(std::format("{} completed {}", client.name, def->id));
         }
         changed = changed || effects.changed;
@@ -228,14 +232,19 @@ void GameServer::handle_quest_request(Client& client, const net::QuestRequest& r
         if (npc == quest_npcs_.end() || client.life != Life::alive) return;
         const MoveState* where = state_of(npc->entity);
         if (flat_distance(where ? where->position : npc->position, client.state.position) > talk_reach) return;
-        apply_quests(client, quest_book_->on_talk(client.quests, npc->name, held));
+        QuestEffects talk_fx = quest_book_->on_talk(client.quests, npc->name, held);
+        const bool completed_here = !talk_fx.completed.empty();
+        apply_quests(client, std::move(talk_fx));
         if (npc->giver) {
             client.offers.clear();
             for (const QuestDef* def : quest_book_->offered_by(npc->name, client.quests)) {
                 client.offers.push_back(def->id);
             }
             client.offer_source = npc->name;
-            client.offer_note = client.offers.empty() ? quest_book_->why_none(npc->name, client.quests) : "";
+            client.offer_note = client.offers.empty()
+                                    ? (completed_here ? std::string("__completed__")
+                                                      : quest_book_->why_none(npc->name, client.quests))
+                                    : "";
             ++client.offer_serial;
             ++client.quest_rev;
             client.quest_sync_tick = 0;
@@ -247,11 +256,16 @@ void GameServer::handle_quest_request(Client& client, const net::QuestRequest& r
         const net::MissionTerminal& terminal = mission_terminals_[request.target];
         if (flat_distance(terminal.position, client.state.position) > terminal.radius + 1.5) return;
         client.offers.clear();
-        for (const QuestDef* def : quest_book_->missions(tick_ / config_.tick_rate, client.quests)) {
-            client.offers.push_back(def->id);
+        if (terminal.kind.empty() || terminal.kind == "general") {
+            for (const QuestDef* def : quest_book_->missions(tick_ / config_.tick_rate, client.quests)) {
+                client.offers.push_back(def->id);
+            }
+            client.offer_note.clear();
+        } else {
+            client.offer_note = std::format(
+                "{} — Specialized {} contracts are coming soon.", terminal.name, terminal.kind);
         }
         client.offer_source = terminal.name;
-        client.offer_note.clear();
         ++client.offer_serial;
         ++client.quest_rev;
         client.quest_sync_tick = 0;
@@ -348,8 +362,9 @@ net::QuestInfo GameServer::describe_quest(const Client& client, const QuestDef& 
     // What to kill (or take the drop from): marked in the world, and the
     // nearest place they live is the waypoint when the step names none.
     const std::string& prey = step.kind == QuestStepKind::kill ? step.target
-                              : step.kind == QuestStepKind::collect ? step.drop_from
-                                                                    : std::string();
+                              : step.kind == QuestStepKind::collect
+                                  ? (!step.drop_from.empty() ? step.drop_from : step.track)
+                                  : std::string();
     if (!prey.empty() && quest_book_ != nullptr) {
         info.targets = quest_book_->target_names(prey);
         if (step.where) {

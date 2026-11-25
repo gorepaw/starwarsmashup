@@ -791,7 +791,7 @@ void GameServer::handle(const net::Endpoint& from, const net::Datagram& datagram
                         notify(client->entity, std::format("Looted {} item(s)", taken.size()));
                     }
                 }
-                if (cit->items.empty()) {
+                if (cit->items.empty() && (cit->harvested || config_.crafting == nullptr)) {
                     corpse_loots_.erase(cit);
                 }
             }
@@ -1244,7 +1244,12 @@ void GameServer::step() {
             client.extract_started >= 0.0 && config_.extract_time > 0.0
                 ? float(std::clamp((now_ - client.extract_started) / config_.extract_time, 0.0, 1.0))
                 : -1.0f;
-        client.status.combat_level = uint8_t(std::clamp(combat_level_of(client), 1, 100));
+        const uint8_t new_combat_level = uint8_t(std::clamp(combat_level_of(client), 1, 100));
+        if (new_combat_level != client.status.combat_level) {
+            client.status.combat_level = new_combat_level;
+            ++client.quest_rev;
+            client.quest_sync_tick = 0;
+        }
         client.status.inventory_rev = client.inventory_rev;
         net::Snapshot client_snapshot = base_snapshot;
         if (filter_npcs) {
@@ -2352,6 +2357,13 @@ void GameServer::kill(Client& victim, uint32_t attacker, bool is_flyer) {
     if (conquest_) {
         conquest_->killed(victim.team, is_flyer);
         drop_pickup(victim.state.position);
+    } else if (victim.character != 0) {
+        const int64_t lost = std::max<int64_t>(0, victim.credits / 10);
+        if (lost > 0) {
+            victim.credits -= lost;
+            save_economy(victim);
+            notify(victim.entity, std::format("Died in the wild: lost {} credits (10%)", lost));
+        }
     }
     say(killer != nullptr ? std::format("{} killed {}", killer->name, victim.name)
                           : std::format("{} died", victim.name));

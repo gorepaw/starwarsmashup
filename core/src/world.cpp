@@ -854,6 +854,39 @@ Vec3 World::push_out(Vec3 from, Vec3 position, double radius, double height, dou
     return position;
 }
 
+bool World::near_structure(Vec3 point, double radius) const {
+    if (radius <= 0) {
+        return false;
+    }
+    const double r2 = radius * radius;
+    for (const Building& b : buildings_) {
+        const double dx = point.x < b.min_x ? b.min_x - point.x : (point.x > b.max_x ? point.x - b.max_x : 0.0);
+        const double dz = point.z < b.min_z ? b.min_z - point.z : (point.z > b.max_z ? point.z - b.max_z : 0.0);
+        if (dx * dx + dz * dz <= r2) {
+            return true;
+        }
+    }
+    bool hit = false;
+    for_solids(point.x - radius, point.x + radius, point.z - radius, point.z + radius, [&](const Solid& s) {
+        if (hit || !(s.blocks & blocks_characters)) {
+            return;
+        }
+        const double cx = (s.a.x + s.b.x + s.c.x) / 3.0;
+        const double cz = (s.a.z + s.b.z + s.c.z) / 3.0;
+        const bool is_structure = (s.max_y - s.min_y > 3.5) ||
+                                  (s.floor && s.max_y > terrain_.height_at(cx, cz) + 0.5);
+        if (!is_structure) {
+            return;
+        }
+        const double dx = point.x < s.min_x ? s.min_x - point.x : (point.x > s.max_x ? point.x - s.max_x : 0.0);
+        const double dz = point.z < s.min_z ? s.min_z - point.z : (point.z > s.max_z ? point.z - s.max_z : 0.0);
+        if (dx * dx + dz * dz <= r2) {
+            hit = true;
+        }
+    });
+    return hit;
+}
+
 std::shared_ptr<const World> load_world(const std::filesystem::path& bake) {
     struct Owned {
         Heightfield ground;

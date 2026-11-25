@@ -428,6 +428,7 @@ private:
         std::string name;
         Vec3 position;
         std::vector<net::LootItemEntry> items;
+        bool harvested = false;
     };
 
     void receive(double now);

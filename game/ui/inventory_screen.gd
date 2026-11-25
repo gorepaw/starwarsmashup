@@ -25,6 +25,7 @@ const GEAR_SLOTS := [
 	["belt", "Belt"],
 	["leggings", "Leggings"],
 	["boots", "Boots"],
+	["mount", "Mount / Speeder"],
 ]
 
 const APPEARANCE_SLOTS := [
@@ -353,7 +354,10 @@ func _paint_paperdoll(box: Rect2) -> void:
 	_slot_rects.clear()
 	var slot_list := GEAR_SLOTS if _paperdoll_mode == "gear" else APPEARANCE_SLOTS
 	var col_w := 148.0 * u
-	var slot_h := 40.0 * u
+	var row_count := (slot_list.size() + 1) / 2
+	var avail_h := (box.end.y - 110 * u) - slots_y
+	var step := minf(46.0 * u, avail_h / float(maxi(1, row_count)))
+	var slot_h := minf(40.0 * u, step - 5.0 * u)
 	var is_app := _paperdoll_mode == "appearance"
 
 	_stage_rect = Rect2(x + col_w + 6 * u, slots_y, box.size.x - col_w * 2 - 32 * u, 280 * u)
@@ -367,10 +371,10 @@ func _paint_paperdoll(box: Rect2) -> void:
 	for i in slot_list.size():
 		var s_id: String = slot_list[i][0]
 		var s_lbl: String = slot_list[i][1]
-		var left_col := i < (slot_list.size() + 1) / 2
-		var row := i if left_col else i - (slot_list.size() + 1) / 2
+		var left_col := i < row_count
+		var row := i if left_col else i - row_count
 		var sx := x if left_col else box.end.x - col_w - 10 * u
-		var sy := slots_y + row * (slot_h + 6 * u)
+		var sy := slots_y + row * step
 		var r := Rect2(sx, sy, col_w, slot_h)
 		var blocked := not is_app and _blocked_slots.has(s_id)
 		var valid_drop := _drag_active and not blocked and _is_compatible(drag_def, s_id, is_app)
@@ -544,6 +548,8 @@ func _is_compatible(def: Dictionary, slot: String, is_app: bool) -> bool:
 		return dslot == slot
 	if kind == "armor" or kind == "deflector_shield":
 		return dslot == slot
+	if kind == "vehicle":
+		return slot == "mount"
 	return false
 
 
@@ -578,8 +584,12 @@ func _quick_equip(inst: Dictionary) -> void:
 		return
 	var kind := str(def.get("kind", ""))
 	var slot := str(def.get("slot", ""))
-	if kind == "supply" or kind == "vehicle":
+	if kind == "supply":
 		item_used.emit(int(inst.get("id", 0)))
+		return
+	if kind == "vehicle":
+		_paperdoll_mode = "gear"
+		_try_equip_into(inst, "mount", false)
 		return
 	if kind == "junk" or kind == "quest":
 		return

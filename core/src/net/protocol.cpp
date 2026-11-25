@@ -608,6 +608,7 @@ struct Encoder {
         for (size_t i = 0; i < m.mission_terminals.size() && i < 255; ++i) {
             const MissionTerminal& t = m.mission_terminals[i];
             out.put_string(t.name);
+            out.put_string(t.kind);
             put_vec3(out, t.position);
             out.put(t.radius);
         }
@@ -615,6 +616,7 @@ struct Encoder {
         for (size_t i = 0; i < m.workbenches.size() && i < 255; ++i) {
             const Workbench& wb = m.workbenches[i];
             out.put_string(wb.name);
+            out.put_string(wb.kind);
             put_vec3(out, wb.position);
             out.put(wb.radius);
         }
@@ -1067,6 +1069,7 @@ Message decode(std::span<const uint8_t> packet) {
         for (size_t i = 0; i < terminals; ++i) {
             MissionTerminal t;
             t.name = in.get_string();
+            t.kind = in.get_string();
             t.position = get_vec3(in);
             t.radius = in.get<double>();
             m.mission_terminals.push_back(std::move(t));
@@ -1075,6 +1078,7 @@ Message decode(std::span<const uint8_t> packet) {
         for (size_t i = 0; i < workbenches; ++i) {
             Workbench wb;
             wb.name = in.get_string();
+            wb.kind = in.get_string();
             wb.position = get_vec3(in);
             wb.radius = in.get<double>();
             m.workbenches.push_back(std::move(wb));

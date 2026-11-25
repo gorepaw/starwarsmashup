@@ -18,16 +18,19 @@ const WorkbenchScreen = preload("res://ui/workbench_screen.gd")
 const WorldMapScreen = preload("res://ui/world_map_screen.gd")
 const TrainerScreen = preload("res://ui/trainer_screen.gd")
 const BankScreen = preload("res://ui/bank_screen.gd")
+const InfoTerminalScreen = preload("res://ui/info_terminal_screen.gd")
 const MultiScanner3D = preload("res://rendering/multi_scanner.gd")
 const TeamTags = preload("res://rendering/team_tags.gd")
 
 const TALK_REACH := 4.5     # meters from a quest NPC to talk to them (the server allows 6)
 const OFFER_REACH := 8.0    # an offer closes when you walk further than this from it
 const GIVER_COLOR := Color(1.0, 0.8, 0.35)
+const GIVER_TURNIN_COLOR := Color(1.0, 0.52, 0.12)
 const GIVER_WAITING_COLOR := Color(0.6, 0.65, 0.75, 1.0)  # a giver whose work isn't open to you yet
 const GIVER_DONE := 0
 const GIVER_WAITING := 1
 const GIVER_READY := 2
+const GIVER_TURNIN := 3
 const MARKER_RANGE := 160.0  # m a creature's or bandit's chevron shows from
 const WHITE_CHEVRON := Color(0.95, 0.95, 0.95)
 const RED_CHEVRON := Color(1.0, 0.3, 0.25)
@@ -70,6 +73,7 @@ var _workbench_screen: WorkbenchScreen
 var _map_screen: WorldMapScreen
 var _trainer_screen: TrainerScreen
 var _bank_screen: BankScreen
+var _info_screen: InfoTerminalScreen
 var _professions: Array = []       # the professions' defs (set_professions), for the trainers
 var _trained_by := ""              # the trainer (their name) whose screen is open
 var map_title := "Map"         # the map's title (the session sets it: the planet and the town)
@@ -88,6 +92,10 @@ var _notice_id := 0
 var _notice := ""
 var _notice_time := 0.0
 var _notice_lines: PackedStringArray = []
+var _prof_levels := {}              # profession id -> last seen level (for level-up banner)
+var _level_up_queue: Array = []     # [{title, detail}]
+var _level_up_active: Dictionary = {}
+var _level_up_time := 0.0
 var _catalog: Array = []
 var _store: Object = null
 var _crafting_store: Object = null
@@ -195,6 +203,11 @@ func setup(layer: CanvasLayer, world_root: Node3D, art: RefCounted, settings: Se
 	_bank_screen.closed.connect(close_all_screens)
 	layer.add_child(_bank_screen)
 
+	_info_screen = InfoTerminalScreen.new(art)
+	_info_screen.visible = false
+	_info_screen.closed.connect(close_all_screens)
+	layer.add_child(_info_screen)
+
 	if world_root != null:
 		_scanner = MultiScanner3D.new()
 		world_root.add_child(_scanner)
@@ -263,6 +276,7 @@ func is_any_screen_open() -> bool:
 			or (_workbench_screen != null and _workbench_screen.visible) \
 			or (_trainer_screen != null and _trainer_screen.visible) \
 			or (_bank_screen != null and _bank_screen.visible) \
+			or (_info_screen != null and _info_screen.visible) \
 			or (_map_screen != null and _map_screen.visible)
 
 
@@ -299,6 +313,10 @@ func try_open_terminal(client: Object) -> bool:
 					_sync_screen_data(client)
 					_bank_screen.open_bank(str(service["name"]))
 					return true
+			"bazaar", "newsnet", "gambling", "data_terminal":
+				if _info_screen != null:
+					_info_screen.open_terminal(str(service["kind"]), str(service["name"]), str(service.get("detail", "")))
+					return true
 			"clinic":
 				service_requested.emit(5, "", 0, 0)
 			"cloning":
@@ -312,7 +330,7 @@ func try_open_terminal(client: Object) -> bool:
 	var wb := at_workbench(client)
 	if _workbench_screen != null and not wb.is_empty():
 		_sync_screen_data(client)
-		_workbench_screen.open_screen()
+		_workbench_screen.open_screen(str(wb.get("kind", "general")), str(wb.get("name", "Workbench")))
 		return true
 	if _quest_screen != null and not person.is_empty() and bool(person.get("giver", false)):
 		_await_offers(client, str(person["name"]))
@@ -327,10 +345,31 @@ func try_open_terminal(client: Object) -> bool:
 	var corpse := at_lootable_corpse(client)
 	if _loot_screen != null and not corpse.is_empty():
 		_loot_screen.corpse = corpse
+		_loot_screen.feedback = ""
 		_loot_screen.visible = true
 		_loot_screen.queue_redraw()
 		return true
 	return false
+
+
+func is_loot_open() -> bool:
+	return _loot_screen != null and _loot_screen.visible
+
+
+func loot_all_and_harvest(_client: Object) -> void:
+	if _loot_screen == null or not _loot_screen.visible:
+		return
+	var cid := int(_loot_screen.corpse.get("entity_id", 0))
+	if cid > 0:
+		if not (_loot_screen.corpse.get("items", []) as Array).is_empty():
+			loot_taken.emit(cid, -1)
+		corpse_harvested.emit(cid)
+	close_all_screens()
+
+
+func show_local_notice(msg: String) -> void:
+	_notice = msg
+	_notice_time = 5.0
 
 
 # The professions' defs for a trainer's `detail` (their ids, comma-separated).
@@ -429,14 +468,14 @@ func map_places(client: Object) -> Array:
 		if bool(npc.get("giver", false)):
 			var state := _giver_state(quests, str(npc["name"]))
 			if state != GIVER_DONE:
-				out.append({"position": npc["position"], "name": str(npc["name"]), "kind": "quest",
-						"color": WorldMapScreen.QUEST if state == GIVER_READY else GIVER_WAITING_COLOR})
+				var c := GIVER_TURNIN_COLOR if state == GIVER_TURNIN else (WorldMapScreen.QUEST if state == GIVER_READY else GIVER_WAITING_COLOR)
+				out.append({"position": npc["position"], "name": str(npc["name"]), "kind": "quest", "color": c})
 	for wb: Dictionary in client.get_workbenches():
 		out.append({"position": wb["position"], "name": str(wb["name"]), "kind": "craft", "color": WorldMapScreen.CRAFT})
 	for r: Dictionary in client.get_recruiters():
 		out.append({"position": r["position"], "name": str(r["name"]), "kind": "terminal", "color": WorldMapScreen.TERMINAL})
 	for t: Dictionary in client.get_mission_terminals():
-		out.append({"position": t["position"], "name": str(t["name"]), "kind": "terminal", "color": WorldMapScreen.TERMINAL})
+		out.append({"position": t["position"], "name": str(t["name"]), "kind": "terminal", "color": _mission_terminal_color(str(t.get("kind", "general")))})
 	return out
 
 
@@ -508,6 +547,8 @@ func close_all_screens() -> void:
 		_trainer_screen.visible = false
 	if _bank_screen != null:
 		_bank_screen.visible = false
+	if _info_screen != null:
+		_info_screen.visible = false
 	_offer_serial = -1
 	if was_open:
 		terminal_closed.emit()
@@ -704,8 +745,13 @@ func _sync_quests(client: Object) -> Dictionary:
 				_quest_screen.waiting = false
 				_offer_serial = -1
 			if not _quest_screen.waiting:
-				_quest_screen.offers = quests.get("offers", [])
-				_quest_screen.offer_note = str(quests.get("offer_note", ""))
+				var note := str(quests.get("offer_note", ""))
+				var offers: Array = quests.get("offers", [])
+				if offers.is_empty() and note == "__completed__":
+					close_all_screens()
+					return quests
+				_quest_screen.offers = offers
+				_quest_screen.offer_note = note
 				_quest_screen.source = str(quests.get("offer_source", _quest_screen.source))
 		if _quest_screen.visible:
 			_quest_screen.queue_redraw()
@@ -739,11 +785,11 @@ func radar_markers(client: Object) -> Array:
 			var state := _giver_state(quests, str(npc["name"]))
 			if state != GIVER_DONE:
 				var at: Vector3 = npc["position"]
-				out.append({"position": Vector2(at.x, at.z), "kind": "giver",
-						"color": GIVER_COLOR if state == GIVER_READY else GIVER_WAITING_COLOR})
+				var c := GIVER_TURNIN_COLOR if state == GIVER_TURNIN else (GIVER_COLOR if state == GIVER_READY else GIVER_WAITING_COLOR)
+				out.append({"position": Vector2(at.x, at.z), "kind": "giver", "color": c})
 	for t: Dictionary in client.get_mission_terminals():
 		var at: Vector3 = t["position"]
-		out.append({"position": Vector2(at.x, at.z), "kind": "terminal", "color": TERMINAL_COLOR})
+		out.append({"position": Vector2(at.x, at.z), "kind": "terminal", "color": _mission_terminal_color(str(t.get("kind", "general")))})
 	return out
 
 
@@ -840,6 +886,12 @@ func _update_objective_markers(client: Object) -> void:
 		else:
 			var fights := kind == 3 or not bool(r.get("passive", false))
 			_place_marker(key, _single_chevron, 0.0012, RED_CHEVRON if fights else WHITE_CHEVRON, at + Vector3.UP * height)
+	for t: Dictionary in client.get_mission_terminals():
+		var at: Vector3 = t["position"]
+		if at.distance_to(own) <= MARKER_RANGE:
+			var key := "mt%d" % int(t["index"])
+			seen[key] = true
+			_place_marker(key, _single_chevron, 0.0012, _mission_terminal_color(str(t.get("kind", "general"))), at + Vector3.UP * 2.35)
 	for key: String in _marker_nodes.keys():
 		if not seen.has(key):
 			if is_instance_valid(_marker_nodes[key]):
@@ -942,22 +994,29 @@ func _update_place_holograms(client: Object, delta: float) -> void:
 			by_name[str(r["name"])] = looks[look - 1]
 			by_entity[int(r["id"])] = looks[look - 1]
 	var seen := {}
-	for v: Dictionary in client.get_vendors():
+	var vendors: Array = client.get_vendors()
+	for vi in vendors.size():
+		var v: Dictionary = vendors[vi]
 		var kind := str(v.get("kind", ""))
 		if not is_shop(kind):
-			# A service point: a star (trainers), coins (the bank) or a cross (clinics, cloning), in the terminals' blue.
-			var symbol: String = {"trainer": "star", "bank": "coins"}.get(kind, "cross")
-			_place_hologram("service:" + str(v["name"]), v["position"], symbol, TERMINAL_COLOR, seen)
+			# A service point: a star (trainers, newsnet, gambling, data_terminal), coins (the bank, bazaar) or a cross (clinics, cloning), in the terminals' blue.
+			var symbol: String = {"trainer": "star", "bank": "coins", "bazaar": "coins",
+					"newsnet": "star", "gambling": "star", "data_terminal": "star"}.get(kind, "cross")
+			_place_hologram("service:%d" % vi, v["position"], symbol, TERMINAL_COLOR, seen)
 			continue
 		var side := side_of_template(str(by_name.get(str(v["name"]), "")))
 		var plain := "coins" if kind == "junk_dealer" else "chest"
-		_place_hologram("vendor:" + str(v["name"]), v["position"], side if side != "neutral" else plain, SHOP_COLOR, seen)
-	for q: Dictionary in client.get_quartermasters():
+		_place_hologram("vendor:%d" % vi, v["position"], side if side != "neutral" else plain, SHOP_COLOR, seen)
+	var qms: Array = client.get_quartermasters()
+	for qi in qms.size():
+		var q: Dictionary = qms[qi]
 		var faction := str(q.get("faction", ""))
-		_place_hologram("qm:" + str(q["name"]), q["position"],
+		_place_hologram("qm:%d" % qi, q["position"],
 				"alliance" if faction == "rebellion" else ("empire" if faction == "empire" else "chest"), SHOP_COLOR, seen)
-	for wb: Dictionary in client.get_workbenches():
-		_place_hologram("workbench:" + str(wb["name"]), wb["position"], "wrench", CRAFT_COLOR, seen)
+	var wbs: Array = client.get_workbenches()
+	for wbi in wbs.size():
+		var wb: Dictionary = wbs[wbi]
+		_place_hologram("workbench:%d" % wbi, wb["position"], "wrench", CRAFT_COLOR, seen)
 	var quests: Dictionary = client.get_quests()
 	for npc: Dictionary in client.get_quest_npcs():
 		if bool(npc.get("giver", false)):
@@ -966,8 +1025,9 @@ func _update_place_holograms(client: Object, delta: float) -> void:
 				continue
 			var template := str(by_entity.get(int(npc["entity"]), by_name.get(str(npc["name"]), "")))
 			var side := side_of_template(template)
-			_place_hologram("giver:" + str(npc["name"]), npc["position"], side if side != "neutral" else "quest",
-					GIVER_COLOR if state == GIVER_READY else GIVER_WAITING_COLOR, seen)
+			var icon := "quest" if state == GIVER_TURNIN else (side if side != "neutral" else "quest")
+			var color := GIVER_TURNIN_COLOR if state == GIVER_TURNIN else (GIVER_COLOR if state == GIVER_READY else GIVER_WAITING_COLOR)
+			_place_hologram("giver:" + str(npc["name"]), npc["position"], icon, color, seen)
 	for key: String in _holo_anchors.keys():
 		if not seen.has(key):
 			_holograms.forget(key.hash())
@@ -978,9 +1038,14 @@ func _update_place_holograms(client: Object, delta: float) -> void:
 		_holograms.update(camera, delta, client.raycast)
 
 
-# Whether a quest giver has work for you now (GIVER_READY), later or under
-# way (GIVER_WAITING), or none left (GIVER_DONE).
+# Whether a quest giver has a turn-in ready (GIVER_TURNIN), work for you now
+# (GIVER_READY), later or under way (GIVER_WAITING), or none left (GIVER_DONE).
 func _giver_state(quests: Dictionary, giver: String) -> int:
+	for q: Dictionary in quests.get("active", []):
+		if str(q.get("step_npc", "")) == giver:
+			var needed := int(q.get("needed", 0))
+			if needed <= 0 or int(q.get("count", 0)) >= needed:
+				return GIVER_TURNIN
 	if (quests.get("ready_givers", PackedStringArray()) as PackedStringArray).has(giver):
 		return GIVER_READY
 	if (quests.get("waiting_givers", PackedStringArray()) as PackedStringArray).has(giver):
@@ -1206,6 +1271,13 @@ func _update_targets(client: Object, delta: float) -> void:
 func update_hub(client: Object, world: Node3D, delta: float, pause_visible: bool,
 		center_label: Label, match_label: RichTextLabel) -> void:
 	_notice_time = maxf(0.0, _notice_time - delta)
+	_level_up_time = maxf(0.0, _level_up_time - delta)
+	if _level_up_time <= 0.0:
+		if not _level_up_queue.is_empty():
+			_level_up_active = _level_up_queue.pop_front()
+			_level_up_time = 5.0
+		else:
+			_level_up_active = {}
 	if client == null or not client.is_spawned():
 		return
 	add_recruiters(client, world)
@@ -1216,24 +1288,33 @@ func update_hub(client: Object, world: Node3D, delta: float, pause_visible: bool
 		_update_place_holograms(client, delta)
 		if _quest_screen != null and _hub_hud != null:
 			_update_quest_hud(client)
+	_check_profession_level_ups(client)
 	var status: Dictionary = client.get_player_status()
 	if int(status.get("notice_id", 0)) != _notice_id:
 		_notice_id = int(status["notice_id"])
-		_notice = str(status.get("notice", ""))
-		_notice_time = 10.0
-		if _notice != "":
-			print("notice: ", _notice)
-			_notice_lines.append(_notice)
+		var incoming := str(status.get("notice", ""))
+		if incoming.contains(" reached level "):
+			_queue_level_up("PROFESSION LEVEL UP", incoming)
+			_notice = ""
+			_notice_time = 0.0
+		else:
+			_notice = incoming
+			_notice_time = 10.0
+		if incoming != "":
+			print("notice: ", incoming)
+			_notice_lines.append(incoming)
 			if _qm_screen != null and _qm_screen.visible:
-				_qm_screen.feedback = _notice
+				_qm_screen.feedback = incoming
 			if _vendor_screen != null and _vendor_screen.visible:
-				_vendor_screen.feedback = _notice
+				_vendor_screen.feedback = incoming
 			if _workbench_screen != null and _workbench_screen.visible:
-				_workbench_screen.feedback = _notice
+				_workbench_screen.feedback = incoming
 			if _trainer_screen != null and _trainer_screen.visible:
-				_trainer_screen.feedback = _notice
+				_trainer_screen.feedback = incoming
 			if _bank_screen != null and _bank_screen.visible:
-				_bank_screen.feedback = _notice
+				_bank_screen.feedback = incoming
+			if _loot_screen != null and _loot_screen.visible:
+				_loot_screen.feedback = incoming
 
 	_sync_screen_data(client)
 
@@ -1256,7 +1337,7 @@ func update_hub(client: Object, world: Node3D, delta: float, pause_visible: bool
 		close_all_screens()
 	if _vendor_screen != null and _vendor_screen.visible and vendor.is_empty():
 		close_all_screens()
-	if (_trainer_screen != null and _trainer_screen.visible or _bank_screen != null and _bank_screen.visible) and service.is_empty():
+	if (_trainer_screen != null and _trainer_screen.visible or _bank_screen != null and _bank_screen.visible or _info_screen != null and _info_screen.visible) and service.is_empty():
 		close_all_screens()
 	if _loot_screen != null and _loot_screen.visible:
 		var cid := int(_loot_screen.corpse.get("entity_id", 0))
@@ -1339,6 +1420,11 @@ func update_hub(client: Object, world: Node3D, delta: float, pause_visible: bool
 		_hub_hud.switching = {}
 	_hub_hud.notice = _notice
 	_hub_hud.notice_alpha = clampf(_notice_time, 0.0, 1.0)
+	_hub_hud.level_up = {} if _level_up_active.is_empty() else {
+		"title": _level_up_active.get("title", "PROFESSION LEVEL UP"),
+		"detail": _level_up_active.get("detail", ""),
+		"alpha": clampf(_level_up_time, 0.0, 1.0),
+	}
 	if _scanner != null and _hub_hud != null:
 		if in_hub and _scanner.active:
 			var scan: Dictionary = _scanner.update_scanner(client, _crafting_store, client.get_presented()["position"], delta)
@@ -1414,6 +1500,23 @@ func _update_hub_text_hud(client: Object, center_label: Label, match_label: Rich
 				terminal["name"], factions[0], factions[1]]
 
 
+func _mission_terminal_color(kind: String) -> Color:
+	match kind:
+		"artisan":
+			return CRAFT_COLOR
+		"bounty":
+			return Color(1.0, 0.58, 0.2)
+		"entertainer":
+			return Color(0.95, 0.55, 0.9)
+		"scout":
+			return Color(0.45, 0.92, 0.5)
+		"imperial":
+			return Color(1.0, 0.35, 0.3)
+		"rebel":
+			return Color(0.35, 0.65, 1.0)
+	return TERMINAL_COLOR
+
+
 func _side_icon(side: String, index: int) -> String:
 	var sname := side.to_lower()
 	if sname.contains("rebel"):
@@ -1429,3 +1532,35 @@ func _side_icon(side: String, index: int) -> String:
 
 func _key_name(action: String) -> String:
 	return Settings.binding_name(_settings.bindings[action]) if _settings != null and _settings.bindings.has(action) else action
+
+
+func _queue_level_up(title: String, detail: String) -> void:
+	for queued: Dictionary in _level_up_queue:
+		if str(queued.get("detail", "")) == detail:
+			return
+	if str(_level_up_active.get("detail", "")) == detail and _level_up_time > 0.0:
+		return
+	if _level_up_active.is_empty():
+		_level_up_active = {"title": title, "detail": detail}
+		_level_up_time = 5.0
+	else:
+		_level_up_queue.append({"title": title, "detail": detail})
+
+
+func _check_profession_level_ups(client: Object) -> void:
+	if _store == null:
+		return
+	var profs: Array = client.get_professions()
+	if profs.is_empty():
+		return
+	var initial := _prof_levels.is_empty()
+	var names := {}
+	for d: Dictionary in _professions:
+		names[str(d.get("id", ""))] = str(d.get("name", d.get("id", "")))
+	for p: Dictionary in profs:
+		var id := str(p.get("id", ""))
+		var lv := int(_store.profession_level(int(p.get("xp", 0))).get("level", 1))
+		if not initial and _prof_levels.has(id) and lv > int(_prof_levels[id]):
+			var pname := str(names.get(id, id.capitalize()))
+			_queue_level_up("PROFESSION LEVEL UP", "%s reached level %d" % [pname, lv])
+		_prof_levels[id] = lv

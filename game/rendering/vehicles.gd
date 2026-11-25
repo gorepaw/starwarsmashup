@@ -422,6 +422,25 @@ func riding(entity: int) -> Dictionary:
 	return {}
 
 
+# World position for a turret operator so their model stays visible at the gun.
+func turret_gunner_pos(entity: int, fallback_pos: Vector3, fallback_yaw: float) -> Vector3:
+	for entry: Dictionary in _nodes.values():
+		var v: Dictionary = entry.get("state", {})
+		if int(v.get("driver", 0)) == entity:
+			var node: Node3D = entry["node"]
+			var main_gunner := node.find_child("hp_main_gunner", true, false) as Node3D
+			if main_gunner != null:
+				return main_gunner.global_position
+			for hp_name: String in ["hp_active", "hp_active_01"]:
+				var hp := node.find_child(hp_name, true, false) as Node3D
+				if hp != null:
+					var p := hp.global_position
+					p.y = maxf(node.global_position.y, p.y)
+					return p
+			return to_world(node.position, node.rotation.y - PI, Vector3(0.0, 0.0, -1.2))
+	return to_world(fallback_pos, fallback_yaw, Vector3(0.0, 0.0, -1.2))
+
+
 # The seat a soldier of `team` would get in the nearest vehicle within reach
 # (as the server reckons it: 2.5 m from its body, ASSUMPTION a little less
 # to be sure): {vehicle: its state, seat: 0 the driver's, 1.. a gunner's},

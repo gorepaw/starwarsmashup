@@ -56,6 +56,8 @@ var inventory: Array = []
 var loadouts: Array = []
 var professions: Dictionary = {}
 var feedback := ""
+var station_kind := "general"
+var station_title := ""
 
 var _tab := "workbench"
 var _prof_filter := "all"
@@ -73,9 +75,25 @@ var _res_by_id: Dictionary = {}
 var _cat_by_id: Dictionary = {}
 
 
-func open_screen() -> void:
+func open_screen(kind := "general", title := "") -> void:
+	station_kind = kind
+	station_title = title
+	match kind:
+		"weapon":
+			_prof_filter = "weaponsmith"
+		"clothing":
+			_prof_filter = "armorsmith"
+		"food":
+			_prof_filter = "chef"
+		"structure":
+			_prof_filter = "architect"
+		_:
+			_prof_filter = "all"
 	_rebuild_lookups()
-	if _selected_schematic == "" and not schematics.is_empty():
+	var list := _filtered_schematics()
+	if not list.is_empty():
+		_select_schematic(str(list[0].get("id", "")))
+	elif not schematics.is_empty():
 		_select_schematic(str(schematics[0].get("id", "")))
 	visible = true
 	queue_redraw()
@@ -170,8 +188,9 @@ func _enhancement_items() -> Array:
 func _paint() -> void:
 	_rebuild_lookups()
 	draw_rect(Rect2(Vector2.ZERO, size), Color(0, 0, 0, 0.55))
-	var box := centered(940, 560, Vector2(0, 8))
-	text("gamefont_large", "Unified Workbench", Vector2(size.x * 0.5, box.position.y - 42 * u), "Center", ACCENT)
+	var box := centered(940, 536, Vector2(0, -6))
+	var hdr := station_title if station_title != "" else "Unified Workbench"
+	text("gamefont_large", hdr, Vector2(size.x * 0.5, box.position.y - 38 * u), "Center", ACCENT)
 	frame(box)
 	var x := box.position.x + 16 * u
 	var y := box.position.y + 14 * u
@@ -194,7 +213,19 @@ func _paint() -> void:
 		"salvage":
 			_paint_salvage(body)
 	if feedback != "":
-		text("gamefont_tiny", feedback, Vector2(size.x * 0.5, box.end.y + 6 * u), "Center", ACCENT)
+		var fb_y := box.end.y + 8 * u
+		var max_w := box.size.x - 24 * u
+		var line := ""
+		for w in feedback.split(" ", false):
+			var cand := w if line == "" else line + " " + w
+			if line != "" and art.text_width("gamefont_tiny", cand, u) > max_w:
+				text("gamefont_tiny", line, Vector2(size.x * 0.5, fb_y), "Center", ACCENT)
+				fb_y += art.line_height("gamefont_tiny", u) + 2 * u
+				line = w
+			else:
+				line = cand
+		if line != "":
+			text("gamefont_tiny", line, Vector2(size.x * 0.5, fb_y), "Center", ACCENT)
 
 
 func _paint_workbench(rect: Rect2) -> void:

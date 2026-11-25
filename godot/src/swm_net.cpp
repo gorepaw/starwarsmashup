@@ -625,6 +625,7 @@ godot::Array SwmClient::get_mission_terminals() const {
             godot::Dictionary entry;
             entry["index"] = int64_t(i);
             entry["name"] = godot::String::utf8(terminals[i].name.c_str());
+            entry["kind"] = godot::String::utf8(terminals[i].kind.c_str());
             entry["position"] = to_godot(terminals[i].position);
             entry["radius"] = terminals[i].radius;
             out.push_back(entry);
@@ -679,6 +680,7 @@ godot::Array SwmClient::get_workbenches() const {
             godot::Dictionary entry;
             entry["index"] = int64_t(i);
             entry["name"] = godot::String::utf8(wbs[i].name.c_str());
+            entry["kind"] = godot::String::utf8(wbs[i].kind.c_str());
             entry["position"] = to_godot(wbs[i].position);
             entry["radius"] = wbs[i].radius;
             out.push_back(entry);

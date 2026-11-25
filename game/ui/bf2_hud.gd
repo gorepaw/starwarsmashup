@@ -141,19 +141,20 @@ func _draw() -> void:
 
 # The Deflector Shield's charge: a thin bar just above the health bar, as
 # wide (Battlefront has none; this keeps clear of the weapon panels above).
-func _draw_shield_bar(screen: Vector2) -> void:
+func _draw_shield_bar(_screen: Vector2) -> void:
 	var health := _health_rect
 	if health.size.x <= 0.0:
 		return
 	var tall := maxf(3.0, health.size.y * 0.55)
 	var bar := Rect2(Vector2(health.position.x, health.position.y - tall - health.size.y * 0.75),
 			Vector2(health.size.x, tall))
-	draw_rect(bar, Color(0.05, 0.09, 0.14, 0.78))
+	draw_rect(bar.grow(1.5), Color(0.02, 0.03, 0.05, 0.95))
+	draw_rect(bar, Color(0.05, 0.09, 0.14, 0.88))
 	var frac := clampf(shield_fraction, 0.0, 1.0)
 	if frac > 0.0:
 		var fill := Rect2(bar.position + Vector2(1, 1), Vector2((bar.size.x - 2) * frac, bar.size.y - 2))
-		draw_rect(fill, Color(0.28, 0.85, 1.0, 0.92))
-	draw_rect(bar, Color(0.65, 0.9, 1.0, 0.65), false, 1.0)
+		draw_rect(fill, Color(0.28, 0.85, 1.0, 0.96))
+	draw_rect(bar.grow(1.0), Color(0.03, 0.05, 0.08, 0.98), false, 1.5)
 
 
 # --- the tree ---------------------------------------------------------------
@@ -307,6 +308,12 @@ func _model(node: Dictionary, xf: Transform2D, color: Color, z: float, screen: V
 		var size := panel.size.x * WEAPON_PANEL_SHARE / WEAPON_PROFILE_WIDTH
 		var at := panel.get_center() + Vector2(panel.size.x * 0.18, 0.0)
 		placed = Transform2D(0.0, Vector2(size, size), 0.0, at)
+		var bright := Color(minf(1.4, color.r + 0.4), minf(1.4, color.g + 0.4), minf(1.4, color.b + 0.4), maxf(color.a, 0.96))
+		_add(z, func() -> void:
+			draw_set_transform_matrix(placed)
+			draw_mesh(model["mesh"], model["texture"], Transform2D(0.0, Vector2(1.5, 1.5)), Color(0.02, 0.04, 0.08, 0.45))
+			draw_mesh(model["mesh"], model["texture"], Transform2D(), bright))
+		return
 	_add(z, func() -> void:
 		draw_set_transform_matrix(placed)
 		draw_mesh(model["mesh"], model["texture"], Transform2D(), color))

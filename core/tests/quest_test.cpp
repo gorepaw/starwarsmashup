@@ -227,7 +227,17 @@ void test_tatooine_quests() {
     catalog.load(root / "game" / "items" / "swg_catalog.ini");
     const HubConfig hub = load_hub(root / "game" / "hubs" / "mos_eisley.ini");
     CHECK(hub.quests.quests().size() >= 5);
-    CHECK(hub.mission_terminals.size() == 10);
+    CHECK(hub.mission_terminals.size() >= 10);
+    bool has_bounty = false, has_artisan = false, has_imperial = false, has_rebel = false;
+    for (const net::MissionTerminal& t : hub.mission_terminals) {
+        has_bounty |= (t.kind == "bounty");
+        has_artisan |= (t.kind == "artisan");
+        has_imperial |= (t.kind == "imperial");
+        has_rebel |= (t.kind == "rebel");
+    }
+    CHECK(has_bounty && has_artisan && has_imperial && has_rebel);
+    const QuestDef* stewpot = hub.quests.find("something_for_the_stewpot");
+    CHECK(stewpot != nullptr && !stewpot->steps.empty() && stewpot->steps[0].track == "worrt");
     CHECK(hub.spawns.has_value());
     const auto person = [&](const std::string& name) {
         return std::any_of(hub.people.begin(), hub.people.end(), [&](const HubPerson& p) { return p.name == name; });
@@ -257,7 +267,7 @@ void test_tatooine_quests() {
             CHECK(def != nullptr && def->available && !def->milestones.empty());
         }
     }
-    CHECK(trainers >= 5 && banks == 1 && clones >= 1 && clinics >= 1);
+    CHECK(trainers >= 5 && banks >= 4 && clones >= 1 && clinics >= 1);
     // The opening chain asks for what the services do.
     const QuestDef* opening = hub.quests.find("stranger_in_mos_eisley");
     CHECK(opening != nullptr && std::any_of(opening->steps.begin(), opening->steps.end(), [](const QuestStep& st) {
@@ -392,6 +402,7 @@ void test_server_quest() {
         client.talk_to(hunter);
         run(0.3);
         CHECK(client.quests().active.empty());
+        CHECK(client.quests().offer_note == "__completed__");
         CHECK(client.quests().completed.size() == 1 && client.quests().completed[0] == "Rats");
         CHECK(client.player_status().credits == credits + 250);
         CHECK(client.items().size() == items + 1);  // the stim, not the ledger

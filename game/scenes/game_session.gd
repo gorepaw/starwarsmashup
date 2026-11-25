@@ -26,6 +26,8 @@ const Settings = preload("res://ui/settings.gd")
 const PauseMenu = preload("res://ui/pause_menu.gd")
 const HubUI = preload("res://scenes/hub_ui.gd")
 const BattleUI = preload("res://scenes/battle_ui.gd")
+const LoadingScreen = preload("res://ui/loading_screen.gd")
+const Bf2Art = preload("res://ui/bf2_art.gd")
 
 const HUD_DIR := "res://imported_assets/hud"
 const EFFECTS_DIR := "res://imported_assets/effects"
@@ -134,13 +136,37 @@ var _doors: Array[Node3D] = []
 var _people := {}
 var _people_colors := {}
 var _shot_delay := 0
+var _loading_screen: LoadingScreen
+var _loading_phase := 0  # 0 idle, 1 waiting frame to load transfer world, 2 hiding after first rendered frame
 
 
 func _ready() -> void:
 	if not pending_config.is_empty():
 		var cfg := pending_config.duplicate(true)
 		pending_config.clear()
-		start_session(cfg)
+		call_deferred("_start_interactive", cfg)
+
+
+func _start_interactive(cfg: Dictionary) -> void:
+	if not DisplayServer.get_name().to_lower().contains("headless"):
+		var art: RefCounted = Bf2Art.load_from(HUD_DIR)
+		Bf2Art.apply_cursor(art)
+		var load_layer := CanvasLayer.new()
+		load_layer.layer = 50
+		add_child(load_layer)
+		_loading_screen = LoadingScreen.new(art)
+		var info := LoadingScreen.pending
+		LoadingScreen.pending = {}
+		_loading_screen.show_loading(
+				str(info.get("title", "MOS EISLEY, TATOOINE")),
+				str(info.get("subtitle", "Loading world...")),
+				str(info.get("icon", "hud_flag_icon")))
+		load_layer.add_child(_loading_screen)
+		await get_tree().process_frame
+		await get_tree().process_frame
+	start_session(cfg)
+	if _loading_screen != null:
+		_loading_phase = 2
 
 
 func start_session(config: Dictionary) -> bool:
@@ -303,6 +329,14 @@ func step_frame(delta: float) -> void:
 	_fire_lockout = maxf(0.0, _fire_lockout - delta)
 	if _wait_fire_release and not Input.is_action_pressed("fire"):
 		_wait_fire_release = false
+	if _loading_phase == 1:
+		_loading_phase = 2
+		_arrive()
+		return
+	elif _loading_phase == 2:
+		_loading_phase = 0
+		if _loading_screen != null:
+			_loading_screen.visible = false
 	if _server != null:
 		if _settings.bot_difficulty != _bot_difficulty:
 			_bot_difficulty = _settings.bot_difficulty
@@ -313,6 +347,14 @@ func step_frame(delta: float) -> void:
 	_client.update()
 	if _client.get_generation() != _generation:
 		_generation = _client.get_generation()
+		if _loading_screen != null and _bot == "" and not DisplayServer.get_name().to_lower().contains("headless"):
+			var bf: Dictionary = _client.get_battlefield()
+			if not bf.is_empty():
+				_loading_screen.show_loading(str(bf.get("name", "BATTLEFIELD")), "Deploying to battle...", "hud_flag_icon")
+			else:
+				_loading_screen.show_loading("MOS EISLEY, TATOOINE", "Returning to Mos Eisley...", "hud_flag_icon")
+			_loading_phase = 1
+			return
 		_arrive()
 	if _client.get_session_error() != "":
 		printerr(_client.get_session_error())
@@ -333,7 +375,7 @@ func step_frame(delta: float) -> void:
 			print("spawned as character %d at Galaxies (%.2f, %.2f, %.2f)" % [
 					_client.get_character_id(), -at.x, at.y, at.z])
 		_weapons = _client.get_weapons()
-		_pose(_own, own)
+		_pose(_own, own, _client.get_entity_id())
 		_update_remotes(int(own["team"]))
 		var shown := {_client.get_entity_id(): {"position": own["position"], "yaw": float(own["yaw"]),
 				"pitch": float(own.get("pitch", 0.0)), "roll": float(own.get("roll", 0.0)),
@@ -483,7 +525,9 @@ func _input(event: InputEvent) -> void:
 			_resume()
 		return
 	if _hub_ui != null and _hub_ui.is_terminal_open():
-		if escape or event.is_action_pressed("interact") or event.is_action_pressed("quest_log") \
+		if _hub_ui.is_loot_open() and event.is_action_pressed("interact") and not event.is_echo():
+			_hub_ui.loot_all_and_harvest(_client)
+		elif escape or event.is_action_pressed("interact") or event.is_action_pressed("quest_log") \
 				or event.is_action_pressed("professions") or event.is_action_pressed("workbench") \
 				or event.is_action_pressed("world_map"):
 			_hub_ui.close_terminal()
@@ -558,6 +602,8 @@ func _input(event: InputEvent) -> void:
 		_client.switch_loadout(1)
 	elif event.is_action_pressed("loadout_3") and not event.is_echo() and _client.get_match().is_empty():
 		_client.switch_loadout(2)
+	elif event.is_action_pressed("summon_mount") and not event.is_echo() and _client.get_match().is_empty():
+		_toggle_equipped_mount()
 	elif event.is_action_pressed("interact") and not event.is_echo() and _hub_ui != null:
 		if _hub_ui.try_open_terminal(_client):
 			_capture_mouse(false)
@@ -585,6 +631,22 @@ func _input(event: InputEvent) -> void:
 			_capture_mouse(false)
 		else:
 			_finish(0)
+
+
+func _toggle_equipped_mount() -> void:
+	if _client == null or not _client.is_spawned() or _hub_ui == null:
+		return
+	var loadouts: Array = _client.get_character_loadouts()
+	var active_idx := int(_client.get_player_status().get("active_loadout", 0))
+	var mount_id := 0
+	for lo: Dictionary in loadouts:
+		if int(lo.get("slot_index", -1)) == active_idx:
+			mount_id = int((lo.get("gear_ids", {}) as Dictionary).get("mount", 0))
+			break
+	if mount_id <= 0:
+		_hub_ui.show_local_notice("No speeder or mount equipped in the Mount slot.")
+		return
+	_client.use_item(mount_id)
 
 
 func _exit_tree() -> void:
@@ -899,7 +961,7 @@ func _update_remotes(own_team: int) -> void:
 			_ensure_character_appearance(_remotes[id], remote, false)
 		if int(remote["team"]) != NATIVES_TEAM:
 			PlayerAppearance.set_worn_models(_remotes[id], str(remote.get("worn", "")))
-		_pose(_remotes[id], remote)
+		_pose(_remotes[id], remote, id)
 		var tag: Label3D = _remotes[id]["tag"]
 		var friend: bool = own_team >= 0 and _client.is_allied(own_team, int(remote["team"]))
 		# Natives' holograms over their own heads (soldiers': the usual height).
@@ -948,6 +1010,8 @@ func _update_person(id: int, state: Dictionary) -> void:
 				top_y = maxf(top_y, box.position.y + box.size.y)
 		if actor_kind == 3 and player != null and player.has_animation("human_rifle_stand_idle_emote_full"):
 			var soldier := Soldier.new(model)
+			if soldier._tree != null:
+				soldier._tree.advance(fposmod(float(id) * 0.618034, 1.0) * 2.5)
 			_remotes[id] = {"model": model, "person": true, "actor_kind": actor_kind,
 					"soldier": soldier, "tag": tag, "holo_height": top_y + 0.45}
 		else:
@@ -1002,14 +1066,20 @@ func _update_person(id: int, state: Dictionary) -> void:
 		elif int(state.get("pose", 0)) == 1 and player.has_animation("sit"):
 			clip = "sit"
 		if player.current_animation != clip and player.has_animation(clip):
-			player.get_animation(clip).loop_mode = loop
+			var anim := player.get_animation(clip)
+			anim.loop_mode = loop
 			player.play(clip, 0.2)
+			if clip in ["idle", "sit"]:
+				player.seek(anim.length * fposmod(float(id) * 0.618034, 1.0), true)
 		player.speed_scale = spd
 		return
 	var clip := "sit" if int(state.get("pose", 0)) == 1 else ("walk" if speed > 0.3 else "idle")
 	if player.current_animation != clip and player.has_animation(clip):
-		player.get_animation(clip).loop_mode = Animation.LOOP_LINEAR
+		var anim := player.get_animation(clip)
+		anim.loop_mode = Animation.LOOP_LINEAR
 		player.play(clip, 0.25)
+		if clip in ["idle", "sit"]:
+			player.seek(anim.length * fposmod(float(id) * 0.618034, 1.0), true)
 	player.speed_scale = clampf(speed / 1.4, 0.6, 1.6) if clip == "walk" else 1.0
 
 
@@ -1028,22 +1098,29 @@ func _load_person(look: int) -> Node3D:
 	return document.generate_scene(state) as Node3D
 
 
-func _pose(character: Dictionary, state: Dictionary) -> void:
+func _pose(character: Dictionary, state: Dictionary, entity_id: int = 0) -> void:
 	var soldier := character["soldier"] as Soldier
 	var vehicle := int(state.get("vehicle", -1))
-	# A gunner sits inside, at its gun: not seen.
-	soldier.model.visible = vehicle < 0 or (str(_vehicles.class_of(vehicle).get("kind", "")) == "hover"
-			and int(state.get("seat", 0)) == 0 and _vehicles.class_of(vehicle).get("seats", []).is_empty())
+	var vclass: Dictionary = _vehicles.class_of(vehicle) if vehicle >= 0 else {}
+	var vkind := str(vclass.get("kind", ""))
+	var is_open_hover := vkind == "hover" and int(state.get("seat", 0)) == 0 and (vclass.get("seats", []) as Array).is_empty()
+	var is_open_turret := vkind == "turret" and int(state.get("seat", 0)) == 0 and str(vclass.get("rider_pose", "")) != ""
+	# A gunner inside a closed turret/walker cab isn't seen; open hover riders and manned ground turret operators stay visible.
+	soldier.model.visible = vehicle < 0 or is_open_hover or is_open_turret
 	if vehicle >= 0:
-		# Inside a walker's cab: not seen. On a hover vehicle: crouched on it.
 		if soldier.model.visible:
 			var seated := state.duplicate()
-			seated["crouched"] = true  # (without a pose of its own)
-			seated["ride_clip"] = str(_vehicles.class_of(vehicle).get("rider_pose", ""))
 			seated["sprinting"] = false
 			seated["velocity"] = Vector3.ZERO
-			seated["position"] = Vehicles.to_world(state["position"], float(state["yaw"]),
-					_vehicles.class_of(vehicle).get("rider_seat", RIDER_SEAT))
+			if is_open_turret:
+				seated["crouched"] = false
+				seated["ride_clip"] = str(vclass.get("rider_pose", ""))
+				seated["position"] = _vehicles.turret_gunner_pos(entity_id, state["position"], float(state["yaw"]))
+			else:
+				seated["crouched"] = true  # (without a pose of its own)
+				seated["ride_clip"] = str(vclass.get("rider_pose", ""))
+				seated["position"] = Vehicles.to_world(state["position"], float(state["yaw"]),
+						vclass.get("rider_seat", RIDER_SEAT))
 			soldier.set_weapon("")
 			soldier.pose(seated, _delta)
 		return
@@ -1577,6 +1654,7 @@ func _setup_scene() -> void:
 	_battle_ui = BattleUI.new()
 	add_child(_battle_ui)
 	_battle_ui.setup(layer, self, _audio, HUD_DIR)
+	Bf2Art.apply_cursor(_battle_ui.art())
 	_battle_ui.spawn_requested.connect(func(_l: int, _p: int) -> void: _request_spawn())
 
 	if _battle_ui.has_bf2_hud():
