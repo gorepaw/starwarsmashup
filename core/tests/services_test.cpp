@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <filesystem>
+#include <tuple>
 #include <vector>
 
 #include "swm/core/client.h"
@@ -169,9 +170,77 @@ void test_event_steps() {
     CHECK(done.completed.size() == 1 && journal[0].done);
 }
 
+// A giver whose every offer is ten levels below yours is grey, not lit.
+void test_trivial_quests_grey() {
+    const auto root = repo_root();
+    ItemCatalog catalog;
+    catalog.load(root / "game" / "items" / "swg_catalog.ini");
+    ProfessionBook book;
+    book.load(root / "game" / "professions" / "professions.ini");
+    Heightfield ground{201, 2.0, -200, -200, std::vector<float>(201 * 201, 0.0f)};
+    World world{ground};
+    QuestBook quests;
+    for (const auto& [id, giver, level] : {std::tuple{"easy", "Easy Ana", 1}, std::tuple{"hard", "Hard Hal", 30}}) {
+        QuestDef def;
+        def.id = id;
+        def.title = id;
+        def.giver = giver;
+        def.level = level;
+        QuestStep go;
+        go.kind = QuestStepKind::go_to;
+        go.where = Vec3{50, 0, 0};
+        go.radius = 5;
+        def.steps = {go};
+        quests.add(def);
+    }
+    const auto db_path = std::filesystem::temp_directory_path() / "swm_trivial_test.sqlite";
+    std::filesystem::remove(db_path);
+    {
+        SqliteCharacterStore store(db_path);
+        net::LoopbackHub links;
+        net::Endpoint server_ep{1, 1}, client_ep{2, 1};
+        net::LoopbackLink srv_link{links, server_ep};
+        net::LoopbackLink cli_link{links, client_ep};
+        ServerConfig config;
+        config.catalog = &catalog;
+        config.professions = &book;
+        config.pvp_enabled = false;
+        config.spawn = {0, 0, 0};
+        GameServer server(srv_link, world, config, &store);
+        server.set_looks({"object/mobile/shared_dressed_commoner_tatooine_rodian_male_01.iff"});
+        const uint32_t ana = server.add_npc("Easy Ana", {3, 0, 0}, 0, 1);
+        const uint32_t hal = server.add_npc("Hard Hal", {-3, 0, 0}, 0, 1);
+        server.set_quests(&quests, {{ana, "Easy Ana", {3, 0, 0}, true}, {hal, "Hard Hal", {-3, 0, 0}, true}}, {});
+        GameClient client(cli_link, world, ClientConfig{.server = server_ep, .name = "Veteran"});
+        double now = 0;
+        const auto run = [&](double seconds) {
+            for (const double end = now + seconds; now < end; now += 1.0 / 60.0) {
+                server.update(now);
+                client.update(now);
+            }
+        };
+        const auto has = [](const std::vector<std::string>& list, const std::string& name) {
+            return std::find(list.begin(), list.end(), name) != list.end();
+        };
+        run(0.6);
+        CHECK(client.player_status().combat_level == 1);
+        CHECK(has(client.quests().ready_givers, "Easy Ana") && has(client.quests().ready_givers, "Hard Hal"));
+        // Enough rifle experience for level 12: Ana's level-1 work is 11 below, trivial; Hal's isn't.
+        server.award_xp(client.entity_id(), book.xp_for_level(12));
+        run(0.8);
+        CHECK(client.player_status().combat_level >= 12);
+        CHECK(!has(client.quests().ready_givers, "Easy Ana") && has(client.quests().waiting_givers, "Easy Ana"));
+        CHECK(has(client.quests().ready_givers, "Hard Hal"));
+        client.disconnect();
+        run(0.1);
+    }
+    std::filesystem::remove(db_path);
+}
+
 } // namespace
 
 int main() {
+    test_trivial_quests_grey();
     test_event_steps();
     test_services();
     return swm::test::finish("services_test");

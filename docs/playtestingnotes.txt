@@ -95,8 +95,8 @@ no more quests for you/ make it grey if quests are just too low level.
      exclamation mark (quests, yellow), a stack of coins (somewhere to sell, green), a chest (a shop,
      green) or Battlefront's wrench (crafting, purple). A giver with no work left shows nothing; one
      with work that isn't open to you yet (or whose quest you're on) is grey, on the radar and map too.
-     There are no quest levels in the game yet, so "too low level" isn't there to grey by: that waits on
-     the level question below. (rendering/place_symbols.gd)
+     (Greying a giver whose work is too low a level for you came with the combat level: see below.)
+     (rendering/place_symbols.gd)
 
 [ANSWERED] Speaking of level, how does exp work right now? give me a full rundown. do we need to reconcile a base system
 with our new professions work?
@@ -125,8 +125,15 @@ with our new professions work?
      (what you fight with), shown on the HUD in place of the bare XP total, with quests and creatures
      carrying a level against it (grey when 10 below, red when 5 or more above). Retire the XP total (or
      keep it as lifetime XP, a statistic). Say if you'd rather have a character level.
+  -> DONE as recommended: the combat level is the higher of the levels of the carried weapon's and the
+     worn armor's professions, shown on the HUD in place of the XP total ("Level N"). Quest, mission and
+     battle experience now goes to those two professions (the equipped weapon's and armor's), slotted or
+     not. Quests have a Level in their file (missions: 1 + 8 per tier), shown in the quest screen
+     against yours (grey 10+ below, green well below, white even, yellow above, red 5+ above); the
+     "too low level" greying is in: a giver whose every offer is 10 or more levels below yours is grey
+     on the world, radar and map (core/profession.h quest_trivial_gap; tests/services_test.cpp).
 
-[DRAFT: your call] I want to come up with a purpose for skill trainers, as well as a purpose for each kind of terminal that was in SWG,
+[DONE] I want to come up with a purpose for skill trainers, as well as a purpose for each kind of terminal that was in SWG,
 then i would like all the terminals to be in their normal places intead of clustered in that testing area, and build
 a more robust starting quest chain to take us around to all of it, as well as teach us about gathering and crafting.
   -> Not built: it's yours to design, so here is a draft to react to.
@@ -147,6 +154,29 @@ a more robust starting quest chain to take us around to all of it, as well as te
        bank (deposit) -> mission terminal; then trainers: take a rifle certification and a scanner ->
        a survey spot (extract; walk on; extract again) -> the workbench (craft a first item from it)
        -> sell/turn it in; then Pests at the Gate; then the first lair mission by speeder.
+  -> Built as drafted (the trainers' prices, the quest wording and the people's names are placeholders
+     to change):
+     Trainers (six: Sergeant Tavel, Chief Brask, Drillmaster Voss, Surveyor Pell, Artisan Tuvi, Tailor
+       Nenna, between them the 17 live professions): a milestone counts only once learned from one,
+       in order, once its level is reached: the first is free, then 500 / 2,500 / 7,500 / 20,000 Cr
+       (profession.cpp milestone_cost). The planner marks what's learned. Existing characters have
+       learned nothing yet, so their level-1 perks are off until they visit one (free).
+     Bank (Mos Eisley Bank): credits and spare items, kept across visits and deaths (not equipped
+       gear, not quest items). Clinic (the Bacta Tank): 25 Cr patches up health and shield. Cloning
+       terminals (two): E sets where your clone wakes (the facility stays the default). Garage: a shop
+       that sells vehicles. Not built, as drafted: travel, bazaar, insurance.
+     Places: from Galaxies' own city snapshot: the bank by its bazaar square, the clinic at its bacta
+       tank, the garage by its parking garage, a cloning terminal at each cloning facility, the
+       market (junk dealer, gear vendor) by the starport, the workbench by the artisans' terminals,
+       the trainers in two groups north of the plaza and west by the workbench. The plaza keeps the
+       quartermasters, the war terminal and the quest givers. (I checked each spot is clear ground
+       and looked at them on the map; a few may stand a little off a doorway, so say if one's wrong.)
+     The opening is two quests now: "A Stranger in Mos Eisley" (junk dealer, put credits in the bank,
+       keep your clone at the cloning terminal, look over the mission terminal, report back; the
+       speeder bike) and "Learning the Ropes" (a trainer and a milestone learned, Surveyor Pell, two
+       extractions, Artisan Tuvi and a first craft, a mission taken, report back); the other quests
+       wait on it. Quest steps can now ask for things done (Kind = event: extract, craft, learn,
+       bank, bind, heal, mission).
 
 [DONE] In character creator last i checked twileks had two sets of headtails, a deafult one overlaying the cosmetic 
 choice ones.
