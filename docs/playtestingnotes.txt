@@ -119,7 +119,9 @@ choice ones.
 
 Our new starting quest/sequence needs to also give us a starting speeder bike pretty quick, its slow to get around
 
-if you shoot an automatic door leaving a mark, when the door opens, the shot marks stay floating in space
+[DONE] if you shoot an automatic door leaving a mark, when the door opens, the shot marks stay floating in space
+  -> A mark made on a door (a Galaxies sliding door, or a Battlefront one) is now hung on the door and
+     slides with it. (bf2_effects.gd _stick_to_door; tests/door_scorch_test.gd)
 
 in the main overworld map hovering over things should tell me what they are in a tooltip.
 

@@ -62,6 +62,7 @@ static func add_objects(parent: Node, prefix: String, camera_collision := false)
 			node.set_meta("door", {"closed": node.position, "slide": Vector3(slide[0], slide[1], slide[2]),
 					"open_time": maxf(0.05, float(door["open"])), "close_time": maxf(0.05, float(door["close"])),
 					"radius": float(door["radius"]), "open": 0.0})
+			node.add_to_group(DOORS_GROUP)
 		parent.add_child(node)
 		placed[placed.size() - 1] = node
 		count += 1
@@ -76,6 +77,9 @@ static func add_objects(parent: Node, prefix: String, camera_collision := false)
 			(template as Node).free()
 	print("placed ", count, " objects (", models.size(), " models) from ", path.get_file())
 	return count
+
+
+const DOORS_GROUP := &"swg_doors"  # the sliding doors' nodes (a mark on one goes with it)
 
 
 # The doors among a parent's children (add_objects' doors).

@@ -351,11 +351,43 @@ func spawn_scorch(position: Vector3, normal: Vector3, radius: float) -> void:
 	node.mesh = quad
 	node.material_override = mat
 	node.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	node.set_meta("scorch", true)
 	node.position = position + n * 0.018
 	# QuadMesh lies in XY with +Z normal; align +Z to surface normal `n`.
 	node.basis = Basis(right, forward, n) * Basis(Vector3.BACK, randf() * TAU)
 	_parent.add_child(node)
+	_stick_to_door(node)
 	_scorches.append({"node": node, "material": mat, "age": 0.0})
+
+
+# A mark on a door (a sliding one's leaf, or a Battlefront door) goes where the door goes.
+func _stick_to_door(node: Node3D) -> void:
+	if not node.is_inside_tree():
+		return
+	var tree := node.get_tree()
+	for group: StringName in [&"swg_doors", &"bf2_doors"]:
+		for door: Node3D in tree.get_nodes_in_group(group):
+			var inverse := door.global_transform.affine_inverse()
+			var bounds := _door_bounds(door, inverse)
+			if bounds.size != Vector3.ZERO and bounds.grow(0.12).has_point(inverse * node.global_position):
+				var keep := node.global_transform
+				node.get_parent().remove_child(node)
+				door.add_child(node)
+				node.global_transform = keep
+				return
+
+
+# The door's meshes' box in the door's own space (as it stands now).
+func _door_bounds(door: Node3D, inverse: Transform3D) -> AABB:
+	var bounds := AABB()
+	var first := true
+	for mesh: MeshInstance3D in door.find_children("*", "MeshInstance3D", true, false):
+		if mesh.mesh == null or mesh.has_meta("scorch"):
+			continue
+		var box := (inverse * mesh.global_transform) * mesh.get_aabb()
+		bounds = box if first else bounds.merge(box)
+		first = false
+	return bounds
 
 
 # --- internals --------------------------------------------------------------
