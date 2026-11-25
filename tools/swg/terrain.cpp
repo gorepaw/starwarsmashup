@@ -138,6 +138,27 @@ bool parse_boundary(const IffNode& node, TerrainBoundary& out) {
     if (out.kind == TerrainBoundary::Kind::polyline) {
         out.width = r.f32();
     }
+    // A local water table follows: BPOL 0005 has (enabled, height, shader
+    // size, shader name), BREC 0003 (enabled, a water type, height, shader
+    // size, shader name). Decoded from Naboo's file: its "WATER_TABLEs" layer
+    // holds only such boundaries, at 3 m (sea level: Moenia stands at 3.75),
+    // its ocean rectangle at -210 m under Kaadara (-192), and Deeja Peak's
+    // mountain lakes at 295-385 m, with "wter_*" shaders.
+    bool has_water = false;
+    if (out.kind == TerrainBoundary::Kind::polygon && r.remaining() >= 8) {
+        out.water = r.i32() != 0;
+        out.water_height = r.f32();
+        has_water = true;
+    } else if (out.kind == TerrainBoundary::Kind::rectangle && r.remaining() >= 12) {
+        out.water = r.i32() != 0;
+        r.i32();  // water type
+        out.water_height = r.f32();
+        has_water = true;
+    }
+    if (has_water && r.remaining() >= 5) {
+        out.water_shader_size = r.f32();
+        out.water_shader = r.cstring();
+    }
     return true;
 }
 
@@ -274,6 +295,9 @@ TerrainLayer parse_layer(const IffNode& layr) {
             TerrainFilter filter;
             TerrainAffector affector;
             if (parse_boundary(child, boundary)) {
+                if (boundary.water) {
+                    layer.water_names.push_back(read_header(version_of(child)).second);
+                }
                 layer.boundaries.push_back(std::move(boundary));
             } else if (parse_filter(child, filter)) {
                 layer.filters.push_back(filter);
@@ -794,6 +818,51 @@ double TerrainBoundary::amount(double x, double z) const {
     return 0;
 }
 
+namespace {
+void collect_water(const TerrainLayer& layer, std::vector<WaterTable>& out) {
+    if (!layer.enabled) {
+        return;
+    }
+    size_t named = 0;
+    for (const TerrainBoundary& b : layer.boundaries) {
+        if (!b.water) {
+            continue;
+        }
+        WaterTable table;
+        const std::string& name = named < layer.water_names.size() ? layer.water_names[named] : std::string();
+        ++named;
+        table.name = name.empty() || name == "BoundaryPolygon" || name == "BoundaryRectangle" ? layer.name : name;
+        table.height = b.water_height;
+        table.shader = b.water_shader;
+        table.shader_size = b.water_shader_size;
+        if (b.kind == TerrainBoundary::Kind::rectangle) {
+            table.outline = {{b.min_x, b.min_z}, {b.max_x, b.min_z}, {b.max_x, b.max_z}, {b.min_x, b.max_z}};
+        } else {
+            table.outline = b.points;
+        }
+        if (table.outline.size() >= 3) {
+            out.push_back(std::move(table));
+        }
+    }
+    for (const TerrainLayer& child : layer.children) {
+        collect_water(child, out);
+    }
+}
+} // namespace
+
+std::vector<WaterTable> ProceduralTerrain::water_tables() const {
+    std::vector<WaterTable> out;
+    if (global_water) {
+        const double h = map_size / 2;
+        out.push_back({"global", global_water_height, {{-h, -h}, {h, -h}, {h, h}, {-h, h}}, global_water_shader,
+                       global_water_shader_size});
+    }
+    for (const TerrainLayer& layer : layers) {
+        collect_water(layer, out);
+    }
+    return out;
+}
+
 const ShaderFamily* ProceduralTerrain::family(int32_t id) const {
     for (const ShaderFamily& f : shader_families) {
         if (f.id == id) {
@@ -822,6 +891,19 @@ ProceduralTerrain parse_procedural_terrain(std::span<const uint8_t> bytes) {
     const IffNode& generator = version_of(version.expect("TGEN"));
 
     ProceduralTerrain terrain;
+    // Header: the file's name, then map size, chunk width, tiles per chunk,
+    // whether there's a global water table and its height, ...
+    if (const IffNode* header = version.child("DATA")) {
+        IffReader r(header->data);
+        r.cstring();
+        terrain.map_size = r.f32();
+        r.f32();
+        r.i32();
+        terrain.global_water = r.i32() != 0;
+        terrain.global_water_height = r.f32();
+        terrain.global_water_shader_size = r.f32();
+        terrain.global_water_shader = r.cstring();
+    }
     if (const IffNode* shader_group = generator.child("SGRP")) {
         // SFAM: id, name, surface properties, map color (3 bytes), shader
         // size, feather clamp, then children (count, then name + weight).

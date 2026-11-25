@@ -58,6 +58,13 @@ const ANIM_SETS := {
 	},
 }
 const CROUCH_WALK_SPEED := 3.5  # m/s the crouch walk plays at its own pace (ASSUMPTION, by eye)
+# Swimming (deep water: state "swimming"): Galaxies' own clips, which
+# swgtool export-species adds to each species (Battlefront's soldiers don't
+# swim): stroking along, and treading water in place.
+const SWIM := &"all_b_loc_swim"
+const TREAD := &"all_b_idl_tread_water"
+const SWIM_SPEED := 3.5  # m/s the stroke plays at its own pace (core swim_factor x run speed)
+const SWIM_BLEND := 4.0  # per second, into the water or out
 const CROUCH_BLEND := 6.0       # per second, getting down or up
 const ROLL_TIME := 0.75         # s a roll lasts (core MoveParams::roll_time)
 const RUN_SPEED := 6.0       # m/s the run cycle plays at its own pace (faster, faster; tuned by eye: 4.5 looked hurried)
@@ -124,6 +131,8 @@ var _last_yaw := 0.0
 var _last_y := 0.0
 var _step := 0.0             # m the chest still lags a step up or down
 var _crouch := 0.0           # 0 standing .. 1 crouched
+var _swim := 0.0             # 0 on foot .. 1 swimming
+var _can_swim := false       # the export has the swimming clips
 var _rolling := false
 var _ride_clip := &""         # riding: the pose it holds (its first frame)
 var _dip := 0.0              # first person: 0 .. 1 the gun dipped to reload or throw
@@ -314,7 +323,8 @@ func _init(scene: Node3D) -> void:
 		skeleton.add_child(_aimer)
 	if _player == null or not _player.has_animation(SHOOT):
 		return  # an older export without the firing clips: run and idle only
-	for looping: StringName in [IDLE, RUN, RUN_BACK, CROUCH_IDLE, CROUCH_WALK, CROUCH_BACK]:
+	_can_swim = _player.has_animation(SWIM) and _player.has_animation(TREAD)
+	for looping: StringName in [IDLE, RUN, RUN_BACK, CROUCH_IDLE, CROUCH_WALK, CROUCH_BACK, SWIM, TREAD]:
 		if _player.has_animation(looping):
 			_player.get_animation(looping).loop_mode = Animation.LOOP_LINEAR
 	_tree = AnimationTree.new()
@@ -392,7 +402,24 @@ func _build_tree(upper: Array[NodePath]) -> AnimationNodeBlendTree:
 	root.connect_node(&"roll_rate", 0, &"roll_clip")
 	root.connect_node(&"roll", 0, last)
 	root.connect_node(&"roll", 1, &"roll_rate")
-	root.connect_node(&"output", 0, &"roll")
+	if not _can_swim:
+		root.connect_node(&"output", 0, &"roll")
+		return root
+	# Swimming: the whole body, treading water to stroking by speed.
+	var swim_move := AnimationNodeBlendSpace1D.new()
+	var tread := AnimationNodeAnimation.new()
+	tread.animation = TREAD
+	var stroke := AnimationNodeAnimation.new()
+	stroke.animation = SWIM
+	swim_move.add_blend_point(tread, 0.0, -1, &"tread")
+	swim_move.add_blend_point(stroke, 1.0, -1, &"stroke")
+	root.add_node(&"swim_move", swim_move)
+	root.add_node(&"swim_speed", AnimationNodeTimeScale.new())
+	root.connect_node(&"swim_speed", 0, &"swim_move")
+	root.add_node(&"swimming", AnimationNodeBlend2.new())
+	root.connect_node(&"swimming", 0, &"roll")
+	root.connect_node(&"swimming", 1, &"swim_speed")
+	root.connect_node(&"output", 0, &"swimming")
 	return root
 
 
@@ -494,6 +521,17 @@ func pose(state: Dictionary, delta: float) -> void:
 	_crouch = move_toward(_crouch, 1.0 if bool(state.get("crouched", false)) else 0.0, CROUCH_BLEND * delta)
 	for blend_node: String in ["posture", "shoot_posture", "reload_clip"]:
 		_tree.set("parameters/%s/blend_amount" % blend_node, _crouch)
+	if _can_swim:
+		_swim = move_toward(_swim, 1.0 if bool(state.get("swimming", false)) and not first_person else 0.0,
+				SWIM_BLEND * delta)
+		_tree.set("parameters/swimming/blend_amount", _swim)
+		_tree.set("parameters/swim_move/blend_position", clampf(speed / 1.5, 0.0, 1.0))
+		_tree.set("parameters/swim_speed/scale", clampf(speed / SWIM_SPEED, 0.6, 1.5) if speed > 0.5 else 1.0)
+		if _swim > 0.0:
+			_leg_yaw = 0.0
+			# Swimming the way it goes, whichever way it looks.
+			if speed > 0.5 and _swim > 0.5:
+				model.rotation.y = atan2(-flat.x, -flat.y) + PI
 
 	# A roll: Battlefront's dive roll in third person; in first person, the
 	# gun dips (the clip would tumble the camera).

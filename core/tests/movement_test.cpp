@@ -505,6 +505,11 @@ void test_terrain_holes() {
     start.position = {-45, 0.5, 50};
     const MoveState stood = run(start, MoveInput{}, world, 45);
     CHECK(near(stood.position.y, -1) && stood.grounded);
+    // Where the hole has no floor under it (wider than the room, beside a
+    // raised foyer), the ground there still holds: nobody falls into the void.
+    const World bare(flat);
+    CHECK(near(bare.ground_at(-45, 50, 0, 0.5).height, 0));
+    CHECK(near(run(start, MoveInput{}, bare, 45).position.y, 0));
 
     // Saved and read back with the bake.
     const auto prefix = std::filesystem::temp_directory_path() / "swm_movement_test_holes";
@@ -561,6 +566,65 @@ void test_seams() {
     CHECK(step.support_at(-43, 50, 9.4, 0.5).height < 0);
 }
 
+// Water (a planet's lakes: swgtool's <prefix>.water): a lake at 3 m over a
+// bed sloping from 4 m (dry) down to -6 m. Shallow water is waded (the bed
+// holds you up); deeper, you swim with your feet swim_depth under the
+// surface, slower, without sprinting, jumping or crouching. A second table
+// inside it, higher (a pond), wins where they overlap.
+void test_water() {
+    // Galaxies x 0..100 (game x 0..-100): the bed falls 0.1 m per meter.
+    Heightfield lake = make_ground([](double gx, double) { return 4.0 - gx * 0.1; });
+    const std::filesystem::path path = std::filesystem::temp_directory_path() / "swm_movement_test.water";
+    {
+        std::ofstream out(path);
+        out << "# test\n";
+        out << "lake 3 4 0 0 -100 0 -100 100 0 100\n";
+        out << "pond 5 3 -90 10 -95 10 -95 15\n";
+    }
+    lake.set_water(load_water_tables(path));
+    std::filesystem::remove(path);
+    CHECK(lake.water().size() == 2 && lake.water()[0].name == "lake" && lake.water()[1].outline.size() == 3);
+    CHECK(!lake.water_at(-5, 50));                         // ground at 3.5: dry
+    CHECK(lake.water_at(-20, 50) && near(*lake.water_at(-20, 50), 3));  // ground at 2: wading
+    CHECK(near(*lake.water_at(-94, 11), 5));                 // in the pond too: its higher surface
+    const World world(lake);
+    CHECK(!world.swim_floor_at(-20, 50));                    // 1 m deep: waded
+    const std::optional<double> swim = world.swim_floor_at(-60, 50);  // ground -2: 5 m deep
+    CHECK(swim && near(*swim, 3 - World::swim_depth));
+    const World::Ground g = world.ground_at(-60, 50, -2, 0.5);  // on the bed: floats up
+    CHECK(g.water && near(g.height, 3 - World::swim_depth));
+    CHECK(!world.ground_at(-20, 50, 2, 0.5).water && near(world.ground_at(-20, 50, 2, 0.5).height, 2));
+
+    // Walking in from the shore (facing game -x: yaw +90 degrees), sprinting:
+    // in deep water it swims at the swim floor, at swim speed, not sprinting.
+    const MoveParams params;
+    MoveState start;
+    start.position = {-5, lake.height_at(-5, 50), 50};
+    MoveInput in;
+    in.forward = 127;
+    in.yaw = float(std::numbers::pi / 2);
+    in.buttons = MoveInput::sprint;
+    const MoveState swum = run(start, in, world, 300);  // 10 s
+    CHECK(swum.position.x < -45);
+    CHECK(near(swum.position.y, 3 - World::swim_depth, 1e-6) && swum.grounded && !swum.sprinting);
+    CHECK(near(-swum.velocity.x, params.run_speed * params.swim_factor, 1e-6));
+    // No jumping or crouching while swimming.
+    MoveInput jump;
+    jump.buttons = MoveInput::jump | MoveInput::crouch;
+    const MoveState after = run(swum, jump, world, 5);
+    CHECK(after.grounded && near(after.position.y, swum.position.y, 1e-6) && !after.crouched);
+    // Back to the shore: out of the water, walking at run speed.
+    MoveInput back;
+    back.forward = 127;
+    back.yaw = float(-std::numbers::pi / 2);
+    MoveState ashore = swum;
+    for (int i = 0; i < 600 && ashore.position.x < -15; ++i) {
+        ashore = run(ashore, back, world, 1);
+    }
+    CHECK(ashore.position.x >= -15 && !world.swim_floor_at(ashore.position.x, ashore.position.z));
+    CHECK(near(ashore.velocity.x, params.run_speed, 1e-6) && near(ashore.position.y, lake.height_at(ashore.position.x, 50), 1e-6));
+}
+
 void test_determinism() {
     const Heightfield hills = make_ground([](double gx, double gz) { return 3 * std::sin(gx * 0.2) * std::cos(gz * 0.15); });
     MoveState a, b;
@@ -591,6 +655,7 @@ int main() {
     test_terrain_cuts();
     test_terrain_holes();
     test_seams();
+    test_water();
     test_determinism();
     return swm::test::finish("movement_test");
 }

@@ -460,6 +460,16 @@ void World::for_solids_along(Vec3 a, Vec3 b, Visit&& visit) const {
     }
 }
 
+std::optional<double> World::swim_floor_at(double x, double z) const {
+    if (const std::optional<double> surface = terrain_.water_at(x, z)) {
+        const double floor = *surface - swim_depth;
+        if (terrain_.height_at(x, z) < floor && !terrain_.cut_at(x, z)) {
+            return floor;
+        }
+    }
+    return std::nullopt;
+}
+
 World::Ground World::ground_at(double x, double z, double y, double step_up) const {
     const double reach = y + step_up;
     Ground best;
@@ -468,6 +478,13 @@ World::Ground World::ground_at(double x, double z, double y, double step_up) con
     const bool cut = terrain_.cut_at(x, z);
     if (terrain <= reach && !cut) {
         best = {terrain, terrain_.normal_at(x, z), false};
+        found = true;
+    }
+    // Deep water: its swim floor over the terrain. Under it, anyone floats
+    // up to it (from the bed, or falling in from a height).
+    const std::optional<double> swim = swim_floor_at(x, z);
+    if (swim) {
+        best = {*swim, {0, 1, 0}, false, true};
         found = true;
     }
     const Vec3 p{x, 0, z};
@@ -522,9 +539,14 @@ World::Ground World::ground_at(double x, double z, double y, double step_up) con
         // A little under the terrain: back up onto it. Deep under it (in a
         // cave or a bunker, over a seam in its floor) or through a hole in
         // it with nothing below: falling.
+        // A building's hole with no floor under it (beside a Naboo guild
+        // hall, under its raised foyer, where the hole over its rooms is
+        // wider than their floors): the ground there still holds, as if
+        // uncut. A Battlefront cut (a bunker's door) has a room under it.
         constexpr double resurface = 2;
-        best = cut || terrain - y > resurface ? Ground{-1e9, {0, 1, 0}, false}
-                                              : Ground{terrain, terrain_.normal_at(x, z), false};
+        const bool open_below = cut && !terrain_.hole_at(x, z);
+        best = open_below || terrain - y > resurface ? Ground{-1e9, {0, 1, 0}, false}
+                                                     : Ground{terrain, terrain_.normal_at(x, z), false};
     }
     return best;
 }

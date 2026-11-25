@@ -67,6 +67,8 @@ A planet (Stage 13): one hub server owns a whole planet, with every town on it. 
 
 Planets (Stage 13): `core::Galaxy` runs every planet `game/hubs/galaxy.ini` names, each a `GameServer` with its own world and `Hub`, in the home server's process (as battles are), sharing the character store. Each server's `ServerConfig::planet` is kept as its characters' location, so a character who logs in on another planet's server is sent on to theirs (`GameServer::on_wrong_planet`). A starport (`[service] Type = starport`) is offered every other planet's starports as `travel_offworld` services (`Detail` = planet and fare). Buying passage (`ServiceRequest::travel`) has the destination server expect the player at its starport (`expect_arrival`), then sends a `Transfer` naming the planet (its bake's name). `ClientSession` loads that planet's world (cached) as it loads a battlefield's, and the client draws it. A hub's battles send players back to its own planet.
 
+Water (Stage 13): a planet's water tables (`<bake>.water`, swgtool's, from its terrain's boundaries) load with its bake into `core::Heightfield` (`water_at`: the highest table over the point, where the terrain is lower). `World::ground_at` treats deep water as a floor `World::swim_depth` under its surface, so the shared movement code swims (slower, no sprint or jump) on server and client alike, with nothing in the protocol: whether a character swims follows from where it is. The client draws the tables (`swg_water.gd`) and poses swimmers from the same query (`SwmClient.get_swim_floor`).
+
 ## Persistence
 
 - **64-bit persistent entity IDs** for everything that can be saved (characters, items, structures, resource spawns).

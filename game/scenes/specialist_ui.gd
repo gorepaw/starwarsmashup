@@ -42,6 +42,7 @@ var _field: FieldEffectsScript
 var _settings: RefCounted
 var _client: Object
 var _book := {}
+var _look_heights := {}   # a companion's look (object template) -> its height (m)
 var _spec := {}
 var _revision := -1
 var _synced_at := 0.0     # when the last sync arrived (cooldowns count down from it)
@@ -62,6 +63,7 @@ func setup(layer: CanvasLayer, world_root: Node3D, art: RefCounted, settings: Re
 	_datapad = DatapadScreen.new(art)
 	_datapad.visible = false
 	_datapad.request.connect(_on_request)
+	_datapad.bar_edit.connect(_on_bar_edit)
 	_datapad.closed.connect(close_screens)
 	layer.add_child(_datapad)
 	_bazaar = BazaarScreen.new(art)
@@ -69,6 +71,85 @@ func setup(layer: CanvasLayer, world_root: Node3D, art: RefCounted, settings: Re
 	_bazaar.request.connect(_on_request)
 	_bazaar.closed.connect(close_screens)
 	layer.add_child(_bazaar)
+
+
+# Which ability is on each of the bar's six keys. `layout` is the player's
+# choice per key: an ability's id, "" (the key fills itself) or "-" (left
+# empty). A key whose ability isn't in the kit (another loadout's) fills
+# itself too. The keys that fill themselves take the kit's abilities that are
+# neither placed nor in `off` (taken off the bar), in the kit's order. Returns
+# six ids, "" for an empty key.
+static func resolve_bar(layout: Array, kit_ids: Array, off: Array) -> Array:
+	var bar := []
+	var placed := {}
+	for i in ABILITY_KEYS:
+		var id := str(layout[i]) if i < layout.size() else ""
+		if id != "" and id != "-" and kit_ids.has(id) and not placed.has(id):
+			placed[id] = true
+			bar.append(id)
+		else:
+			bar.append("-" if id == "-" else "")
+	var next := 0
+	for i in ABILITY_KEYS:
+		if bar[i] != "":
+			if bar[i] == "-":
+				bar[i] = ""
+			continue
+		while next < kit_ids.size() and (placed.has(kit_ids[next]) or off.has(kit_ids[next])):
+			next += 1
+		if next < kit_ids.size():
+			bar[i] = kit_ids[next]
+			placed[kit_ids[next]] = true
+	return bar
+
+
+# The layout after the player puts `ability` on key `slot` (0..5), or takes it
+# off the bar (slot -1), or (ability "") sets the whole bar back to filling
+# itself. Returns {"layout": [...], "off": [...]}.
+static func edit_bar(layout: Array, off: Array, kit_ids: Array, ability: String, slot: int) -> Dictionary:
+	if ability == "":
+		return {"layout": [], "off": []}
+	var now := resolve_bar(layout, kit_ids, off)
+	# Start from what the bar shows, so what the player didn't touch stays put
+	# (a key that filled itself becomes theirs once they rearrange the bar).
+	var out := []
+	for i in ABILITY_KEYS:
+		out.append(now[i] if now[i] != "" else ("-" if layout.size() > i and str(layout[i]) == "-" else ""))
+	var kept_off := off.duplicate()
+	for i in ABILITY_KEYS:
+		if out[i] == ability:
+			out[i] = "-"
+	if slot >= 0 and slot < ABILITY_KEYS:
+		out[slot] = ability
+		kept_off.erase(ability)
+	elif not kept_off.has(ability):
+		kept_off.append(ability)
+	return {"layout": out, "off": kept_off}
+
+
+func _kit_ids() -> Array:
+	var ids := []
+	for e: Dictionary in _spec.get("abilities", []):
+		ids.append(str(e["id"]))
+	return ids
+
+
+# The six keys' abilities now (resolve_bar with the player's layout).
+func bar_ids() -> Array:
+	var layout: Array = _settings.bar_layout if _settings != null and "bar_layout" in _settings else []
+	var off: Array = _settings.bar_off if _settings != null and "bar_off" in _settings else []
+	return resolve_bar(layout, _kit_ids(), off)
+
+
+func _on_bar_edit(ability: String, slot: int) -> void:
+	if _settings == null or not "bar_layout" in _settings:
+		return
+	var edited := edit_bar(_settings.bar_layout, _settings.bar_off, _kit_ids(), ability, slot)
+	_settings.bar_layout = edited["layout"]
+	_settings.bar_off = edited["off"]
+	_settings.save_file()
+	if _datapad != null:
+		_datapad.bar_ids = bar_ids()
 
 
 func has_ui() -> bool:
@@ -122,8 +203,16 @@ func _positions(client: Object) -> Dictionary:
 	var own := _own(client)
 	if not own.is_empty():
 		out[client.get_entity_id()] = own["position"]
+	var looks: PackedStringArray = client.get_looks()
+	var heights := {}
 	for r: Dictionary in client.get_remotes():
 		out[int(r["id"])] = r["position"]
+		# Companions' tags sit over their heads: a bantha's 2.8 m, an R2's 1 m.
+		var look := int(r.get("look", 0))
+		if look >= 1 and look <= looks.size() and _look_heights.has(looks[look - 1]):
+			heights[int(r["id"])] = _look_heights[looks[look - 1]]
+	if _field != null:
+		_field.tag_heights = heights
 	return out
 
 
@@ -142,6 +231,8 @@ func update(client: Object, camera: Camera3D, catalog: Array, delta: float) -> v
 		var path := ProjectSettings.globalize_path("res://" + BOOK_PATH)
 		if FileAccess.file_exists("res://" + BOOK_PATH):
 			_book = client.get_specialist_book(path)
+			for c: Dictionary in (_book.get("companions", {}) as Dictionary).values():
+				_look_heights[str(c.get("look", ""))] = float(c.get("height", 1.0))
 	_spec = client.get_specialist()
 	if int(_spec.get("revision", -1)) != _revision:
 		_revision = int(_spec.get("revision", -1))
@@ -152,13 +243,22 @@ func update(client: Object, camera: Camera3D, catalog: Array, delta: float) -> v
 		_field.update(client.get_field() if spawned else {}, _positions(client), client.get_entity_id(), delta)
 	if _bar == null:
 		return
-	# The bar: the first six abilities, their keys and cooldowns.
+	# The bar: the player's six keys (empty ones drawn as empty slots, up to
+	# the last one in use), with their keys and cooldowns.
 	var slots: Array = []
-	var kit: Array = _spec.get("abilities", [])
-	for i in mini(ABILITY_KEYS, kit.size()):
-		var entry: Dictionary = kit[i]
+	var chosen := bar_ids()
+	var last := -1
+	for i in ABILITY_KEYS:
+		if chosen[i] != "":
+			last = i
+	for i in last + 1:
+		var key := _key_name("ability_%d" % (i + 1))
+		var entry := _kit_entry(str(chosen[i]))
+		if entry.is_empty():
+			slots.append({"key": key, "name": "", "cooldown": 0.0, "total": 1.0})
+			continue
 		var a: Dictionary = abilities.get(str(entry["id"]), {})
-		slots.append({"key": _key_name("ability_%d" % (i + 1)), "name": str(a.get("name", entry["id"])),
+		slots.append({"key": key, "name": str(a.get("name", entry["id"])),
 				"cooldown": _cooldown_left(entry), "total": float(a.get("cooldown", 1.0))})
 	_bar.slots = slots
 	var effects: Array = []
@@ -250,12 +350,12 @@ func _near(own: Vector3, list: Array, extra := 1.5) -> Dictionary:
 
 func _fill_datapad(client: Object) -> void:
 	var own := _own(client)
-	var inventory: Dictionary = client.get_inventory()
 	_datapad.spec = _spec
 	_datapad.book = _book
-	_datapad.items = inventory.get("items", [])
+	_datapad.items = client.get_inventory()
 	_datapad.catalog = _catalog
 	_datapad.levels = _levels(client)
+	_datapad.bar_ids = bar_ids()
 	_datapad.key_names = {}
 	for i in ABILITY_KEYS:
 		_datapad.key_names["ability_%d" % (i + 1)] = _key_name("ability_%d" % (i + 1))
@@ -278,9 +378,8 @@ func _fill_datapad(client: Object) -> void:
 
 
 func _fill_bazaar(client: Object) -> void:
-	var inventory: Dictionary = client.get_inventory()
 	_bazaar.spec = _spec
-	_bazaar.items = inventory.get("items", [])
+	_bazaar.items = client.get_inventory()
 	_bazaar.catalog = _catalog
 	_bazaar.equipped = _equipped(client)
 	_bazaar.credits = int(client.get_player_status().get("credits", 0))
@@ -327,12 +426,20 @@ func _aim(client: Object, camera: Camera3D, target: String, reach: float) -> Dic
 	return {"entity": best_id, "ground": ground}
 
 
+func _kit_entry(id: String) -> Dictionary:
+	if id == "":
+		return {}
+	for e: Dictionary in _spec.get("abilities", []):
+		if str(e["id"]) == id:
+			return e
+	return {}
+
+
 func _use(client: Object, camera: Camera3D, index: int) -> void:
-	var kit: Array = _spec.get("abilities", [])
-	if index >= kit.size():
-		_say("No ability on that key: slot a specialist profession (K)")
+	var entry := _kit_entry(str(bar_ids()[index]))
+	if entry.is_empty():
+		_say("Nothing on that key: choose abilities in the datapad (%s)" % _key_name("datapad"))
 		return
-	var entry: Dictionary = kit[index]
 	var a: Dictionary = (_book.get("abilities", {}) as Dictionary).get(str(entry["id"]), {})
 	if _cooldown_left(entry) > 0.05:
 		_say("%s: %ds" % [str(a.get("name", entry["id"])), ceili(_cooldown_left(entry))])

@@ -205,6 +205,7 @@ HubConfig load_hub(const std::filesystem::path& path) {
             person.look = look_of(*template_name);
             person.name = s.get("Name").value_or("Citizen");
             person.position = point(s.get("Position").value_or(""), "an [npc]'s Position");
+            person.position.y = s.number("Height", 0.0);  // a floor's, indoors (absolute)
             // Galaxies' yaw faces +Z at 0 and turns toward +X; the game's faces -Z.
             person.yaw = std::numbers::pi - s.number("Yaw", 0) * std::numbers::pi / 180;
             person.pose = same_name(s.get("Pose").value_or("stand"), "sit") ? 1 : 0;
@@ -386,6 +387,23 @@ net::Endpoint UdpHubNetwork::local(uint16_t port) const {
     return {0x7F000001, port};  // 127.0.0.1
 }
 
+namespace {
+
+// Where to look for the floor under something a hub places: under its
+// Height where the ini gives one (indoors, upstairs); else a little over the
+// terrain (at least 7.8 m on Mos Eisley's low ground, for its raised floors),
+// so on Deeja Peak's heights or by Kaadara's shore (-192 m) it's the ground
+// floor, not a roof.
+double floor_reach(const World& world, const Vec3& p) {
+    if (p.y != 0.0) {
+        return p.y;
+    }
+    const double terrain = world.terrain().height_at(p.x, p.z);
+    return terrain >= 0 && terrain < 6.0 ? 7.8 : terrain + 1.8;
+}
+
+} // namespace
+
 Hub::Hub(GameServer& server, uint16_t port, const World& world, HubConfig config, HubNetwork& network)
     : server_(server), port_(port), world_(world), config_(std::move(config)), network_(network),
       bot_roster_(build_stock_bot_roster(server.catalog())) {
@@ -404,7 +422,7 @@ Hub::Hub(GameServer& server, uint16_t port, const World& world, HubConfig config
         server_.set_cloning_facilities(std::move(facilities));
     }
     const auto snap_floor = [&](Vec3& p) {
-        const double reach = p.y > 0.1 ? p.y : 7.8;
+        const double reach = floor_reach(world_, p);
         p = world_.clamp(p);
         const World::Ground g = world_.ground_at(p.x, p.z, reach, 0.5);
         p.y = g.on_floor ? g.height : world_.terrain().height_at(p.x, p.z);
@@ -552,7 +570,7 @@ void Hub::add_people() {
     std::vector<net::QuestNpc> quest_npcs;
     for (const HubPerson& person : config_.people) {
         Vec3 at = person.position;
-        const double reach = at.y > 0.1 ? at.y : 7.8;
+        const double reach = floor_reach(world_, at);
         const World::Ground g = world_.ground_at(at.x, at.z, reach, 0.5);
         at.y = g.on_floor ? g.height : world_.terrain().height_at(at.x, at.z);
         const uint32_t entity =

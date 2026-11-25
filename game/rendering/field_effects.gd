@@ -28,6 +28,7 @@ const HAZARD_COLORS := {
 	"electro": Color(0.4, 0.6, 1.0, 0.3),
 }
 
+var tag_heights := {}   # entity -> how tall it stands (m), for tags over companions
 var _root: Node3D
 var _marks := {}        # entity -> Label3D
 var _deployables := {}  # id -> Node3D
@@ -185,7 +186,8 @@ func update(field: Dictionary, positions: Dictionary, own: int, delta: float) ->
 			want["cloak:%d" % e] = ["(cloaked)", Color(0.6, 0.8, 1.0, 0.6), e, 2.0]
 	var pets: Dictionary = field.get("companions", {})
 	for e: int in pets:
-		want["pet:%d" % e] = ["yours" if int(pets[e]) == own else "companion", Color(0.45, 1.0, 0.55), e, 1.9]
+		want["pet:%d" % e] = ["yours" if int(pets[e]) == own else "companion", Color(0.45, 1.0, 0.55), e,
+				float(tag_heights.get(e, 1.5)) + 0.4]
 	for key: String in want:
 		var w: Array = want[key]
 		var e := int(w[2])

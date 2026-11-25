@@ -166,6 +166,15 @@ void save_terrain_hole_patches(const std::vector<TerrainHoles>& patches, const s
     }
 }
 
+bool Heightfield::hole_at(double x, double z) const {
+    for (const TerrainHoles& patch : holes_) {
+        if (patch.at(x, z)) {
+            return true;
+        }
+    }
+    return false;
+}
+
 bool Heightfield::cut_at(double x, double z) const {
     for (const TerrainHoles& patch : holes_) {
         if (patch.at(x, z)) {
@@ -254,7 +263,78 @@ Heightfield load_bake(const std::filesystem::path& prefix) {
     if (const std::filesystem::path holes = prefix.string() + ".holes"; std::filesystem::exists(holes)) {
         field.set_hole_patches(load_terrain_hole_patches(holes));
     }
+    if (const std::filesystem::path water = prefix.string() + ".water"; std::filesystem::exists(water)) {
+        field.set_water(load_water_tables(water));
+    }
     return field;
+}
+
+bool WaterTable::contains(double x, double z) const {
+    if (x < min_x || x > max_x || z < min_z || z > max_z) {
+        return false;
+    }
+    // Even-odd crossings of a ray toward +x.
+    bool inside = false;
+    for (size_t i = 0, j = outline.size() - 1; i < outline.size(); j = i++) {
+        const auto& a = outline[i];
+        const auto& b = outline[j];
+        if ((a[1] > z) != (b[1] > z) && x < a[0] + (z - a[1]) * (b[0] - a[0]) / (b[1] - a[1])) {
+            inside = !inside;
+        }
+    }
+    return inside;
+}
+
+std::vector<WaterTable> load_water_tables(const std::filesystem::path& path) {
+    std::ifstream in(path);
+    if (!in) {
+        throw std::runtime_error("can't read " + path.string());
+    }
+    std::vector<WaterTable> tables;
+    for (std::string line; std::getline(in, line);) {
+        if (line.empty() || line[0] == '#') {
+            continue;
+        }
+        std::istringstream fields(line);
+        WaterTable t;
+        size_t count = 0;
+        if (!(fields >> t.name >> t.height >> count) || count < 3) {
+            throw std::runtime_error(path.string() + ": bad line \"" + line.substr(0, 60) + "\"");
+        }
+        for (size_t i = 0; i < count; ++i) {
+            std::array<double, 2> p{};
+            if (!(fields >> p[0] >> p[1])) {
+                throw std::runtime_error(path.string() + ": " + t.name + " is missing points");
+            }
+            t.outline.push_back(p);
+        }
+        t.min_x = t.max_x = t.outline[0][0];
+        t.min_z = t.max_z = t.outline[0][1];
+        for (const auto& p : t.outline) {
+            t.min_x = std::min(t.min_x, p[0]);
+            t.max_x = std::max(t.max_x, p[0]);
+            t.min_z = std::min(t.min_z, p[1]);
+            t.max_z = std::max(t.max_z, p[1]);
+        }
+        tables.push_back(std::move(t));
+    }
+    return tables;
+}
+
+std::optional<double> Heightfield::water_at(double x, double z) const {
+    if (water_.empty()) {
+        return std::nullopt;
+    }
+    std::optional<double> surface;
+    for (const WaterTable& t : water_) {
+        if ((!surface || t.height > *surface) && t.contains(x, z)) {
+            surface = t.height;
+        }
+    }
+    if (surface && height_at(x, z) < *surface) {
+        return surface;
+    }
+    return std::nullopt;
 }
 
 } // namespace swm::core

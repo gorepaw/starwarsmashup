@@ -98,7 +98,10 @@ core::Vec3 to_core(Vec3 v) {
 }
 
 // The hub's war terminals, as snapshot objects on the terrain (parent id -1
-// marks them).
+// marks them), and the terminals its [service]s and [vendor]s name a
+// Template for (parent id -2): what Galaxies' servers spawned, which its
+// world snapshot doesn't have (Naboo's banks' terminals). At their Height
+// where the hub gives one, else on the terrain.
 std::vector<SnapshotNode> recruiters(const CityExport& city) {
     std::vector<SnapshotNode> out;
     if (city.hub.empty()) {
@@ -108,7 +111,8 @@ std::vector<SnapshotNode> recruiters(const CityExport& city) {
     const core::Ini hub = core::Ini::load(city.hub);
     for (const core::Ini::Section& section : hub.sections()) {
         const auto template_name = section.get("Template");
-        if (section.name != "recruiter" || !template_name) {
+        const bool recruiter = section.name == "recruiter";
+        if (!(recruiter || section.name == "service" || section.name == "vendor") || !template_name) {
             continue;
         }
         std::istringstream fields(section.get("Position").value_or(""));
@@ -118,9 +122,9 @@ std::vector<SnapshotNode> recruiters(const CityExport& city) {
         }
         const double yaw = section.number("Yaw", 0) * std::numbers::pi / 180;
         SnapshotNode node;
-        node.parent_id = -1;
+        node.parent_id = recruiter ? -1 : -2;
         node.template_name = *template_name;
-        node.position = {float(x), float(ground.height_at(-x, z)), float(z)};
+        node.position = {float(x), float(section.number("Height", ground.height_at(-x, z))), float(z)};
         node.rotation = {float(std::cos(yaw / 2)), 0, float(std::sin(yaw / 2)), 0};
         out.push_back(node);
     }
@@ -223,13 +227,25 @@ void export_people(TreLibrary& library, const CityExport& city, const std::files
         }
         looks.emplace_back(tpl, is_bandit);
     };
-    for (const core::Ini::Section& section : hub.sections()) {
-        if (section.name != "npc" && section.name != "crowd") {
-            continue;
+    // Its own people, then its towns' (Town = lines: their files, as the
+    // server reads them with the hub's).
+    std::vector<core::Ini> files{hub};
+    if (const core::Ini::Section* main_sec = hub.section("hub")) {
+        for (const auto& [key, value] : main_sec->values) {
+            if (key == "Town") {
+                files.push_back(core::Ini::load(city.hub.parent_path() / value));
+            }
         }
-        for (const auto& [key, value] : section.values) {
-            if (key == "Template") {
-                add_look(value, false);
+    }
+    for (const core::Ini& file : files) {
+        for (const core::Ini::Section& section : file.sections()) {
+            if (section.name != "npc" && section.name != "crowd") {
+                continue;
+            }
+            for (const auto& [key, value] : section.values) {
+                if (key == "Template") {
+                    add_look(value, false);
+                }
             }
         }
     }
@@ -362,7 +378,7 @@ void export_city(TreLibrary& library, const CityExport& city, std::ostream& log)
     for (const CityExport& one : per_hub) {
         const std::vector<SnapshotNode> terminals = recruiters(one);
         nodes.insert(nodes.end(), terminals.begin(), terminals.end());
-        log << std::format("{} war terminal(s) from {}\n", terminals.size(), one.hub.string());
+        log << std::format("{} placed terminal(s) from {}\n", terminals.size(), one.hub.string());
     }
     std::vector<CityArea> areas = city.areas;
     if (areas.empty()) {
@@ -584,6 +600,9 @@ void export_city(TreLibrary& library, const CityExport& city, std::ostream& log)
         if (inside >= 0) {
             marks += std::format("\"inside\": {}, \"cell\": {}, ", inside, cell);
         }
+        if (node.parent_id == -2) {
+            marks += "\"hub\": true, ";  // placed by a hub's [service] or [vendor], not the snapshot
+        }
         objects << (placed_count == 0 ? "\n" : ",\n")
                 << std::format("    {{\"template\": \"{}\", \"model\": \"{}\", {}\"position\": [{}, {}, {}], \"basis\": [{}, "
                                "{}, {}, {}, {}, {}, {}, {}, {}]}}",
@@ -607,7 +626,7 @@ void export_city(TreLibrary& library, const CityExport& city, std::ostream& log)
 
     for (const SnapshotNode& node : nodes) {
         const bool recruiter = node.parent_id == -1;
-        if (node.parent_id != 0 && !recruiter) {
+        if (node.parent_id != 0 && node.parent_id != -1 && node.parent_id != -2) {
             continue;
         }
         const int in_area = area_of(node);

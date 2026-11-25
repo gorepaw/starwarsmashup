@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <filesystem>
 #include <format>
+#include <limits>
 #include <string>
 
 #include <godot_cpp/core/class_db.hpp>
@@ -951,6 +952,8 @@ godot::Dictionary SwmClient::get_specialist_book(const godot::String& path) {
         d["bays"] = int64_t(c.bays);
         d["mountable"] = c.mountable;
         d["tactical"] = c.tactical();
+        d["radius"] = c.radius;
+        d["height"] = c.height;
         godot::Array materials;
         for (const auto& [cat, units] : c.materials) materials.push_back(godot::String::utf8(std::format("{} {}", cat, units).c_str()));
         d["materials"] = materials;
@@ -1965,6 +1968,16 @@ double SwmClient::get_ground_height(double x, double z, double below) const {
     return ground > -1e8 ? ground : world()->terrain().height_at(x, z);
 }
 
+double SwmClient::get_swim_floor(double x, double z) const {
+    // Deep water's swim floor (World::swim_floor_at): where a swimmer's feet
+    // are; NAN where there's none.
+    if (!world()) {
+        return std::numeric_limits<double>::quiet_NaN();
+    }
+    const auto floor = world()->swim_floor_at(x, z);
+    return floor ? *floor : std::numeric_limits<double>::quiet_NaN();
+}
+
 double SwmClient::raycast(const godot::Vector3& from, const godot::Vector3& to) const {
     if (!world()) {
         return -1;
@@ -2072,6 +2085,7 @@ void SwmClient::_bind_methods() {
     ClassDB::bind_method(D_METHOD("get_stats"), &SwmClient::get_stats);
     ClassDB::bind_method(D_METHOD("get_ground_height", "x", "z", "below"), &SwmClient::get_ground_height,
                          DEFVAL(1e9));
+    ClassDB::bind_method(D_METHOD("get_swim_floor", "x", "z"), &SwmClient::get_swim_floor);
     ClassDB::bind_method(D_METHOD("raycast", "from", "to"), &SwmClient::raycast);
 }
 

@@ -18,6 +18,10 @@ extends "res://ui/bf2_screen.gd"
 
 signal request(action: int, id: String, target: int, position: Vector3, amount: int, item_id: int, text: String)
 signal closed
+# The player's choice for the ability bar: put `ability` on key `slot` (0..5),
+# take it off the bar (slot -1), or (ability "") set the bar back to filling
+# itself. SpecialistUI keeps the layout.
+signal bar_edit(ability: String, slot: int)
 
 # net::SpecialistRequest::Action
 const SUMMON := 1
@@ -45,7 +49,7 @@ const ROWS := 8
 
 var spec := {}             # SwmClient.get_specialist()
 var book := {}             # SwmClient.get_specialist_book()
-var items: Array = []      # what you carry (SwmClient.get_inventory()["items"])
+var items: Array = []      # what you carry (SwmClient.get_inventory())
 var catalog: Array = []    # item defs, for names
 var levels := {}           # profession id -> level
 var terminal := {}         # a mission terminal in reach: {index, kind, name}; empty: none
@@ -54,6 +58,7 @@ var designee := {}         # the nearest player in reach: {entity, name, appeara
 var own := {}              # {entity, name, appearance}
 var feedback := ""
 var key_names := {}        # action -> key label
+var bar_ids: Array = []    # the ability on each of the bar's six keys now ("" empty)
 
 var _tab := 0
 var _scroll := 0
@@ -176,6 +181,9 @@ func _paint_kit(body: Rect2) -> void:
 	var flag_on := bool(spec.get("bounty_flag", false))
 	button(Rect2(body.end.x - 260 * u, y - 2 * u, 260 * u, 26 * u),
 			"Open to bounty hunters: %s" % ("ON" if flag_on else "OFF"), "bounty_flag", flag_on)
+	button(Rect2(body.end.x - 400 * u, y - 2 * u, 130 * u, 26 * u), "Reset bar", "bar_reset")
+	text("gamefont_tiny", "Choose a key for each ability to set your bar.",
+			Vector2(body.end.x - 410 * u, y + 3 * u), "Right", DIM, 0.9)
 	y += 30 * u
 	if kit.is_empty():
 		text("gamefont_small", "No abilities: slot a specialist profession (K) or train an unslotted one.",
@@ -187,9 +195,17 @@ func _paint_kit(body: Rect2) -> void:
 		var a: Dictionary = abilities.get(str(entry.get("id", "")), {})
 		var rect := Rect2(body.position.x, y, body.size.x, 44 * u)
 		_row(rect, "")
-		var key := str(key_names.get("ability_%d" % (_scroll + i + 1), ""))
+		var ability := str(entry.get("id", ""))
+		var on_key := bar_ids.find(ability)
+		var key := str(key_names.get("ability_%d" % (on_key + 1), "")) if on_key >= 0 else ""
 		text("gamefont_small", "%s%s" % ["[%s] " % key if key != "" else "", str(a.get("name", entry["id"]))],
 				Vector2(rect.position.x + 8 * u, y + 3 * u), "Left", ACCENT)
+		# Which of the bar's keys it's on: a button each (the one it's on takes it off).
+		var bx := rect.end.x - 8 * u - 6 * 30 * u
+		text("gamefont_tiny", "Bar", Vector2(bx - 8 * u, y + 24 * u), "Right", DIM, 0.9)
+		for n in 6:
+			button(Rect2(bx + n * 30 * u, y + 20 * u, 27 * u, 21 * u),
+					str(key_names.get("ability_%d" % (n + 1), str(n + 3))), "bar:%s:%d" % [ability, n], on_key == n)
 		text("gamefont_tiny", "%s %d  ·  %ds cooldown%s" % [str(a.get("profession", "")).capitalize(), int(a.get("level", 1)),
 				int(a.get("cooldown", 0)), "" if str(a.get("where", "both")) == "both" else "  ·  " + str(a.get("where")) + " only"],
 				Vector2(rect.end.x - 8 * u, y + 5 * u), "Right", DIM, 0.9)
@@ -473,6 +489,12 @@ func _on_click(id: String, _at: Vector2) -> void:
 		_renaming = -1
 	elif id == "bounty_flag":
 		_send(BOUNTY_FLAG, 0 if bool(spec.get("bounty_flag", false)) else 1)
+	elif id == "bar_reset":
+		bar_edit.emit("", -1)
+	elif id.begins_with("bar:"):
+		var parts := id.split(":")
+		var slot := int(parts[2])
+		bar_edit.emit(parts[1], -1 if bar_ids.size() > slot and bar_ids[slot] == parts[1] else slot)
 	elif id == "design_yes":
 		_send(DESIGN_ANSWER, 1)
 	elif id == "design_no":

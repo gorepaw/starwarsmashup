@@ -153,9 +153,16 @@ double WorldPopulation::random_unit() {
 }
 
 Vec3 WorldPopulation::random_point_around(Vec3 center, double radius) {
-    const double angle = random_unit() * 2.0 * std::numbers::pi;
-    const double r = std::sqrt(random_unit()) * radius;
-    Vec3 p = world_.clamp(center + Vec3{std::cos(angle) * r, 0.0, std::sin(angle) * r});
+    Vec3 p;
+    // Somewhere dry, if a few tries find it (a lair on a lake's shore).
+    for (int attempt = 0; attempt < 6; ++attempt) {
+        const double angle = random_unit() * 2.0 * std::numbers::pi;
+        const double r = std::sqrt(random_unit()) * radius;
+        p = world_.clamp(center + Vec3{std::cos(angle) * r, 0.0, std::sin(angle) * r});
+        if (!world_.swim_floor_at(p.x, p.z)) {
+            break;
+        }
+    }
     const double h = world_.terrain().height_at(p.x, p.z);
     p.y = world_.ground_at(p.x, p.z, h + 1.0, 0.5).height;
     if (p.y < -1e8) p.y = h;

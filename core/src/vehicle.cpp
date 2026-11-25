@@ -449,7 +449,8 @@ void simulate_vehicle(MoveState& state, const MoveInput& input, const World& wor
         velocity.x = velocity.z = 0;
         ground = world.support_at(position.x, position.z, feet, vehicle.step_up);
     }
-    const double ride = ground.height + vehicle.altitude;
+    // Over deep water, it hovers over the surface (not a swimmer's depth).
+    const double ride = ground.height + (ground.water ? World::swim_depth : 0.0) + vehicle.altitude;
     if (state.grounded && before.position.y - ride <= vehicle.step_up) {
         position.y = ride;  // following the ground, up or down
         velocity.y = 0;

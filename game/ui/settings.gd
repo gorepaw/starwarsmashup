@@ -65,6 +65,11 @@ var master_volume := 0.8
 var sfx_volume := 1.0
 var music_volume := 0.65
 var voice_volume := 1.0
+# The specialist ability bar (SpecialistUI.resolve_bar): what the player put on
+# each of its six keys ("" leaves a key to fill itself, "-" leaves it empty),
+# and the abilities they took off it, which stay off the keys left to fill.
+var bar_layout := []
+var bar_off := []
 
 
 func _init() -> void:
@@ -87,6 +92,10 @@ func load_file() -> void:
 		voice_volume = clampf(float(file.get_value("audio", "voice", voice_volume)), 0.0, 1.0)
 		for action: Array in ACTIONS:
 			bindings[action[0]] = file.get_value("controls", action[0], bindings[action[0]])
+		var layout: Variant = file.get_value("bar", "layout", bar_layout)
+		var off: Variant = file.get_value("bar", "off", bar_off)
+		bar_layout = (layout as Array).duplicate() if layout is Array else []
+		bar_off = (off as Array).duplicate() if off is Array else []
 	apply()
 
 
@@ -104,6 +113,8 @@ func save_file() -> void:
 	file.set_value("audio", "voice", voice_volume)
 	for action: Array in ACTIONS:
 		file.set_value("controls", action[0], bindings[action[0]])
+	file.set_value("bar", "layout", bar_layout)
+	file.set_value("bar", "off", bar_off)
 	file.save(PATH)
 
 

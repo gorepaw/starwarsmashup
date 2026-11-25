@@ -71,6 +71,13 @@ struct TerrainBoundary {
     double width = 0;  // polyline
     Feather feather = Feather::linear;
     double feather_amount = 0;  // circle/rectangle/polyline: fraction of size; polygon: meters
+    // A local water table (polygon and rectangle boundaries): water stands at
+    // `water_height` inside the boundary wherever the ground is lower.
+    // Naboo's lakes, rivers and ocean are these.
+    bool water = false;
+    double water_height = 0;
+    double water_shader_size = 2;  // meters per repeat (ASSUMPTION)
+    std::string water_shader;      // shader/<name>.sht
 
     double amount(double x, double z) const;  // 0 outside, 1 inside, feathered between
 };
@@ -144,15 +151,36 @@ struct TerrainLayer {
     };
     std::vector<Step> steps;
     std::vector<TerrainLayer> children;
+    std::vector<std::string> water_names;  // the water boundaries' names, in order
+};
+
+// Where water stands: a surface height over an area (x, z outline).
+struct WaterTable {
+    std::string name;  // the boundary's (or its layer's) name
+    double height = 0;
+    std::vector<std::array<double, 2>> outline;
+    std::string shader;  // its look: shader/<shader>.sht
+    double shader_size = 2;
 };
 
 struct ProceduralTerrain {
     double map_size = 16384;
+    // The header's global water table: water at this height everywhere the
+    // ground is lower (unused on Naboo, whose water is all local tables).
+    bool global_water = false;
+    double global_water_height = 0;
+    double global_water_shader_size = 2;
+    std::string global_water_shader;
     std::map<int32_t, Fractal> fractals;
     std::vector<ShaderFamily> shader_families;
     std::vector<TerrainLayer> layers;
 
     const ShaderFamily* family(int32_t id) const;
+    // Every water table: the global one (as the whole map) and each enabled
+    // boundary's in enabled layers, in file order. Where tables overlap,
+    // the water is at the highest (Theed's river at 3 m lies inside Naboo's
+    // ocean rectangle at -210 m; Keren's ponds inside its plains' table).
+    std::vector<WaterTable> water_tables() const;
 };
 
 ProceduralTerrain parse_procedural_terrain(std::span<const uint8_t> bytes);

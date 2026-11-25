@@ -96,10 +96,20 @@ public:
         double height = 0;
         Vec3 normal{0, 1, 0};   // a building's floor's: straight up
         bool on_floor = false;  // a building floor rather than terrain
+        bool water = false;     // swimming: deep water's (see swim_floor_at)
     };
+    // How far under the water's surface a swimmer's feet hang (its head and
+    // shoulders out), and so how deep water is before it's swum rather
+    // than waded.
+    static constexpr double swim_depth = 1.3;
+    // Where a swimmer's feet are at (x, z), if the water there is deeper
+    // than swim_depth: its surface less swim_depth. Characters keep to it as
+    // to ground (ground_at), so nobody walks the bed of a lake.
+    std::optional<double> swim_floor_at(double x, double z) const;
     // The surface a character with feet at `y` stands on at (x, z): the
-    // highest floor or terrain at most `step_up` above its feet. The terrain
-    // doesn't count where it's cut away. If nothing is that low: the terrain
+    // highest floor or terrain at most `step_up` above its feet, or the
+    // swim floor of deep water over the terrain (which holds up anyone under
+    // it: they float up). The terrain doesn't count where it's cut away. If nothing is that low: the terrain
     // if it's a little above the feet (which then pushes it up, as on a
     // hillside), else (deep under it, or through a hole) a height of -1e9:
     // falling.

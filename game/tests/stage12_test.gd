@@ -10,6 +10,7 @@ const AbilityBar = preload("res://ui/ability_bar.gd")
 const DatapadScreen = preload("res://ui/datapad_screen.gd")
 const BazaarScreen = preload("res://ui/bazaar_screen.gd")
 const FieldEffects = preload("res://rendering/field_effects.gd")
+const SpecialistUI = preload("res://scenes/specialist_ui.gd")
 
 var _frames := 0
 var _screens: Array = []
@@ -28,6 +29,7 @@ func _initialize() -> void:
 	assert((book.get("modules", []) as Array).size() >= 8 and (book.get("slices", []) as Array).size() >= 7)
 	assert((client.get_specialist() as Dictionary).is_empty())  # not connected
 	print("specialist book: OK")
+	_check_bar_layout()
 
 	var art: RefCounted = Bf2Art.load_from("res://imported_assets/hud")
 	var layer := CanvasLayer.new()
@@ -88,6 +90,38 @@ func _initialize() -> void:
 
 	_world = Node3D.new()
 	root.add_child(_world)
+
+
+# The ability bar's layout rules: keys fill themselves in the kit's order until
+# the player chooses, and their choices hold across edits and loadouts.
+func _check_bar_layout() -> void:
+	var kit := ["bh_a", "bh_b", "bh_c", "bh_d", "bh_e", "ent_perform", "ch_tame", "ch_mend"]
+	var ui: GDScript = SpecialistUI
+	# By default: the first six.
+	assert(ui.resolve_bar([], kit, []) == ["bh_a", "bh_b", "bh_c", "bh_d", "bh_e", "ent_perform"])
+	# A short kit leaves the rest empty.
+	assert(ui.resolve_bar([], ["bh_a", "bh_b"], []) == ["bh_a", "bh_b", "", "", "", ""])
+	# Tame onto the first key: the bar keeps everything else where it was.
+	var edited: Dictionary = ui.edit_bar([], [], kit, "ch_tame", 0)
+	assert(ui.resolve_bar(edited["layout"], kit, edited["off"]) == ["ch_tame", "bh_b", "bh_c", "bh_d", "bh_e", "ent_perform"])
+	# bh_a, bumped off the bar by it, takes no empty key while the bar is full of others.
+	var bumped: Array = ui.resolve_bar(edited["layout"], kit, edited["off"])
+	assert(not bumped.has("bh_a"))
+	# Taking an ability off leaves its key to the next one, and it stays off.
+	var off: Dictionary = ui.edit_bar([], [], kit, "bh_b", -1)
+	var after: Array = ui.resolve_bar(off["layout"], kit, off["off"])
+	assert(not after.has("bh_b") and after.has("ent_perform") and after.size() == 6, str(after))
+	# Moving one to another key swaps nothing else: it leaves its old key empty.
+	var moved: Dictionary = ui.edit_bar([], [], kit, "bh_a", 5)
+	var moved_bar: Array = ui.resolve_bar(moved["layout"], kit, moved["off"])
+	assert(moved_bar[5] == "bh_a" and moved_bar.count("bh_a") == 1, str(moved_bar))
+	# A layout from another kit: keys whose ability isn't here fill themselves.
+	var other: Array = ui.resolve_bar(["zz_gone", "ch_tame"], ["bh_a", "ch_tame"], [])
+	assert(other == ["bh_a", "ch_tame", "", "", "", ""], str(other))
+	# Resetting clears the choices.
+	var reset: Dictionary = ui.edit_bar(edited["layout"], edited["off"], kit, "", -1)
+	assert(reset["layout"].is_empty() and reset["off"].is_empty())
+	print("ability bar layout: OK")
 
 
 func _process(_delta: float) -> bool:

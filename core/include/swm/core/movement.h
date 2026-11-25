@@ -117,6 +117,10 @@ struct MoveParams {
     // Crouched, speeds times these (ControlSpeed crouch: forward, sideways).
     double crouch_factor = 0.70;
     double crouch_strafe = 0.60;
+    // Swimming (deep water: World::swim_floor_at), speeds times this, and no
+    // sprinting, rolling, crouching or jumping. ASSUMPTION: about Galaxies'
+    // swimming pace against its run.
+    double swim_factor = 0.5;
     // A roll: it starts at run speed times RollSpeedFactor and slows to a
     // third of that over `roll_time`, the way it was going; steering is all
     // but gone (ControlSpeed roll 0.02), and it costs EnergyCostRoll.

@@ -61,6 +61,7 @@ constexpr const char* usage = R"(usage:
   swgtool bake-terrain <dir> <out_prefix> --trn <path.trn> --center <x> <z> --samples <n> --spacing <m>
                        [--snapshot <path.ws>]
   swgtool terrain-trace <dir> --trn <path.trn> --at <x> <z>
+  swgtool export-water <dir> <out_prefix> --trn <path.trn>
   swgtool export-building <dir> <out_dir> --pob <path.pob> --name <name>
   swgtool pob-check <dir>
   swgtool snapshot <dir> <path.ws> [--match <text>] [--near <x> <z> <radius>] [--inside <id>]
@@ -603,6 +604,80 @@ ImageRgba hillshade(const TerrainGrid& grid, const ProceduralTerrain* terrain = 
     return image;
 }
 
+// Writes a terrain's water tables to <prefix>.water (none: no file), as
+// core::load_bake reads them: a line per table, its name (spaces as '_'),
+// surface height, point count, then the outline's x z pairs in game space
+// (x = -Galaxies x). Returns how many.
+size_t write_water(TreLibrary& library, const ProceduralTerrain& terrain, const std::string& trn,
+                   const std::filesystem::path& prefix) {
+    const std::vector<WaterTable> tables = terrain.water_tables();
+    const std::filesystem::path path = prefix.string() + ".water";
+    if (tables.empty()) {
+        std::filesystem::remove(path);
+        return 0;
+    }
+    std::ofstream out(path, std::ios::binary);
+    out << "# water tables from " << trn
+        << ": name height count, then x z pairs (game space: x = -Galaxies x), then its texture and meters per repeat\n";
+    // Each look's texture (its shader's main texture), as PNG beside the bake.
+    std::map<std::string, std::string> textures;  // shader -> png
+    const std::filesystem::path texture_dir = prefix.string() + "_textures";
+    for (const WaterTable& t : tables) {
+        if (t.shader.empty() || textures.contains(t.shader)) {
+            continue;
+        }
+        textures[t.shader] = "";
+        try {
+            const std::string texture = shader_main_texture(library.read("shader/" + t.shader + ".sht"));
+            if (!texture.empty()) {
+                std::filesystem::create_directories(texture_dir);
+                const std::string png = std::filesystem::path(texture).stem().string() + ".png";
+                write_png(texture_dir / png, decode_dds(library.read(texture)));
+                textures[t.shader] = png;
+            }
+        } catch (const std::exception& e) {
+            std::cerr << "  warning: water shader " << t.shader << ": " << e.what() << "\n";
+        }
+    }
+    for (const WaterTable& t : tables) {
+        std::string name = t.name.empty() ? "water" : t.name;
+        std::replace(name.begin(), name.end(), ' ', '_');
+        out << name << ' ' << std::format("{:g}", t.height) << ' ' << t.outline.size();
+        for (const auto& p : t.outline) {
+            out << ' ' << std::format("{:g} {:g}", p[0] == 0 ? 0.0 : -p[0], p[1]);
+        }
+        const auto texture = textures.find(t.shader);
+        if (texture != textures.end() && !texture->second.empty()) {
+            out << ' ' << texture->second << ' ' << std::format("{:g}", t.shader_size);
+        }
+        out << '\n';
+    }
+    return tables.size();
+}
+
+int cmd_export_water(const std::vector<std::string>& args) {
+    const std::string trn = option(args, "--trn");
+    if (args.size() < 2 || trn.empty()) {
+        std::cerr << usage;
+        return 2;
+    }
+    TreLibrary library(args[0]);
+    const ProceduralTerrain terrain = parse_procedural_terrain(library.read(trn));
+    const std::filesystem::path prefix = args[1];
+    std::filesystem::create_directories(prefix.parent_path());
+    const size_t count = write_water(library, terrain, trn, prefix);
+    for (const WaterTable& t : terrain.water_tables()) {
+        double x0 = 1e30, x1 = -1e30, z0 = 1e30, z1 = -1e30;
+        for (const auto& p : t.outline) {
+            x0 = std::min(x0, p[0]), x1 = std::max(x1, p[0]), z0 = std::min(z0, p[1]), z1 = std::max(z1, p[1]);
+        }
+        std::cerr << std::format("  {:>7.1f} m  {:<36} x {:.0f}..{:.0f}  z {:.0f}..{:.0f}  {}\n", t.height, t.name, x0,
+                                 x1, z0, z1, t.shader);
+    }
+    std::cerr << std::format("{} water table(s) -> {}.water\n", count, prefix.string());
+    return 0;
+}
+
 int cmd_bake_terrain(const std::vector<std::string>& args) {
     const std::string trn = option(args, "--trn");
     const auto center = std::find(args.begin(), args.end(), "--center");
@@ -675,6 +750,9 @@ int cmd_bake_terrain(const std::vector<std::string>& args) {
         "  \"texture_dir\": \"{}\",\n  \"shader_families\": [{}\n  ]\n}}\n",
         trn, grid.samples, grid.spacing, grid.origin_x, grid.origin_z, *lo, *hi, texture_dir.filename().string(),
         families_json);
+    if (const size_t tables = write_water(library, terrain, trn, prefix)) {
+        std::cerr << std::format("{} water table(s) -> {}.water\n", tables, prefix.string());
+    }
     write_png(prefix.string() + "_preview.png", hillshade(grid));
     write_png(prefix.string() + "_ground_preview.png", hillshade(grid, &terrain));
     std::cerr << std::format("heights {:.1f} .. {:.1f} m; wrote {}.r32/.shaders/.json, previews, and textures\n", *lo,
@@ -1139,6 +1217,15 @@ int cmd_export_species(const std::vector<std::string>& args) {
                     }
                 }
             }
+            // Galaxies' own swimming (Battlefront's soldiers don't swim):
+            // stroking along and treading water, on the species' skeleton.
+            for (const char* ans : {"appearance/animation/all_b_loc_swim.ans",
+                                    "appearance/animation/all_b_idl_tread_water.ans"}) {
+                if (library.contains(ans)) {
+                    req.clips.push_back(sample_animation(parse_keyframe_animation(library.read(ans)), skel,
+                                                         std::filesystem::path(ans).stem().string()));
+                }
+            }
 
             std::ostringstream dummy_log;
             const CharacterBounds bounds = export_character(library, req, sp_dir, dummy_log);
@@ -1486,6 +1573,9 @@ int main(int argc, char** argv) {
         }
         if (command == "bake-terrain") {
             return cmd_bake_terrain(args);
+        }
+        if (command == "export-water") {
+            return cmd_export_water(args);
         }
         if (command == "terrain-trace") {
             return cmd_terrain_trace(args);

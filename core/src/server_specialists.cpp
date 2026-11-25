@@ -1053,8 +1053,10 @@ void GameServer::summon_companion(Client& client, uint64_t record_id) {
     spec.mitigation = stats.mitigation;
     spec.walk_speed = stats.speed * 0.5;
     spec.run_speed = stats.speed;
+    // Beside its owner, clear of them: a bantha's flank is 1.7 m from its middle.
     const double yaw = client.state.yaw;
-    const Vec3 beside = client.state.position + Vec3{std::cos(yaw) * 1.8, 0, -std::sin(yaw) * 1.8};
+    const double side = 1.2 + tpl->radius;
+    const Vec3 beside = client.state.position + Vec3{std::cos(yaw) * side, 0, -std::sin(yaw) * side};
     const uint32_t entity = add_combat_npc(record->name, beside, yaw, look, spec, record->colors);
     ActiveCompanion active;
     active.entity = entity;
@@ -1141,10 +1143,13 @@ void GameServer::update_companions(double dt) {
         c.pulse -= dt;
         const Vec3 me = npc->state.position;
         const Vec3 home = owner->state.position;
+        // How big it is: it keeps its flank, not its middle, near its owner.
+        const CompanionTemplate* tpl = config_.specialists ? config_.specialists->companion(c.template_id) : nullptr;
+        const double size = tpl ? tpl->radius : 0.5;
         // Too far from its owner: brought back to them.
         if (flat_distance(me, home) > companion_leash && c.recall_cooldown <= 0) {
             MoveState s = npc->state;
-            s.position = world_.clamp(home + Vec3{1.5, 0, 1.5});
+            s.position = world_.clamp(home + Vec3{0.9 + size * 0.71, 0, 0.9 + size * 0.71});
             s.position.y = world_.ground_at(s.position.x, s.position.z, home.y + 1, 0.5).height;
             if (s.position.y < -1e8) s.position.y = home.y;
             s.velocity = {};
@@ -1211,7 +1216,7 @@ void GameServer::update_companions(double dt) {
         MoveInput input;
         input.yaw = npc->state.yaw;
         Vec3 goal = anchor;
-        double stop = c.mode == CompanionMode::guard ? 1.0 : 3.0;
+        double stop = c.mode == CompanionMode::guard ? 1.0 : 2.5 + size;
         Vec3 target_at = me;
         if (c.target != 0) {
             if (const Client* tc = find(c.target)) target_at = tc->state.position;

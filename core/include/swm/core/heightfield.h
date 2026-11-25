@@ -3,6 +3,8 @@
 #include <array>
 #include <cstdint>
 #include <filesystem>
+#include <optional>
+#include <string>
 #include <vector>
 
 #include "swm/core/vec3.h"
@@ -59,6 +61,19 @@ TerrainHoles load_terrain_holes(const std::filesystem::path& path);
 void save_terrain_hole_patches(const std::vector<TerrainHoles>& patches, const std::filesystem::path& path);
 std::vector<TerrainHoles> load_terrain_hole_patches(const std::filesystem::path& path);
 
+// Where water stands (a planet's lakes, rivers and sea: swgtool writes a
+// terrain's water tables to <prefix>.water): a surface height over an
+// outline, in game space. Water fills it wherever the ground is lower.
+struct WaterTable {
+    std::string name;
+    double height = 0;
+    std::vector<std::array<double, 2>> outline;  // x z
+    double min_x = 0, min_z = 0, max_x = 0, max_z = 0;
+
+    bool contains(double x, double z) const;
+};
+std::vector<WaterTable> load_water_tables(const std::filesystem::path& path);
+
 class Heightfield {
 public:
     Heightfield() = default;
@@ -83,6 +98,8 @@ public:
     // there is inside a cut, or it's in a hole. There, it neither holds
     // anyone up nor stops anything.
     bool cut_at(double x, double z) const;
+    // Whether a building's hole (TerrainHoles, not a cut) is at a position.
+    bool hole_at(double x, double z) const;
     const std::vector<TerrainCut>& cuts() const { return cuts_; }
     void set_cuts(std::vector<TerrainCut> cuts) { cuts_ = std::move(cuts); }
     // The first patch of holes (empty if none).
@@ -92,6 +109,13 @@ public:
     void set_hole_patches(std::vector<TerrainHoles> patches) { holes_ = std::move(patches); }
     // The lowest height in the grid.
     double lowest() const;
+
+    const std::vector<WaterTable>& water() const { return water_; }
+    void set_water(std::vector<WaterTable> tables) { water_ = std::move(tables); }
+    // The water's surface at a game-space position, if water stands there
+    // over the terrain: the highest table holding the point (Theed's river
+    // at 3 m lies inside Naboo's ocean at -210), if the terrain is lower.
+    std::optional<double> water_at(double x, double z) const;
 
 private:
     struct Triangle {
@@ -107,14 +131,15 @@ private:
     std::vector<float> heights_;
     std::vector<TerrainCut> cuts_;
     std::vector<TerrainHoles> holes_;
+    std::vector<WaterTable> water_;
     inline static const TerrainHoles no_holes_{};
 };
 
 // Loads `<prefix>.r32` and the grid layout from `<prefix>.json`, as written by
 // `swgtool bake-terrain` (or `bf2tool export-map`), and its cuts from
 // `<prefix>.cuts` if there is one (a line per cut: center x y z, radius, then
-// each plane's nx ny nz d; game space), and its holes from `<prefix>.holes`
-// if there are any. Throws std::runtime_error on failure.
+// each plane's nx ny nz d; game space), its holes from `<prefix>.holes`
+// and its water from `<prefix>.water` if there are any. Throws std::runtime_error on failure.
 Heightfield load_bake(const std::filesystem::path& prefix);
 
 } // namespace swm::core

@@ -267,6 +267,13 @@ void GameServer::sync_client_ammo(Client& client, bool flush_now) {
     if (conquest_ || store_ == nullptr || client.character == 0 || client.custom_loadouts.empty()) {
         return;
     }
+    // Aboard a vehicle or mount, the combat state is its weapons', not the
+    // soldier's (theirs is stashed until they get out): counted against the
+    // soldier's loadout it reads as no ammo left, and the stack was deleted.
+    // The item keeps what was last synced on foot.
+    if (client.state.vehicle >= 0) {
+        return;
+    }
     const Loadout& lo = loadout_of(client);
     const int rem_std = remaining_unified_ammo(client.state.combat, lo, AmmoClass::standard);
     const int rem_hvy = remaining_unified_ammo(client.state.combat, lo, AmmoClass::heavy);

@@ -12,6 +12,21 @@ const SwgBuilding = preload("res://rendering/swg_building.gd")
 const Bf2Map = preload("res://rendering/bf2_map.gd")
 const Weather = preload("res://rendering/weather.gd")  # Stage 11: rain, sand, snow, ash, mist
 const SwgCity = preload("res://rendering/swg_city.gd")
+const SwgWater = preload("res://rendering/swg_water.gd")
+# A planet's sky and haze where it isn't Tatooine's (its bake's name): the
+# sky shader's colors (Naboo's one sun: no second), fog and sunlight.
+const PLANET_LOOKS := {
+	"naboo": {
+		"zenith_color": Color(0.24, 0.47, 0.82),
+		"mid_sky_color": Color(0.52, 0.70, 0.88),
+		"horizon_color": Color(0.76, 0.84, 0.90),
+		"ground_color": Color(0.42, 0.52, 0.40),
+		"sun_a_color": Color(1.0, 0.98, 0.92),
+		"sun_b_color": Color(0, 0, 0),
+		"fog": Color(0.74, 0.82, 0.88),
+		"sun": Color(1.0, 0.98, 0.93),
+	},
+}
 const NATIVES_TEAM := 2  # a battlefield's natives (core::natives_team)
 const Soldier = preload("res://rendering/soldier.gd")
 const PlayerAppearance = preload("res://rendering/player_appearance.gd")
@@ -196,6 +211,8 @@ func start_session(config: Dictionary) -> bool:
 	_settings = Settings.new()
 	_settings.load_file()
 	_first_person = bool(_config.get("first_person", false)) or _settings.first_person
+	if bool(_config.get("third_person", false)):  # (tests: whatever the settings say)
+		_first_person = false
 	var bake_path := _os_path(bake)
 
 	for point: Variant in _config.get("route", []):
@@ -1173,9 +1190,24 @@ func _pose(character: Dictionary, state: Dictionary, entity_id: int = 0) -> void
 			soldier.set_weapon("")
 			soldier.pose(seated, _delta)
 		return
-	soldier.set_weapon(str(state.get("weapon_model", "")))  # its own weapon's model
+	var posed := _with_swimming(state)
+	# Its own weapon's model (slung while it swims).
+	soldier.set_weapon("" if posed.get("swimming", false) else str(state.get("weapon_model", "")))
 	soldier.set_anim_set(str(state.get("anim_set", "rifle")))  # held as its kind is
-	soldier.pose(state, _delta)
+	soldier.pose(posed, _delta)
+
+
+# Whether a character swims (feet at deep water's swim floor), for its pose.
+func _with_swimming(state: Dictionary) -> Dictionary:
+	if _client == null or not _client.has_method("get_swim_floor"):
+		return state
+	var at: Vector3 = state.get("position", Vector3.ZERO)
+	var floor_y: float = _client.get_swim_floor(at.x, at.z)
+	if is_nan(floor_y) or at.y > floor_y + 0.15:
+		return state
+	var swimming := state.duplicate()
+	swimming["swimming"] = true
+	return swimming
 
 
 func _follow_route() -> Dictionary:
@@ -1683,6 +1715,16 @@ func _build_world(bake: String) -> bool:
 		sun.rotation_degrees = Vector3(-34, -42, 0)
 		sun.light_color = Color(1.0, 0.95, 0.86)
 		sun.light_energy = 1.45
+		var look: Dictionary = PLANET_LOOKS.get(bake.get_file(), {})
+		for key: String in look:
+			if key.ends_with("_color"):
+				sky_mat.set_shader_parameter(key, look[key])
+		if look.has("fog"):
+			environment.fog_light_color = look["fog"]
+		if look.has("sun"):
+			sun.light_color = look["sun"]
+		# Its lakes, rivers and sea (Naboo's), if its terrain has any.
+		SwgWater.add_water(_world, bake, sun, environment.fog_light_color)
 	# The planet's weather (Kamino's storm, Hoth's snow...): looks and sound only.
 	_weather.setup(_world, Weather.planet_of(bake, Bf2Map.is_bf2(meta as Dictionary)), environment, sun, self,
 			DisplayServer.get_name().to_lower().contains("headless"))

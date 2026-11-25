@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cmath>
 #include <numbers>
+#include <optional>
 
 #include "swm/core/world.h"
 
@@ -44,6 +45,10 @@ MoveState simulate_move(const MoveState& state, const MoveInput& input, const Wo
         r /= stick;
     }
 
+    // Swimming: feet at deep water's swim floor.
+    const std::optional<double> swim_floor = world.swim_floor_at(state.position.x, state.position.z);
+    const bool swimming = swim_floor && state.position.y <= *swim_floor + 0.05;
+
     // Stagger and melee block/parry timers.
     next.stagger = float(std::max(0.0, double(state.stagger) - dt));
     next.parry_window = float(std::max(0.0, double(state.parry_window) - dt));
@@ -53,7 +58,7 @@ MoveState simulate_move(const MoveState& state, const MoveInput& input, const Wo
 
     // Sprinting (forward only) drains energy; blocking drains energy; otherwise
     // energy comes back, faster at rest.
-    const bool wants_sprint = input.held(MoveInput::sprint) && f > 0 && next.stagger <= 0 && !can_block;
+    const bool wants_sprint = input.held(MoveInput::sprint) && f > 0 && next.stagger <= 0 && !can_block && !swimming;
     next.sprinting = wants_sprint && state.energy > 0 &&
                      (state.sprinting || state.energy >= params.energy_min_sprint);
     if (can_block) {
@@ -78,8 +83,10 @@ MoveState simulate_move(const MoveState& state, const MoveInput& input, const Wo
     const bool pressed = input.held(MoveInput::crouch) && !state.crouch_held;
     next.crouch_held = input.held(MoveInput::crouch);
     next.roll = float(std::max(0.0, double(state.roll) - dt));
-    bool jump = input.held(MoveInput::jump) && !state.rolling() && next.stagger <= 0;
-    if (pressed && state.grounded && !state.rolling() && next.stagger <= 0) {
+    bool jump = input.held(MoveInput::jump) && !state.rolling() && next.stagger <= 0 && !swimming;
+    if (swimming) {
+        next.crouched = false;
+    } else if (pressed && state.grounded && !state.rolling() && next.stagger <= 0) {
         if (f * f + r * r > 0.09 && state.energy >= params.energy_cost_roll) {
             const Vec3 way = forward * f + right * r;
             next.roll = float(params.roll_time);
@@ -117,6 +124,10 @@ MoveState simulate_move(const MoveState& state, const MoveInput& input, const Wo
     } else if (next.crouched) {
         forward_speed *= f > 0 ? params.crouch_factor : params.crouch_strafe;
         side_speed *= params.crouch_strafe;
+    }
+    if (swimming) {
+        forward_speed *= params.swim_factor;
+        side_speed *= params.swim_factor;
     }
     Vec3 target = forward * (f * forward_speed) + right * (r * side_speed);
     if (next.rolling()) {
