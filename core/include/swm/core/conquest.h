@@ -73,6 +73,7 @@ struct DeathRegion {
     // deadly while its walls close): first on `first` seconds into the
     // battle, for `on` seconds, then off for `off`, and again. on 0: always.
     double first = 0, on = 0, off = 0;
+    bool characters_only = false;  // optional `characters` keyword: only kills on-foot units, not flyers
 
     bool contains(Vec3 point) const;
     // Whether it's on at `clock` seconds into the battle (its timer's doing).
@@ -228,10 +229,41 @@ struct VehicleSpawn {
     std::string name;
     Vec3 position;  // game space, on the ground
     double yaw = 0;
-    int post = -1;  // an index into the posts; -1: always the first team's
+    int post = -1;  // an index into the posts; -1: always the first team's (or turret_team)
     std::array<int, 2> vehicle{-1, -1};  // per team, an index into Battlefield::vehicles
+    int turret_team = -1;  // for [turret]: 0 or 1 automated defense team, -1 neutral/any
     double respawn_time = 45;  // SpawnTime
     double expire_time = 40;   // ExpireTimeField
+};
+
+struct TurretChair {
+    std::string name;
+    Vec3 position;
+    double yaw = 0;
+    int team = -1;
+};
+
+struct ShieldLink {
+    int controller = -1;
+    std::vector<int> targets;
+};
+
+struct DestroyLink {
+    int source = -1;
+    std::vector<int> targets;
+};
+
+struct TurretMainframe {
+    int destructible = -1;
+    std::vector<std::string> turrets;
+};
+
+struct SpaceSystem {
+    int destructible = -1;
+    int owner_team = -1;
+    std::string kind;
+    int points = 0;
+    std::string label;
 };
 
 struct Battlefield {
@@ -260,11 +292,23 @@ struct Battlefield {
     double bleed = 0.1;            // tickets per second the other team loses, per post of lead
     double out_of_bounds_time = 10;  // seconds outside the bounds before dying
     size_t min_players = 1;        // the warmup waits for this many
+    double min_fly_y = -1e9;       // FlyHeight bounds for space flyers
+    double max_fly_y = 1e9;
+    int score_limit = 0;           // > 0: Space Assault point win target (e.g. 180)
+    std::vector<DeathRegion> landing_regions;
+    std::vector<ShieldLink> shield_links;
+    std::vector<DestroyLink> destroy_links;
+    std::vector<TurretMainframe> turret_mainframes;
+    std::vector<TurretMainframe> destroy_turrets;
+    std::vector<SpaceSystem> space_systems;
+    std::vector<TurretChair> turret_chairs;
     // Where the HUD's minimap image lies, for drawing: the game-space x and z
     // under its left, top, right and bottom edges. Unset (all zero): the
     // client fits the image to the bounds.
     std::array<double, 4> minimap{};
 
+    bool is_space() const { return score_limit > 0 || !landing_regions.empty(); }
+    bool in_landing_region(Vec3 point) const;
     // Team `index`: one of the two sides, or the natives.
     const Team& team(int index) const;
     // Whether teams a and b don't fight: the same team, or the natives and a
@@ -275,7 +319,7 @@ struct Battlefield {
     // boundary.
     bool contains(Vec3 point) const;
     // Whether a soldier standing at `feet` is in a death region.
-    bool deadly(Vec3 feet) const;
+    bool deadly(Vec3 feet, bool is_character = true) const;
     // How much health a second a soldier standing at `feet` loses to damage
     // regions (feet or body in them, as for death regions).
     double damage_rate(Vec3 feet) const;
@@ -335,6 +379,8 @@ struct MatchState {
     Phase phase = Phase::warmup;
     double time_left = 0;            // seconds left of the warmup or the results
     std::array<double, 2> tickets{};
+    std::array<double, 2> scores{};
+    uint16_t score_limit = 0;        // > 0: Space Assault score mode
     int8_t dominant = -1;            // team holding every post, counting down to victory
     double victory_left = 0;
     int8_t winner = -1;              // when ended; -1: a draw
@@ -376,8 +422,10 @@ public:
     // Advances by `dt` seconds. `units` are the living soldiers; `players`
     // counts everyone in the match, for the warmup's minimum.
     std::vector<MatchEvent> step(double dt, std::span<const Unit> units, size_t players);
-    // A soldier of `team` died: a reinforcement lost while live.
-    void killed(int team);
+    // A soldier or flyer of `team` died: lost reinforcement or Space Assault points.
+    void killed(int team, bool is_flyer = false);
+    // Awards points in Space Assault mode (`score_limit > 0`).
+    void add_score(int team, double points);
     // Whether a soldier of `team` may spawn at `post` now.
     bool can_spawn(int team, size_t post) const;
     // Whether health/ammo droid `index` is intact.
@@ -386,11 +434,14 @@ public:
     bool damage_powerup(size_t index, double amount);
     // Whether destructible `index` stands.
     bool destructible_alive(size_t index) const;
+    // Whether destructible `index` is currently protected by an alive shield controller.
+    bool destructible_shielded(size_t index) const;
     // Damages destructible `index`. Returns true on the hit that destroys it.
     bool damage_destructible(size_t index, double amount);
-    // Whether a soldier standing at `feet` is in a death region that's there
-    // now (Battlefield::deadly, less those whose destructible is destroyed).
-    bool deadly(Vec3 feet) const;
+    // Whether a turret named `turret_name` has its mainframe or frigate destroyed.
+    bool turret_disabled(std::string_view turret_name) const;
+    // Whether a unit at `feet` is in a death region active now.
+    bool deadly(Vec3 feet, bool is_character = true) const;
     // Whether door `index` is shut (more than half), stopping shots.
     bool door_shut(size_t index) const;
     // Where along a..b (0..1) the segment first meets a shut door, if it does.

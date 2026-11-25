@@ -16,7 +16,7 @@ const LAYER_SIZE := 512
 # the dome is SKY_DOME_RADIUS away and each later model a little nearer,
 # every one scaled to its own size: about the camera, that changes nothing
 # of how it looks.
-const SKY_DOME_RADIUS := 3000.0  # m, within the camera's far plane
+const SKY_DOME_RADIUS := 12000.0  # m, within the camera's far plane
 const SKY_LAYER_STEP := 0.04     # each later model this much nearer
 const SKY_FIRST_PRIORITY := -120  # drawn before the map's other blended surfaces
 

@@ -6,6 +6,7 @@
 #include <sstream>
 #include <stdexcept>
 
+#include "swm/core/conquest.h"
 #include "swm/core/ini.h"
 #include "swm/core/world.h"
 
@@ -148,6 +149,22 @@ VehicleClass load_vehicle_class(const std::filesystem::path& path) {
     v.stride_speed = s.number("StrideSpeed", 0);
     v.rider_seat = read_vec3(s, "RiderSeat", v.rider_seat);
     v.wake_effect = s.get("WakeEffect").value_or("");
+    v.contrail_effect = s.get("ContrailEffect").value_or("");
+    const std::string vtype = s.get("VehicleType").value_or("");
+    v.is_transport = vtype.size() == 9 &&
+                     std::equal(vtype.begin(), vtype.end(), "transport",
+                                [](char a, char b) { return std::tolower(uint8_t(a)) == b; });
+    for (const auto& [key, val] : s.values) {
+        if (key.size() == 10 &&
+            std::equal(key.begin(), key.end(), "spawnpoint",
+                       [](char a, char b) { return std::tolower(uint8_t(a)) == b; })) {
+            Vec3 pt;
+            std::istringstream sp_in(val);
+            if (sp_in >> pt.x >> pt.y >> pt.z) {
+                v.spawn_points.push_back(pt);
+            }
+        }
+    }
     v.step_sound = s.get("StepSound").value_or("");
     v.stomp_effect = s.get("StompEffect").value_or("");
     v.rider_pose = s.get("RiderPose").value_or("");
@@ -214,15 +231,19 @@ std::vector<VehicleClass> load_vehicle_classes(const std::filesystem::path& dir)
 }
 
 void simulate_flyer(MoveState& state, const MoveState& before, const MoveInput& input, const World& world,
-                    const VehicleClass& vehicle, double dt) {
+                    const VehicleClass& vehicle, double dt, const Battlefield* field) {
     const double f = input.forward / 127.0;
-    // The floor under it (not a roof over it: Hoth's hangar).
-    const double ground = world.ground_at(state.position.x, state.position.z, state.position.y, 1).height;
+    const bool space = field != nullptr && field->is_space();
+    const bool in_hangar = space && field->in_landing_region(before.position);
+    const double ground = world.ground_at(state.position.x, state.position.z, state.position.y, 1.5).height;
     const double speed = state.velocity.length();
     if (state.grounded) {
         state.pitch = 0;
+        state.roll = 0;
         state.velocity = {};
-        state.position.y = ground + vehicle.landed_height;
+        if (!space || in_hangar || ground > field->min_fly_y) {
+            state.position.y = ground + vehicle.landed_height;
+        }
         if (f > 0.1) {
             // Lifting off: up to its takeoff height, then away.
             state.grounded = false;
@@ -230,8 +251,15 @@ void simulate_flyer(MoveState& state, const MoveState& before, const MoveInput& 
         }
         return;
     }
-    // Nose toward the look.
-    const double pitch_to = std::clamp(double(input.pitch), -1.0, 1.0);
+    // Visual roll/bank into turns.
+    const double yaw_delta = wrap_angle(double(state.yaw) - double(before.yaw));
+    const double yaw_vel = dt > 1e-6 ? yaw_delta / dt : 0.0;
+    const double target_bank = std::clamp(-yaw_vel * 0.45 - (input.right / 127.0) * 0.35, -0.75, 0.75);
+    state.roll = float(double(before.roll) + std::clamp(target_bank - double(before.roll), -2.5 * dt, 2.5 * dt));
+
+    // Nose toward the look (deeper pitch range in 3D space).
+    const double max_pitch = space ? 1.4 : 1.0;
+    const double pitch_to = std::clamp(double(input.pitch), -max_pitch, max_pitch);
     const double pitch = double(before.pitch) + std::clamp(pitch_to - double(before.pitch),
                                                            -vehicle.pitch_rate * dt, vehicle.pitch_rate * dt);
     state.pitch = float(pitch);
@@ -251,22 +279,65 @@ void simulate_flyer(MoveState& state, const MoveState& before, const MoveInput& 
     const double cp = std::cos(pitch), sp = std::sin(pitch);
     Vec3 velocity{-s * cp * next, sp * next, -c * cp * next};
     Vec3 position = before.position + velocity * dt;
-    const double floor = world.ground_at(position.x, position.z, position.y, 0.5).height;
-    const double low = floor + vehicle.takeoff_height;
-    // Low (skimming), slow and level with the throttle back: it lands.
-    if (position.y < low + 0.5 && f < -0.1 && next <= vehicle.min_speed + 1 && std::abs(pitch) < 0.2) {
-        position.y = floor + vehicle.landed_height;
-        state.position = world.clamp(position);
-        state.velocity = {};
-        state.grounded = true;
-        state.pitch = 0;
-        return;
+
+    if (!space) {
+        const double floor = world.ground_at(position.x, position.z, position.y, 0.5).height;
+        const double low = floor + vehicle.takeoff_height;
+        // Low (skimming), slow and level with the throttle back: it lands.
+        if (position.y < low + 0.5 && f < -0.1 && next <= vehicle.min_speed + 1 && std::abs(pitch) < 0.2) {
+            position.y = floor + vehicle.landed_height;
+            state.position = world.clamp(position);
+            state.velocity = {};
+            state.grounded = true;
+            state.pitch = 0;
+            state.roll = 0;
+            return;
+        }
+        if (position.y < low) {
+            // Not into the ground: it skims along over it.
+            position.y = low;
+            velocity.y = std::max(0.0, velocity.y);
+            state.pitch = float(std::max(0.0, pitch));
+        }
+    } else {
+        position.y = std::clamp(position.y, field->min_fly_y, field->max_fly_y);
+        if (field->in_landing_region(position)) {
+            const double floor = world.ground_at(position.x, position.z, position.y + 2.0, 1.5).height;
+            const double low = floor + vehicle.takeoff_height;
+            if (position.y - floor <= 35.0) {
+                if (position.y < low + 4.0 && f < -0.1 && next <= vehicle.min_speed + 2.0 && std::abs(pitch) < 0.45) {
+                    position.y = floor + vehicle.landed_height;
+                    state.position = world.clamp(position);
+                    state.velocity = {};
+                    state.grounded = true;
+                    state.pitch = 0;
+                    state.roll = 0;
+                    return;
+                }
+                if (position.y < low) {
+                    position.y = low;
+                    velocity.y = std::max(0.0, velocity.y);
+                    state.pitch = float(std::max(0.0, pitch));
+                }
+            }
+        }
     }
-    if (position.y < low) {
-        // Not into the ground: it skims along over it.
-        position.y = low;
-        velocity.y = std::max(0.0, velocity.y);
-        state.pitch = float(std::max(0.0, pitch));
+
+    // Check 3D solid ship hull / structure hits in space before horizontal wall resolution.
+    if (space) {
+        const Vec3 delta = position - before.position;
+        if (delta.length() > 1e-4) {
+            if (const auto hit = world.raycast_hit(before.position + Vec3{0, 0.5, 0}, position + Vec3{0, 0.5, 0})) {
+                const double approach = velocity.x * hit->normal.x + velocity.y * hit->normal.y +
+                                        velocity.z * hit->normal.z;
+                position = before.position + delta * std::max(0.0, hit->t - 0.05) + hit->normal * 0.5;
+                if (approach < -next * 0.55) {
+                    velocity = {};
+                } else if (approach < 0) {
+                    velocity = velocity - hit->normal * approach;
+                }
+            }
+        }
     }
     const Vec3 moved = world.resolve_walls(before.position, position, vehicle.radius(), vehicle.height(),
                                            vehicle.step_up, velocity);
@@ -280,7 +351,7 @@ void simulate_flyer(MoveState& state, const MoveState& before, const MoveInput& 
 }
 
 void simulate_vehicle(MoveState& state, const MoveInput& input, const World& world, const VehicleClass& vehicle,
-                      double dt) {
+                      double dt, const Battlefield* field) {
     const MoveState before = state;
     // Turn toward where the pilot looks, at most turn_rate.
     const double turn = std::clamp(wrap_angle(double(input.yaw) - double(state.yaw)), -vehicle.turn_rate * dt,
@@ -296,7 +367,7 @@ void simulate_vehicle(MoveState& state, const MoveInput& input, const World& wor
         return;  // it stays where it stands
     }
     if (vehicle.kind == VehicleKind::flyer) {
-        simulate_flyer(state, before, input, world, vehicle, dt);
+        simulate_flyer(state, before, input, world, vehicle, dt, field);
         return;
     }
     const double s = std::sin(double(state.yaw)), c = std::cos(double(state.yaw));

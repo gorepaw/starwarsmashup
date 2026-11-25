@@ -494,10 +494,11 @@ void GameClient::reconcile(uint32_t last_input, const net::EntityState& server, 
     // Replay what the server hasn't simulated yet on top of its state.
     const double dt = 1 / tick_rate_;
     MoveState state = server_state;
+    const Battlefield* field = config_.battlefield ? &*config_.battlefield : nullptr;
     for (Pending& p : pending_) {
         if (self_.life != Life::waiting) {
             simulate_character(state, p.input, alive(), world_, loadout(), character_stats_, dt,
-                               vehicle_classes());  // shots were drawn already
+                               vehicle_classes(), field);  // shots were drawn already
         }
         p.result = state;
     }
@@ -519,8 +520,9 @@ void GameClient::tick(double now) {
     input.view_tick = render_tick_;
     previous_ = current_;
     if (self_.life != Life::waiting) {
+        const Battlefield* field = config_.battlefield ? &*config_.battlefield : nullptr;
         if (auto shot = simulate_character(current_, input, alive(), world_, loadout(), character_stats_, 1 / tick_rate_,
-                                           vehicle_classes())) {
+                                           vehicle_classes(), field)) {
             shots_.push_back(*shot);
         }
     }

@@ -13,6 +13,7 @@
 
 namespace swm::core {
 
+struct Battlefield;
 class World;
 
 // Where shots start: the character's eyes, above its feet.
@@ -66,7 +67,8 @@ void reset_loadout(MoveState& state, const Loadout& loadout, const CharacterStat
 // guns fire instead, aimed within their limits.
 std::optional<Shot> simulate_character(MoveState& state, const MoveInput& input, bool alive, const World& world,
                                        const Loadout& loadout, const CharacterStats& stats, double dt,
-                                       std::span<const VehicleClass> vehicles = {});
+                                       std::span<const VehicleClass> vehicles = {},
+                                       const Battlefield* field = nullptr);
 
 // The unit aim direction for a yaw and pitch (radians; pitch up is positive).
 Vec3 aim_direction(double yaw, double pitch);

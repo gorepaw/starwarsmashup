@@ -403,9 +403,9 @@ Level a combat, armor, gathering, and crafting profession; gather resources with
 ## Stage 8: Space combat
 
 Battlefront II's space battles, queued from the hubs like ground battles:
-- its space maps imported;
-- fighters, bombers and capital ships;
-- landing in an enemy hangar and fighting aboard.
+- [x] its space maps imported (`spa1` Yavin, `spa3` Kashyyyk, `spa6` Mygeeto, `spa7` Felucia, `spa8` Hoth, and `spa9` Tatooine, plus `spa_sky.lvl` sky domes);
+- [x] fighters, bombers, and capital ships (all 16 starfighters/bombers/transports, 27 defense/roof turrets, mobile transport spawns, shield-linked & chain-linked capital ship systems, automated defense turrets, turret control chairs, and ScoreLimit scoring);
+- [x] landing in an enemy (or friendly) hangar (`LandingRegion`) and fighting aboard on foot (turret chairs, hangar bays, and sabotageable interior ship systems).
 
 Builds on Stage 6's flyers.
 

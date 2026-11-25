@@ -86,7 +86,10 @@ func _paint_map(box: Rect2) -> void:
 		if i == post and flash != null:
 			draw_texture_rect(flash, Rect2(at - Vector2(r, r) * 1.9, Vector2(r, r) * 3.8), false, Color(1, 1, 1, 0.9))
 		var icon: Texture2D = art.texture("hud_flag_icon")  # the posts' map icon
-		if icon != null:
+		if p.get("mobile", false):
+			draw_circle(at, r * 0.95, Color(0, 0, 0, 0.6))
+			draw_rect(Rect2(at - Vector2(r, r) * 0.65, Vector2(r, r) * 1.3), p["color"])
+		elif icon != null:
 			draw_circle(at, r * 0.9, Color(0, 0, 0, 0.5))
 			draw_texture_rect(icon, Rect2(at - Vector2(r, r), Vector2(r, r) * 2), false, p["color"])
 		else:

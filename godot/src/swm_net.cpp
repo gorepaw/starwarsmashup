@@ -361,6 +361,9 @@ godot::Array SwmClient::get_vehicles() const {
             entry["driver"] = int64_t(v.driver);
             entry["team"] = int64_t(v.team);
             entry["alive"] = v.alive;
+            entry["bank"] = double(v.bank);
+            entry["grounded"] = (v.flags & core::net::VehicleState::flag_grounded) != 0;
+            entry["mobile_spawn"] = (v.flags & core::net::VehicleState::flag_mobile_spawn) != 0;
             godot::Array gunners;
             for (const uint32_t g : v.gunners) {
                 gunners.push_back(int64_t(g));
@@ -868,6 +871,13 @@ godot::Array vehicle_class_dicts(std::span<const core::VehicleClass> classes) {
         entry["damage_effects"] = damage_effects;
         entry["map_texture"] = godot::String::utf8(v.map_texture.c_str());
         entry["health_texture"] = godot::String::utf8(v.health_texture.c_str());
+        entry["is_transport"] = v.is_transport;
+        entry["contrail_effect"] = godot::String::utf8(v.contrail_effect.c_str());
+        godot::Array spawn_points;
+        for (const core::Vec3& p : v.spawn_points) {
+            spawn_points.push_back(to_godot(p));
+        }
+        entry["spawn_points"] = spawn_points;
         vehicles.push_back(entry);
     }
     return vehicles;
@@ -950,6 +960,61 @@ godot::Dictionary SwmClient::get_battlefield() const {
         powerups.push_back(entry);
     }
     out["powerups"] = powerups;
+    out["is_space"] = field.is_space();
+    out["min_fly_y"] = field.min_fly_y;
+    out["max_fly_y"] = field.max_fly_y;
+    out["score_limit"] = int64_t(field.score_limit);
+    godot::Array space_systems;
+    for (const core::SpaceSystem& sys : field.space_systems) {
+        godot::Dictionary entry;
+        entry["destructible"] = int64_t(sys.destructible);
+        entry["owner_team"] = int64_t(sys.owner_team);
+        entry["kind"] = godot::String::utf8(sys.kind.c_str());
+        entry["points"] = int64_t(sys.points);
+        entry["label"] = godot::String::utf8(sys.label.c_str());
+        core::Vec3 pos;
+        double max_hp = 0;
+        if (sys.destructible >= 0 && size_t(sys.destructible) < field.destructibles.size()) {
+            pos = field.destructibles[size_t(sys.destructible)].center;
+            max_hp = field.destructibles[size_t(sys.destructible)].max_health;
+        }
+        entry["position"] = to_godot(pos);
+        entry["max_health"] = max_hp;
+        int shield_ctrl = -1;
+        for (const core::ShieldLink& sl : field.shield_links) {
+            for (int target : sl.targets) {
+                if (target == sys.destructible) {
+                    shield_ctrl = sl.controller;
+                    break;
+                }
+            }
+            if (shield_ctrl >= 0) break;
+        }
+        entry["shield_controller"] = int64_t(shield_ctrl);
+        space_systems.push_back(entry);
+    }
+    out["space_systems"] = space_systems;
+    godot::Array turret_chairs;
+    for (const core::TurretChair& chair : field.turret_chairs) {
+        godot::Dictionary entry;
+        entry["name"] = godot::String::utf8(chair.name.c_str());
+        entry["position"] = to_godot(chair.position);
+        entry["yaw"] = chair.yaw;
+        entry["team"] = int64_t(chair.team);
+        turret_chairs.push_back(entry);
+    }
+    out["turret_chairs"] = turret_chairs;
+    godot::Array landing_regions;
+    for (const core::DeathRegion& r : field.landing_regions) {
+        godot::Dictionary entry;
+        entry["shape"] = r.shape == core::DeathRegion::Shape::sphere     ? "sphere"
+                         : r.shape == core::DeathRegion::Shape::cylinder ? "cylinder"
+                                                                         : "box";
+        entry["center"] = to_godot(r.center);
+        entry["size"] = to_godot(r.size);
+        landing_regions.push_back(entry);
+    }
+    out["landing_regions"] = landing_regions;
     if (field.natives) {
         // Its natives (team 2): name, model ("<character>" or
         // "species:<id>"), how many, and whose friends they are.
@@ -983,6 +1048,11 @@ godot::Dictionary SwmClient::get_match() const {
     tickets.push_back(match.tickets[0]);
     tickets.push_back(match.tickets[1]);
     out["tickets"] = tickets;
+    godot::Array scores;
+    scores.push_back(int64_t(match.scores[0]));
+    scores.push_back(int64_t(match.scores[1]));
+    out["scores"] = scores;
+    out["score_limit"] = int64_t(match.score_limit);
     out["dominant"] = int64_t(match.dominant);
     out["victory_left"] = match.victory_left;
     out["winner"] = int64_t(match.winner);

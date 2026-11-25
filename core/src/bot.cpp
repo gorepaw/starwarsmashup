@@ -1034,8 +1034,8 @@ void Bot::choose_vehicle(const GameClient& client, double now) {
                            std::any_of(cls.seats.begin(), cls.seats.end(), [](const VehicleSeat& s) {
                                return weapon_in_slot(s.loadout, 0) != nullptr;
                            });
-        if (!armed && cls.kind == VehicleKind::turret) return false;
-        if (cls.kind == VehicleKind::flyer) return false;  // flying is for players (ASSUMPTION)
+        if (cls.kind == VehicleKind::turret && (!armed || field.is_space())) return false;
+        if (cls.kind == VehicleKind::flyer && !field.is_space()) return false;
         const bool aboard = v.driver != 0 || std::any_of(v.gunners.begin(), v.gunners.end(),
                                                          [](uint32_t g) { return g != 0; });
         if (aboard && !field.allied(v.team, team)) return false;
@@ -1056,6 +1056,7 @@ void Bot::choose_vehicle(const GameClient& client, double now) {
     next_vehicle_ = now + 2 + random() * 2;
     double best = look_reach;
     for (const net::VehicleState& v : client.vehicles()) {
+        if (std::abs(v.position.y - client.predicted().position.y) > 12.0) continue;
         const double d = horizontal_distance(v.position, client.predicted().position);
         if (free_seat(v) && d < best) {
             best = d;
@@ -1147,6 +1148,85 @@ void Bot::ride(GameClient& client, const World& world, double now) {
         }
         undriven_since_ = target != nullptr ? -1 : (undriven_since_ < 0 ? now : undriven_since_);
         leave = undriven_since_ >= 0 && now - undriven_since_ > 20;
+    } else if (cls.kind == VehicleKind::flyer) {
+        // Space flyer AI: fly straight out the hangar bay, then dogfight enemy
+        // flyers or strafe unshielded enemy critical ship systems & frigates.
+        if (me.grounded || field.in_landing_region(me.position)) {
+            controls.forward = 1;
+            controls.yaw = me.yaw;
+            controls.pitch = me.grounded ? 0.12f : 0.05f;
+            controls.sprint = !me.grounded && me.energy > 50.0;
+            client.set_input(controls);
+            return;
+        }
+        std::optional<Vec3> goal;
+        bool want_torpedo = false;
+        double best_score = 1e30;
+        for (const auto& other : client.remotes()) {
+            if (!other.alive() || field.allied(self.team, other.team) ||
+                other.state.vehicle < 0 || size_t(other.state.vehicle) >= classes.size() ||
+                classes[size_t(other.state.vehicle)].kind != VehicleKind::flyer) {
+                continue;
+            }
+            const double d = (other.state.position - me.position).length();
+            if (d < best_score) {
+                best_score = d;
+                goal = other.state.position;
+                want_torpedo = false;
+            }
+        }
+        if (!goal) {
+            const auto is_shielded = [&](int idx) {
+                for (const ShieldLink& s : field.shield_links) {
+                    if (s.controller >= 0 && size_t(s.controller) < match.destructibles.size() &&
+                        match.destructibles[size_t(s.controller)] > 0 &&
+                        std::find(s.targets.begin(), s.targets.end(), idx) != s.targets.end()) {
+                        return true;
+                    }
+                }
+                return false;
+            };
+            double sys_best = 1e30;
+            for (const SpaceSystem& sys : field.space_systems) {
+                if (sys.owner_team == self.team || sys.destructible < 0 ||
+                    size_t(sys.destructible) >= field.destructibles.size() ||
+                    size_t(sys.destructible) >= match.destructibles.size() ||
+                    match.destructibles[size_t(sys.destructible)] <= 0 || is_shielded(sys.destructible)) {
+                    continue;
+                }
+                const Vec3 sys_at = field.destructibles[size_t(sys.destructible)].center;
+                if (field.in_landing_region(sys_at)) continue;
+                const double d = (sys_at - me.position).length();
+                if (d < sys_best) {
+                    sys_best = d;
+                    goal = sys_at;
+                    want_torpedo = true;
+                }
+            }
+        }
+        if (!goal) {
+            goal = field.center() + Vec3{0, 120, 0};
+        }
+        Vec3 aim_target = *goal;
+        const Vec3 fwd = aim_direction(me.yaw, me.pitch);
+        const auto ahead = world.raycast_hit(eye, eye + fwd * 85.0);
+        if (ahead && ahead->t < 0.75) {
+            aim_target = me.position + (ahead->normal + Vec3{0, 0.5, 0}) * 150.0;
+        }
+        const Vec3 d = aim_target - eye;
+        const double horiz = std::hypot(d.x, d.z);
+        controls.forward = 1;
+        controls.yaw = float(std::atan2(-d.x, -d.z));
+        controls.pitch = float(std::clamp(std::atan2(d.y, std::max(1.0, horiz)), -1.1, 1.1));
+        const double dist = d.length();
+        const double dot = dist > 1e-6 ? (fwd.x * d.x + fwd.y * d.y + fwd.z * d.z) / dist : 0;
+        controls.fire = dist < 550.0 && dot > 0.94 && !ahead;
+        if (want_torpedo && weapon_in_slot(loadout, 1) != nullptr) {
+            controls.weapon = 1;
+        }
+        controls.sprint = dist > 400.0 && me.energy > 40.0;
+        client.set_input(controls);
+        return;
     } else {
         // Driving: toward its objective along its route; turned on an enemy
         // in range (its guns turn only so far from its heading), firing once

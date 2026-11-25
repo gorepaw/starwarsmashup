@@ -242,7 +242,7 @@ std::optional<Shot> simulate_weapons(MoveState& state, const MoveInput& pressed,
 
 std::optional<Shot> simulate_character(MoveState& state, const MoveInput& input, bool alive, const World& world,
                                        const Loadout& loadout, const CharacterStats& stats, double dt,
-                                       std::span<const VehicleClass> vehicles) {
+                                       std::span<const VehicleClass> vehicles, const Battlefield* field) {
     if (state.vehicle >= 0 && size_t(state.vehicle) < vehicles.size() && state.seat > 0) {
         // A gunner: carried, its guns turned within the seat's limits.
         const VehicleSeat* seat = vehicle_seat(vehicles[size_t(state.vehicle)], state.seat);
@@ -271,7 +271,7 @@ std::optional<Shot> simulate_character(MoveState& state, const MoveInput& input,
             steer.buttons = 0;
             steer.yaw = state.yaw;
         }
-        simulate_vehicle(state, steer, world, vehicle, dt);
+        simulate_vehicle(state, steer, world, vehicle, dt, field);
         if (!alive) {
             return std::nullopt;
         }

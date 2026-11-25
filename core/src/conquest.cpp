@@ -1,7 +1,9 @@
 #include "swm/core/conquest.h"
 
 #include <algorithm>
+#include <cctype>
 #include <cmath>
+#include <map>
 #include <sstream>
 #include <stdexcept>
 
@@ -202,9 +204,10 @@ void read_regions(Battlefield& field, const Ini::Section& section, const std::st
                 }
             }
             field.doors.push_back(door);
-        } else if (iequals(key, "DeathRegion") || iequals(key, "DamageRegion")) {
+        } else if (iequals(key, "DeathRegion") || iequals(key, "DamageRegion") || iequals(key, "LandingRegion")) {
             std::istringstream fields(value);
             const bool damage = iequals(key, "DamageRegion");
+            const bool landing = iequals(key, "LandingRegion");
             double rate = 0;
             std::string shape;
             DeathRegion region;
@@ -236,13 +239,15 @@ void read_regions(Battlefield& field, const Ini::Section& section, const std::st
                     region.basis[row * 3 + column] = sign[row] * sign[column] * m[row * 3 + column];
                 }
             }
-            // Then: `standing <n>` (or a bare n), `timed <first> <on> <off>`.
-            for (std::string word; !damage && fields >> word;) {
+            // Then: `standing <n>` (or a bare n), `timed <first> <on> <off>`, `characters`.
+            for (std::string word; !damage && !landing && fields >> word;) {
                 if (iequals(word, "timed")) {
                     ok = ok && bool(fields >> region.first >> region.on >> region.off) && region.on > 0 &&
                          region.off >= 0;
                 } else if (iequals(word, "standing")) {
                     ok = ok && bool(fields >> region.while_standing);
+                } else if (iequals(word, "characters")) {
+                    region.characters_only = true;
                 } else {
                     std::istringstream(word) >> region.while_standing;
                 }
@@ -252,6 +257,8 @@ void read_regions(Battlefield& field, const Ini::Section& section, const std::st
             }
             if (damage) {
                 field.damage_regions.push_back({region, rate});
+            } else if (landing) {
+                field.landing_regions.push_back(region);
             } else {
                 field.death_regions.push_back(region);
             }
@@ -390,12 +397,18 @@ bool Battlefield::contains(Vec3 point) const {
                                              [&](const std::vector<Vec3>& polygon) { return inside_polygon(polygon, point); });
 }
 
-bool Battlefield::deadly(Vec3 feet) const {
+bool Battlefield::in_landing_region(Vec3 point) const {
+    return std::any_of(landing_regions.begin(), landing_regions.end(),
+                       [&](const DeathRegion& r) { return r.contains(point); });
+}
+
+bool Battlefield::deadly(Vec3 feet, bool is_character) const {
     // The middle of the body: a soldier falling into a shallow region dies
     // as it lands.
     const Vec3 body = feet + Vec3{0, 0.9, 0};
-    return std::any_of(death_regions.begin(), death_regions.end(),
-                       [&](const DeathRegion& region) { return region.contains(feet) || region.contains(body); });
+    return std::any_of(death_regions.begin(), death_regions.end(), [&](const DeathRegion& region) {
+        return (!region.characters_only || is_character) && (region.contains(feet) || region.contains(body));
+    });
 }
 
 double Battlefield::damage_rate(Vec3 feet) const {
@@ -633,11 +646,46 @@ Battlefield load_battlefield(const std::filesystem::path& path) {
             if (const auto bounds = about->get("Bounds"); bounds && !main->get("Bounds")) {
                 read_bounds(field, *bounds, map_path.string());
             }
+            if (const auto fly_h = about->get("FlyHeight")) {
+                double lo = 0, hi = 0;
+                if (std::istringstream(*fly_h) >> lo >> hi && lo < hi) {
+                    field.min_fly_y = lo;
+                    field.max_fly_y = hi;
+                }
+            }
+            if (const auto limit = about->get("ScoreLimit")) {
+                field.score_limit = std::max(0, std::atoi(limit->c_str()));
+            }
             if (const auto terrain = about->get("Terrain")) {
                 field.terrain = map_path.parent_path() / *terrain;
             }
             read_barriers(field, *about, map_path.string());
             read_regions(field, *about, map_path.string());
+        }
+        for (const Ini::Section& section : map_ini.sections()) {
+            if (!iequals(section.name, "turret_chair")) {
+                continue;
+            }
+            TurretChair chair;
+            chair.name = section.get("Name").value_or("Turret Chair");
+            double cx = 0, cz = 0, cy = 0;
+            if (const auto pos = section.get("Position"); !pos || !(std::istringstream(*pos) >> cx >> cz >> cy)) {
+                continue;
+            }
+            chair.position = {-cx, cy, cz};
+            if (const auto fwd = section.get("Forward")) {
+                double fx = 0, fz = 1;
+                if (std::istringstream(*fwd) >> fx >> fz && (fx != 0 || fz != 0)) {
+                    chair.yaw = std::atan2(fx, -fz);
+                }
+            }
+            if (const auto t = section.get("Team")) {
+                const int team_num = std::atoi(t->c_str());
+                if (team_num == 1 || team_num == 2) {
+                    chair.team = team_num - 1;
+                }
+            }
+            field.turret_chairs.push_back(std::move(chair));
         }
         read_posts(field, map_ini, map_path.string());
         // Its vehicles, where bf2tool export-vehicle wrote them (Vehicles =
@@ -659,6 +707,144 @@ Battlefield load_battlefield(const std::filesystem::path& path) {
     read_posts(field, ini, where);
     read_barriers(field, *main, where);
     read_regions(field, *main, where);
+    if (const auto fly_h = main->get("FlyHeight")) {
+        double lo = 0, hi = 0;
+        if (std::istringstream(*fly_h) >> lo >> hi && lo < hi) {
+            field.min_fly_y = lo;
+            field.max_fly_y = hi;
+        }
+    }
+    if (const auto limit = main->get("ScoreLimit")) {
+        field.score_limit = std::max(0, std::atoi(limit->c_str()));
+    }
+    const auto find_destructible = [&](const std::string& name) -> int {
+        for (size_t i = 0; i < field.destructibles.size(); ++i) {
+            if (iequals(field.destructibles[i].name, name)) {
+                return int(i);
+            }
+        }
+        return -1;
+    };
+    const auto read_space_links = [&](const Ini::Section* sec) {
+        if (sec == nullptr) return;
+        for (const auto& [key, value] : sec->values) {
+            if (iequals(key, "ShieldLink") || iequals(key, "DestroyLink")) {
+                std::istringstream ss(value);
+                std::string head, item;
+                if (!(ss >> head)) continue;
+                const int src = find_destructible(head);
+                if (src < 0) continue;
+                std::vector<int> targets;
+                while (ss >> item) {
+                    if (const int idx = find_destructible(item); idx >= 0) {
+                        targets.push_back(idx);
+                    }
+                }
+                if (targets.empty()) continue;
+                if (iequals(key, "ShieldLink")) {
+                    field.shield_links.push_back({src, std::move(targets)});
+                } else {
+                    field.destroy_links.push_back({src, std::move(targets)});
+                }
+            } else if (iequals(key, "TurretMainframe") || iequals(key, "DestroyTurrets")) {
+                std::istringstream ss(value);
+                std::string head, item;
+                if (!(ss >> head)) continue;
+                const int src = find_destructible(head);
+                if (src < 0) continue;
+                TurretMainframe entry{src, {}};
+                while (ss >> item) {
+                    entry.turrets.push_back(item);
+                }
+                if (entry.turrets.empty()) continue;
+                if (iequals(key, "TurretMainframe")) {
+                    field.turret_mainframes.push_back(std::move(entry));
+                } else {
+                    field.destroy_turrets.push_back(std::move(entry));
+                }
+            } else if (iequals(key, "SpaceSystem")) {
+                std::istringstream ss(value);
+                std::string name, kind;
+                int team_num = 0, pts = 0;
+                if (!(ss >> name >> team_num >> kind >> pts) || team_num < 1 || team_num > 2) continue;
+                std::string label;
+                std::getline(ss >> std::ws, label);
+                const int idx = find_destructible(name);
+                if (idx >= 0) {
+                    field.space_systems.push_back({idx, team_num - 1, kind, pts, label.empty() ? name : label});
+                }
+            }
+        }
+    };
+    if (const auto map = main->get("Map")) {
+        const Ini map_ini = Ini::load(path.parent_path() / *map);
+        read_space_links(map_ini.section("map"));
+    }
+    read_space_links(main);
+    // Associate turret Teams if not resolved yet (`[turret]` Team = 1|2 in map_ini):
+    if (const auto map = main->get("Map")) {
+        const Ini map_ini = Ini::load(path.parent_path() / *map);
+        std::map<std::string, int> turret_teams;
+        for (const Ini::Section& section : map_ini.sections()) {
+            if (iequals(section.name, "turret")) {
+                if (const auto t = section.get("Team")) {
+                    const int team_num = std::atoi(t->c_str());
+                    if (team_num == 1 || team_num == 2) {
+                        std::string nm = section.get("Name").value_or("");
+                        for (char& c : nm) c = char(std::tolower(static_cast<unsigned char>(c)));
+                        turret_teams[nm] = team_num - 1;
+                    }
+                }
+            }
+        }
+        for (VehicleSpawn& vs : field.vehicle_spawns) {
+            std::string nm = vs.name;
+            for (char& c : nm) c = char(std::tolower(static_cast<unsigned char>(c)));
+            if (const auto it = turret_teams.find(nm); it != turret_teams.end()) {
+                vs.turret_team = it->second;
+            }
+        }
+    }
+    if (field.is_space()) {
+        const auto nearest_team = [&](Vec3 p) {
+            int best_team = -1;
+            double best_d2 = 1e30;
+            for (const CommandPost& cp : field.posts) {
+                if (cp.owner == 0 || cp.owner == 1) {
+                    const Vec3 diff = cp.position - p;
+                    const double d2 = diff.dot(diff);
+                    if (d2 < best_d2) {
+                        best_d2 = d2;
+                        best_team = cp.owner;
+                    }
+                }
+            }
+            return best_team;
+        };
+        for (TurretChair& chair : field.turret_chairs) {
+            if (chair.team < 0) chair.team = nearest_team(chair.position);
+        }
+        for (VehicleSpawn& vs : field.vehicle_spawns) {
+            if (vs.post < 0 && vs.turret_team < 0 && vs.vehicle[0] >= 0 &&
+                size_t(vs.vehicle[0]) < field.vehicles.size() &&
+                field.vehicles[size_t(vs.vehicle[0])].kind == VehicleKind::turret) {
+                vs.turret_team = nearest_team(vs.position);
+            }
+        }
+        // Let bots on foot target interior critical systems (shield gen,
+        // engine console, life support console, turret mainframe).
+        for (const SpaceSystem& sys : field.space_systems) {
+            if (sys.destructible >= 0 && size_t(sys.destructible) < field.destructibles.size() &&
+                (sys.owner_team == 0 || sys.owner_team == 1) &&
+                (sys.kind == "shields" || sys.kind == "autodefense" ||
+                 field.in_landing_region(field.destructibles[size_t(sys.destructible)].center))) {
+                auto& atk = field.destructibles[size_t(sys.destructible)].attackers;
+                if (std::find(atk.begin(), atk.end(), 1 - sys.owner_team) == atk.end()) {
+                    atk.push_back(1 - sys.owner_team);
+                }
+            }
+        }
+    }
     // The bounds shrink to the boundaries'.
     if (!field.boundaries.empty()) {
         double x0 = 1e18, z0 = 1e18, x1 = -1e18, z1 = -1e18;
@@ -713,6 +899,8 @@ Conquest::Conquest(const Battlefield& battlefield, bool repeat) : battlefield_(b
 
 void Conquest::reset() {
     state_.tickets = {battlefield_.tickets, battlefield_.tickets};
+    state_.scores = {0, 0};
+    state_.score_limit = uint16_t(std::clamp(battlefield_.score_limit, 0, 65535));
     state_.dominant = -1;
     state_.victory_left = 0;
     state_.winner = -1;
@@ -770,8 +958,18 @@ bool Conquest::destructible_alive(size_t index) const {
     return index < state_.destructibles.size() && state_.destructibles[index] > 0.0f;
 }
 
+bool Conquest::destructible_shielded(size_t index) const {
+    for (const ShieldLink& link : battlefield_.shield_links) {
+        if (link.controller >= 0 && destructible_alive(size_t(link.controller)) &&
+            std::find(link.targets.begin(), link.targets.end(), int(index)) != link.targets.end()) {
+            return true;
+        }
+    }
+    return false;
+}
+
 bool Conquest::damage_destructible(size_t index, double amount) {
-    if (!destructible_alive(index) || amount <= 0) {
+    if (!destructible_alive(index) || amount <= 0 || destructible_shielded(index)) {
         return false;
     }
     state_.destructibles[index] = float(std::max(0.0, double(state_.destructibles[index]) - amount));
@@ -781,10 +979,28 @@ bool Conquest::damage_destructible(size_t index, double amount) {
     return state_.destructibles[index] <= 0.0f;
 }
 
-bool Conquest::deadly(Vec3 feet) const {
+bool Conquest::turret_disabled(std::string_view turret_name) const {
+    const auto matches = [&](const std::vector<TurretMainframe>& list) {
+        for (const TurretMainframe& link : list) {
+            if (link.destructible < 0 || destructible_alive(size_t(link.destructible))) {
+                continue;
+            }
+            for (const std::string& t : link.turrets) {
+                if (iequals(t, turret_name)) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    };
+    return matches(battlefield_.turret_mainframes) || matches(battlefield_.destroy_turrets);
+}
+
+bool Conquest::deadly(Vec3 feet, bool is_character) const {
     const Vec3 body = feet + Vec3{0, 0.9, 0};
     return std::any_of(battlefield_.death_regions.begin(), battlefield_.death_regions.end(), [&](const DeathRegion& r) {
-        return (r.while_standing < 0 || destructible_alive(size_t(r.while_standing))) && r.on_at(clock_) &&
+        return (!r.characters_only || is_character) &&
+               (r.while_standing < 0 || destructible_alive(size_t(r.while_standing))) && r.on_at(clock_) &&
                (r.contains(feet) || r.contains(body));
     });
 }
@@ -834,10 +1050,22 @@ void Conquest::move_doors(double dt, std::span<const Unit> units) {
     }
 }
 
-void Conquest::killed(int team) {
-    if (state_.phase == Phase::live && team >= 0 && team < 2) {
+void Conquest::killed(int team, bool is_flyer) {
+    if (state_.phase != Phase::live || team < 0 || team >= 2) {
+        return;
+    }
+    if (battlefield_.score_limit > 0) {
+        add_score(1 - team, is_flyer ? 2.0 : 1.0);
+    } else {
         state_.tickets[size_t(team)] = std::max(0.0, state_.tickets[size_t(team)] - 1);
     }
+}
+
+void Conquest::add_score(int team, double points) {
+    if (state_.phase != Phase::live || battlefield_.score_limit <= 0 || team < 0 || team >= 2 || points <= 0) {
+        return;
+    }
+    state_.scores[size_t(team)] = std::min(double(battlefield_.score_limit), state_.scores[size_t(team)] + points);
 }
 
 std::vector<MatchEvent> Conquest::step(double dt, std::span<const Unit> units, size_t players) {
@@ -862,6 +1090,13 @@ std::vector<MatchEvent> Conquest::step(double dt, std::span<const Unit> units, s
         break;
     case Phase::live: {
         capture(dt, units, events);
+        if (battlefield_.score_limit > 0) {
+            if (state_.scores[0] >= battlefield_.score_limit || state_.scores[1] >= battlefield_.score_limit) {
+                const int winner = state_.scores[0] >= battlefield_.score_limit ? 0 : 1;
+                finish(winner, events);
+            }
+            break;
+        }
         std::array<int, 2> held{};
         for (const PostState& post : state_.posts) {
             if (post.owner >= 0) {

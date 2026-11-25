@@ -107,10 +107,20 @@ func update(vehicles: Array, shown: Dictionary, delta: float) -> void:
 			node.rotation.y = float(at["yaw"]) + PI
 			if flyer:
 				node.rotation.x = -float(at.get("pitch", 0.0))  # its nose, up or down
+				node.rotation.z = float(at.get("roll", 0.0))
+			else:
+				node.rotation.x = 0.0
+				node.rotation.z = 0.0
 		else:
 			var t := minf(1.0, EASE * delta)
 			node.position = node.position.lerp(v["position"], t)
 			node.rotation.y = lerp_angle(node.rotation.y, float(v["yaw"]) + PI, t)
+			if flyer:
+				node.rotation.x = lerp_angle(node.rotation.x, -float(v.get("pitch", 0.0)), t)
+				node.rotation.z = lerp_angle(node.rotation.z, float(v.get("bank", 0.0)), t)
+			else:
+				node.rotation.x = 0.0
+				node.rotation.z = 0.0
 		if str(class_of(index).get("kind", "")) == "walker":
 			_step(entry, bool(v["alive"]), delta)
 		_aim_turrets(entry, v, shown)
@@ -142,6 +152,11 @@ func _update_effects(entry: Dictionary, v: Dictionary) -> void:
 	if wake != "":
 		var moving := (v["velocity"] as Vector3).length() > 3.0 and bool(v["alive"])
 		_run(node, running, "wake", wake, Vector3(0, -float(c.get("altitude", 0.0)), 0), moving)
+	var contrail := str(c.get("contrail_effect", ""))
+	if contrail != "":
+		var flying := bool(v["alive"]) and not bool(v.get("grounded", false)) and (v["velocity"] as Vector3).length() > 15.0
+		var bmin: Vector3 = c.get("bounds_min", Vector3.ZERO)
+		_run(node, running, "contrail", contrail, Vector3(0, 0, bmin.z * 0.85), flying)
 	entry["effects"] = running
 
 
@@ -412,12 +427,14 @@ func riding(entity: int) -> Dictionary:
 # to be sure): {vehicle: its state, seat: 0 the driver's, 1.. a gunner's},
 # or {}. A gunner's seat only beside one's own side; in the world, only
 # one's own (`me`).
-func enterable(vehicles: Array, position: Vector3, team := -1, me := 0) -> Dictionary:
+func enterable(vehicles: Array, position: Vector3, team := -1, me := 0, is_space := false) -> Dictionary:
 	var best := {}
 	var best_d := 2.2
 	var chest := position + Vector3.UP
 	for v: Dictionary in vehicles:
 		if not bool(v["alive"]):
+			continue
+		if is_space and str(class_of(int(v.get("vehicle", -1))).get("kind", "")) == "turret":
 			continue
 		if int(v.get("owner", 0)) != 0 and int(v["owner"]) != me:
 			continue  # in the world, someone else's

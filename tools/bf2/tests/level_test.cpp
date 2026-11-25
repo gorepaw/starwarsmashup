@@ -429,9 +429,41 @@ void test_no_terrain() {
     CHECK(threw);
 }
 
+// Merges sky domes from a specific planet sublevel (like spa_sky.lvl's `yav`),
+// ignoring sibling planet sublevels, and verifies newly added ODF hashes.
+void test_sky_sublevel() {
+    const auto make_sky = [](const std::string& geom, float rot) {
+        const Bytes model = chunk("SCOP", join({record("Geometry", geom), record("RotationSpeed", {rot})}));
+        const Bytes dome = chunk("SCOP", join({record("DomeModel", {}), model}));
+        return chunk("sky_", join({record("DomeInfo", {}), dome}));
+    };
+    const auto make_lvl = [](uint32_t hash, const Bytes& inner) {
+        Bytes body;
+        put(body, hash);
+        put(body, uint32_t(inner.size()));
+        body.insert(body.end(), inner.begin(), inner.end());
+        return chunk("lvl_", body);
+    };
+    const Bytes sky_pack = chunk(
+        "ucfb", join({make_lvl(odf_hash("hot"), make_sky("hot_dome", 0.1f)),
+                      make_lvl(odf_hash("yav"), make_sky("yav_dome", 0.25f))}));
+    LevelSky sky;
+    CHECK(merge_sky_sublevel(parse_ucfb(sky_pack), odf_hash("yav"), sky));
+    CHECK(sky.dome_models.size() == 1);
+    if (!sky.dome_models.empty()) {
+        CHECK(sky.dome_models[0].geometry == "yav_dome");
+        CHECK(std::abs(sky.dome_models[0].rotation_speed - 0.25f) < 1e-4f);
+    }
+    CHECK(!merge_sky_sublevel(parse_ucfb(sky_pack), odf_hash("kas"), sky));
+    CHECK(odf_hash("ControlRegion") == 0x805c1f8a);
+    CHECK(odf_hash("DestroyedGeometryName") == 0x5dc6e917);
+    CHECK(odf_hash("ContrailEffect") == 0x050dfa58);
+}
+
 int main() {
     test_level();
     test_no_terrain();
+    test_sky_sublevel();
     if (failures == 0) {
         std::printf("level_test: all passed\n");
     }

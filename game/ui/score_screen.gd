@@ -42,7 +42,9 @@ func _paint_side(box: Rect2, side: Dictionary) -> void:
 	var y := box.position.y + 12 * u
 	art.draw_icon(self, side["icon"], Rect2(Vector2(x, y), Vector2(34, 34) * u), side["color"])
 	text("gamefont_large", side["name"], Vector2(x + 44 * u, y + 2 * u), "Left", side["color"])
-	text("gamefont_large", str(ceili(float(side["tickets"]))), Vector2(box.end.x - 16 * u, y + 2 * u), "Right", side["color"])
+	var limit := int(side.get("score_limit", 0))
+	var counter := "%d/%d" % [int(side.get("score", 0)), limit] if limit > 0 else str(ceili(float(side["tickets"])))
+	text("gamefont_large", counter, Vector2(box.end.x - 16 * u, y + 2 * u), "Right", side["color"])
 	y += 48 * u
 	# Column heads: Battlefront's stats icons.
 	var columns := [box.end.x - 120 * u, box.end.x - 75 * u, box.end.x - 30 * u]

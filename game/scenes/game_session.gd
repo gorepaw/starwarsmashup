@@ -336,10 +336,12 @@ func step_frame(delta: float) -> void:
 		_pose(_own, own)
 		_update_remotes(int(own["team"]))
 		var shown := {_client.get_entity_id(): {"position": own["position"], "yaw": float(own["yaw"]),
-				"pitch": float(own.get("pitch", 0.0)), "aim_yaw": float(own.get("roll_yaw", 0.0))}}
+				"pitch": float(own.get("pitch", 0.0)), "roll": float(own.get("roll", 0.0)),
+				"aim_yaw": float(own.get("roll_yaw", 0.0))}}
 		for remote: Dictionary in _client.get_remotes():
 			shown[int(remote["id"])] = {"position": remote["position"], "yaw": float(remote["yaw"]),
-					"pitch": float(remote.get("pitch", 0.0)), "aim_yaw": float(remote.get("roll_yaw", 0.0))}
+					"pitch": float(remote.get("pitch", 0.0)), "roll": float(remote.get("roll", 0.0)),
+					"aim_yaw": float(remote.get("roll_yaw", 0.0))}
 		_vehicles.update(_client.get_vehicles(), shown, delta)
 		var game: Dictionary = _client.get_match()
 		_battle_ui.update_posts(game, int(own["team"]), _elapsed)
@@ -503,8 +505,10 @@ func _input(event: InputEvent) -> void:
 		var motion := event as InputEventMouseMotion
 		var sensitivity := MOUSE_SENSITIVITY * _settings.mouse_sensitivity / _zoom
 		_yaw -= motion.relative.x * sensitivity
-		var lowest := -1.35 if _first_person else -1.2
-		var highest := 1.35 if _first_person else 0.6
+		var driving_cls := _driven_vehicle()
+		var flying := str(driving_cls.get("kind", "")) == "flyer"
+		var lowest := -1.38 if (_first_person or flying) else -1.2
+		var highest := 1.38 if (_first_person or flying) else 0.6
 		var up := -1.0 if _settings.invert_mouse else 1.0
 		_pitch = clampf(_pitch - motion.relative.y * sensitivity * up, lowest, highest)
 	elif event is InputEventMouseButton and event.pressed and not _mouse_captured and not screen_spawn:
@@ -720,7 +724,7 @@ func _show_vehicle_prompt() -> void:
 	if int(own.get("vehicle", -1)) >= 0 or not bool(own["alive"]) or label == null or label.text != "":
 		return
 	var found := _vehicles.enterable(_client.get_vehicles(), own["position"], int(own["team"]),
-			_client.get_entity_id())
+			_client.get_entity_id(), bool(_battlefield.get("is_space", false)))
 	if not found.is_empty():
 		var key := Settings.binding_name(_settings.bindings["interact"]) if _settings.bindings.has("interact") else "E"
 		var label_text := str(_vehicles.class_of(int(found["vehicle"]["vehicle"])).get("label", "vehicle"))
@@ -729,6 +733,18 @@ func _show_vehicle_prompt() -> void:
 		else:
 			label.text = ("Press %s to get in the %s" if int(found["seat"]) == 0 else "Press %s to man the %s's gun") \
 					% [key, label_text]
+		return
+	var chairs: Array = _battlefield.get("turret_chairs", [])
+	var own_pos: Vector3 = own["position"]
+	var own_team := int(own["team"])
+	for chair: Dictionary in chairs:
+		var cteam := int(chair.get("team", -1))
+		if cteam >= 0 and not _client.is_allied(own_team, cteam):
+			continue
+		if own_pos.distance_squared_to(chair["position"] as Vector3) <= 2.8 * 2.8:
+			var key := Settings.binding_name(_settings.bindings["interact"]) if _settings.bindings.has("interact") else "E"
+			label.text = "Press %s to control defense turret" % key
+			return
 
 
 func _aim() -> Vector2:
@@ -1097,7 +1113,8 @@ func _update_camera(target: Vector3, delta: float) -> void:
 				target = at["position"]
 		var pivot := target + Vector3.UP * track.y
 		var at := pivot + look * Vector3(0, 0.3, maxf(3.5, (offset.z - track.z) * 0.75))
-		at.y = maxf(at.y, _client.get_ground_height(at.x, at.z, pivot.y) + 0.5)
+		if not bool(_battlefield.get("is_space", false)):
+			at.y = maxf(at.y, _client.get_ground_height(at.x, at.z, pivot.y) + 0.5)
 		_camera.global_position = at
 		_camera.look_at(pivot + look * Vector3(0, 0, -10), Vector3.UP)
 		return
@@ -1125,7 +1142,8 @@ func _update_camera(target: Vector3, delta: float) -> void:
 	var pivot := _camera_pivot(target)
 	var offset := Vector3(CAMERA_SHOULDER, 0.3, CAMERA_DISTANCE) * (_camera_distance / CAMERA_DISTANCE)
 	var position := pivot + basis * offset
-	position.y = maxf(position.y, _client.get_ground_height(position.x, position.z, pivot.y) + 0.4)
+	if not bool(_battlefield.get("is_space", false)):
+		position.y = maxf(position.y, _client.get_ground_height(position.x, position.z, pivot.y) + 0.4)
 	_camera.global_position = position
 	_camera.look_at(pivot + basis * Vector3(CAMERA_SHOULDER, 0, -10), Vector3.UP)
 
@@ -1729,13 +1747,13 @@ func _request_spawn() -> void:
 
 
 func _choose_spawn(game: Dictionary, own: Dictionary) -> void:
-	var owned := _battle_ui.owned_posts(game, int(own["team"]))
+	var owned := _battle_ui.owned_posts(game, int(own["team"]), _client)
 	if not owned.has(_battle_ui.spawn_post):
 		_battle_ui.spawn_post = owned[0] if not owned.is_empty() else -1
 	if _bot != "" and _bot != "conquest" and not _battle_ui.spawn_requested_flag:
 		_request_spawn()
 	if _battle_ui.spawn_post >= 0:
-		var target: Vector3 = _battlefield["posts"][_battle_ui.spawn_post]["position"]
+		var target := _battle_ui.spawn_post_position(_client, _battle_ui.spawn_post)
 		var view := target + Basis(Vector3.UP, _yaw) * Vector3(0, 28, 38)
 		_camera.global_position = _camera.global_position.lerp(view, 0.1)
 		_camera.look_at(target, Vector3.UP)

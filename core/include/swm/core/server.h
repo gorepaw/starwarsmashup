@@ -276,6 +276,7 @@ private:
         CharacterStats stats;        // with the loadout's gear
         std::optional<net::SpawnRequest> wants_spawn;
         double outside = 0;  // seconds out of bounds
+        int remote_chair = -1;
         uint16_t kills = 0, deaths = 0, captures = 0;
         std::deque<std::pair<uint32_t, Vec3>> history;  // recent positions, for rewinding
         uint32_t last_input = 0;  // newest simulated input
@@ -349,6 +350,7 @@ private:
         uint32_t owner = 0;                       // in the world: who called it (only they ride it)
         double away = 0;        // seconds empty away from its spawn
         double dead_for = -1;   // seconds since destroyed; -1 alive
+        double auto_cooldown = 0;  // seconds until automated ship turret fires next
     };
     struct RangeTarget {
         uint32_t entity = 0;
@@ -449,8 +451,11 @@ private:
     const Npc* find_npc(uint32_t entity) const;
     void damage_powerup(size_t index, double amount, uint32_t attacker, std::vector<Blast>& blasts);
     void explode(const Blast& blast, std::vector<Blast>& blasts);
-    void kill(Client& victim, uint32_t attacker);
+    void kill(Client& victim, uint32_t attacker, bool is_flyer = false);
     void respawn(Client& client);
+    bool is_mobile_spawn(const Vehicle& vehicle, int team, const Battlefield& field,
+                         std::span<const VehicleClass> classes) const;
+    bool can_spawn_at(int team, size_t post) const;
     void spawn_at_post(Client& client, size_t loadout, size_t post);
     void return_to_waiting(Client& client);
     void rebuild_client_loadouts(Client& client);

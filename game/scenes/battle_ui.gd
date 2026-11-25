@@ -327,20 +327,54 @@ func is_choosing_spawn(client: Object) -> bool:
 	return client != null and client.is_spawned() and not _battlefield.is_empty() and client.get_presented()["life"] == "waiting"
 
 
-func owned_posts(game: Dictionary, team: int) -> Array[int]:
+func mobile_spawns(client: Object, team: int) -> Array[Dictionary]:
+	var out: Array[Dictionary] = []
+	if client == null or _battlefield.is_empty():
+		return out
+	var classes: Array = _battlefield.get("vehicles", [])
+	for v: Dictionary in client.get_vehicles():
+		if not bool(v.get("alive", false)) or not bool(v.get("mobile_spawn", false)) or int(v.get("team", -1)) != team:
+			continue
+		var cls_idx := int(v.get("vehicle", -1))
+		var label := "Transport"
+		if cls_idx >= 0 and cls_idx < classes.size():
+			label = str((classes[cls_idx] as Dictionary).get("label", label))
+		out.append({"vehicle": v, "label": label + " (Mobile)", "position": v["position"]})
+	return out
+
+
+func owned_posts(game: Dictionary, team: int, client: Object = null) -> Array[int]:
 	var owned: Array[int] = []
-	for i in (game.get("posts", []) as Array).size():
-		if int(game["posts"][i]["owner"]) == team:
+	var posts: Array = game.get("posts", [])
+	for i in posts.size():
+		if int(posts[i]["owner"]) == team:
 			owned.append(i)
+	if client != null and game.get("phase", "") != "ended":
+		var mobiles := mobile_spawns(client, team)
+		for m in mobiles.size():
+			owned.append(posts.size() + m)
 	return owned
 
 
 func cycle_post(client: Object, step: int) -> void:
-	var owned := owned_posts(client.get_match(), int(client.get_presented()["team"]))
+	var owned := owned_posts(client.get_match(), int(client.get_presented()["team"]), client)
 	if owned.is_empty():
 		return
 	var at := owned.find(spawn_post)
 	spawn_post = owned[posmod(at + step, owned.size())]
+
+
+func spawn_post_position(client: Object, post_index: int) -> Vector3:
+	var posts: Array = _battlefield.get("posts", [])
+	if post_index >= 0 and post_index < posts.size():
+		return posts[post_index]["position"]
+	if client != null and post_index >= posts.size():
+		var own: Dictionary = client.get_presented()
+		var mobiles := mobile_spawns(client, int(own.get("team", -1)))
+		var m_idx := post_index - posts.size()
+		if m_idx >= 0 and m_idx < mobiles.size():
+			return mobiles[m_idx]["position"]
+	return Vector3.ZERO
 
 
 func update_posts(game: Dictionary, own_team: int, elapsed: float) -> void:
@@ -572,10 +606,12 @@ func _update_bf2_hud(client: Object, weapons: Array, max_health: float, delta: f
 	else:
 		_bf2_hud.shield_fraction = -1.0
 	if not game.is_empty() and team >= 0:
+		var score_limit := int(game.get("score_limit", 0))
+		var scores: Array = game.get("scores", [0, 0])
 		for side in 2:
 			var slot := "player1.team%d" % (1 if side == team else 2)
 			b[slot + ".texture"] = _team_icon(side)
-			b[slot + ".reinforcements"] = ceili(game["tickets"][side])
+			b[slot + ".reinforcements"] = int(scores[side]) if score_limit > 0 else ceili(game["tickets"][side])
 		var dominant := int(game.get("dominant", -1))
 		if game["phase"] == "live" and dominant >= 0:
 			b["victorytimer" if dominant == team else "defeattimer"] = ceili(game["victory_left"])
@@ -609,11 +645,17 @@ func _update_screens(client: Object, pause_visible: bool, terminal_open: bool, b
 			loadouts.append({"name": str(entry["name"]) if not custom_lo.is_empty() else _unit_name(str(entry["name"])),
 					"weapons": weapons, "max_health": entry["max_health"]})
 		var posts: Array = []
-		var owned := owned_posts(game, team)
-		for i in (game["posts"] as Array).size():
+		var owned := owned_posts(game, team, client)
+		var map_posts: Array = game["posts"]
+		for i in map_posts.size():
 			var at: Vector3 = _battlefield["posts"][i]["position"]
 			posts.append({"name": _battlefield["posts"][i]["name"], "position": Vector2(at.x, at.z),
-					"color": _post_color(int(game["posts"][i]["owner"]), team), "ours": owned.has(i)})
+					"color": _post_color(int(map_posts[i]["owner"]), team), "ours": owned.has(i)})
+		var mobiles := mobile_spawns(client, team)
+		for m in mobiles.size():
+			var mat: Vector3 = mobiles[m]["position"]
+			posts.append({"name": mobiles[m]["label"], "position": Vector2(mat.x, mat.z),
+					"color": FRIEND_COLOR, "ours": true, "mobile": true})
 		_spawn_screen.title = str(_battlefield["name"])
 		_spawn_screen.side = {"name": _team_name(team), "icon": _team_icon(team), "color": FRIEND_COLOR}
 		_spawn_screen.loadouts = loadouts
@@ -622,8 +664,9 @@ func _update_screens(client: Object, pause_visible: bool, terminal_open: bool, b
 		_spawn_screen.post = spawn_post
 		_spawn_screen.minimap = _bf2_hud.minimap
 		_spawn_screen.waiting = spawn_requested_flag
+		var score_limit := int(game.get("score_limit", 0))
 		_spawn_screen.notice = "No reinforcements left" \
-				if game["phase"] == "live" and ceili(game["tickets"][team]) <= 0 else ""
+				if game["phase"] == "live" and score_limit <= 0 and ceili(game["tickets"][team]) <= 0 else ""
 		_spawn_screen.queue_redraw()
 	var ended: bool = not game.is_empty() and game["phase"] == "ended"
 	_score_screen.visible = not game.is_empty() and team >= 0 and not pause_visible \
@@ -634,6 +677,8 @@ func _update_screens(client: Object, pause_visible: bool, terminal_open: bool, b
 		var me := own.duplicate()
 		me["id"] = client.get_entity_id()
 		everyone.append(me)
+		var score_limit := int(game.get("score_limit", 0))
+		var scores: Array = game.get("scores", [0, 0])
 		var sides: Array = []
 		for side in 2:
 			var players: Array = []
@@ -645,7 +690,7 @@ func _update_screens(client: Object, pause_visible: bool, terminal_open: bool, b
 							"you": int(p["id"]) == client.get_entity_id()})
 			sides.append({"name": _team_name(side), "icon": _team_icon(side),
 					"color": FRIEND_COLOR if side == team else ENEMY_COLOR, "tickets": game["tickets"][side],
-					"players": players})
+					"score": int(scores[side]), "score_limit": score_limit, "players": players})
 		_score_screen.sides = sides
 		_score_screen.own_team = team
 		_score_screen.ended = ended
@@ -717,6 +762,19 @@ func _update_minimap(client: Object, team: int, game: Dictionary) -> void:
 			var at: Vector3 = post["position"]
 			_bf2_hud.map_markers.append({"position": Vector2(at.x, at.z), "kind": "post",
 					"color": _post_color(int(game["posts"][i]["owner"]), team)})
+		var dest_health: PackedFloat32Array = game.get("destructibles", PackedFloat32Array())
+		for sys: Dictionary in _battlefield.get("space_systems", []):
+			var d_idx := int(sys.get("destructible", -1))
+			if d_idx < 0 or d_idx >= dest_health.size() or dest_health[d_idx] <= 0.0:
+				continue
+			var pos: Vector3 = sys["position"]
+			var steam := int(sys.get("owner_team", -1))
+			_bf2_hud.map_markers.append({"position": Vector2(pos.x, pos.z), "kind": "waypoint",
+					"color": FRIEND_COLOR if steam == team else ENEMY_COLOR})
+	for m: Dictionary in mobile_spawns(client, team):
+		var mat: Vector3 = m["position"]
+		_bf2_hud.map_markers.append({"position": Vector2(mat.x, mat.z), "kind": "waypoint",
+				"color": FRIEND_COLOR})
 	for droid: Node3D in get_tree().get_nodes_in_group(Bf2Map.POWERUPS):
 		if not droid.visible:
 			continue
@@ -754,6 +812,39 @@ func _aim_candidates(client: Object, team: int) -> Array:
 				"team": int(remote["team"]), "friend": friend,
 				"hostile": kind >= 2 or (not person and not friend), "peaceful": person and kind < 2,
 				"health": float(remote.get("health", 0.0)), "max_health": float(remote.get("max_health", 0.0))})
+	if not in_world:
+		var classes: Array = _battlefield.get("vehicles", [])
+		var own_id := int(client.get_entity_id())
+		for v: Dictionary in client.get_vehicles():
+			if not bool(v.get("alive", false)) or int(v.get("driver", 0)) == own_id:
+				continue
+			var vteam := int(v.get("team", -1))
+			if vteam < 0:
+				continue
+			var cls_idx := int(v.get("vehicle", -1))
+			var vlabel := "Vehicle"
+			if cls_idx >= 0 and cls_idx < classes.size():
+				vlabel = str((classes[cls_idx] as Dictionary).get("label", vlabel))
+			var friend: bool = team >= 0 and client.is_allied(team, vteam)
+			out.append({"key": "v%d" % int(v["id"]), "name": vlabel, "at": v["position"], "team": vteam,
+					"friend": friend, "hostile": not friend, "peaceful": false,
+					"health": float(v.get("health", 0.0)), "max_health": float(v.get("max_health", 0.0)),
+					"range": 1000.0, "margin": 8.0})
+		var game: Dictionary = client.get_match()
+		var dest_health: PackedFloat32Array = game.get("destructibles", PackedFloat32Array())
+		for sys: Dictionary in _battlefield.get("space_systems", []):
+			var d_idx := int(sys.get("destructible", -1))
+			if d_idx < 0 or d_idx >= dest_health.size() or dest_health[d_idx] <= 0.0:
+				continue
+			var steam := int(sys.get("owner_team", -1))
+			var friend: bool = team >= 0 and steam >= 0 and client.is_allied(team, steam)
+			var ctrl := int(sys.get("shield_controller", -1))
+			var shielded := ctrl >= 0 and ctrl < dest_health.size() and dest_health[ctrl] > 0.0
+			var sname := str(sys.get("label", "System")) + (" [SHIELDED]" if shielded else "")
+			out.append({"key": "s%d" % d_idx, "name": sname, "at": sys["position"], "team": steam,
+					"friend": friend, "hostile": not friend, "peaceful": false,
+					"health": float(dest_health[d_idx]), "max_health": float(sys.get("max_health", 0.0)),
+					"range": 1400.0, "margin": 65.0})
 	if in_world and hub_ui_ref != null:
 		for t: Dictionary in client.get_targets():
 			if not bool(t["alive"]):
@@ -783,17 +874,20 @@ func _aimed_at(client: Object, camera: Camera3D, candidates: Array) -> Dictionar
 	for c: Dictionary in candidates:
 		var to: Vector3 = (c["at"] as Vector3) - from
 		var distance := to.length()
-		if distance > TARGET_RANGE or distance < 0.5:
+		var max_range := float(c.get("range", TARGET_RANGE))
+		if distance > max_range or distance < 0.5:
 			continue
 		var angle := forward.angle_to(to)
-		if angle < maxf(best_angle, 0.6 / distance) and angle < best_angle + 0.6 / distance:
+		var pad := float(c.get("margin", 1.0))
+		if angle < maxf(best_angle, 0.6 * pad / distance) and angle < best_angle + 0.6 * pad / distance:
 			best = c
 			best_angle = angle
 	if not best.is_empty():
-		# A wall between (more than a meter short of it: its own collision doesn't count).
+		# A wall between (more than a margin short of it: its own collision doesn't count).
 		var along := float(client.raycast(from, best["at"]))
 		var distance := from.distance_to(best["at"])
-		if along >= 0.0 and along * distance < distance - 1.0:
+		var margin := float(best.get("margin", 1.0))
+		if along >= 0.0 and along * distance < distance - margin:
 			return {}
 	return best
 
@@ -818,14 +912,18 @@ func _update_match_hud(client: Object, delta: float, hub_ui: Node, generation: i
 		return
 	var own: Dictionary = client.get_presented()
 	var team := int(own["team"])
+	var score_limit := int(game.get("score_limit", 0))
+	var scores: Array = game.get("scores", [0, 0])
 	var text := "[center][color=#%s]%s %d[/color]     [color=#%s]%s %d[/color]\n" % [
-			_post_color(0, team).to_html(false), _team_name(0), ceili(game["tickets"][0]),
-			_post_color(1, team).to_html(false), _team_name(1), ceili(game["tickets"][1])]
+			_post_color(0, team).to_html(false), _team_name(0), int(scores[0]) if score_limit > 0 else ceili(game["tickets"][0]),
+			_post_color(1, team).to_html(false), _team_name(1), int(scores[1]) if score_limit > 0 else ceili(game["tickets"][1])]
 	match game["phase"]:
 		"warmup":
 			text += "Warmup: the match starts in %d s\n" % ceili(game["time_left"])
 		"live":
-			if int(game["dominant"]) >= 0:
+			if score_limit > 0:
+				text += "Goal: %d pts\n" % score_limit
+			elif int(game["dominant"]) >= 0:
 				text += "%s holds every command post: victory in %d s\n" % [_team_name(int(game["dominant"])),
 						ceili(game["victory_left"])]
 			else:
@@ -837,8 +935,12 @@ func _update_match_hud(client: Object, delta: float, hub_ui: Node, generation: i
 	_match_label.text = text + "  ".join(names) + "[/center]"
 	if _bf2_hud != null:
 		var warmup: bool = game["phase"] == "warmup"
-		_match_label.text = "[center]\n\n\n\n\nWarmup: the match starts in %d s[/center]" % ceili(game["time_left"]) \
-				if warmup else ""
+		if warmup:
+			_match_label.text = "[center]\n\n\n\n\nWarmup: the match starts in %d s[/center]" % ceili(game["time_left"])
+		elif score_limit > 0:
+			_match_label.text = _space_systems_banner(game, team, score_limit)
+		else:
+			_match_label.text = ""
 
 	var position: Vector3 = own["position"]
 	var inside: bool = client.in_battlefield(position)
@@ -856,6 +958,28 @@ func _update_match_hud(client: Object, delta: float, hub_ui: Node, generation: i
 		_center.text = "Return to the battlefield!"
 
 
+func _space_systems_banner(game: Dictionary, team: int, score_limit: int) -> String:
+	var dest_health: PackedFloat32Array = game.get("destructibles", PackedFloat32Array())
+	var counts := [[0, 0], [0, 0]]
+	var shields := [false, false]
+	for sys: Dictionary in _battlefield.get("space_systems", []):
+		var steam := int(sys.get("owner_team", -1))
+		var d_idx := int(sys.get("destructible", -1))
+		if steam < 0 or steam > 1 or d_idx < 0 or d_idx >= dest_health.size():
+			continue
+		counts[steam][1] += 1
+		if dest_health[d_idx] > 0.0:
+			counts[steam][0] += 1
+			if str(sys.get("kind", "")) == "shieldgen":
+				shields[steam] = true
+	var ally := team if team >= 0 and team < 2 else 0
+	var enemy := 1 - ally
+	return "[center][color=#%s]Allied Shields %s (%d/%d)[/color]  |  Goal %d  |  [color=#%s]Enemy Shields %s (%d/%d)[/color][/center]" % [
+			FRIEND_COLOR.to_html(false), "ON" if shields[ally] else "OFF", counts[ally][0], counts[ally][1],
+			score_limit,
+			ENEMY_COLOR.to_html(false), "ON" if shields[enemy] else "OFF", counts[enemy][0], counts[enemy][1]]
+
+
 func _spawn_menu(game: Dictionary, team: int) -> String:
 	var lines := PackedStringArray()
 	lines.append("%s: you fight for the %s" % [_battlefield["name"], _team_name(team)])
@@ -868,13 +992,18 @@ func _spawn_menu(game: Dictionary, team: int) -> String:
 				", ".join(loadout["weapons"] + ([loadout["secondary"]] if loadout["secondary"] != "" else [])),
 				roundi(loadout["max_health"])])
 	lines.append("")
+	var post_count := (_battlefield.get("posts", []) as Array).size()
 	if spawn_post < 0:
 		lines.append("Your team holds no command posts")
-	else:
+	elif spawn_post < post_count:
 		lines.append("Command post (Q / E):  < %s >" % _battlefield["posts"][spawn_post]["name"])
 		lines.append("")
 		lines.append("Spawning..." if spawn_requested_flag else "Space or click to spawn")
-	if game["phase"] == "live" and ceili(game["tickets"][team]) <= 0:
+	else:
+		lines.append("Command post (Q / E):  < Mobile Transport >")
+		lines.append("")
+		lines.append("Spawning..." if spawn_requested_flag else "Space or click to spawn")
+	if game["phase"] == "live" and int(game.get("score_limit", 0)) <= 0 and ceili(game["tickets"][team]) <= 0:
 		lines.append("No reinforcements left")
 	return "\n".join(lines)
 

@@ -222,6 +222,9 @@ void put_match(ByteWriter& out, const MatchState& m) {
     out.put(float(m.time_left));
     out.put(float(m.tickets[0]));
     out.put(float(m.tickets[1]));
+    out.put(float(m.scores[0]));
+    out.put(float(m.scores[1]));
+    out.put(m.score_limit);
     out.put(m.dominant);
     out.put(float(m.victory_left));
     out.put(m.winner);
@@ -274,6 +277,9 @@ MatchState get_match(ByteReader& in) {
     m.time_left = in.get<float>();
     m.tickets[0] = in.get<float>();
     m.tickets[1] = in.get<float>();
+    m.scores[0] = in.get<float>();
+    m.scores[1] = in.get<float>();
+    m.score_limit = in.get<uint16_t>();
     m.dominant = get_team(in);
     m.victory_left = in.get<float>();
     m.winner = get_team(in);
@@ -713,11 +719,13 @@ struct Encoder {
             put_vec3(out, v.velocity);
             out.put(v.yaw);
             out.put(v.pitch);
+            out.put(v.bank);
             out.put(v.health);
             out.put(v.max_health);
             out.put(v.driver);
             out.put(v.team);
             out.put(uint8_t(v.alive));
+            out.put(v.flags);
             out.put(uint8_t(std::min<size_t>(v.gunners.size(), 8)));
             for (size_t g = 0; g < v.gunners.size() && g < 8; ++g) {
                 out.put(v.gunners[g]);
@@ -1211,11 +1219,13 @@ Message decode(std::span<const uint8_t> packet) {
             v.velocity = get_vec3(in);
             v.yaw = in.get<float>();
             v.pitch = in.get<float>();
+            v.bank = in.get<float>();
             v.health = in.get<float>();
             v.max_health = in.get<float>();
             v.driver = in.get<uint32_t>();
             v.team = in.get<int8_t>();
             v.alive = in.get<uint8_t>() != 0;
+            v.flags = in.get<uint8_t>();
             const size_t gunners = in.get<uint8_t>();
             if (gunners > 8) throw PacketError("too many gunners");
             for (size_t g = 0; g < gunners; ++g) {

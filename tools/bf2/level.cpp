@@ -764,4 +764,23 @@ Level read_level(const UcfbNode& root) {
     return level;
 }
 
+bool merge_sky_sublevel(const UcfbNode& root, uint32_t sublevel_hash, LevelSky& sky) {
+    bool found = false;
+    for (const UcfbNode& child : root.children) {
+        if (child.tag == "lvl_" && child.name_hash == sublevel_hash) {
+            for (const UcfbNode& sub : child.children) {
+                if (sub.tag == "sky_") {
+                    read_sky(sub, sky);
+                    found = true;
+                }
+            }
+        } else if (child.tag == "ucfb" || child.tag == "lvl_") {
+            if (merge_sky_sublevel(child, sublevel_hash, sky)) {
+                found = true;
+            }
+        }
+    }
+    return found;
+}
+
 } // namespace swm::bf2

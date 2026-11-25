@@ -27,6 +27,22 @@ void AssetLibrary::add(std::vector<uint8_t> bytes) {
     classes_.add(roots_.back());
 }
 
+void AssetLibrary::add_sublevel(std::vector<uint8_t> bytes, uint32_t sublevel_hash) {
+    files_.push_back(std::move(bytes));
+    roots_.push_back(parse_ucfb(files_.back()));
+    const auto walk = [&](auto& self, const UcfbNode& node) -> void {
+        for (const UcfbNode& child : node.children) {
+            if (child.tag == "lvl_" && child.name_hash == sublevel_hash) {
+                index(child);
+                classes_.add(child);
+            } else if (child.tag == "ucfb" || child.tag == "lvl_") {
+                self(self, child);
+            }
+        }
+    };
+    walk(walk, roots_.back());
+}
+
 void AssetLibrary::index(const UcfbNode& node) {
     for (const UcfbNode& child : node.children) {
         if (child.tag == "lvl_") {

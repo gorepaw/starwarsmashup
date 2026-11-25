@@ -27,6 +27,8 @@ public:
     // Parses and keeps a file's bytes. Throws std::runtime_error if it isn't
     // a ucfb tree.
     void add(std::vector<uint8_t> bytes);
+    // Adds only a matching `lvl_` sublevel (e.g. a planet sky inside spa_sky.lvl).
+    void add_sublevel(std::vector<uint8_t> bytes, uint32_t sublevel_hash);
 
     // A model by name, or through a "gmod" of that name (its first LOD).
     const UcfbNode* model(std::string_view name) const;

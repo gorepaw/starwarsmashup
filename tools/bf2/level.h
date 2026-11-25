@@ -245,4 +245,8 @@ struct Level {
 // Reads a map file's tree. Throws std::runtime_error on malformed data.
 Level read_level(const UcfbNode& root);
 
+// Reads sky dome / atmosphere entries from a named lvl_ sublevel (such as
+// spa_sky.lvl's planet sublevels) into `sky`.
+bool merge_sky_sublevel(const UcfbNode& root, uint32_t sublevel_hash, LevelSky& sky);
+
 } // namespace swm::bf2

@@ -1041,8 +1041,9 @@ void GameServer::step() {
             if (client.life == Life::waiting) {
                 continue;  // not in the world
             }
+            const Battlefield* field = conquest_ ? &conquest_->battlefield() : nullptr;
             const auto shot = simulate_character(client.state, input, client.life == Life::alive, world_,
-                                                 loadout_of(client), client.stats, dt, vehicle_classes());
+                                                 loadout_of(client), client.stats, dt, vehicle_classes(), field);
             if (shot) {
                 fire(client, *shot, input.view_tick);
             }
@@ -1325,9 +1326,15 @@ void GameServer::run_match() {
             return_to_waiting(client);
         }
         // So do death regions, at once, and falling through a hole in the
-        // terrain with nothing below.
-        if (client.life == Life::alive && (conquest_->deadly(client.state.position) ||
-                                           client.state.position.y < world_.terrain().lowest() - fall_depth)) {
+        // terrain with nothing below (flyers in space use min_fly_y instead).
+        const auto classes = vehicle_classes();
+        const bool in_flyer = client.state.vehicle >= 0 && size_t(client.state.vehicle) < vehicles_.size() &&
+                              size_t(vehicles_[size_t(client.state.vehicle)].cls) < classes.size() &&
+                              classes[size_t(vehicles_[size_t(client.state.vehicle)].cls)].kind == VehicleKind::flyer;
+        const double death_y =
+            (in_flyer && field.is_space()) ? field.min_fly_y - 50.0 : world_.terrain().lowest() - fall_depth;
+        if (client.life == Life::alive &&
+            (conquest_->deadly(client.state.position, !in_flyer) || client.state.position.y < death_y)) {
             kill(client, 0);
             continue;
         }
@@ -1439,7 +1446,7 @@ void GameServer::run_match() {
         const size_t post = client.wants_spawn->post;
         const size_t avail_loadouts =
             client.custom_loadouts.empty() ? field.team(client.team).loadouts.size() : client.custom_loadouts.size();
-        if (loadout < avail_loadouts && conquest_->can_spawn(client.team, post)) {
+        if (loadout < avail_loadouts && can_spawn_at(client.team, post)) {
             spawn_at_post(client, loadout, post);
         }
     }
@@ -1454,38 +1461,112 @@ void GameServer::return_to_waiting(Client& client) {
     client.state.velocity = {};
 }
 
+bool GameServer::is_mobile_spawn(const Vehicle& vehicle, int team, const Battlefield& field,
+                                 std::span<const VehicleClass> classes) const {
+    if (vehicle.dead_for >= 0 || vehicle.team < 0 || vehicle.team != team ||
+        size_t(vehicle.cls) >= classes.size()) {
+        return false;
+    }
+    const VehicleClass& cls = classes[size_t(vehicle.cls)];
+    if (!cls.is_transport || cls.spawn_points.empty()) {
+        return false;
+    }
+    if (vehicle.driver != 0) {
+        return true;
+    }
+    if (vehicle.spawn >= 0 && size_t(vehicle.spawn) < field.vehicle_spawns.size()) {
+        const Vec3 origin = field.vehicle_spawns[size_t(vehicle.spawn)].position;
+        return (vehicle.state.position - origin).length() > 25.0;
+    }
+    return false;
+}
+
+bool GameServer::can_spawn_at(int team, size_t post) const {
+    if (!conquest_) {
+        return false;
+    }
+    const Battlefield& field = conquest_->battlefield();
+    if (post < field.posts.size()) {
+        return conquest_->can_spawn(team, post);
+    }
+    if (conquest_->state().phase == Phase::ended || team < 0 || team >= 2) {
+        return false;
+    }
+    size_t idx = post - field.posts.size();
+    const auto classes = vehicle_classes();
+    for (const Vehicle& v : vehicles_) {
+        if (is_mobile_spawn(v, team, field, classes)) {
+            if (idx-- == 0) {
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
 void GameServer::spawn_at_post(Client& client, size_t loadout_index, size_t post_index) {
     const Battlefield& field = conquest_->battlefield();
-    const CommandPost& post = field.posts[post_index];
-    // At the post's spawn points in turn, or spread around it (golden-angle
-    // steps); facing away from it.
     const uint32_t slot = next_spawn_slot_++;
-    const double angle = double(slot) * 2.399963;
-    // Natives at its ally spawn points, if it has them.
-    const bool ally = client.team == natives_team && !post.ally_spawn_points.empty();
-    const auto& points = ally ? post.ally_spawn_points : post.spawn_points;
-    Vec3 position = points.empty() ? post.position + Vec3{std::cos(angle), 0, std::sin(angle)} * post.spawn_radius
-                                   : points[slot % points.size()];
-    position.x = std::clamp(position.x, field.min_x, field.max_x);
-    position.z = std::clamp(position.z, field.min_z, field.max_z);
-    position = world_.clamp(position);
-    // On the surface at the spawn point's height, if it has one; else on
-    // the terrain (or what stands on it).
-    const double from = ally || (post.spawn_heights && !post.spawn_points.empty())
-                            ? position.y
-                            : world_.terrain().height_at(position.x, position.z);
+    Vec3 position;
+    double face_yaw = 0;
+    bool exact_height = false;
+    double from_y = 0;
+    std::string spawn_name;
+    if (post_index >= field.posts.size()) {
+        // Mobile transport spawn (commandflyer spawn points).
+        size_t wanted = post_index - field.posts.size();
+        const Vehicle* transport = nullptr;
+        const auto classes = vehicle_classes();
+        for (const Vehicle& v : vehicles_) {
+            if (is_mobile_spawn(v, client.team, field, classes)) {
+                if (wanted-- == 0) {
+                    transport = &v;
+                    break;
+                }
+            }
+        }
+        if (transport == nullptr) {
+            return;
+        }
+        const VehicleClass& cls = classes[size_t(transport->cls)];
+        spawn_name = cls.label;
+        const Vec3 local = cls.spawn_points[slot % cls.spawn_points.size()];
+        position = vehicle_to_world(transport->state.position, transport->state.yaw, local);
+        face_yaw = transport->state.yaw;
+        exact_height = !transport->state.grounded;
+        from_y = position.y;
+    } else {
+        const CommandPost& post = field.posts[post_index];
+        spawn_name = post.name;
+        // At the post's spawn points in turn, or spread around it (golden-angle
+        // steps); facing away from it.
+        const double angle = double(slot) * 2.399963;
+        // Natives at its ally spawn points, if it has them.
+        const bool ally = client.team == natives_team && !post.ally_spawn_points.empty();
+        const auto& points = ally ? post.ally_spawn_points : post.spawn_points;
+        position = points.empty() ? post.position + Vec3{std::cos(angle), 0, std::sin(angle)} * post.spawn_radius
+                                  : points[slot % points.size()];
+        position.x = std::clamp(position.x, field.min_x, field.max_x);
+        position.z = std::clamp(position.z, field.min_z, field.max_z);
+        position = world_.clamp(position);
+        // On the surface at the spawn point's height, if it has one; else on
+        // the terrain (or what stands on it).
+        from_y = ally || (post.spawn_heights && !post.spawn_points.empty())
+                     ? position.y
+                     : world_.terrain().height_at(position.x, position.z);
+        face_yaw = std::atan2(-(position.x - post.position.x), -(position.z - post.position.z));
+    }
     client.loadout = loadout_index;
     const Loadout& loadout = loadout_of(client);
     client.stats = stats_for(loadout, client.species, config_.base_stats);
-    // (A spawn point over a seam in the floor, one of Mygeeto's CP2's: on
-    // the floor both sides of it.) A spawn point a little under its floor
-    // (one of Utapau's, a meter down) is on it: looking from a meter up.
     constexpr double spawn_lift = 1;
-    position.y = world_.support_at(position.x, position.z, from + spawn_lift, client.stats.move.step_up).height;
+    if (!exact_height) {
+        position.y = world_.support_at(position.x, position.z, from_y + spawn_lift, client.stats.move.step_up).height;
+    }
 
     client.state = MoveState{};
     client.state.position = position;
-    client.state.yaw = float(std::atan2(-(position.x - post.position.x), -(position.z - post.position.z)));
+    client.state.yaw = float(face_yaw);
     reset_loadout(client.state, loadout, client.stats);
     client.health = client.stats.max_health;
     client.shield = client.stats.shield_capacity;
@@ -1496,7 +1577,7 @@ void GameServer::spawn_at_post(Client& client, size_t loadout_index, size_t post
     client.history.clear();
     client.wants_spawn.reset();
     ++client.spawn_count;
-    say(std::format("{} spawned with {} at {}", client.name, loadout.name, post.name));
+    say(std::format("{} spawned with {} at {}", client.name, loadout.name, spawn_name));
 }
 
 void GameServer::fire(Client& shooter, const Shot& shot, double view_tick) {
@@ -1963,8 +2044,24 @@ void GameServer::damage_destructible(size_t index, double amount, uint32_t attac
     if (!conquest_ || !conquest_->destructible_alive(index) || amount <= 0) {
         return;
     }
+    const Battlefield& field = conquest_->battlefield();
+    if (amount < 1e11 && attacker != 0 && !config_.friendly_fire) {
+        if (const Client* src = find(attacker)) {
+            for (const SpaceSystem& sys : field.space_systems) {
+                if (sys.destructible == int(index) && sys.owner_team >= 0 && field.allied(src->team, sys.owner_team)) {
+                    return;
+                }
+            }
+        }
+    }
+    if (conquest_->destructible_shielded(index)) {
+        return;
+    }
+    if (attacker != 0 && amount < 1e11) {
+        events_.push_back({net::CombatEvent::hit, attacker, 0, float(amount)});
+    }
     if (conquest_->damage_destructible(index, amount)) {
-        const Destructible& d = conquest_->battlefield().destructibles[index];
+        const Destructible& d = field.destructibles[index];
         world_.set_destroyed(index, true);
         say(std::format("{} destroyed", d.name));
         Blast blast;
@@ -1975,6 +2072,45 @@ void GameServer::damage_destructible(size_t index, double amount, uint32_t attac
         blast.normal = {0, 1, 0};
         blast.destructible = int(index);
         blasts.push_back(blast);
+
+        for (const SpaceSystem& sys : field.space_systems) {
+            if (sys.destructible == int(index) && sys.owner_team >= 0 && sys.points > 0) {
+                conquest_->add_score(1 - sys.owner_team, sys.points);
+            }
+        }
+        for (const DestroyLink& link : field.destroy_links) {
+            if (link.source == int(index)) {
+                for (const int target : link.targets) {
+                    if (target >= 0 && size_t(target) != index) {
+                        damage_destructible(size_t(target), 1e12, attacker, blasts);
+                    }
+                }
+            }
+        }
+        for (const TurretMainframe& link : field.destroy_turrets) {
+            if (link.destructible == int(index)) {
+                for (Vehicle& v : vehicles_) {
+                    if (v.dead_for >= 0 || v.spawn < 0 || size_t(v.spawn) >= field.vehicle_spawns.size()) {
+                        continue;
+                    }
+                    const std::string& tname = field.vehicle_spawns[size_t(v.spawn)].name;
+                    const bool linked = std::any_of(link.turrets.begin(), link.turrets.end(), [&](const std::string& n) {
+                        return n.size() == tname.size() &&
+                               std::equal(n.begin(), n.end(), tname.begin(),
+                                          [](char a, char b) { return std::tolower(uint8_t(a)) == std::tolower(uint8_t(b)); });
+                    });
+                    if (linked) {
+                        if (v.driver != 0) {
+                            if (Client* driver = find(v.driver)) {
+                                leave_vehicle(*driver);
+                                kill(*driver, attacker);
+                            }
+                        }
+                        v.dead_for = 1e9;
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -2188,8 +2324,14 @@ void GameServer::damage(Client& victim, double raw, DamageType type, uint32_t at
     }
 }
 
-void GameServer::kill(Client& victim, uint32_t attacker) {
+void GameServer::kill(Client& victim, uint32_t attacker, bool is_flyer) {
     if (victim.state.vehicle >= 0) {
+        const auto classes = vehicle_classes();
+        const size_t vi = size_t(victim.state.vehicle);
+        if (vi < vehicles_.size() && size_t(vehicles_[vi].cls) < classes.size() &&
+            classes[size_t(vehicles_[vi].cls)].kind == VehicleKind::flyer) {
+            is_flyer = true;
+        }
         leave_vehicle(victim);
     }
     victim.health = 0;
@@ -2208,7 +2350,7 @@ void GameServer::kill(Client& victim, uint32_t attacker) {
         }
     }
     if (conquest_) {
-        conquest_->killed(victim.team);
+        conquest_->killed(victim.team, is_flyer);
         drop_pickup(victim.state.position);
     }
     say(killer != nullptr ? std::format("{} killed {}", killer->name, victim.name)

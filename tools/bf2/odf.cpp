@@ -82,6 +82,8 @@ constexpr std::array known_names = {
     // Flyers' (the snowspeeder's), by the same hashing.
     "MinSpeed", "TakeoffTime", "TakeoffSpeed", "TakeoffHeight", "LandingTime", "LandingSpeed", "LandedHeight",
     "LevelFilter", "PitchFilterDecel", "TurnFilterDecel",
+    // Space combat, capital ships, transports, and turrets.
+    "DestroyedGeometryName", "ExplosionDestruct", "ContrailEffect", "ControlRegion", "SpawnPointLocation",
 };
 
 const std::map<uint32_t, std::string_view>& name_table() {

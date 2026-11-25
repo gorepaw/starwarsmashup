@@ -19,7 +19,7 @@ namespace swm::core::net {
 // Every packet starts with a magic number, the protocol version and a message
 // type. Peers drop packets with another version. Bump it on any wire change.
 inline constexpr uint16_t protocol_magic = 0x4D53;  // "SM"
-inline constexpr uint16_t protocol_version = 30;
+inline constexpr uint16_t protocol_version = 32;
 inline constexpr uint8_t droid_explosion_weapon = 0xFF;  // Explosion::weapon sentinel for destroyed health/ammo droids
 // ...for a destroyed object (Battlefield::destructibles); clients draw it
 // from the object's own explosion as they see it go.
@@ -322,13 +322,18 @@ struct VehicleState {
     Vec3 velocity;
     float yaw = 0;
     float pitch = 0;
+    float bank = 0;       // flyer visual roll/bank angle (radians)
     float health = 0;
     float max_health = 0;
     uint32_t driver = 0;  // entity; 0: empty
     int8_t team = -1;     // whose it is: its driver's, else the side it spawned for
     bool alive = true;
+    uint8_t flags = 0;    // bit 0: landed/grounded; bit 1: active mobile spawn
     std::vector<uint32_t> gunners;  // per gunner's seat: who sits there (0: no one)
     uint32_t owner = 0;             // in the world: whose it is (only they ride it); 0 in a match
+
+    static constexpr uint8_t flag_grounded = 1 << 0;
+    static constexpr uint8_t flag_mobile_spawn = 1 << 1;
 
     friend bool operator==(const VehicleState&, const VehicleState&) = default;
 };

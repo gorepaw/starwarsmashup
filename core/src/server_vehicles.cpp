@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <cmath>
 #include <format>
+#include <numbers>
 
 #include "swm/core/server.h"
 
@@ -34,6 +35,7 @@ std::vector<net::VehicleState> GameServer::vehicles() const {
 }
 
 net::VehicleState GameServer::describe(const Vehicle& v) const {
+    const auto classes = vehicle_classes();
     net::VehicleState s;
     s.id = v.id;
     s.vehicle = uint8_t(v.cls);
@@ -41,11 +43,16 @@ net::VehicleState GameServer::describe(const Vehicle& v) const {
     s.velocity = v.state.velocity;
     s.yaw = v.state.yaw;
     s.pitch = v.state.pitch;
+    s.bank = v.state.roll;
     s.health = float(v.health);
-    s.max_health = float(vehicle_classes()[size_t(v.cls)].max_health);
+    s.max_health = float(classes[size_t(v.cls)].max_health);
     s.driver = v.driver;
     s.team = int8_t(v.team);
     s.alive = v.dead_for < 0;
+    s.flags = (v.state.grounded ? net::VehicleState::flag_grounded : 0) |
+              (conquest_ && is_mobile_spawn(v, v.team, conquest_->battlefield(), classes)
+                   ? net::VehicleState::flag_mobile_spawn
+                   : 0);
     s.gunners = v.gunners;
     s.owner = v.owner;
     return s;
@@ -135,7 +142,85 @@ void GameServer::update_vehicles(double dt) {
             // Empty: it coasts to a stop and settles.
             MoveInput idle;
             idle.yaw = v.state.yaw;
-            simulate_vehicle(v.state, idle, world_, cls, dt);
+            idle.pitch = v.state.pitch;
+            const Battlefield* field_ptr = conquest_ ? &conquest_->battlefield() : nullptr;
+            simulate_vehicle(v.state, idle, world_, cls, dt, field_ptr);
+            // Automated ship / hangar turrets engage enemy flyers and boarders
+            // when unmanned and not disabled by mainframe or frigate destruction.
+            if (v.dead_for < 0 && cls.kind == VehicleKind::turret && v.team >= 0 && field_ptr != nullptr &&
+                field_ptr->is_space() && conquest_->state().phase == Phase::live) {
+                const bool disabled =
+                    v.spawn >= 0 && size_t(v.spawn) < field_ptr->vehicle_spawns.size() &&
+                    conquest_->turret_disabled(field_ptr->vehicle_spawns[size_t(v.spawn)].name);
+                v.auto_cooldown = std::max(0.0, v.auto_cooldown - dt);
+                if (!disabled && cls.loadout.weapons[0]) {
+                    const WeaponDef& w = *cls.loadout.weapons[0];
+                    const Vec3 eye = vehicle_to_world(v.state.position, v.state.yaw, cls.eye);
+                    const double w_range = w.bolt_speed * w.bolt_life;
+                    const double max_range = w_range > 0 ? std::min(w_range, 600.0) : 500.0;
+                    double best_d2 = max_range * max_range;
+                    std::optional<Vec3> target_pos;
+                    for (const Vehicle& other : vehicles_) {
+                        if (other.dead_for >= 0 || other.team < 0 || allied(v.team, other.team) ||
+                            other.driver == 0) {
+                            continue;
+                        }
+                        const Vec3 delta = other.state.position - eye;
+                        const double d2 = delta.dot(delta);
+                        if (d2 >= best_d2) continue;
+                        const Vec3 aim_pt = other.state.position + Vec3{0, 0.5, 0};
+                        if (!world_.raycast_hit(eye, aim_pt)) {
+                            best_d2 = d2;
+                            target_pos = aim_pt;
+                        }
+                    }
+                    if (!target_pos) {
+                        const double inf_range = std::min(max_range, 90.0);
+                        double inf_d2 = std::min(best_d2, inf_range * inf_range);
+                        for (const Client& c : clients_) {
+                            if (c.life != Life::alive || allied(v.team, c.team) || c.state.vehicle >= 0) continue;
+                            const Vec3 delta = c.state.position - eye;
+                            const double d2 = delta.dot(delta);
+                            if (d2 >= inf_d2) continue;
+                            const Vec3 aim_pt = c.state.position + Vec3{0, 1.1, 0};
+                            if (!world_.raycast_hit(eye, aim_pt)) {
+                                inf_d2 = d2;
+                                target_pos = aim_pt;
+                            }
+                        }
+                    }
+                    if (target_pos) {
+                        const Vec3 d = *target_pos - eye;
+                        const double wanted_yaw = std::atan2(-d.x, -d.z);
+                        const double wanted_pitch =
+                            std::clamp(std::atan2(d.y, std::hypot(d.x, d.z)), cls.pitch_min, cls.pitch_max);
+                        double dy = wanted_yaw - double(v.state.yaw);
+                        while (dy > std::numbers::pi) dy -= 2 * std::numbers::pi;
+                        while (dy < -std::numbers::pi) dy += 2 * std::numbers::pi;
+                        const double step = cls.turn_rate * dt;
+                        v.state.yaw = float(double(v.state.yaw) + std::clamp(dy, -step, step));
+                        v.state.pitch = float(double(v.state.pitch) +
+                                              std::clamp(wanted_pitch - double(v.state.pitch), -step, step));
+                        v.state.roll_yaw = v.state.yaw;
+                        if (std::abs(dy) < 0.18 && v.auto_cooldown <= 0) {
+                            const Vec3 muzzle = vehicle_muzzle(v.state, cls);
+                            const Vec3 dir = aim_direction(v.state.yaw, v.state.pitch);
+                            Bolt bolt;
+                            bolt.id = next_bolt_++;
+                            bolt.owner = 0;
+                            bolt.team = v.team;
+                            bolt.weapon = 0;
+                            bolt.position = muzzle;
+                            bolt.def = w;
+                            bolt.velocity = dir * w.bolt_speed;
+                            bolt.life = w.bolt_life;
+                            bolt.gravity = 0;
+                            bolts_.push_back(bolt);
+                            v.auto_cooldown = std::max(0.25, w.shot_delay);
+                        }
+                    }
+                }
+            }
         }
         // Its gunners ride where it is, facing its way (their look turns the guns).
         bool manned = driven;
@@ -187,7 +272,7 @@ void GameServer::update_vehicles(double dt) {
     for (size_t i = 0; i < field.vehicle_spawns.size(); ++i) {
         const VehicleSpawn& spawn = field.vehicle_spawns[i];
         spawn_wait_[i] = std::max(0.0, spawn_wait_[i] - dt);
-        const int holder = spawn.post < 0 ? 0
+        const int holder = spawn.post < 0 ? (spawn.turret_team >= 0 ? spawn.turret_team : 0)
                            : size_t(spawn.post) < match.posts.size() ? int(match.posts[size_t(spawn.post)].owner)
                                                                      : -1;
         const int wanted = holder >= 0 && holder < 2 ? spawn.vehicle[size_t(holder)] : -1;
@@ -235,15 +320,38 @@ void GameServer::update_vehicles(double dt) {
 void GameServer::use_vehicle(Client& client) {
     const auto classes = vehicle_classes();
     if (client.state.vehicle >= 0) {
+        if (conquest_ && conquest_->battlefield().is_space() &&
+            size_t(client.state.vehicle) < classes.size() &&
+            classes[size_t(client.state.vehicle)].kind == VehicleKind::flyer && client.state.seat == 0 &&
+            !client.state.grounded) {
+            const Battlefield& field = conquest_->battlefield();
+            const VehicleClass& cls = classes[size_t(client.state.vehicle)];
+            const double floor = world_.ground_at(client.state.position.x, client.state.position.z,
+                                                client.state.position.y + 2.0, 1.5).height;
+            if (!field.in_landing_region(client.state.position) ||
+                client.state.position.y - floor > cls.takeoff_height + 15.0) {
+                notify(client.entity, "Fly into a hangar to land and exit");
+                return;
+            }
+            client.state.position.y = floor + cls.landed_height;
+            client.state.velocity = {};
+            client.state.grounded = true;
+            client.state.pitch = 0;
+            client.state.roll = 0;
+        }
         leave_vehicle(client);
         return;
     }
     Vehicle* best = nullptr;
     int best_seat = -1;
-    double best_distance = enter_reach;
+    double best_distance = 1e9;
     const Vec3 chest = client.state.position + Vec3{0, 1.0, 0};
     for (Vehicle& v : vehicles_) {
         if (v.dead_for >= 0 || (v.owner != 0 && v.owner != client.entity)) continue;
+        const VehicleClass& cls = classes[size_t(v.cls)];
+        if (cls.kind == VehicleKind::turret && conquest_ && conquest_->battlefield().is_space()) {
+            continue;  // space defense turrets are automated or manned via turret chairs
+        }
         int seat = -1;
         const bool aboard = v.driver != 0 || std::any_of(v.gunners.begin(), v.gunners.end(),
                                                          [](uint32_t g) { return g != 0; });
@@ -258,16 +366,52 @@ void GameServer::use_vehicle(Client& client) {
             }
         }
         if (seat < 0 || (aboard && !allied(v.team, client.team))) continue;
-        const double d = distance_to_vehicle(chest, v.state.position, v.state.yaw, classes[size_t(v.cls)]);
-        if (d <= best_distance) {
+        const double reach = cls.kind == VehicleKind::flyer ? enter_reach + 1.5 : enter_reach;
+        const double d = distance_to_vehicle(chest, v.state.position, v.state.yaw, cls);
+        if (d <= reach && d < best_distance) {
             best_distance = d;
             best = &v;
             best_seat = seat;
         }
     }
+    int chosen_chair = -1;
+    if (best == nullptr && conquest_ && !conquest_->battlefield().turret_chairs.empty()) {
+        const Battlefield& field = conquest_->battlefield();
+        double best_chair_d2 = 3.5 * 3.5;
+        for (size_t i = 0; i < field.turret_chairs.size(); ++i) {
+            const TurretChair& chair = field.turret_chairs[i];
+            if (chair.team >= 0 && !allied(chair.team, client.team)) continue;
+            const Vec3 delta = chair.position - client.state.position;
+            const double d2 = delta.dot(delta);
+            if (d2 <= best_chair_d2) {
+                best_chair_d2 = d2;
+                chosen_chair = int(i);
+            }
+        }
+        if (chosen_chair >= 0) {
+            const Vec3 chair_pos = field.turret_chairs[size_t(chosen_chair)].position;
+            double best_tur_d2 = 1e30;
+            for (Vehicle& v : vehicles_) {
+                if (v.dead_for >= 0 || v.driver != 0 || classes[size_t(v.cls)].kind != VehicleKind::turret) continue;
+                if (v.team >= 0 && !allied(v.team, client.team)) continue;
+                if (v.spawn >= 0 && size_t(v.spawn) < field.vehicle_spawns.size() &&
+                    conquest_->turret_disabled(field.vehicle_spawns[size_t(v.spawn)].name)) {
+                    continue;
+                }
+                const Vec3 delta = v.state.position - chair_pos;
+                const double d2 = delta.dot(delta);
+                if (d2 < best_tur_d2) {
+                    best_tur_d2 = d2;
+                    best = &v;
+                    best_seat = 0;
+                }
+            }
+        }
+    }
     if (best == nullptr) {
         return;
     }
+    client.remote_chair = chosen_chair;
     if (best_seat > 0) {
         const VehicleSeat& seat = classes[size_t(best->cls)].seats[size_t(best_seat - 1)];
         best->gunners[size_t(best_seat - 1)] = client.entity;
@@ -368,6 +512,20 @@ void GameServer::leave_vehicle(Client& client) {
     }
     const Vec3 carried = v->state.velocity;
     const VehicleClass& vehicle = classes[size_t(cls)];
+    if (client.remote_chair >= 0 && conquest_ &&
+        size_t(client.remote_chair) < conquest_->battlefield().turret_chairs.size()) {
+        const TurretChair& chair = conquest_->battlefield().turret_chairs[size_t(client.remote_chair)];
+        client.state.position = chair.position;
+        client.state.yaw = float(chair.yaw);
+        client.state.velocity = {};
+        client.state.combat = own;
+        client.state.grounded = true;
+        client.state.sprinting = false;
+        client.state.energy = client.stats.move.max_energy;
+        client.remote_chair = -1;
+        return;
+    }
+    client.remote_chair = -1;
     // Out on its left, clear of its body.
     Vec3 out = vehicle_to_world(v->state.position, v->state.yaw, {vehicle.bounds_max.x + 0.8, 0, 0});
     const Vec3 inside = v->state.position + Vec3{0, 0.5, 0};
@@ -375,7 +533,7 @@ void GameServer::leave_vehicle(Client& client) {
         out = vehicle_to_world(v->state.position, v->state.yaw, {vehicle.bounds_min.x - 0.8, 0, 0});
     }
     out = world_.clamp(out);
-    out.y = world_.ground_at(out.x, out.z, v->state.position.y + 1, 3).height;
+    out.y = world_.ground_at(out.x, out.z, v->state.position.y + 2.0, 3).height;
     client.state.position = out;
     client.state.velocity = {};
     client.state.combat = own;
@@ -410,14 +568,14 @@ void GameServer::damage_vehicle(Vehicle& v, double amount, uint32_t attacker, st
         if (Client* driver = find(v.driver)) {
             v.state = driver->state;
             leave_vehicle(*driver);
-            kill(*driver, attacker);
+            kill(*driver, attacker, cls.kind == VehicleKind::flyer);
         }
         v.driver = 0;
     }
     for (uint32_t& g : v.gunners) {
         if (Client* gunner = g != 0 ? find(g) : nullptr) {
             leave_vehicle(*gunner);
-            kill(*gunner, attacker);
+            kill(*gunner, attacker, cls.kind == VehicleKind::flyer);
         }
         g = 0;
     }

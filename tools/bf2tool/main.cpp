@@ -45,12 +45,16 @@ constexpr const char* usage = R"(usage:
   bf2tool odf <file.lvl> [class]
   bf2tool export-loadout <_lvl_pc dir> <side> <soldier class> -o <loadout.ini> [--items <dir>]
   bf2tool export-vehicle <_lvl_pc dir> <side> <vehicle class> -o <out dir>
-  bf2tool export-map <_lvl_pc dir> <map> -o <out dir> [--mode conquest] [--skip <layer>]...
-                     [--death <region>]... [--open <object>]... [--team <post>=<n>]... [--disable <barrier>]...
-                     [--drop-boundary <path>]... [--set <object>.<property>=<value>]...
+  bf2tool export-map <_lvl_pc dir> <map> -o <out dir> [--mode conquest] [--sky <planet>] [--skip <layer>]...
+                     [--death <region>]... [--landing <region>]... [--open <object>]... [--team <post>=<n>]...
+                     [--disable <barrier>]... [--drop-boundary <path>]... [--set <object>.<property>=<value>]...
                      [--regen <object>=<health a second>]... [--kill-plays <object>=<animation group>]...
                      [--kill-stops <object>=<animation group>]... [--kill-removes <object>=<death region>]...
                      [--start-plays <animation group>]... [--timed-death <region>=<first>,<on>,<off>]...
+                     [--fly-height <min>,<max>] [--extents <half>] [--score-limit <points>]
+                     [--shield <ctrl>=<targets>]... [--link <src>=<targets>]...
+                     [--turret-mainframe <obj>=<turrets>]... [--kill-turrets <obj>=<turrets>]...
+                     [--system <obj>=<team>:<kind>:<points>:<label>]...
   bf2tool export-hud <_lvl_pc dir> -o <out dir>
   bf2tool export-effects <_lvl_pc dir> -o <out dir> [--map <map>]...
   bf2tool export-audio <_lvl_pc dir> -o <out dir>
@@ -213,8 +217,8 @@ OdfClass ordnance_of(const OdfClass& weapon, const OdfLibrary& library) {
 // What a weapon fires, if the game supports it: "bolt" (a cannon firing
 // bolts or bullets), "missile" (a launcher) or "grenade" (thrown or lobbed).
 std::string projectile_of(const OdfClass& weapon, const OdfClass& ordnance) {
-    // A vehicle's guns derive from plain "weapon" (com_weap_veh_laser).
-    const bool gun = weapon.base == "cannon" || weapon.base == "weapon";
+    // A vehicle's guns derive from plain "weapon" (com_weap_veh_laser) or "launcher".
+    const bool gun = weapon.base == "cannon" || weapon.base == "weapon" || weapon.base == "launcher";
     if (gun && (ordnance.base == "bolt" || ordnance.base == "bullet")) {
         return "bolt";
     }
@@ -487,7 +491,9 @@ int cmd_export_vehicle(const std::vector<std::string>& args) {
     const std::filesystem::path dir = args[0];
     const std::filesystem::path out_dir = args[4];
     AssetLibrary library;
-    for (const std::filesystem::path& path : {dir / "side" / (args[1] + ".lvl"), dir / "ingame.lvl"}) {
+    const std::filesystem::path explicit_lvl = dir / (args[1] + ".lvl");
+    const std::filesystem::path side_lvl = std::filesystem::exists(explicit_lvl) ? explicit_lvl : dir / "side" / (args[1] + ".lvl");
+    for (const std::filesystem::path& path : {side_lvl, dir / "ingame.lvl"}) {
         library.add(read_file(path));
     }
     const std::string name = lowercase(args[2]);
@@ -498,11 +504,12 @@ int cmd_export_vehicle(const std::vector<std::string>& args) {
     // A map's turret (side/tur.lvl's armedbuildings) is a vehicle that
     // stays put: its operator's section (TURRET1) has its limits and guns.
     // A command walker (the AT-AT, the AT-TE: Battlefront's mobile command
-    // posts) is a walker here (ASSUMPTION: not yet somewhere to spawn).
+    // posts) is a walker here; commandflyers are flyers/transports.
     const std::string base = lowercase(vehicle.base);
-    const std::string kind = base == "armedbuilding" ? "turret" : base == "commandwalker" ? "walker" : base;
+    const std::string kind =
+        base == "armedbuilding" ? "turret" : base == "commandwalker" ? "walker" : base == "commandflyer" ? "flyer" : base;
     if (kind != "hover" && kind != "walker" && kind != "turret" && kind != "flyer") {
-        throw std::runtime_error(args[2] + " is a " + vehicle.base + ", not a hover or walker vehicle or a turret");
+        throw std::runtime_error(args[2] + " is a " + vehicle.base + ", not a hover or walker vehicle, flyer, or turret");
     }
     std::filesystem::create_directories(out_dir);
     std::ofstream out(out_dir / (name + ".ini"), std::ios::binary);
@@ -520,7 +527,15 @@ int cmd_export_vehicle(const std::vector<std::string>& args) {
             {"atte", "AT-TE"},                    {"oneman_atst", "AT-RT"},
             {"spider", "Spider Walker"},          {"tauntaun", "Tauntaun"},
             {"recoilless_kas", "Recoilless Cannon"}, {"recoilless_lg", "Recoilless Cannon"},
-            {"tat_barge", "Barge Turret"},        {"beam", "Beam Turret"}};
+            {"tat_barge", "Barge Turret"},        {"beam", "Beam Turret"},
+            {"xwing_sc", "X-Wing"},               {"ywing_sc", "Y-Wing"},
+            {"awing", "A-Wing"},                  {"gunship_sc", "Transport"},
+            {"tiefighter_sc", "TIE Fighter"},     {"tiebomber_sc", "TIE Bomber"},
+            {"tieinterceptor", "TIE Interceptor"}, {"trooptrans", "Imperial Shuttle"},
+            {"anakinstarfighter_sc", "Jedi Starfighter"}, {"arc170fighter_sc", "ARC-170"},
+            {"vwing", "V-Wing"},                  {"droidfighter_sc", "Droid Starfighter"},
+            {"tridroidfighter", "Tri-Fighter"},   {"greviousfighter", "Belbullab-22"},
+            {"droidgunship", "Droid Gunship"}};
         const std::string tail = name.substr(std::min(name.size(), name.find('_', name.find('_') + 1) + 1));
         const auto it = known.find(tail);
         std::string label = it != known.end() ? it->second : tail;
@@ -533,8 +548,9 @@ int cmd_export_vehicle(const std::vector<std::string>& args) {
     // limits and eye). The rest are the whole vehicle's wherever they stand
     // (the jungle AT-ST's MaxHealth comes after its TURRET1).
     const auto body_value = [&](std::string_view key) -> std::optional<std::string> {
-        static constexpr std::array<std::string_view, 5> seat_keys{"TrackCenter", "TrackOffset", "EyePointOffset",
-                                                                   "PitchLimits", "YawLimits"};
+        static constexpr std::array<std::string_view, 10> seat_keys{
+            "TrackCenter", "TrackOffset", "EyePointOffset", "PitchLimits", "YawLimits",
+            "TurnRate",    "PitchRate",   "TiltValue",      "TurnFilter",  "PitchFilter"};
         if (std::find(seat_keys.begin(), seat_keys.end(), key) == seat_keys.end()) {
             return vehicle.get(key);
         }
@@ -556,11 +572,25 @@ int cmd_export_vehicle(const std::vector<std::string>& args) {
                             "LiftDamp", "GravityScale", "SpinRate", "BankAngle", "TrackCenter", "TrackOffset",
                             "EyePointOffset", "TiltValue", "PitchLimits", "YawLimits", "LegPairCount",
                             "MapTexture", "HealthTexture", "ExplosionName", "EngineSound", "WakeEffect",
-                            "MinSpeed", "TakeoffSpeed", "TakeoffTime", "TakeoffHeight", "LandingSpeed",
-                            "LandingTime", "LandedHeight"}) {
+                            "ContrailEffect", "MinSpeed", "TakeoffSpeed", "TakeoffTime", "TakeoffHeight",
+                            "LandingSpeed", "LandingTime", "LandedHeight"}) {
         if (const auto value = body_value(key)) {
             const std::string text(*value);
             out << key << " = " << (std::string_view(key) == "EngineSound" ? first_token(text) : text) << "\n";
+        }
+    }
+    if (!vehicle.get("ExplosionName")) {
+        if (const auto destruct = vehicle.get("ExplosionDestruct")) {
+            out << "ExplosionName = " << *destruct << "\n";
+        }
+    }
+    // Mobile spawn offsets on commandflyer transports (`SpawnPointLocation`).
+    for (const auto& [hash, value] : vehicle.properties) {
+        if (hash == odf_hash("SpawnPointLocation")) {
+            double sx = 0, sy = 0, sz = 0;
+            if (std::istringstream(value) >> sx >> sy >> sz) {
+                out << std::format("SpawnPoint = {:.3f} {:.3f} {:.3f}\n", -sx, sy, sz);
+            }
         }
     }
     // Its rider's pose, a soldier clip (export-species retargets them): its
@@ -608,7 +638,9 @@ int cmd_export_vehicle(const std::vector<std::string>& args) {
         }
     }
     // Its explosion when destroyed: damage and reach, for whoever's near.
-    if (const auto explosion_name = vehicle.get("ExplosionName")) {
+    const auto explosion_name = vehicle.get("ExplosionName").has_value() ? vehicle.get("ExplosionName")
+                                                                         : vehicle.get("ExplosionDestruct");
+    if (explosion_name) {
         const OdfClass explosion = library.classes().resolve(*explosion_name);
         for (const auto& [key, ours] : {std::pair{"Damage", "ExplosionDamage"},
                                         std::pair{"DamageRadiusInner", "ExplosionRadiusInner"},
@@ -959,11 +991,34 @@ int cmd_export_map(const std::vector<std::string>& args) {
     const std::string map = args[1];
     const std::filesystem::path out_dir = args[3];
     std::string mode = "conquest";
+    std::string sky_code;
     std::vector<std::string> skipped;
     std::vector<std::string> deaths;
+    std::vector<std::string> landings;
     std::vector<std::string> opened;
     std::vector<std::string> disabled;
     std::vector<std::string> dropped_boundaries;
+    std::optional<std::array<double, 2>> fly_height;
+    double world_extents = 0;
+    int score_limit = 0;
+    std::vector<std::pair<std::string, std::vector<std::string>>> shield_links;
+    std::vector<std::pair<std::string, std::vector<std::string>>> destroy_links;
+    std::vector<std::pair<std::string, std::vector<std::string>>> turret_mainframes;
+    std::vector<std::pair<std::string, std::vector<std::string>>> kill_turrets;
+    struct SpaceSystemArg {
+        std::string object, team, kind, points, label;
+    };
+    std::vector<SpaceSystemArg> space_systems;
+    const auto split_csv = [](const std::string& s) {
+        std::vector<std::string> parts;
+        std::istringstream ss(s);
+        for (std::string item; std::getline(ss, item, ',');) {
+            if (!item.empty()) {
+                parts.push_back(item);
+            }
+        }
+        return parts;
+    };
     // What the mission script does when an object is destroyed (OnObjectKill)
     // and stands again (OnObjectRespawn), by the object's name (lowercase):
     // a world animation group it plays (and rewinds), a looping one it
@@ -982,10 +1037,59 @@ int cmd_export_map(const std::vector<std::string>& args) {
     for (size_t i = 4; i + 1 < args.size(); i += 2) {
         if (args[i] == "--mode") {
             mode = args[i + 1];
+        } else if (args[i] == "--sky") {
+            sky_code = lowercase(args[i + 1]);
         } else if (args[i] == "--skip") {
             skipped.push_back(args[i + 1]);
         } else if (args[i] == "--death") {
             deaths.push_back(args[i + 1]);
+        } else if (args[i] == "--landing") {
+            landings.push_back(args[i + 1]);
+        } else if (args[i] == "--fly-height") {
+            double lo = 0, hi = 0;
+            char comma = 0;
+            if (!(std::istringstream(args[i + 1]) >> lo >> comma >> hi) || comma != ',' || lo >= hi) {
+                std::cerr << usage;
+                return 2;
+            }
+            fly_height = {lo, hi};
+        } else if (args[i] == "--extents") {
+            world_extents = std::atof(args[i + 1].c_str());
+        } else if (args[i] == "--score-limit") {
+            score_limit = std::atoi(args[i + 1].c_str());
+        } else if (args[i] == "--shield" || args[i] == "--link" || args[i] == "--turret-mainframe" ||
+                   args[i] == "--kill-turrets") {
+            const size_t eq = args[i + 1].find('=');
+            if (eq == std::string::npos) {
+                std::cerr << usage;
+                return 2;
+            }
+            const std::string key = lowercase(args[i + 1].substr(0, eq));
+            std::vector<std::string> targets = split_csv(args[i + 1].substr(eq + 1));
+            for (std::string& t : targets) {
+                t = lowercase(t);
+            }
+            auto& dst = args[i] == "--shield" ? shield_links
+                        : args[i] == "--link" ? destroy_links
+                        : args[i] == "--turret-mainframe" ? turret_mainframes
+                                                          : kill_turrets;
+            dst.emplace_back(key, std::move(targets));
+        } else if (args[i] == "--system") {
+            const size_t eq = args[i + 1].find('=');
+            if (eq == std::string::npos) {
+                std::cerr << usage;
+                return 2;
+            }
+            SpaceSystemArg sys;
+            sys.object = lowercase(args[i + 1].substr(0, eq));
+            std::istringstream rest(args[i + 1].substr(eq + 1));
+            if (!std::getline(rest, sys.team, ':') || !std::getline(rest, sys.kind, ':') ||
+                !std::getline(rest, sys.points, ':')) {
+                std::cerr << usage;
+                return 2;
+            }
+            std::getline(rest, sys.label);
+            space_systems.push_back(std::move(sys));
         } else if (args[i] == "--open") {
             opened.push_back(lowercase(args[i + 1]));
         } else if (args[i] == "--disable") {
@@ -1061,6 +1165,27 @@ int cmd_export_map(const std::vector<std::string>& args) {
     if (const std::filesystem::path ingame = std::filesystem::path(args[0]) / "ingame.lvl";
         std::filesystem::exists(ingame)) {
         library.add(read_file(ingame));
+    }
+    if (sky_code.empty() && folder == "spa" && level.sky.dome_models.empty()) {
+        static const std::map<std::string, std::string> space_skies{
+            {"spa1", "yav"}, {"spa3", "kas"}, {"spa6", "myg"}, {"spa7", "fel"}, {"spa8", "hot"}, {"spa9", "tat"},
+        };
+        if (const auto it = space_skies.find(lowercase(map)); it != space_skies.end()) {
+            sky_code = it->second;
+        }
+    }
+    if (!sky_code.empty()) {
+        const std::filesystem::path spa_sky = std::filesystem::path(args[0]) / "spa" / "spa_sky.lvl";
+        if (std::filesystem::exists(spa_sky)) {
+            std::vector<uint8_t> sky_bytes = read_file(spa_sky);
+            const uint32_t sky_hash = odf_hash(sky_code);
+            if (!merge_sky_sublevel(parse_ucfb(sky_bytes), sky_hash, level.sky)) {
+                std::cerr << std::format("sky: no sublevel '{}' in spa_sky.lvl\n", sky_code);
+            }
+            library.add_sublevel(std::move(sky_bytes), sky_hash);
+        } else {
+            std::cerr << "sky: missing " << spa_sky.string() << "\n";
+        }
     }
     std::filesystem::create_directories(out_dir);
     // A map without terrain (aboard Tantive IV): a flat stand-in under
@@ -1426,7 +1551,10 @@ int cmd_export_map(const std::vector<std::string>& args) {
     };
     const std::vector<std::string> mode_names =
         mode == "conquest" ? std::vector<std::string>{"_conquest", "_con", "_cp-conquest"}
-                           : std::vector<std::string>{"_" + mode};
+        : mode == "assault"
+            ? std::vector<std::string>{"_assault", "_ass", "_ass_hangar", "_ass_spawn", "_ass_paths", "swingassault",
+                                       "_obj_hangar", "_obj_spawn", "_obj_paths", "swing_obj"}
+            : std::vector<std::string>{"_" + mode};
     const auto named_for_mode = [&](const std::string& layer) {
         const std::string name = lowercase(layer);
         return std::any_of(mode_names.begin(), mode_names.end(), [&](const std::string& m) { return ends_with(name, m); });
@@ -1434,7 +1562,7 @@ int cmd_export_map(const std::vector<std::string>& args) {
     const auto named_for_other_mode = [&](const std::string& layer) {
         const std::string name = lowercase(layer);
         for (const char* other : {"conquest", "_con", "ctf", "flag", "_eli", "hunt", "tdm", "campaign", "objective",
-                                  "_obj", "assault", "assult", "xl"}) {
+                                  "_obj", "assault", "assult", "_ass_", "xl"}) {
             if (name.find(other) != std::string::npos) {
                 return true;
             }
@@ -1443,7 +1571,7 @@ int cmd_export_map(const std::vector<std::string>& args) {
     };
     std::set<uint32_t> post_sublevels;  // sublevels with command posts
     for (const WorldItem& object : level.objects) {
-        if (object.sublevel != 0 && !object.get("CaptureRegion").empty()) {
+        if (object.sublevel != 0 && (!object.get("CaptureRegion").empty() || !object.get("ControlRegion").empty())) {
             post_sublevels.insert(object.sublevel);
         }
     }
@@ -1494,7 +1622,20 @@ int cmd_export_map(const std::vector<std::string>& args) {
     }
 
     // What can be destroyed, in the order the objects come (their indices),
-    // as the objects below go.
+    // as the objects below go. Includes weaponless ship subsystem `armedbuilding`
+    // ODFs (capital ship engines/bridge/comms/sensors/life-support/mainframe)
+    // whose MaxHealth < 500000 (skipping 999999 invulnerable hull pieces).
+    const auto is_destructible_class = [](const OdfClass& resolved, double max_health) {
+        if (max_health <= 0 || !resolved.get("GeometryName")) {
+            return false;
+        }
+        const std::string base = lowercase(resolved.base);
+        if (base == "destructablebuilding") {
+            return true;
+        }
+        return base == "armedbuilding" && max_health < 500000.0 && !resolved.get("WeaponName") &&
+               !resolved.get("TurretNodeName");
+    };
     std::map<std::string, int> destructible_index;  // object name (lowercase) -> index
     for (const WorldItem& object : level.objects) {
         if (!included(object) || std::find(opened.begin(), opened.end(), lowercase(object.name)) != opened.end() ||
@@ -1502,8 +1643,10 @@ int cmd_export_map(const std::vector<std::string>& args) {
             continue;
         }
         const OdfClass resolved = library.classes().resolve(object.type);
-        if (resolved.get("GeometryName") && lowercase(resolved.base) == "destructablebuilding" &&
-            std::atof(resolved.get("MaxHealth").value_or("0").c_str()) > 0) {
+        const std::string set_health = object.get("MaxHealth");
+        const double max_health =
+            std::atof((set_health.empty() ? resolved.get("MaxHealth").value_or("0") : set_health).c_str());
+        if (is_destructible_class(resolved, max_health)) {
             const int index = int(destructible_index.size());
             destructible_index.emplace(lowercase(object.name), index);
         }
@@ -1806,7 +1949,7 @@ int cmd_export_map(const std::vector<std::string>& args) {
                     const std::string set_health = object.get("MaxHealth");
                     const double max_health =
                         std::atof((set_health.empty() ? resolved.get("MaxHealth").value_or("0") : set_health).c_str());
-                    const bool destructible = lowercase(resolved.base) == "destructablebuilding" && max_health > 0;
+                    const bool destructible = is_destructible_class(resolved, max_health);
                     int16_t part = destructible ? int16_t(destructibles.size() + 1) : int16_t(0);
                     // Moved by a world animation that a destroyed object
                     // plays: where it rests while that stands, where the
@@ -2100,6 +2243,12 @@ int cmd_export_map(const std::vector<std::string>& args) {
            "; Game data: don't commit or share it. Positions are Battlefront coordinates (x z).\n\n[map]\nName = "
         << map << "\nTerrain = " << map << "\n"
         << std::format("Bounds = {} {} {} {}\n", edge_x, edge_z, edge_x + extent, edge_z + extent);
+    if (fly_height) {
+        ini << std::format("FlyHeight = {:g} {:g}\n", (*fly_height)[0], (*fly_height)[1]);
+    }
+    if (score_limit > 0) {
+        ini << std::format("ScoreLimit = {}\n", score_limit);
+    }
     // The AI barriers that stop soldiers: places bots keep out of when they can.
     size_t barriers = 0;
     for (const LevelBarrier& barrier : level.barriers) {
@@ -2160,6 +2309,36 @@ int cmd_export_map(const std::vector<std::string>& args) {
             }
             ini << "\n";
         }
+    }
+    if (boundaries.empty() && world_extents > 0) {
+        ini << std::format("Boundary = -{0:g} -{0:g} {0:g} -{0:g} {0:g} {0:g} -{0:g} {0:g}\n", world_extents);
+    }
+    // Hangar landing regions (`AddLandingRegion`), where flyers can land and
+    // take off cleanly inside space maps.
+    const auto write_region = [&](const char* key, const WorldItem& region) {
+        const auto& r = region.rotation;  // stored columns
+        ini << std::format("{} = {} {:.2f} {:.2f} {:.2f} {:.2f} {:.2f} {:.2f}", key, region.type, region.position[0],
+                           region.position[1], region.position[2], region.size[0], region.size[1], region.size[2]);
+        for (int row = 0; row < 3; ++row) {
+            for (int column = 0; column < 3; ++column) {
+                ini << std::format(" {:.4f}", r[size_t(column * 3 + row)]);
+            }
+        }
+    };
+    size_t landing_regions = 0;
+    for (const WorldItem& region : level.regions) {
+        if (!included(region)) {
+            continue;
+        }
+        const bool named = std::any_of(landings.begin(), landings.end(), [&](const std::string& name) {
+            return lowercase(region.name) == lowercase(name) || lowercase(region.get("Name")) == lowercase(name);
+        });
+        if (!named) {
+            continue;
+        }
+        write_region("LandingRegion", region);
+        ini << "\n";
+        ++landing_regions;
     }
     // Death regions: shape, center (x y z), size, and rotation (rows), as
     // Battlefront stores them.
@@ -2248,11 +2427,35 @@ int cmd_export_map(const std::vector<std::string>& args) {
     for (const std::string& line : destructibles) {
         ini << line << "\n";
     }
+    for (const auto& [controller, targets] : shield_links) {
+        ini << "ShieldLink = " << controller;
+        for (const std::string& t : targets) ini << " " << t;
+        ini << "\n";
+    }
+    for (const auto& [source, targets] : destroy_links) {
+        ini << "DestroyLink = " << source;
+        for (const std::string& t : targets) ini << " " << t;
+        ini << "\n";
+    }
+    for (const auto& [mainframe, targets] : turret_mainframes) {
+        ini << "TurretMainframe = " << mainframe;
+        for (const std::string& t : targets) ini << " " << t;
+        ini << "\n";
+    }
+    for (const auto& [source, targets] : kill_turrets) {
+        ini << "DestroyTurrets = " << source;
+        for (const std::string& t : targets) ini << " " << t;
+        ini << "\n";
+    }
+    for (const SpaceSystemArg& sys : space_systems) {
+        ini << std::format("SpaceSystem = {} {} {} {} {}\n", sys.object, sys.team, sys.kind, sys.points, sys.label);
+    }
     if (no_terrain) {
-        // Off the ship: falling to the stand-in ground, through this.
+        // Off the ship: on-foot soldiers falling to the stand-in ground die,
+        // while flyers in 3D space pass freely unless hitting FlyHeight.
         const double half = terrain.cells * terrain.unit / 2;
-        ini << std::format("DeathRegion = box 0 {:.2f} 0 {:.2f} 20 {:.2f} 1 0 0 0 1 0 0 0 1\n", fall_y + 20, half,
-                           half);
+        ini << std::format("DeathRegion = box 0 {:.2f} 0 {:.2f} 20 {:.2f} 1 0 0 0 1 0 0 0 1{}\n", fall_y + 20, half,
+                           half, fly_height ? " characters" : "");
         ++death_regions;
     }
     // Deep water: soldiers can't swim, so whoever is more than drown_depth
@@ -2277,15 +2480,20 @@ int cmd_export_map(const std::vector<std::string>& args) {
             ++death_regions;
         }
     }
-    std::cerr << std::format("boundaries: {}; death regions: {} ({} named); damage regions: {}; droids: {}\n",
-                             boundaries.size(), death_regions, deaths.size(), damage_regions, powerups.size());
+    std::cerr << std::format(
+        "boundaries: {}; landing regions: {}; death regions: {} ({} named); damage regions: {}; droids: {}\n",
+        boundaries.size(), landing_regions, death_regions, deaths.size(), damage_regions, powerups.size());
     int posts = 0;
     for (const WorldItem& object : level.objects) {
-        if (object.sublevel != mode_sublevel || object.get("CaptureRegion").empty() ||
+        const std::string reg_name =
+            !object.get("CaptureRegion").empty() ? object.get("CaptureRegion") : object.get("ControlRegion");
+        if (!included(object) || reg_name.empty() ||
             std::find(opened.begin(), opened.end(), lowercase(object.name)) != opened.end()) {
             continue;
         }
-        const WorldItem* capture = level.region(object.get("CaptureRegion"), mode_sublevel);
+        const uint32_t obj_group = object.sublevel ? object.sublevel : odf_hash(object.layer);
+        const bool capturable = !object.get("CaptureRegion").empty();
+        const WorldItem* capture = level.region(reg_name, object.sublevel);
         const auto& at = capture ? capture->position : object.position;
         ini << "\n[post]\nName = " << (object.get("Label").empty() ? object.name : object.get("Label")) << "\n"
             << std::format("Position = {:.2f} {:.2f}\n", at[0], at[2])
@@ -2293,6 +2501,9 @@ int cmd_export_map(const std::vector<std::string>& args) {
             // is fought over.
             << std::format("Console = {:.2f} {:.2f} {:.2f}\n", object.position[0], object.position[2],
                            object.position[1]);
+        if (!capturable) {
+            ini << "Capturable = 0\n";
+        }
         if (capture != nullptr) {
             // ASSUMPTION: a capture cylinder's SIZE x is its radius.
             ini << std::format("Radius = {:.2f}\n", std::max(capture->size[0], capture->size[2]));
@@ -2313,13 +2524,13 @@ int cmd_export_map(const std::vector<std::string>& args) {
         }
         // Where natives friendly to its holder spawn (its AllyPath): heights
         // given.
-        if (const LevelPath* allies = level.path_in(object.get("AllyPath"), mode_sublevel)) {
+        if (const LevelPath* allies = level.path_in(object.get("AllyPath"), obj_group)) {
             for (const PathNode& node : allies->nodes) {
                 ini << std::format("AllySpawnPoint = {:.2f} {:.2f} {:.2f}\n", node.position[0], node.position[2],
                                    node.position[1]);
             }
         }
-        if (const LevelPath* spawns = level.path_in(object.get("SpawnPath"), mode_sublevel)) {
+        if (const LevelPath* spawns = level.path_in(object.get("SpawnPath"), obj_group)) {
             for (const PathNode& node : spawns->nodes) {
                 ini << std::format("SpawnPoint = {:.2f} {:.2f} {:.2f}\n", node.position[0], node.position[2],
                                    node.position[1]);
@@ -2336,7 +2547,7 @@ int cmd_export_map(const std::vector<std::string>& args) {
     // (ExpireTimeField), and which way it faces (its local +z).
     int vehicle_spawns = 0;
     for (const WorldItem& object : level.objects) {
-        if (object.sublevel != mode_sublevel || lowercase(object.type) != "com_item_vehicle_spawn" ||
+        if (!included(object) || lowercase(object.type) != "com_item_vehicle_spawn" ||
             std::find(opened.begin(), opened.end(), lowercase(object.name)) != opened.end()) {
             continue;
         }
@@ -2356,7 +2567,8 @@ int cmd_export_map(const std::vector<std::string>& args) {
         // The post by the name the map file gives it (its Label, else its own).
         std::string post = object.get("ControlZone");
         for (const WorldItem& other : level.objects) {
-            if (other.sublevel == mode_sublevel && !other.get("CaptureRegion").empty() &&
+            if (included(other) &&
+                (!other.get("CaptureRegion").empty() || !other.get("ControlRegion").empty()) &&
                 lowercase(other.name) == lowercase(post)) {
                 post = other.get("Label").empty() ? other.name : other.get("Label");
             }
@@ -2379,9 +2591,9 @@ int cmd_export_map(const std::vector<std::string>& args) {
         ++vehicle_spawns;
     }
     std::cerr << std::format("vehicle spawns: {}\n", vehicle_spawns);
-    // Turrets: objects of side/tur.lvl's armedbuilding classes (Naboo's
-    // laser turrets), for whoever mans them (bf2tool export-vehicle tur
-    // <class> exports each class).
+    // Turrets: objects of side/tur.lvl's or the map's own armedbuilding classes
+    // with weapons/aimers (Naboo's laser turrets, space capital/frigate turrets),
+    // for whoever mans them or automated mainframe defense.
     std::set<std::string> turret_classes;
     if (const auto tur = std::filesystem::path(args[0]) / "side" / "tur.lvl"; std::filesystem::exists(tur)) {
         OdfLibrary turrets;
@@ -2393,18 +2605,56 @@ int cmd_export_map(const std::vector<std::string>& args) {
             }
         }
     }
+    for (const OdfClass& odf : library.classes().all()) {
+        const OdfClass resolved = library.classes().resolve(odf.type);
+        if (lowercase(resolved.base) == "armedbuilding" &&
+            (resolved.get("WeaponName") || resolved.get("TurretNodeName"))) {
+            turret_classes.insert(lowercase(odf.type));
+        }
+    }
     int turret_count = 0;
     for (const WorldItem& object : level.objects) {
-        if (!included(object) || !turret_classes.contains(lowercase(object.type))) {
+        if (!included(object) || std::find(opened.begin(), opened.end(), lowercase(object.name)) != opened.end() ||
+            !turret_classes.contains(lowercase(object.type))) {
             continue;
         }
         ini << "\n[turret]\nName = " << object.name << "\nClass = " << lowercase(object.type) << "\n"
             << std::format("Position = {:.2f} {:.2f} {:.2f}\n", object.position[0], object.position[2],
                            object.position[1])
             << std::format("Forward = {:.4f} {:.4f}\n", object.rotation[6], object.rotation[8]);
+        std::string team = object.get("Team");
+        if (const auto it = teams.find(lowercase(object.name)); it != teams.end()) {
+            team = it->second;
+        }
+        if (team == "1" || team == "2") {
+            ini << "Team = " << team << "\n";
+        }
         ++turret_count;
     }
-    std::cerr << std::format("turrets: {}\n", turret_count);
+    int chair_count = 0;
+    for (const WorldItem& object : level.objects) {
+        if (!included(object) || std::find(opened.begin(), opened.end(), lowercase(object.name)) != opened.end() ||
+            library.classes().find(object.type) == nullptr) {
+            continue;
+        }
+        const OdfClass resolved = library.classes().resolve(object.type);
+        if (lowercase(resolved.base) != "remoteterminal") {
+            continue;
+        }
+        ini << "\n[turret_chair]\nName = " << object.name << "\n"
+            << std::format("Position = {:.2f} {:.2f} {:.2f}\n", object.position[0], object.position[2],
+                           object.position[1])
+            << std::format("Forward = {:.4f} {:.4f}\n", object.rotation[6], object.rotation[8]);
+        std::string team = object.get("Team");
+        if (const auto it = teams.find(lowercase(object.name)); it != teams.end()) {
+            team = it->second;
+        }
+        if (team == "1" || team == "2") {
+            ini << "Team = " << team << "\n";
+        }
+        ++chair_count;
+    }
+    std::cerr << std::format("turrets: {}; turret chairs: {}\n", turret_count, chair_count);
     std::cerr << std::format("{} ({}): {} command posts\nwrote {}\n", mode, mode_layers, posts, out_dir.string());
     if (posts == 0) {
         throw std::runtime_error("no command posts in " + mode + " (" + mode_layers + ")");
@@ -2699,12 +2949,14 @@ int cmd_export_effects(const std::vector<std::string>& args) {
                 }
             }
             // Vehicles' (and turrets'): smoking and burning as they're hurt,
-            // a hover vehicle's wake and a walker's footfalls.
+            // a hover vehicle's wake, a flyer's contrail, and a walker's footfalls.
             if (base == "hover" || base == "walker" || base == "commandwalker" || base == "flyer" ||
-                base == "armedbuilding") {
+                base == "commandflyer" || base == "armedbuilding") {
                 for (const auto& [hash, value] : resolved.properties) {
                     if ((hash == odf_hash("DamageEffect") || hash == odf_hash("WakeEffect") ||
-                         hash == odf_hash("StompEffect")) && !value.empty()) {
+                         hash == odf_hash("ContrailEffect") || hash == odf_hash("ChunkTrailEffect") ||
+                         hash == odf_hash("StompEffect")) &&
+                        !value.empty()) {
                         effect_names.insert(lowercase(value));
                     }
                 }

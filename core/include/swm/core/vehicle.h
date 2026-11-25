@@ -12,6 +12,7 @@
 
 namespace swm::core {
 
+struct Battlefield;
 class World;
 
 // How a vehicle moves: hovering over the ground (speeder bikes, hover
@@ -109,7 +110,11 @@ struct VehicleClass {
         Vec3 at;
     };
     std::vector<DamageEffect> damage_effects;
+    // Visual effects & transport properties
     std::string wake_effect;
+    std::string contrail_effect;
+    bool is_transport = false;
+    std::vector<Vec3> spawn_points;  // local offsets in game space (commandflyer mobile spawns)
     // A walker's footfalls: the sound and the effect as each foot lands.
     std::string step_sound, stomp_effect;
     // How its rider sits on an open vehicle: a soldier clip held at its first
@@ -131,7 +136,7 @@ VehicleClass load_vehicle_class(const std::filesystem::path& path);
 // it. Its state's yaw is its heading; pitch is the input's. Like
 // simulate_move, deterministic.
 void simulate_vehicle(MoveState& state, const MoveInput& input, const World& world, const VehicleClass& vehicle,
-                      double dt);
+                      double dt, const Battlefield* field = nullptr);
 
 // Where its guns aim for an input: the input's yaw and pitch, within their
 // limits round its heading.
