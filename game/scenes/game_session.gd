@@ -13,20 +13,6 @@ const Bf2Map = preload("res://rendering/bf2_map.gd")
 const Weather = preload("res://rendering/weather.gd")  # Stage 11: rain, sand, snow, ash, mist
 const SwgCity = preload("res://rendering/swg_city.gd")
 const SwgWater = preload("res://rendering/swg_water.gd")
-# A planet's sky and haze where it isn't Tatooine's (its bake's name): the
-# sky shader's colors (Naboo's one sun: no second), fog and sunlight.
-const PLANET_LOOKS := {
-	"naboo": {
-		"zenith_color": Color(0.24, 0.47, 0.82),
-		"mid_sky_color": Color(0.52, 0.70, 0.88),
-		"horizon_color": Color(0.76, 0.84, 0.90),
-		"ground_color": Color(0.42, 0.52, 0.40),
-		"sun_a_color": Color(1.0, 0.98, 0.92),
-		"sun_b_color": Color(0, 0, 0),
-		"fog": Color(0.74, 0.82, 0.88),
-		"sun": Color(1.0, 0.98, 0.93),
-	},
-}
 const NATIVES_TEAM := 2  # a battlefield's natives (core::natives_team)
 const Soldier = preload("res://rendering/soldier.gd")
 const PlayerAppearance = preload("res://rendering/player_appearance.gd")
@@ -1645,6 +1631,22 @@ func _add_terrain(bake: String, meta: Dictionary, use_terrain3d: bool) -> void:
 	_world.add_child(mesh)
 
 
+# A planet's sky and haze where it isn't Tatooine's: hubs/<bake name>_look.ini
+# ([look]: the sky shader's colors, zenith_color, mid_sky_color,
+# horizon_color, ground_color, sun_a_color and sun_b_color, black for a
+# planet with one sun; fog; sun: its light), each "r g b" (0..1).
+func _planet_look(planet: String) -> Dictionary:
+	var look := {}
+	var file := ConfigFile.new()
+	if file.load("res://hubs/%s_look.ini" % planet) != OK:
+		return look
+	for key: String in file.get_section_keys("look") if file.has_section("look") else PackedStringArray():
+		var rgb := str(file.get_value("look", key)).split(" ", false)
+		if rgb.size() >= 3:
+			look[key] = Color(float(rgb[0]), float(rgb[1]), float(rgb[2]))
+	return look
+
+
 func _build_world(bake: String) -> bool:
 	var meta: Variant = JSON.parse_string(FileAccess.get_file_as_string(bake + ".json"))
 	if meta == null:
@@ -1715,7 +1717,7 @@ func _build_world(bake: String) -> bool:
 		sun.rotation_degrees = Vector3(-34, -42, 0)
 		sun.light_color = Color(1.0, 0.95, 0.86)
 		sun.light_energy = 1.45
-		var look: Dictionary = PLANET_LOOKS.get(bake.get_file(), {})
+		var look := _planet_look(bake.get_file())
 		for key: String in look:
 			if key.ends_with("_color"):
 				sky_mat.set_shader_parameter(key, look[key])
