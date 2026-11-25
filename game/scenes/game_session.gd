@@ -1589,6 +1589,8 @@ func _setup_scene() -> void:
 	_hub_ui.preset_deleted.connect(func(pname: String) -> void: _client.delete_recipe_preset(pname))
 	_hub_ui.work_order_fulfilled.connect(func(oid: String) -> void: _client.fulfill_work_order(oid))
 	_hub_ui.item_salvaged.connect(func(iid: int) -> void: _client.salvage_item(iid))
+	_hub_ui.service_requested.connect(func(action: int, id: String, amount: int, item_id: int) -> void:
+		_client.service(action, id, amount, item_id))
 	_hub_ui.quest_accepted.connect(func(id: String) -> void: _client.accept_quest(id))
 	_hub_ui.quest_abandoned.connect(func(id: String) -> void: _client.abandon_quest(id))
 	_hub_ui.terminal_closed.connect(func() -> void:

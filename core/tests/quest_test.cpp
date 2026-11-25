@@ -13,6 +13,7 @@
 #include "swm/core/hub.h"
 #include "swm/core/items.h"
 #include "swm/core/net/link.h"
+#include "swm/core/profession.h"
 #include "swm/core/quest.h"
 #include "swm/core/server.h"
 #include "swm/core/sqlite_store.h"
@@ -237,6 +238,31 @@ void test_tatooine_quests() {
         for (const auto& b : hub.spawns->bandits) if (b.id == target || b.gang == target) return true;
         return false;
     };
+    // Its services: trainers are people (of the same name) who teach real professions.
+    ProfessionBook professions;
+    professions.load(root / "game" / "professions" / "professions.ini");
+    int trainers = 0, banks = 0, clones = 0, clinics = 0;
+    for (const net::Vendor& v : hub.vendors) {
+        trainers += v.kind == "trainer";
+        banks += v.kind == "bank";
+        clones += v.kind == "cloning";
+        clinics += v.kind == "clinic";
+        if (v.kind != "trainer") continue;
+        CHECK(person(v.name));
+        CHECK(!v.detail.empty());
+        for (size_t at = 0, next = 0; at < v.detail.size(); at = next + 1) {
+            next = v.detail.find(',', at);
+            if (next == std::string::npos) next = v.detail.size();
+            const ProfessionDef* def = professions.find(v.detail.substr(at, next - at));
+            CHECK(def != nullptr && def->available && !def->milestones.empty());
+        }
+    }
+    CHECK(trainers >= 5 && banks == 1 && clones >= 1 && clinics >= 1);
+    // The opening chain asks for what the services do.
+    const QuestDef* opening = hub.quests.find("stranger_in_mos_eisley");
+    CHECK(opening != nullptr && std::any_of(opening->steps.begin(), opening->steps.end(), [](const QuestStep& st) {
+        return st.kind == QuestStepKind::event && st.target == "bank";
+    }));
     for (const QuestDef& def : hub.quests.quests()) {
         CHECK(person(def.giver));
         for (const std::string& required : def.prerequisites) CHECK(hub.quests.find(required) != nullptr);

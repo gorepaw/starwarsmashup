@@ -1,6 +1,7 @@
 # The flat symbols floating over the world's places, for the ones Battlefront
 # has no picture of: an exclamation mark (a quest giver), a stack of coins
-# (somewhere to sell) and a chest (a shop). Drawn here in white (the hologram
+# (somewhere to sell, the bank), a chest (a shop), a star (a trainer) and a
+# cross (a clinic, a cloning terminal). Drawn here in white (the hologram
 # tints them): a translucent body with a bright outline, as its own hologram
 # icons are. (Its wrench for crafting is its own picture, hud_active_repair_icon.)
 #
@@ -8,7 +9,7 @@
 extends RefCounted
 
 const SIZE := 96
-const NAMES := ["quest", "coins", "chest"]
+const NAMES := ["quest", "coins", "chest", "star", "cross"]
 const BODY := 0.32      # how solid a symbol's inside is (its outline is 1.0)
 const STROKE := 4.5     # outline width, pixels
 
@@ -29,6 +30,10 @@ static func texture(name: String) -> Texture2D:
 			_coins(image)
 		"chest":
 			_chest(image)
+		"star":
+			_star(image)
+		"cross":
+			_cross(image)
 	image.generate_mipmaps()
 	var made := ImageTexture.create_from_image(image)
 	_cache[name] = made
@@ -101,6 +106,21 @@ static func _coins(image: Image) -> void:
 	# The top coin's rim.
 	var face := Vector2(48, 32)
 	_paint(image, func(p: Vector2) -> float: return _ellipse(p, face, Vector2(rx - 12.0, ry - 5.0)), true, 0.0)
+
+
+static func _star(image: Image) -> void:
+	# Five points, the lines between them straight: its radius by how far round the point it is.
+	var center := Vector2(48, 52)
+	_paint(image, func(p: Vector2) -> float:
+		var d := p - center
+		var a := fposmod(atan2(d.y, d.x) + PI * 0.5, TAU / 5.0) / (TAU / 5.0)  # 0 at a point, 0.5 at a valley
+		var t := minf(a, 1.0 - a) * 2.0
+		return d.length() - lerpf(42.0, 18.0, t))
+
+
+static func _cross(image: Image) -> void:
+	_paint(image, func(p: Vector2) -> float:
+		return minf(_box(p, Vector2(48, 48), Vector2(11, 34), 4.0), _box(p, Vector2(48, 48), Vector2(34, 11), 4.0)))
 
 
 static func _chest(image: Image) -> void:

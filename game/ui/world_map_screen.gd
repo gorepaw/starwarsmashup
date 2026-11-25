@@ -25,7 +25,7 @@ const SHOP := Color(0.35, 0.92, 0.55)
 const QUEST := Color(1.0, 0.8, 0.35)
 const CRAFT := Color(0.75, 0.5, 1.0)
 const TERMINAL := Color(0.55, 0.85, 1.0)
-const KINDS := [["quest", "Quests"], ["shop", "Shops"], ["craft", "Crafting"], ["terminal", "Terminals"]]
+const KINDS := [["quest", "Quests"], ["shop", "Shops"], ["craft", "Crafting"], ["service", "Services"], ["terminal", "Terminals"]]
 
 var title := "Map"
 var places: Array = []

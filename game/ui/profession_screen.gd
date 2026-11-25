@@ -26,6 +26,7 @@ const ROWS := 9
 
 var professions: Array = []
 var progress: Dictionary = {}
+var trained: Dictionary = {}     # profession id -> the highest milestone level learned from a trainer
 var loadouts: Array = []
 var active_loadout := 0
 var store: Object            # SwmCharacterStore: the level curve
@@ -213,7 +214,9 @@ func _paint_detail(p: Dictionary, rect: Rect2) -> void:
 	colors.append(TEXT)
 	for m: Dictionary in p.get("milestones", []):
 		var reached := available and int(m.get("level", 0)) <= level
-		var head := "%s Lv %d  %s" % ["[x]" if reached else "[ ]", int(m.get("level", 0)), str(m.get("name", ""))]
+		var learned := reached and int(m.get("level", 0)) <= int(trained.get(id, 0))
+		var head := "%s Lv %d  %s%s" % ["[x]" if learned else "[ ]", int(m.get("level", 0)), str(m.get("name", "")),
+				"   (reached: a trainer teaches it)" if reached and not learned else ""]
 		lines.append(head)
 		colors.append(DONE_COLOR if reached else (ACCENT if available else LOCKED_COLOR))
 		var body := str(m.get("description", ""))

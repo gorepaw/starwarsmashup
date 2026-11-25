@@ -16,6 +16,8 @@ const QuestScreen = preload("res://ui/quest_screen.gd")
 const ProfessionScreen = preload("res://ui/profession_screen.gd")
 const WorkbenchScreen = preload("res://ui/workbench_screen.gd")
 const WorldMapScreen = preload("res://ui/world_map_screen.gd")
+const TrainerScreen = preload("res://ui/trainer_screen.gd")
+const BankScreen = preload("res://ui/bank_screen.gd")
 const MultiScanner3D = preload("res://rendering/multi_scanner.gd")
 const TeamTags = preload("res://rendering/team_tags.gd")
 
@@ -54,6 +56,7 @@ signal preset_saved(name: String, schematic_id: String, resource_ids: PackedStri
 signal preset_deleted(name: String)
 signal work_order_fulfilled(order_id: String)
 signal item_salvaged(item_id: int)
+signal service_requested(action: int, id: String, amount: int, item_id: int)
 
 var _hub_hud: HubHud
 var _terminal_screen: WarTerminalScreen
@@ -65,6 +68,10 @@ var _quest_screen: QuestScreen
 var _profession_screen: ProfessionScreen
 var _workbench_screen: WorkbenchScreen
 var _map_screen: WorldMapScreen
+var _trainer_screen: TrainerScreen
+var _bank_screen: BankScreen
+var _professions: Array = []       # the professions' defs (set_professions), for the trainers
+var _trained_by := ""              # the trainer (their name) whose screen is open
 var map_title := "Map"         # the map's title (the session sets it: the planet and the town)
 var map_planet := {}           # the radar's picture of the planet, for the map's widest view
 var _scanner: MultiScanner3D
@@ -174,6 +181,20 @@ func setup(layer: CanvasLayer, world_root: Node3D, art: RefCounted, settings: Se
 	_map_screen.closed.connect(close_all_screens)
 	layer.add_child(_map_screen)
 
+	_trainer_screen = TrainerScreen.new(art)
+	_trainer_screen.visible = false
+	_trainer_screen.train_requested.connect(func(profession: String, level: int) -> void:
+		service_requested.emit(0, profession, level, 0))
+	_trainer_screen.closed.connect(close_all_screens)
+	layer.add_child(_trainer_screen)
+
+	_bank_screen = BankScreen.new(art)
+	_bank_screen.visible = false
+	_bank_screen.service_requested.connect(func(action: int, id: String, amount: int, item_id: int) -> void:
+		service_requested.emit(action, id, amount, item_id))
+	_bank_screen.closed.connect(close_all_screens)
+	layer.add_child(_bank_screen)
+
 	if world_root != null:
 		_scanner = MultiScanner3D.new()
 		world_root.add_child(_scanner)
@@ -216,6 +237,7 @@ func set_catalog(catalog: Array, store: Object, species: String, gender: String,
 # The profession roster (SwmCharacterStore.get_professions()) and the store
 # that knows its level curve.
 func set_professions(professions: Array, store: Object) -> void:
+	_professions = professions
 	if _profession_screen != null:
 		_profession_screen.professions = professions
 		_profession_screen.store = store
@@ -239,6 +261,8 @@ func is_any_screen_open() -> bool:
 			or (_quest_screen != null and _quest_screen.visible) \
 			or (_profession_screen != null and _profession_screen.visible) \
 			or (_workbench_screen != null and _workbench_screen.visible) \
+			or (_trainer_screen != null and _trainer_screen.visible) \
+			or (_bank_screen != null and _bank_screen.visible) \
 			or (_map_screen != null and _map_screen.visible)
 
 
@@ -259,6 +283,27 @@ func try_open_terminal(client: Object) -> bool:
 		_qm_screen.visible = true
 		_qm_screen.queue_redraw()
 		return true
+	var service := at_service(client)
+	if not service.is_empty():
+		match str(service["kind"]):
+			"trainer":
+				if _trainer_screen != null:
+					_sync_screen_data(client)
+					_trained_by = str(service["name"])
+					_trainer_screen.trainer_name = _trained_by
+					_trainer_screen.professions = _professions_of(str(service.get("detail", "")))
+					_trainer_screen.open_trainer()
+					return true
+			"bank":
+				if _bank_screen != null:
+					_sync_screen_data(client)
+					_bank_screen.open_bank(str(service["name"]))
+					return true
+			"clinic":
+				service_requested.emit(5, "", 0, 0)
+			"cloning":
+				service_requested.emit(6, "", 0, 0)
+		return false  # (a clinic and a cloning terminal answer with a notice)
 	var vendor := at_vendor(client)
 	if _vendor_screen != null and not vendor.is_empty():
 		_sync_screen_data(client)
@@ -286,6 +331,17 @@ func try_open_terminal(client: Object) -> bool:
 		_loot_screen.queue_redraw()
 		return true
 	return false
+
+
+# The professions' defs for a trainer's `detail` (their ids, comma-separated).
+func _professions_of(ids: String) -> Array:
+	var wanted := ids.split(",", false)
+	var out: Array = []
+	for id: String in wanted:
+		for p: Dictionary in _professions:
+			if str(p.get("id", "")) == id.strip_edges():
+				out.append(p)
+	return out
 
 
 func _await_offers(client: Object, from: String) -> void:
@@ -362,7 +418,10 @@ func toggle_map(client: Object) -> bool:
 func map_places(client: Object) -> Array:
 	var out: Array = []
 	for v: Dictionary in client.get_vendors():
-		out.append({"position": v["position"], "name": str(v["name"]), "kind": "shop", "color": WorldMapScreen.SHOP})
+		if is_shop(str(v["kind"])):
+			out.append({"position": v["position"], "name": str(v["name"]), "kind": "shop", "color": WorldMapScreen.SHOP})
+		else:
+			out.append({"position": v["position"], "name": str(v["name"]), "kind": "service", "color": WorldMapScreen.TERMINAL})
 	for q: Dictionary in client.get_quartermasters():
 		out.append({"position": q["position"], "name": str(q["name"]), "kind": "shop", "color": WorldMapScreen.SHOP})
 	var quests: Dictionary = client.get_quests()
@@ -445,6 +504,10 @@ func close_all_screens() -> void:
 		_workbench_screen.visible = false
 	if _map_screen != null and _map_screen.visible:
 		_map_screen.close_map()
+	if _trainer_screen != null:
+		_trainer_screen.visible = false
+	if _bank_screen != null:
+		_bank_screen.visible = false
 	_offer_serial = -1
 	if was_open:
 		terminal_closed.emit()
@@ -550,6 +613,28 @@ func at_vendor(client: Object) -> Dictionary:
 		return {}
 	var position: Vector3 = client.get_presented()["position"]
 	for v: Dictionary in client.get_vendors():
+		if not is_shop(str(v["kind"])):
+			continue
+		var at: Vector3 = v["position"]
+		if Vector2(position.x - at.x, position.z - at.z).length() <= float(v["radius"]):
+			return v
+	return {}
+
+
+# Shops (junk dealer, gear vendor, garage) trade; service points (trainer,
+# bank, clinic, cloning terminal) do something else.
+static func is_shop(kind: String) -> bool:
+	return kind == "junk_dealer" or kind == "gear_vendor" or kind == "garage"
+
+
+# The service point you stand at (kinds: trainer, bank, clinic, cloning).
+func at_service(client: Object) -> Dictionary:
+	if client == null or not client.is_spawned():
+		return {}
+	var position: Vector3 = client.get_presented()["position"]
+	for v: Dictionary in client.get_vendors():
+		if is_shop(str(v["kind"])):
+			continue
 		var at: Vector3 = v["position"]
 		if Vector2(position.x - at.x, position.z - at.z).length() <= float(v["radius"]):
 			return v
@@ -805,7 +890,7 @@ func _world_holograms() -> TeamTags:
 			var tags := TeamTags.new("res://imported_assets", {"images": {
 					"alliance": models + "com_icon_alliance.gltf", "empire": models + "com_icon_imperial.gltf",
 					"neutral": "hud/textures/hud_flag_icon.png", "quest": "gen:quest", "coins": "gen:coins",
-					"chest": "gen:chest", "wrench": "hud/textures/hud_active_repair_icon.png"}})
+					"chest": "gen:chest", "star": "gen:star", "cross": "gen:cross", "wrench": "hud/textures/hud_active_repair_icon.png"}})
 			if tags.available():
 				_holograms = tags
 			break
@@ -858,8 +943,14 @@ func _update_place_holograms(client: Object, delta: float) -> void:
 			by_entity[int(r["id"])] = looks[look - 1]
 	var seen := {}
 	for v: Dictionary in client.get_vendors():
+		var kind := str(v.get("kind", ""))
+		if not is_shop(kind):
+			# A service point: a star (trainers), coins (the bank) or a cross (clinics, cloning), in the terminals' blue.
+			var symbol: String = {"trainer": "star", "bank": "coins"}.get(kind, "cross")
+			_place_hologram("service:" + str(v["name"]), v["position"], symbol, TERMINAL_COLOR, seen)
+			continue
 		var side := side_of_template(str(by_name.get(str(v["name"]), "")))
-		var plain := "coins" if str(v.get("kind", "")) == "junk_dealer" else "chest"
+		var plain := "coins" if kind == "junk_dealer" else "chest"
 		_place_hologram("vendor:" + str(v["name"]), v["position"], side if side != "neutral" else plain, SHOP_COLOR, seen)
 	for q: Dictionary in client.get_quartermasters():
 		var faction := str(q.get("faction", ""))
@@ -997,9 +1088,12 @@ func _sync_screen_data(client: Object) -> void:
 			_vendor_screen.queue_redraw()
 	if _profession_screen != null:
 		var progress := {}
+		var taught := {}
 		for p: Dictionary in client.get_professions():
 			progress[str(p["id"])] = int(p["xp"])
+			taught[str(p["id"])] = int(p.get("trained", 0))
 		_profession_screen.progress = progress
+		_profession_screen.trained = taught
 		_profession_screen.active_loadout = active
 		# What the server last said; the screen keeps its own change until the answer.
 		if los != _shown_loadouts:
@@ -1007,6 +1101,26 @@ func _sync_screen_data(client: Object) -> void:
 			_profession_screen.loadouts = los.duplicate(true)
 		if _profession_screen.visible:
 			_profession_screen.queue_redraw()
+	if _trainer_screen != null:
+		var learned := {}
+		for p: Dictionary in client.get_professions():
+			var xp := int(p["xp"])
+			var level := int(_store.profession_level(xp)["level"]) if _store != null else 1
+			learned[str(p["id"])] = {"xp": xp, "level": level, "trained": int(p.get("trained", 0))}
+		_trainer_screen.progress = learned
+		_trainer_screen.credits = int(status.get("credits", 0))
+		if _trainer_screen.visible:
+			_trainer_screen.professions = _professions_of(_trainer_detail(client))
+			_trainer_screen.queue_redraw()
+	if _bank_screen != null:
+		var bank: Dictionary = client.get_bank()
+		_bank_screen.credits = int(status.get("credits", 0))
+		_bank_screen.bank_credits = int(bank.get("credits", 0))
+		_bank_screen.inventory = inv
+		_bank_screen.bank_items = bank.get("items", [])
+		_bank_screen.catalog = _catalog
+		if _bank_screen.visible:
+			_bank_screen.queue_redraw()
 	if _workbench_screen != null:
 		_workbench_screen.materials = client.get_materials()
 		_workbench_screen.presets = client.get_presets()
@@ -1018,6 +1132,14 @@ func _sync_screen_data(client: Object) -> void:
 		_workbench_screen.professions = prof_xp
 		if _workbench_screen.visible:
 			_workbench_screen.queue_redraw()
+
+
+# What the trainer whose screen is open teaches (their `detail`).
+func _trainer_detail(client: Object) -> String:
+	for v: Dictionary in client.get_vendors():
+		if str(v["name"]) == _trained_by and str(v["kind"]) == "trainer":
+			return str(v.get("detail", ""))
+	return ""
 
 
 func _update_targets(client: Object, delta: float) -> void:
@@ -1108,6 +1230,10 @@ func update_hub(client: Object, world: Node3D, delta: float, pause_visible: bool
 				_vendor_screen.feedback = _notice
 			if _workbench_screen != null and _workbench_screen.visible:
 				_workbench_screen.feedback = _notice
+			if _trainer_screen != null and _trainer_screen.visible:
+				_trainer_screen.feedback = _notice
+			if _bank_screen != null and _bank_screen.visible:
+				_bank_screen.feedback = _notice
 
 	_sync_screen_data(client)
 
@@ -1119,6 +1245,7 @@ func update_hub(client: Object, world: Node3D, delta: float, pause_visible: bool
 	var terminal: Dictionary = at_recruiter(client) if in_hub else {}
 	var qm: Dictionary = at_quartermaster(client) if in_hub else {}
 	var vendor: Dictionary = at_vendor(client) if in_hub else {}
+	var service: Dictionary = at_service(client) if in_hub else {}
 	var wb: Dictionary = at_workbench(client) if in_hub else {}
 	var corpse: Dictionary = at_lootable_corpse(client) if in_hub else {}
 	var quest_npc: Dictionary = at_quest_npc(client) if in_hub else {}
@@ -1128,6 +1255,8 @@ func update_hub(client: Object, world: Node3D, delta: float, pause_visible: bool
 	if _qm_screen != null and _qm_screen.visible and qm.is_empty():
 		close_all_screens()
 	if _vendor_screen != null and _vendor_screen.visible and vendor.is_empty():
+		close_all_screens()
+	if (_trainer_screen != null and _trainer_screen.visible or _bank_screen != null and _bank_screen.visible) and service.is_empty():
 		close_all_screens()
 	if _loot_screen != null and _loot_screen.visible:
 		var cid := int(_loot_screen.corpse.get("entity_id", 0))
@@ -1170,6 +1299,9 @@ func update_hub(client: Object, world: Node3D, delta: float, pause_visible: bool
 		tip = "Press %s to talk to %s" % [_key_name("interact"), qm["name"]]
 	elif not vendor.is_empty():
 		tip = "Press %s to trade with %s" % [_key_name("interact"), vendor["name"]]
+	elif not service.is_empty():
+		var verb := {"trainer": "talk to", "bank": "use the", "clinic": "get patched up at the", "cloning": "keep your clone at the"}
+		tip = "Press %s to %s %s" % [_key_name("interact"), verb.get(str(service["kind"]), "use"), service["name"]]
 	elif not wb.is_empty():
 		tip = "Press %s to use %s" % [_key_name("interact"), wb["name"]]
 	elif not quest_npc.is_empty():

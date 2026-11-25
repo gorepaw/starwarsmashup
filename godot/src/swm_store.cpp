@@ -359,6 +359,7 @@ godot::Array SwmCharacterStore::get_professions() const {
             ms["name"] = godot::String::utf8(m.name.c_str());
             ms["description"] = godot::String::utf8(m.description.c_str());
             ms["perks"] = perk_lines(m.perk);
+            ms["cost"] = int64_t(core::milestone_cost(m.level));  // what a trainer asks for teaching it
             milestones.push_back(ms);
         }
         entry["milestones"] = milestones;

@@ -41,11 +41,16 @@ var _filtered: Array = []
 var _def_by_id: Dictionary = {}
 
 
+# A gear vendor sells most things; a garage, vehicles.
+func _sells_gear() -> bool:
+	return vendor_kind == "gear_vendor" or vendor_kind == "garage"
+
+
 func open_vendor(vname: String, vkind: String) -> void:
 	title = vname
 	vendor_kind = vkind
 	_mode = "sell" if vkind == "junk_dealer" else "buy"
-	_category = "all"
+	_category = "vehicle" if vkind == "garage" else "all"
 	_scroll = 0
 	feedback = ""
 	visible = true
@@ -98,12 +103,16 @@ func _paint() -> void:
 
 	var x := box.position.x + 18 * u
 	var y := box.position.y + 14 * u
-	var subtitle := "Junk Dealer — Buys Salvage & Hides" if vendor_kind == "junk_dealer" else "Mos Eisley Outfitter — Credits"
+	var subtitle := "Junk Dealer — Buys Salvage & Hides"
+	if vendor_kind == "garage":
+		subtitle = "Garage — Vehicles for Credits"
+	elif vendor_kind != "junk_dealer":
+		subtitle = "Mos Eisley Outfitter — Credits"
 	text("gamefont_medium", subtitle, Vector2(x, y), "Left", TEXT)
 	text("gamefont_medium", "%d Credits" % credits, Vector2(box.end.x - 18 * u, y), "Right", ACCENT)
 
 	y += 32 * u
-	if vendor_kind == "gear_vendor":
+	if _sells_gear():
 		button(Rect2(x, y, 108 * u, 28 * u), "Buy", "mode:buy", _mode == "buy")
 		button(Rect2(x + 116 * u, y, 108 * u, 28 * u), "Sell", "mode:sell", _mode == "sell")
 	else:
@@ -114,14 +123,16 @@ func _paint() -> void:
 	button(Rect2(box.end.x - 110 * u, y, 92 * u, 28 * u), "Close", "close", false, true)
 
 	y += 36 * u
-	if _mode == "buy" and vendor_kind == "gear_vendor":
+	if _mode == "buy" and vendor_kind == "garage":
+		_category = "vehicle"
+	elif _mode == "buy" and _sells_gear():
 		var cx := x
 		for cat: Array in BUY_CATEGORIES:
 			var bw := 102.0 * u
 			button(Rect2(cx, y, bw, 26 * u), cat[1], "cat:" + cat[0], _category == cat[0])
 			cx += bw + 6 * u
 		y += 34 * u
-	elif vendor_kind == "gear_vendor":
+	elif _sells_gear():
 		var junk := _junk_summary()
 		button(Rect2(x, y, 220 * u, 26 * u),
 				"Sell All Junk (%d | %d Cr)" % [int(junk["count"]), int(junk["total"])],
