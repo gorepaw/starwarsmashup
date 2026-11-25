@@ -134,6 +134,12 @@ void GameClient::gather_extract(ResourceCategory category) {
     }
 }
 
+void GameClient::specialist_request(const net::SpecialistRequest& request) {
+    if (status_ == Status::connected) {
+        link_.send(config_.server, net::encode(request));
+    }
+}
+
 void GameClient::service(uint8_t action, const std::string& id, int64_t amount, uint64_t item_id) {
     if (status_ == Status::connected) {
         net::ServiceRequest request;
@@ -372,6 +378,15 @@ void GameClient::handle(const net::Datagram& datagram, double now) {
         }
         return;
     }
+    if (const auto* sync = std::get_if<net::SpecialistSync>(&message)) {
+        if (status_ == Status::connected) {
+            if (sync->revision >= specialist_.revision) {
+                specialist_ = *sync;
+            }
+            link_.send(config_.server, net::encode(net::SpecialistAck{sync->revision}));
+        }
+        return;
+    }
     if (const auto* sync = std::get_if<net::CraftingSync>(&message)) {
         if (status_ == Status::connected) {
             if (sync->revision >= crafting_.revision) {
@@ -430,6 +445,7 @@ void GameClient::handle(const net::Datagram& datagram, double now) {
     targets_ = snapshot->targets;
     vehicles_ = snapshot->vehicles;
     corpses_ = snapshot->corpses;
+    field_ = snapshot->field;
     match_ = snapshot->match;
     if (match_) {
         // What's been destroyed, gone from our world too (so we move as the

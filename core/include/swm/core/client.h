@@ -159,6 +159,12 @@ public:
     const net::QuestSync& quests() const { return quests_; }
     // Our experience in each profession (ProfessionSync).
     const net::ProfessionSync& professions() const { return professions_; }
+    // Stage 12: our kit, effects, datapad, contracts and bazaar page
+    // (SpecialistSync), what specialists have put in the field (each
+    // snapshot's), and asking to do something with them.
+    const net::SpecialistSync& specialist() const { return specialist_; }
+    const net::FieldState& field() const { return field_; }
+    void specialist_request(const net::SpecialistRequest& request);
     const std::vector<net::Workbench>& workbenches() const { return workbenches_; }
     const net::CraftingSync& crafting() const { return crafting_; }
     void gather_extract(ResourceCategory category);
@@ -257,6 +263,8 @@ private:
     std::vector<net::Workbench> workbenches_;
     net::QuestSync quests_;
     net::ProfessionSync professions_;
+    net::SpecialistSync specialist_;
+    net::FieldState field_;
     net::CraftingSync crafting_;
     std::vector<net::TargetState> targets_;
     std::vector<net::VehicleState> vehicles_;

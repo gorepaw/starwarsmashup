@@ -187,6 +187,14 @@ public:
     godot::Array get_workbenches() const;
     godot::Dictionary get_bank() const;
     void service(int64_t action, const godot::String& id, int64_t amount, int64_t item_id);
+    // Stage 12: the specialist and companion professions. `action` is a
+    // net::SpecialistRequest::Action; see core/include/swm/core/net/protocol.h.
+    void specialist(int64_t action, const godot::String& id, int64_t target, const godot::Vector3& position,
+                    int64_t amount, int64_t item_id, const godot::String& text);
+    godot::Dictionary get_specialist() const;
+    godot::Dictionary get_field() const;
+    // The abilities, companions, droid modules and slices (specialists.ini), for screens.
+    godot::Dictionary get_specialist_book(const godot::String& path);
     godot::Array get_materials() const;
     godot::Array get_presets() const;
     void gather_extract(const godot::String& category_name);
@@ -312,6 +320,8 @@ private:
     bool has_catalog_ = false;
     core::ProfessionBook professions_;
     bool has_professions_ = false;
+    core::SpecialistBook specialists_;  // Stage 12: specialists.ini, next to professions.ini
+    bool has_specialists_ = false;
     std::vector<core::VehicleClass> world_vehicles_;
     core::CraftingBook crafting_;
     bool has_crafting_ = false;

@@ -22,6 +22,8 @@
 #include "swm/core/profession.h"
 #include "swm/core/quest.h"
 #include "swm/core/species.h"
+#include "swm/core/specialist.h"
+#include "swm/core/spatial.h"
 #include "swm/core/world.h"
 
 namespace swm::core {
@@ -53,6 +55,9 @@ struct ServerConfig {
     // The profession roster (outliving the server): experience is earned and
     // loadouts' Active Specialization Slots apply with one.
     const ProfessionBook* professions = nullptr;
+    // Stage 12: the specialist and companion professions' abilities,
+    // companions, droid modules and slices (outliving the server).
+    const SpecialistBook* specialists = nullptr;
     // Outside a match: the world's vehicle classes (game/vehicles/), called
     // by their owners from items (ItemKind::vehicle).
     std::vector<VehicleClass> world_vehicles;
@@ -194,7 +199,10 @@ public:
     // standing or sitting about), drawn by `looks` (told to clients as
     // they join; an NPC's look is an index into them). They walk as players
     // do, by the input they're steered with, and take no harm.
-    void set_looks(std::vector<std::string> looks) { looks_ = std::move(looks); }
+    void set_looks(std::vector<std::string> looks) {
+        looks_ = std::move(looks);
+        add_companion_looks();  // Stage 12: after the hub's own, so theirs keep their indices
+    }
     // Adds one standing on the ground under `position` (from a meter
     // over it), facing `yaw`; returns its entity. `colors`: 0 for its look's
     // own colors, else a seed clients vary them by (net::EntityState).
@@ -246,6 +254,21 @@ public:
     const ItemCatalog* catalog() const { return config_.catalog; }
     void steer_npc(uint32_t entity, const MoveInput& input);
     std::vector<uint32_t> npcs() const;
+    // Stage 12 (server_specialists.cpp): the specialist roster, a player's
+    // kit and datapad, their fielded companion, and what's in the field.
+    const SpecialistBook* specialist_book() const { return config_.specialists; }
+    const SpecialistState* specialist_state(uint32_t entity) const;
+    std::optional<ActiveCompanion> companion_of(uint32_t owner) const;
+    size_t deployable_count() const { return deployables_.size(); }
+    size_t hazard_count() const { return hazards_.size(); }
+    // A bazaar terminal's listings, everyone's (they're saved with the world).
+    const std::vector<BazaarListing>& bazaar_listings() const { return bazaar_; }
+    // The field as a player sees it (what their snapshots carry).
+    net::FieldState field_state_for(uint32_t entity) const;
+    // Whether `entity` is hidden from `viewer` (cloaked, or in smoke, and an enemy).
+    bool hidden_from(uint32_t viewer, uint32_t entity) const;
+    // Whether a player is cloaked (creatures and outlaws don't pick them as targets).
+    bool cloaked(uint32_t entity) const;
 
     std::function<void(const std::string&)> log;
     std::function<void(uint32_t npc_entity, uint32_t killer_entity)> on_npc_killed;
@@ -341,6 +364,7 @@ private:
         std::vector<ItemInstance> bank_items;  // ids are the bank's own
         uint64_t next_bank_id = 1;
         std::optional<Vec3> bound;      // where their clone is kept (cloning terminals), else the hub's facility
+        SpecialistState spec;  // Stage 12: kit, effects, datapad, contracts (server_specialists.cpp)
     };
     // A vehicle in a match. Empty, it keeps its own state; driven, its
     // driver's state is its state (MoveState::vehicle), and the driver's
@@ -534,6 +558,43 @@ private:
     Client* find(uint32_t entity);
     const Client* find(uint32_t entity) const;
     void say(const std::string& text) const;
+    // Stage 12 (server_specialists.cpp).
+    void add_companion_looks();
+    void handle_specialist_request(Client& client, const net::SpecialistRequest& request);
+    void update_specialists(double dt);
+    void send_specialist_sync(Client& client);
+    void load_specialist_data(Client& client);
+    void save_specialist_data(const Client& client) const;
+    bool use_specialist_item(Client& client, const ItemDef& def, uint64_t item_id);
+    bool spawn_at_beacon(Client& client, size_t loadout);
+    void refresh_abilities(Client& client);
+    void refresh_effect_gear(Client& client);
+    bool use_ability(Client& client, const AbilityDef& ability, uint32_t target, Vec3 at);
+    void finish_channel(Client& client);
+    void give_effect(Client& client, TimedEffect effect);
+    int specialist_level(const Client& client, const std::string& profession) const;
+    void earn_specialist_xp(Client& client, const std::string& profession, int64_t xp);
+    bool is_enemy(const Client& a, uint32_t entity) const;
+    void summon_companion(Client& client, uint64_t record_id);
+    void dismiss_companion(Client& client, bool destroyed);
+    void update_companions(double dt);
+    void companion_died(uint32_t npc_entity);
+    // A hit on an NPC, if it's a companion: nothing from its owner's side, more from electro on a droid.
+    double companion_hit(uint32_t npc_entity, uint32_t attacker, double raw, DamageType type) const;
+    void mark_entity(uint32_t entity, int team, uint32_t owner, double seconds, uint8_t kind);
+    void specialist_kill(uint32_t victim, uint32_t killer, bool npc);
+    bool bounty_pvp_allowed(uint32_t shooter, uint32_t victim) const;
+    double vehicle_damage_factor(uint32_t driver) const;
+    void break_cloak(Client& client);
+    void offer_contracts(Client& client, size_t terminal);
+    void update_contracts(Client& client);
+    void bazaar_action(Client& client, const net::SpecialistRequest& request);
+    void load_bazaar();
+    void save_bazaar();
+    void datapad_action(Client& client, const net::SpecialistRequest& request);
+    void apply_slices(const Client& client, const CharacterLoadout& cl, Loadout& loadout) const;
+    void fill_specialist_loadout(const Client& client, const CharacterLoadout& cl, Loadout& loadout) const;
+    int field_team(const Client& client) const;
 
     net::Link& link_;
     const World& world_;
@@ -574,6 +635,41 @@ private:
     double next_save_time_ = 0;
     bool started_ = false;
     std::optional<Vec3> cloning_facility_;
+    // Stage 12: what specialists have put in the field, the companions
+    // fielded, marks shown to a side, and the bazaar.
+    struct Mark {
+        uint32_t entity = 0;
+        int team = -1;        // the side that sees it (-1: every player, outside a match; -2: only its owner)
+        uint32_t owner = 0;
+        double remaining = 0;
+        uint8_t kind = 0;     // net::FieldMark::Kind
+    };
+    // A snare, toxin or tranquilizer on an NPC (a creature or an outlaw).
+    struct NpcEffect {
+        uint32_t entity = 0;
+        std::string id;
+        double remaining = 0;
+        double speed = 1;       // its walk and run speeds times this
+        double dps = 0;         // damage a second
+        DamageType type = DamageType::bio;
+        uint32_t source = 0;
+        bool tranquilized = false;
+    };
+    std::vector<Deployable> deployables_;
+    std::vector<Hazard> hazards_;
+    std::vector<PendingStrike> strikes_;
+    std::vector<ActiveCompanion> companions_;
+    std::vector<Mark> marks_;
+    std::vector<NpcEffect> npc_effects_;
+    std::map<uint32_t, std::pair<double, double>> npc_base_speed_;  // walk, run before effects
+    std::vector<BazaarListing> bazaar_;
+    std::vector<BazaarSale> bazaar_sales_;
+    bool bazaar_loaded_ = false;
+    uint64_t next_listing_ = 1;
+    uint64_t next_contract_ = 1;
+    uint32_t next_field_id_ = 1;
+    double specialist_clock_ = 0;  // seconds of ticks (contracts expire by it)
+    double cohesion_pulse_ = 0;
 };
 
 } // namespace swm::core

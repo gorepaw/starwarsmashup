@@ -26,7 +26,9 @@ add_library(swm_core STATIC
   src/server_professions.cpp
   src/server_services.cpp
   src/server_quests.cpp
+  src/server_specialists.cpp
   src/server_vehicles.cpp
+  src/specialist.cpp
   src/species.cpp
   src/vehicle.cpp
   src/wildlife.cpp
@@ -43,7 +45,7 @@ add_library(swm_sqlite_store STATIC src/sqlite_store.cpp)
 target_link_libraries(swm_sqlite_store PUBLIC swm_core PRIVATE swm::sqlite3)
 swm_target_warnings(swm_sqlite_store)
 
-foreach(test core_test movement_test nav_test net_test persistence_test combat_test match_test hub_test species_test items_test wildlife_test loot_test quest_test vehicle_test space_test profession_test crafting_test services_test)
+foreach(test core_test movement_test nav_test net_test persistence_test combat_test match_test hub_test species_test items_test wildlife_test loot_test quest_test vehicle_test space_test profession_test crafting_test services_test specialist_test)
   add_executable(${test} tests/${test}.cpp)
   target_link_libraries(${test} PRIVATE swm_core swm_sqlite_store)
   swm_target_warnings(${test})

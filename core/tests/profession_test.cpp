@@ -55,9 +55,7 @@ void test_roster() {
     CHECK(in_wave("7B") == 10);
     CHECK(in_wave("7C") == 4);
     for (const ProfessionDef& def : book.all()) {
-        if (def.wave == "7A") {
-            CHECK(def.available);
-        }
+        CHECK(def.available);  // all 31 are in play since Stage 12
         // Major unlocks at 1, 25, 50, 75 and 100.
         std::vector<int> levels;
         for (const ProfessionMilestone& m : def.milestones) levels.push_back(m.level);
@@ -69,7 +67,8 @@ void test_roster() {
                            "heavy_weapons", "melee"}) {
         CHECK(can_specialize(book, id));
     }
-    CHECK(!can_specialize(book, "bounty_hunter"));  // Wave 7B specialist not yet in play
+    CHECK(can_specialize(book, "bounty_hunter"));  // Stage 12: a slotted Wave 7B specialist
+    CHECK(!can_specialize(book, "entertainer"));   // unslotted: always on
     CHECK(!can_specialize(book, "weaponsmith"));    // nor crafting
     CHECK(!can_specialize(book, "nobody"));
     for (const auto& a : {"pistol", "carbine_burst", "scatter", "rifle_auto", "sniper", "heavy_launcher", "grenade",
@@ -96,7 +95,7 @@ void test_roster() {
 
     // Slots: known, slottable, once each, three at most.
     const std::vector<std::string> asked{"rifles", "bounty_hunter", "rifles", "bogus", "light_armor", "pistols", "carbines"};
-    CHECK((clean_specializations(book, asked) == std::vector<std::string>{"rifles", "light_armor", "pistols"}));
+    CHECK((clean_specializations(book, asked) == std::vector<std::string>{"rifles", "bounty_hunter", "light_armor"}));
 }
 
 void test_perks() {
@@ -222,9 +221,9 @@ void test_server_professions() {
         lo.companion = "a rancor";
         client.save_loadout(lo);
         run(0.3);
-        CHECK(client.char_loadouts().size() == 1 &&
-              client.char_loadouts()[0].specializations == std::vector<std::string>{"rifles"});
-        CHECK(client.char_loadouts().size() == 1 && client.char_loadouts()[0].companion.empty());
+        CHECK((client.char_loadouts().size() == 1 &&
+               client.char_loadouts()[0].specializations == std::vector<std::string>{"rifles", "bounty_hunter"}));
+        CHECK(client.char_loadouts().size() == 1 && client.char_loadouts()[0].companion.empty());  // not in their datapad
         const auto& resolved = client.custom_loadouts();
         CHECK(!resolved.empty() && resolved[0].weapons[0] && resolved[0].weapons[0]->archetype == "rifle_auto");
         const double slotted_spread = resolved.empty() || !resolved[0].weapons[0] ? 0 : resolved[0].weapons[0]->yaw_spread;
@@ -264,7 +263,7 @@ void test_server_professions() {
         CHECK(profession_xp(progress, "unarmored") == 41);
         CHECK(profession_xp(progress, "pistols") == 40);
         const auto loadouts = saved ? store.list_loadouts(saved->id) : std::vector<CharacterLoadout>{};
-        CHECK(loadouts.size() == 1 && loadouts[0].specializations == std::vector<std::string>{"rifles"});
+        CHECK((loadouts.size() == 1 && loadouts[0].specializations == std::vector<std::string>{"rifles", "bounty_hunter"}));
 
         // Rewarded while away (on a battle's server): saved for when they're back.
         net::LoopbackHub links;
@@ -276,7 +275,7 @@ void test_server_professions() {
         server.award_profession_xp("Trainee", {{"carbines", 25}, {"bounty_hunter", 99}}, 30);
         const auto later = saved ? store.list_professions(saved->id) : std::vector<ProfessionProgress>{};
         CHECK(profession_xp(later, "carbines") == 25);
-        CHECK(profession_xp(later, "bounty_hunter") == 0);  // not in the game yet
+        CHECK(profession_xp(later, "bounty_hunter") == 99);  // in the game since Stage 12
         CHECK(profession_xp(later, "rifles") == 195);
         CHECK(profession_xp(later, "unarmored") == 56);
     }

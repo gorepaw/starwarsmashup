@@ -39,6 +39,9 @@ enum class Type : uint8_t {
     gather_request,
     craft_request,
     service_request,
+    specialist_request,
+    specialist_sync,
+    specialist_ack,
 };
 
 void put_vec3(ByteWriter& out, Vec3 v) {
@@ -552,6 +555,198 @@ CharacterLoadout get_char_loadout(ByteReader& in) {
     return lo;
 }
 
+// Stage 12 (specialist.h).
+void put_companion(ByteWriter& out, const CompanionRecord& r) {
+    out.put(r.id);
+    out.put_string(r.template_id);
+    out.put_string(r.name);
+    out.put_string(r.origin);
+    out.put(float(r.quality));
+    out.put(float(r.health));
+    out.put(float(r.damage));
+    out.put(float(r.speed));
+    out.put(r.colors);
+    out.put(uint8_t(std::min<size_t>(r.modules.size(), 8)));
+    for (size_t i = 0; i < r.modules.size() && i < 8; ++i) out.put_string(r.modules[i]);
+    out.put(uint8_t(r.mount));
+}
+
+CompanionRecord get_companion(ByteReader& in) {
+    CompanionRecord r;
+    r.id = in.get<uint64_t>();
+    r.template_id = in.get_string();
+    r.name = in.get_string();
+    r.origin = in.get_string();
+    r.quality = in.get<float>();
+    r.health = in.get<float>();
+    r.damage = in.get<float>();
+    r.speed = in.get<float>();
+    r.colors = in.get<uint16_t>();
+    const size_t n = in.get<uint8_t>();
+    if (n > 8) throw PacketError("too many droid modules");
+    for (size_t i = 0; i < n; ++i) r.modules.push_back(in.get_string());
+    r.mount = in.get<uint8_t>() != 0;
+    return r;
+}
+
+void put_contract(ByteWriter& out, const Contract& c) {
+    out.put(c.id);
+    out.put(uint8_t(c.kind));
+    out.put_string(c.title);
+    out.put_string(c.target_name);
+    out.put(c.target_entity);
+    put_vec3(out, c.waypoint);
+    out.put(float(c.radius));
+    out.put(c.reward);
+    out.put(c.xp);
+    out.put(float(c.expires));
+    out.put(float(c.progress));
+    out.put(float(c.needed));
+    out.put_string(c.profession);
+}
+
+Contract get_contract(ByteReader& in) {
+    Contract c;
+    c.id = in.get<uint64_t>();
+    const uint8_t kind = in.get<uint8_t>();
+    if (kind > uint8_t(ContractKind::gig)) throw PacketError("bad contract kind");
+    c.kind = ContractKind(kind);
+    c.title = in.get_string();
+    c.target_name = in.get_string();
+    c.target_entity = in.get<uint32_t>();
+    c.waypoint = get_vec3(in);
+    c.radius = in.get<float>();
+    c.reward = in.get<int64_t>();
+    c.xp = in.get<int64_t>();
+    c.expires = in.get<float>();
+    c.progress = in.get<float>();
+    c.needed = in.get<float>();
+    c.profession = in.get_string();
+    return c;
+}
+
+void put_listing(ByteWriter& out, const BazaarListing& l) {
+    out.put(l.id);
+    out.put(l.seller);
+    out.put_string(l.seller_name);
+    out.put_string(l.shop);
+    out.put(l.item.id);
+    out.put_string(l.item.def_id);
+    out.put(float(l.item.quality));
+    out.put(uint16_t(std::clamp(l.item.quantity, 1, 65535)));
+    out.put_string(l.item.custom_name);
+    out.put_long_string(l.item.color_json);
+    out.put(l.price);
+    out.put(l.listed_at);
+}
+
+BazaarListing get_listing(ByteReader& in) {
+    BazaarListing l;
+    l.id = in.get<uint64_t>();
+    l.seller = in.get<uint64_t>();
+    l.seller_name = in.get_string();
+    l.shop = in.get_string();
+    l.item.id = in.get<uint64_t>();
+    l.item.def_id = in.get_string();
+    l.item.quality = in.get<float>();
+    l.item.quantity = std::max<int>(1, in.get<uint16_t>());
+    l.item.custom_name = in.get_string();
+    l.item.color_json = in.get_long_string();
+    l.price = in.get<int64_t>();
+    l.listed_at = in.get<int64_t>();
+    return l;
+}
+
+void put_field(ByteWriter& out, const FieldState& f) {
+    out.put(uint16_t(std::min<size_t>(f.marks.size(), 512)));
+    for (size_t i = 0; i < f.marks.size() && i < 512; ++i) {
+        out.put(f.marks[i].entity);
+        out.put(f.marks[i].remaining);
+        out.put(f.marks[i].kind);
+    }
+    out.put(uint16_t(std::min<size_t>(f.cloaked.size(), 512)));
+    for (size_t i = 0; i < f.cloaked.size() && i < 512; ++i) out.put(f.cloaked[i]);
+    out.put(uint16_t(std::min<size_t>(f.performers.size(), 512)));
+    for (size_t i = 0; i < f.performers.size() && i < 512; ++i) out.put(f.performers[i]);
+    out.put(uint16_t(std::min<size_t>(f.companions.size(), 512)));
+    for (size_t i = 0; i < f.companions.size() && i < 512; ++i) {
+        out.put(f.companions[i].first);
+        out.put(f.companions[i].second);
+    }
+    out.put(uint16_t(std::min<size_t>(f.deployables.size(), 512)));
+    for (size_t i = 0; i < f.deployables.size() && i < 512; ++i) {
+        const FieldDeployable& d = f.deployables[i];
+        out.put(d.id);
+        out.put(d.kind);
+        out.put(d.owner);
+        out.put(uint8_t(d.friendly));
+        put_vec3(out, d.position);
+        out.put(d.radius);
+        out.put(d.remaining);
+    }
+    out.put(uint16_t(std::min<size_t>(f.hazards.size(), 512)));
+    for (size_t i = 0; i < f.hazards.size() && i < 512; ++i) {
+        const FieldHazard& h = f.hazards[i];
+        out.put(h.id);
+        out.put_string(h.kind);
+        put_vec3(out, h.position);
+        out.put(h.radius);
+        out.put(h.remaining);
+    }
+    out.put(uint16_t(std::min<size_t>(f.flair.size(), 512)));
+    for (size_t i = 0; i < f.flair.size() && i < 512; ++i) {
+        out.put(f.flair[i].first);
+        out.put(f.flair[i].second);
+    }
+}
+
+FieldState get_field(ByteReader& in) {
+    FieldState f;
+    const auto count = [&](const char* what) {
+        const size_t n = in.get<uint16_t>();
+        if (n > 512) throw PacketError(std::string("too many field ") + what);
+        return n;
+    };
+    for (size_t i = 0, n = count("marks"); i < n; ++i) {
+        FieldMark m;
+        m.entity = in.get<uint32_t>();
+        m.remaining = in.get<float>();
+        m.kind = in.get<uint8_t>();
+        f.marks.push_back(m);
+    }
+    for (size_t i = 0, n = count("cloaks"); i < n; ++i) f.cloaked.push_back(in.get<uint32_t>());
+    for (size_t i = 0, n = count("performers"); i < n; ++i) f.performers.push_back(in.get<uint32_t>());
+    for (size_t i = 0, n = count("companions"); i < n; ++i) {
+        const uint32_t entity = in.get<uint32_t>();
+        f.companions.emplace_back(entity, in.get<uint32_t>());
+    }
+    for (size_t i = 0, n = count("deployables"); i < n; ++i) {
+        FieldDeployable d;
+        d.id = in.get<uint32_t>();
+        d.kind = in.get<uint8_t>();
+        d.owner = in.get<uint32_t>();
+        d.friendly = in.get<uint8_t>() != 0;
+        d.position = get_vec3(in);
+        d.radius = in.get<float>();
+        d.remaining = in.get<float>();
+        f.deployables.push_back(d);
+    }
+    for (size_t i = 0, n = count("hazards"); i < n; ++i) {
+        FieldHazard h;
+        h.id = in.get<uint32_t>();
+        h.kind = in.get_string();
+        h.position = get_vec3(in);
+        h.radius = in.get<float>();
+        h.remaining = in.get<float>();
+        f.hazards.push_back(std::move(h));
+    }
+    for (size_t i = 0, n = count("flair"); i < n; ++i) {
+        const uint32_t entity = in.get<uint32_t>();
+        f.flair.emplace_back(entity, in.get<uint8_t>());
+    }
+    return f;
+}
+
 struct Encoder {
     ByteWriter& out;
 
@@ -771,6 +966,7 @@ struct Encoder {
         out.put(m.you.combat_level);
         out.put(m.you.extract_progress);
         out.put(m.you.inventory_rev);
+        put_field(out, m.field);
     }
     void operator()(const Goodbye&) { out.put(uint8_t(Type::goodbye)); }
     void operator()(const SpawnRequest& m) {
@@ -990,6 +1186,75 @@ struct Encoder {
         out.put(m.batch_count);
         out.put_string(m.preset_name);
         out.put_string(m.order_id);
+    }
+    void operator()(const SpecialistRequest& m) {
+        out.put(uint8_t(Type::specialist_request));
+        out.put(m.action);
+        out.put_string(m.id);
+        out.put(m.target);
+        put_vec3(out, m.position);
+        out.put(m.amount);
+        out.put(m.item_id);
+        out.put_long_string(m.text);
+    }
+    void operator()(const SpecialistSync& m) {
+        out.put(uint8_t(Type::specialist_sync));
+        out.put(m.revision);
+        out.put(uint8_t(std::min<size_t>(m.abilities.size(), 64)));
+        for (size_t i = 0; i < m.abilities.size() && i < 64; ++i) {
+            out.put_string(m.abilities[i].id);
+            out.put(m.abilities[i].cooldown);
+        }
+        out.put(uint8_t(std::min<size_t>(m.effects.size(), 64)));
+        for (size_t i = 0; i < m.effects.size() && i < 64; ++i) {
+            out.put_string(m.effects[i].id);
+            out.put_string(m.effects[i].name);
+            out.put(m.effects[i].remaining);
+            out.put(m.effects[i].duration);
+            out.put(m.effects[i].flags);
+        }
+        out.put(uint8_t(std::min<size_t>(m.companions.size(), 64)));
+        for (size_t i = 0; i < m.companions.size() && i < 64; ++i) put_companion(out, m.companions[i]);
+        out.put(m.active_companion);
+        out.put(m.companion_entity);
+        out.put(m.companion_cooldown);
+        out.put(m.companion_mode);
+        out.put(m.companion_slot);
+        out.put(uint8_t(std::min<size_t>(m.samples.size(), 64)));
+        for (size_t i = 0; i < m.samples.size() && i < 64; ++i) {
+            out.put(m.samples[i].id);
+            out.put_string(m.samples[i].template_id);
+            out.put(float(m.samples[i].quality));
+        }
+        out.put(uint8_t(std::min<size_t>(m.contracts.size(), 16)));
+        for (size_t i = 0; i < m.contracts.size() && i < 16; ++i) put_contract(out, m.contracts[i]);
+        out.put(uint8_t(std::min<size_t>(m.offers.size(), 16)));
+        for (size_t i = 0; i < m.offers.size() && i < 16; ++i) put_contract(out, m.offers[i]);
+        out.put_string(m.offer_source);
+        out.put(uint8_t(std::min<size_t>(m.bazaar.size(), 40)));
+        for (size_t i = 0; i < m.bazaar.size() && i < 40; ++i) put_listing(out, m.bazaar[i]);
+        out.put(uint8_t(std::min<size_t>(m.my_listings.size(), 40)));
+        for (size_t i = 0; i < m.my_listings.size() && i < 40; ++i) put_listing(out, m.my_listings[i]);
+        out.put(uint8_t(std::min<size_t>(m.prices.size(), 40)));
+        for (size_t i = 0; i < m.prices.size() && i < 40; ++i) {
+            out.put_string(m.prices[i].first);
+            const PriceStats& p = m.prices[i].second;
+            out.put(int32_t(p.count));
+            out.put(p.low);
+            out.put(p.high);
+            out.put(p.average);
+            out.put(p.last);
+        }
+        out.put(uint8_t(m.performing));
+        out.put(uint8_t(m.bounty_flag));
+        out.put_string(m.design_from);
+        out.put_long_string(m.design_appearance);
+        out.put_string(m.channel);
+        out.put(m.channel_remaining);
+    }
+    void operator()(const SpecialistAck& m) {
+        out.put(uint8_t(Type::specialist_ack));
+        out.put(m.revision);
     }
 };
 
@@ -1287,6 +1552,7 @@ Message decode(std::span<const uint8_t> packet) {
         m.you.combat_level = in.get<uint8_t>();
         m.you.extract_progress = in.get<float>();
         m.you.inventory_rev = in.get<uint32_t>();
+        m.field = get_field(in);
         message = std::move(m);
         break;
     }
@@ -1557,6 +1823,95 @@ Message decode(std::span<const uint8_t> packet) {
         message = std::move(m);
         break;
     }
+    case Type::specialist_request: {
+        SpecialistRequest m;
+        m.action = in.get<uint8_t>();
+        if (m.action > uint8_t(SpecialistRequest::cancel_channel)) throw PacketError("bad specialist action");
+        m.id = in.get_string();
+        m.target = in.get<uint32_t>();
+        m.position = get_vec3(in);
+        m.amount = in.get<int64_t>();
+        m.item_id = in.get<uint64_t>();
+        m.text = in.get_long_string();
+        message = std::move(m);
+        break;
+    }
+    case Type::specialist_sync: {
+        SpecialistSync m;
+        m.revision = in.get<uint32_t>();
+        const size_t an = in.get<uint8_t>();
+        if (an > 64) throw PacketError("too many abilities");
+        for (size_t i = 0; i < an; ++i) {
+            AbilityStatus a;
+            a.id = in.get_string();
+            a.cooldown = in.get<float>();
+            m.abilities.push_back(std::move(a));
+        }
+        const size_t en = in.get<uint8_t>();
+        if (en > 64) throw PacketError("too many effects");
+        for (size_t i = 0; i < en; ++i) {
+            EffectStatus e;
+            e.id = in.get_string();
+            e.name = in.get_string();
+            e.remaining = in.get<float>();
+            e.duration = in.get<float>();
+            e.flags = in.get<uint16_t>();
+            m.effects.push_back(std::move(e));
+        }
+        const size_t cn = in.get<uint8_t>();
+        if (cn > 64) throw PacketError("too many companions");
+        for (size_t i = 0; i < cn; ++i) m.companions.push_back(get_companion(in));
+        m.active_companion = in.get<uint64_t>();
+        m.companion_entity = in.get<uint32_t>();
+        m.companion_cooldown = in.get<float>();
+        m.companion_mode = in.get<uint8_t>();
+        m.companion_slot = in.get<uint64_t>();
+        const size_t sn = in.get<uint8_t>();
+        if (sn > 64) throw PacketError("too many samples");
+        for (size_t i = 0; i < sn; ++i) {
+            DnaSample d;
+            d.id = in.get<uint64_t>();
+            d.template_id = in.get_string();
+            d.quality = in.get<float>();
+            m.samples.push_back(std::move(d));
+        }
+        const size_t kn = in.get<uint8_t>();
+        if (kn > 16) throw PacketError("too many contracts");
+        for (size_t i = 0; i < kn; ++i) m.contracts.push_back(get_contract(in));
+        const size_t on = in.get<uint8_t>();
+        if (on > 16) throw PacketError("too many contract offers");
+        for (size_t i = 0; i < on; ++i) m.offers.push_back(get_contract(in));
+        m.offer_source = in.get_string();
+        const size_t bn = in.get<uint8_t>();
+        if (bn > 40) throw PacketError("too many listings");
+        for (size_t i = 0; i < bn; ++i) m.bazaar.push_back(get_listing(in));
+        const size_t mn = in.get<uint8_t>();
+        if (mn > 40) throw PacketError("too many own listings");
+        for (size_t i = 0; i < mn; ++i) m.my_listings.push_back(get_listing(in));
+        const size_t pn = in.get<uint8_t>();
+        if (pn > 40) throw PacketError("too many prices");
+        for (size_t i = 0; i < pn; ++i) {
+            std::string def = in.get_string();
+            PriceStats p;
+            p.count = in.get<int32_t>();
+            p.low = in.get<int64_t>();
+            p.high = in.get<int64_t>();
+            p.average = in.get<int64_t>();
+            p.last = in.get<int64_t>();
+            m.prices.emplace_back(std::move(def), p);
+        }
+        m.performing = in.get<uint8_t>() != 0;
+        m.bounty_flag = in.get<uint8_t>() != 0;
+        m.design_from = in.get_string();
+        m.design_appearance = in.get_long_string();
+        m.channel = in.get_string();
+        m.channel_remaining = in.get<float>();
+        message = std::move(m);
+        break;
+    }
+    case Type::specialist_ack:
+        message = SpecialistAck{in.get<uint32_t>()};
+        break;
     default:
         throw PacketError("unknown message type");
     }

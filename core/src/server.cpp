@@ -25,6 +25,7 @@ GameServer::GameServer(net::Link& link, const World& world, ServerConfig config,
     if (config_.battlefield) {
         conquest_.emplace(*config_.battlefield, !config_.single_match);
     }
+    add_companion_looks();  // Stage 12
 }
 
 bool GameServer::match_over() const {
@@ -814,6 +815,12 @@ void GameServer::handle(const net::Endpoint& from, const net::Datagram& datagram
         handle_craft_request(*client, *craft);
     } else if (const auto* service = std::get_if<net::ServiceRequest>(&message)) {
         handle_service_request(*client, *service);
+    } else if (const auto* spec_request = std::get_if<net::SpecialistRequest>(&message)) {
+        handle_specialist_request(*client, *spec_request);  // Stage 12
+    } else if (const auto* spec_ack = std::get_if<net::SpecialistAck>(&message)) {
+        if (spec_ack->revision == client->spec.revision) {
+            client->spec.acked = spec_ack->revision;
+        }
     } else if (const auto* save_lo = std::get_if<net::SaveLoadoutRequest>(&message)) {
         if (!conquest_ && store_ != nullptr && config_.catalog != nullptr && client->character != 0 &&
             save_lo->loadout.slot_index >= 0 && save_lo->loadout.slot_index < max_character_loadouts) {
@@ -826,7 +833,13 @@ void GameServer::handle(const net::Endpoint& from, const net::Datagram& datagram
             clean.specializations = config_.professions
                                         ? clean_specializations(*config_.professions, clean.specializations)
                                         : std::vector<std::string>{};
-            clean.companion.clear();
+            // Stage 12: the Companion Slot keeps a companion from their datapad.
+            if (!clean.companion.empty() &&
+                std::none_of(client->spec.companions.begin(), client->spec.companions.end(), [&](const CompanionRecord& r) {
+                    return std::to_string(r.id) == clean.companion;
+                })) {
+                clean.companion.clear();
+            }
             if (!owns(clean.primary_id)) clean.primary_id = 0;
             if (!owns(clean.sidearm_id)) clean.sidearm_id = 0;
             if (!owns(clean.secondary_id)) clean.secondary_id = 0;
@@ -1054,6 +1067,8 @@ void GameServer::handle(const net::Endpoint& from, const net::Datagram& datagram
                 const ItemDef* def = config_.catalog->find(it->def_id);
                 if (def != nullptr && def->kind == ItemKind::vehicle) {
                     call_vehicle(*client, *def);
+                } else if (def != nullptr && use_specialist_item(*client, *def, use->item_id)) {
+                    // Stage 12: used.
                 } else if (def != nullptr && def->kind == ItemKind::supply && def->heal_amount > 0 &&
                     client->health < client->stats.max_health && store_->remove_item(use->item_id)) {
                     const double before = client->health;
@@ -1181,6 +1196,7 @@ GameServer::Client* GameServer::join(const net::Endpoint& from, const std::strin
             joined.professions = store_->list_professions(joined.character);
             joined.profession_rev = 1;
             load_services_data(joined);
+            load_specialist_data(joined);  // Stage 12: before the loadouts are rebuilt below
             joined.materials = store_->list_materials(joined.character);
             joined.presets = store_->list_presets(joined.character);
             joined.crafting_rev = 1;
@@ -1230,6 +1246,7 @@ void GameServer::save(std::span<const Client> clients) {
                 say(std::format("profession save error for {}: {}", client.name, error.what()));
             }
         }
+        save_specialist_data(client);  // Stage 12
     }
 }
 
@@ -1682,6 +1699,9 @@ void GameServer::run_match() {
         const size_t post = client.wants_spawn->post;
         const size_t avail_loadouts =
             client.custom_loadouts.empty() ? field.team(client.team).loadouts.size() : client.custom_loadouts.size();
+        if (loadout < avail_loadouts && post == beacon_spawn_post && spawn_at_beacon(client, loadout)) {
+            continue;  // Stage 12: at a squad spawn beacon
+        }
         if (loadout < avail_loadouts && can_spawn_at(client.team, post)) {
             spawn_at_post(client, loadout, post);
         }
@@ -1826,6 +1846,7 @@ void GameServer::spawn_at_post(Client& client, size_t loadout_index, size_t post
 }
 
 void GameServer::fire(Client& shooter, const Shot& shot, double view_tick) {
+    break_cloak(shooter);  // Stage 12
     const auto classes = vehicle_classes();
     const bool driving = shooter.state.vehicle >= 0 && size_t(shooter.state.vehicle) < classes.size();
     const VehicleSeat* seat = driving ? vehicle_seat(classes[size_t(shooter.state.vehicle)], shooter.state.seat) : nullptr;
@@ -2057,7 +2078,8 @@ void GameServer::advance_bolts() {
         const bool pvp_blocked = !conquest_ && !config_.pvp_enabled && bolt.team != hostile_npc_team;
         for (Client& target : clients_) {
             const bool teammate = allied(bolt.team, target.team) && !config_.friendly_fire;
-            if (bounces || harmless || pvp_blocked || target.entity == bolt.owner || target.life != Life::alive || teammate ||
+            if (bounces || harmless || (pvp_blocked && !bounty_pvp_allowed(bolt.owner, target.entity)) ||
+                target.entity == bolt.owner || target.life != Life::alive || teammate ||
                 target.state.vehicle >= 0) {
                 continue;  // (a driver: its vehicle takes the hit)
             }
@@ -2412,14 +2434,15 @@ void GameServer::explode(const Blast& blast, std::vector<Blast>& blasts) {
         // Thrown away from it (teammates too: a blast doesn't take sides).
         const double push = explosion_push(def, blast.at, target.state.position) *
                             (1.0 - std::clamp(target.stats.explosion_push_resist, 0.0, max_mitigation));
-        if (push > 0 && !(pvp_blocked && target.entity != bolt.owner)) {
+        const bool hunted = pvp_blocked && bounty_pvp_allowed(bolt.owner, target.entity);  // Stage 12
+        if (push > 0 && !(pvp_blocked && !hunted && target.entity != bolt.owner)) {
             Vec3 away = target.state.position + Vec3{0, 1.0, 0} - blast.at;
             away = away.length() > 1e-3 ? away * (1 / away.length()) : Vec3{0, 1, 0};
             away.y = std::max(away.y, 0.35);  // and off its feet
             target.state.velocity += away * (push / away.length());
             target.state.grounded = false;
         }
-        if (teammate || (pvp_blocked && target.entity != bolt.owner)) {
+        if (teammate || (pvp_blocked && !hunted && target.entity != bolt.owner)) {
             continue;
         }
         const double amount = explosion_damage(def, blast.at, target_pos);
@@ -2500,8 +2523,12 @@ void GameServer::explode(const Blast& blast, std::vector<Blast>& blasts) {
     }
 }
 
-void GameServer::damage_npc(Npc& npc, double raw, DamageType, uint32_t attacker) {
+void GameServer::damage_npc(Npc& npc, double raw, DamageType type, uint32_t attacker) {
     if (npc.hidden || npc.actor_kind < 2 || npc.life != Life::alive || raw <= 0) {
+        return;
+    }
+    raw = companion_hit(npc.entity, attacker, raw, type);  // Stage 12
+    if (raw <= 0) {
         return;
     }
     const double amount = raw * (1.0 - npc.mitigation);
@@ -2518,6 +2545,7 @@ void GameServer::damage_npc(Npc& npc, double raw, DamageType, uint32_t attacker)
         if (on_npc_killed) {
             on_npc_killed(npc.entity, attacker);
         }
+        specialist_kill(npc.entity, attacker, true);  // Stage 12
     }
 }
 
@@ -2585,6 +2613,7 @@ void GameServer::kill(Client& victim, uint32_t attacker, bool is_flyer) {
     victim.respawn_tick = tick_ + uint32_t(std::lround(config_.respawn_delay * config_.tick_rate));
     ++victim.deaths;
     events_.push_back({net::CombatEvent::kill, attacker, victim.entity, 0});
+    specialist_kill(victim.entity, attacker, false);  // Stage 12
     Client* killer = attacker != 0 ? find(attacker) : nullptr;
     if (killer != nullptr && killer != &victim) {
         ++killer->kills;

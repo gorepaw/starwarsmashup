@@ -551,6 +551,7 @@ void GameServer::damage_vehicle(Vehicle& v, double amount, uint32_t attacker, st
     if (v.dead_for >= 0 || amount <= 0) {
         return;
     }
+    amount *= vehicle_damage_factor(v.driver);  // Stage 12: Pilot's Evasive Maneuvers and Reactor Tuning
     v.health = std::max(0.0, v.health - amount);
     events_.push_back({net::CombatEvent::hit, attacker, v.id, float(amount)});
     if (v.health > 0) {

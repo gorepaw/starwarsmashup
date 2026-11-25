@@ -244,6 +244,19 @@ void export_people(TreLibrary& library, const CityExport& city, const std::files
             }
         }
     }
+    // Stage 12: companions (tamed creatures, assembled droids) are drawn as
+    // the hub's people too: game/professions/specialists.ini, next to game/hubs/.
+    const std::filesystem::path specialists = city.hub.parent_path().parent_path() / "professions" / "specialists.ini";
+    if (std::filesystem::exists(specialists)) {
+        const core::Ini sp_ini = core::Ini::load(specialists);
+        for (const core::Ini::Section& section : sp_ini.sections()) {
+            if (section.name == "companion") {
+                if (const auto tpl = section.get("Look")) {
+                    add_look(*tpl, false);
+                }
+            }
+        }
+    }
     ObjectTemplates templates(library);
     for (const auto& [look, is_bandit] : looks) {
         try {

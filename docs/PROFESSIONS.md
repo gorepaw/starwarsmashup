@@ -73,6 +73,8 @@ Armor proficiency is completely decoupled from weapon and advanced professions. 
 
 ### Wave 7B — Specialist Combat, Support, Social & Economy (10 Professions)
 
+*Live since Stage 12: each ability, its milestone and its numbers are in [`game/professions/specialists.ini`](../game/professions/specialists.ini); what's done and what's still open is in the [Roadmap](ROADMAP.md#stage-12-remaining-professions-waves-7b--7c--creature-mounts).*
+
 - **Bounty Hunter:** Open-world bounty terminal contracts (NPC marks + opt-in PvP marks), seeker probe tracking, capture payouts; match recon probes, bolas/net/wrist-rocket/jump-pack gadgets, and HVT spotting.
 - **Smuggler:** Slicing loot containers, faction terminals, and contraband missions plus permanent **sidegrade weapon/armor slicing**; match faster objective/turret/door slicing, flashbangs, smoke, and EMP disruptors.
 - **Squad Leader:** Battlefront Officer role—team aura buffs (stamina/reload/morale), tactical ping/target marking, **squad spawn beacon**, and supply/strike call-ins.
@@ -87,6 +89,8 @@ Armor proficiency is completely decoupled from weapon and advanced professions. 
 *Deferred / Parked:* **Politician** is stubbed/deferred to Stage 10+ (player city founding, zoning, civic structures, and city war terminals). **Jedi / Force** remains parked/undecided per [Design](DESIGN.md#open-questions).
 
 ### Wave 7C — Companions & Bio/Robotics Ecosystem (4 Professions)
+
+*Live since Stage 12: companion templates (10 creatures, 6 droid chassis), droid modules and mounts are in `specialists.ini` too.*
 
 - **Bio-Engineer:** Samples DNA from Stage 5 wildlife to craft engineered **creature eggs**, organic armor tissues, and enhanced stim/chef additives.
 - **Creature Handler:** Active wild taming, hatching/raising Bio-Engineered eggs, companion commands, behavior modules, and **creature mounts** (connecting to Stage 6).
@@ -157,6 +161,7 @@ Combat and support droids run directly on the existing `core::Bot` + `core::NavG
 ## Architecture & Persistence Hooks
 
 - **Data-driven definitions (`core/`):** Profession trees, 1–100 milestone tables, schematics, resource classes, and companion templates live in data files and simulate in C++ `core/` (see [Architecture](ARCHITECTURE.md#persistence)).
-- **Persistence (`core::CharacterStore`):** Character profession levels/XP, Material Vault contents, Recipe Presets, and stabled pets/droids persist through the persistence interface (SQLite now, Postgres later).
+- **Persistence (`core::CharacterStore`):** Character profession levels/XP, Material Vault contents, Recipe Presets, and stabled pets/droids persist through the persistence interface (SQLite now, Postgres later). Since Stage 12, datapads (companions), DNA samples and the bounty opt-in are per-character extras, and the bazaar is world extras (`get_extra(0, ...)`).
+- **Specialist rules (`core/specialist.h`, Stage 12):** abilities and their effects, timed buffs and debuffs as loadout gear (so clients predict with them), companions, taming, eggs, droid modules, contracts, bazaar fees and price trends, and slicing. A `core::Loadout` carries its abilities, specialist levels and Companion Slot companion into matches.
 - **Loadouts (`core/loadout.h`):** Extends Stage 4 loadouts with the universal **Deflector Shield** slot, **Active Specialization Slots**, and **1 Companion Slot**.
 - **Item compatibility:** Crafted weapons, armor, shields, and enhancement modules remain standard Stage 4 item instances with rolled/experimented stat values inside their sidegrade band.

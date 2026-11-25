@@ -3,6 +3,7 @@
 #include <array>
 #include <cstdint>
 #include <filesystem>
+#include <map>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -254,6 +255,13 @@ struct Loadout {
     // What its armor makes it: none, light, medium or heavy (empty: not
     // known, Battlefront's own). Says which armor profession it levels.
     std::string armor_class;
+    // Stage 12 (specialist.h), filled from the character's professions so a
+    // match a hub hands the loadout to knows them: the abilities it brings
+    // (world and match ones), the levels of its specialist and companion
+    // professions, and its Companion Slot's companion (format_companion; empty: none).
+    std::vector<std::string> abilities;
+    std::map<std::string, int> specialist_levels;
+    std::string companion;
     // Unified ammo inventory reserves (-1 = legacy BF2 per-weapon reserves).
     int unified_standard_ammo = -1;
     int unified_heavy_ammo = -1;

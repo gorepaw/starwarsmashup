@@ -63,6 +63,8 @@ public:
     // "" when there's none.
     virtual std::string get_extra(PersistentId, const std::string&) { return {}; }
     virtual void set_extra(PersistentId, const std::string&, const std::string&) {}
+    // Stage 12: an item's color JSON rewritten in place (a slice, a dye). False if there's no such item.
+    virtual bool update_item_colors(PersistentId, const std::string&) { return false; }
 
     // Inventory, loadouts, and character economy.
     virtual std::vector<ItemInstance> list_items(PersistentId owner_id) = 0;
@@ -123,6 +125,7 @@ public:
     void save_reputation(PersistentId owner_id, const std::map<std::string, int64_t>& reputation) override;
     std::string get_extra(PersistentId owner_id, const std::string& key) override;
     void set_extra(PersistentId owner_id, const std::string& key, const std::string& value) override;
+    bool update_item_colors(PersistentId item_id, const std::string& color_json) override;
 
 private:
     std::map<PersistentId, std::map<std::string, std::string>> extras_;

@@ -41,6 +41,17 @@ const ACTIONS := [
 	["loadout_3", "Loadout 3", KEY_F7],
 	["loadout_4", "Loadout 4", KEY_F8],
 	["loadout_5", "Loadout 5", KEY_F9],
+	# Stage 12: the specialist kit, the datapad and companions.
+	["ability_1", "Ability 1", KEY_3],
+	["ability_2", "Ability 2", KEY_4],
+	["ability_3", "Ability 3", KEY_5],
+	["ability_4", "Ability 4", KEY_6],
+	["ability_5", "Ability 5", KEY_7],
+	["ability_6", "Ability 6", KEY_8],
+	["datapad", "Datapad", KEY_P],
+	["companion_command", "Companion: Attack / Guard / Follow", KEY_T],
+	["companion_summon", "Companion: Field / Store", KEY_Y],
+	["beacon_spawn", "Spawn at Squad Beacon", KEY_N],
 ]
 
 var bindings := {}           # action -> physical keycode (int) or "mouse:<button>"

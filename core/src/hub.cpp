@@ -744,6 +744,7 @@ void Hub::start_battle(std::pair<int, int> pair) {
     config.battlefield = b->field.field;
     config.single_match = true;
     config.professions = server_.profession_book();
+    config.specialists = server_.specialist_book();  // Stage 12: abilities and companions in battle
     b->server = std::make_unique<GameServer>(*b->link, world, config);
     b->server->log = [this, id = b->id](const std::string& line) { say(std::format("battle {}: {}", id, line)); };
     b->server->on_join = [b](uint32_t entity, const std::string& name) {

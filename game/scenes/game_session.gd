@@ -26,6 +26,7 @@ const Settings = preload("res://ui/settings.gd")
 const PauseMenu = preload("res://ui/pause_menu.gd")
 const HubUI = preload("res://scenes/hub_ui.gd")
 const BattleUI = preload("res://scenes/battle_ui.gd")
+const SpecialistUIScript = preload("res://scenes/specialist_ui.gd")  # Stage 12
 const LoadingScreen = preload("res://ui/loading_screen.gd")
 const Bf2Art = preload("res://ui/bf2_art.gd")
 
@@ -119,6 +120,7 @@ var _pending_shot := ""
 var _settings: Settings
 var _pause_menu: PauseMenu
 var _hub_ui: HubUI
+var _specialist_ui: SpecialistUIScript  # Stage 12: ability bar, datapad, bazaar, field effects
 var _battle_ui: BattleUI
 var _catalog_store: Object
 var _catalog: Array = []
@@ -432,6 +434,8 @@ func step_frame(delta: float) -> void:
 				_battle_ui.center_label(), _battle_ui.match_label())
 		for line: String in _hub_ui.take_notice_lines():
 			_battle_ui.add_feed_line(line)
+	if _specialist_ui != null:
+		_specialist_ui.update(_client, _camera, _catalog, delta)
 
 	if _audio != null:
 		_audio.update(delta, _camera.global_position)
@@ -534,6 +538,8 @@ func _input(event: InputEvent) -> void:
 			if sidx < _client.get_factions().size():
 				_client.queue(sidx)
 		return
+	if _specialist_ui != null and _specialist_ui.handle_input(event, _client, _camera, _battle_ui.spawn_loadout):
+		return  # Stage 12: its keys, and everything while its screens are open
 	if escape and _pause_menu != null:
 		_capture_mouse(false)
 		_pause_menu.in_match = not _battlefield.is_empty()

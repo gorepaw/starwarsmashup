@@ -123,6 +123,8 @@ func update(vehicles: Array, shown: Dictionary, delta: float) -> void:
 				node.rotation.z = 0.0
 		if str(class_of(index).get("kind", "")) == "walker":
 			_step(entry, bool(v["alive"]), delta)
+		elif entry["walk"]["player"] != null and (entry["walk"]["player"] as AnimationPlayer).has_animation("walk"):
+			_gait(entry, bool(v["alive"]), delta)  # Stage 12: a creature mount
 		_aim_turrets(entry, v, shown)
 		_update_effects(entry, v)
 		_update_engine(entry, v, delta)
@@ -331,6 +333,37 @@ func _pose_part(root: Node3D, part: Dictionary, turn: Basis) -> void:
 	var rest: Transform3D = part["rest"]
 	var local := to_parent.inverse() * turn * to_parent * rest.basis
 	skeleton.set_bone_pose_rotation(bone, local.get_rotation_quaternion())
+
+
+# Stage 12: a creature mount's gait (a Galaxies creature's idle, walk and
+# run clips, as `swgtool export-people` exports them), by how fast it moves.
+func _gait(entry: Dictionary, alive: bool, delta: float) -> void:
+	var walk: Dictionary = entry["walk"]
+	var player: AnimationPlayer = walk["player"]
+	var node: Node3D = entry["node"]
+	if player == null or delta <= 0:
+		return
+	var moved: Vector3 = node.position - (walk["last"] as Vector3)
+	walk["last"] = node.position
+	walk["speed"] = lerpf(float(walk["speed"]), Vector2(moved.x, moved.z).length() / delta, minf(1.0, 8.0 * delta))
+	var speed := float(walk["speed"])
+	var clip := "idle"
+	var rate := 1.0
+	if not alive and player.has_animation("die"):
+		clip = "die"
+	elif speed > 5.0 and player.has_animation("run"):
+		clip = "run"
+		rate = clampf(speed / 7.0, 0.7, 1.8)
+	elif speed > 0.4:
+		clip = "walk"
+		rate = clampf(speed / 2.5, 0.6, 1.8)
+	if not player.has_animation(clip):
+		return
+	if player.current_animation != clip:
+		var anim := player.get_animation(clip)
+		anim.loop_mode = Animation.LOOP_NONE if clip == "die" else Animation.LOOP_LINEAR
+		player.play(clip, 0.2)
+	player.speed_scale = rate
 
 
 # A walker's legs: what it's doing from how its drawn self moved this frame.

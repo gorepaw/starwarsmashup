@@ -488,6 +488,16 @@ void SqliteCharacterStore::set_extra(PersistentId owner_id, const std::string& k
     if (step != SQLITE_DONE) fail(db_, "set_extra");
 }
 
+bool SqliteCharacterStore::update_item_colors(PersistentId item_id, const std::string& color_json) {
+    sqlite3_stmt* statement = prepare(db_, "UPDATE items SET color_json = ? WHERE id = ?");
+    sqlite3_bind_text(statement, 1, color_json.c_str(), int(color_json.size()), SQLITE_TRANSIENT);
+    sqlite3_bind_int64(statement, 2, sqlite3_int64(item_id));
+    const int step = sqlite3_step(statement);
+    sqlite3_finalize(statement);
+    if (step != SQLITE_DONE) fail(db_, "update_item_colors");
+    return sqlite3_changes(db_) == 1;
+}
+
 bool SqliteCharacterStore::remove(PersistentId id) {
     exec((std::string("DELETE FROM character_extras WHERE owner_id = ") + std::to_string(id)).c_str());
     {

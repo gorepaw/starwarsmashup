@@ -85,6 +85,13 @@ bool MemoryCharacterStore::remove_item(PersistentId item_id) {
     return items_.erase(item_id) > 0;
 }
 
+bool MemoryCharacterStore::update_item_colors(PersistentId item_id, const std::string& color_json) {
+    auto it = items_.find(item_id);
+    if (it == items_.end()) return false;
+    it->second.color_json = color_json;
+    return true;
+}
+
 bool MemoryCharacterStore::update_item_quantity(PersistentId item_id, int quantity) {
     auto it = items_.find(item_id);
     if (it == items_.end()) return false;

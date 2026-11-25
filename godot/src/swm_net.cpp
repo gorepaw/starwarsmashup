@@ -1,7 +1,9 @@
 #include "swm_net.h"
 
 #include <exception>
+#include <algorithm>
 #include <filesystem>
+#include <format>
 #include <string>
 
 #include <godot_cpp/core/class_db.hpp>
@@ -9,6 +11,7 @@
 #include <godot_cpp/variant/vector3.hpp>
 
 #include "swm/core/species.h"
+#include "swm/core/specialist.h"
 
 namespace swm::godot_bindings {
 
@@ -682,6 +685,275 @@ godot::Dictionary SwmClient::get_bank() const {
 
 void SwmClient::service(int64_t action, const godot::String& id, int64_t amount, int64_t item_id) {
     if (client()) client()->service(uint8_t(action), std::string(id.utf8().get_data()), amount, uint64_t(item_id));
+}
+
+// Stage 12 ---------------------------------------------------------------
+
+namespace {
+
+godot::Dictionary companion_dictionary(const core::CompanionRecord& r) {
+    godot::Dictionary d;
+    d["id"] = int64_t(r.id);
+    d["template"] = godot::String::utf8(r.template_id.c_str());
+    d["name"] = godot::String::utf8(r.name.c_str());
+    d["origin"] = godot::String::utf8(r.origin.c_str());
+    d["quality"] = r.quality;
+    d["health"] = r.health;
+    d["damage"] = r.damage;
+    d["speed"] = r.speed;
+    d["colors"] = int64_t(r.colors);
+    godot::PackedStringArray modules;
+    for (const std::string& m : r.modules) modules.push_back(godot::String::utf8(m.c_str()));
+    d["modules"] = modules;
+    d["mount"] = r.mount;
+    return d;
+}
+
+godot::Dictionary contract_dictionary(const core::Contract& c) {
+    godot::Dictionary d;
+    d["id"] = int64_t(c.id);
+    d["kind"] = godot::String::utf8(std::string(core::contract_kind_name(c.kind)).c_str());
+    d["title"] = godot::String::utf8(c.title.c_str());
+    d["target_name"] = godot::String::utf8(c.target_name.c_str());
+    d["target_entity"] = int64_t(c.target_entity);
+    d["waypoint"] = to_godot(c.waypoint);
+    d["radius"] = c.radius;
+    d["reward"] = int64_t(c.reward);
+    d["xp"] = int64_t(c.xp);
+    d["expires_in"] = c.expires;
+    d["progress"] = c.progress;
+    d["needed"] = c.needed;
+    d["profession"] = godot::String::utf8(c.profession.c_str());
+    return d;
+}
+
+godot::Dictionary listing_dictionary(const core::BazaarListing& l) {
+    godot::Dictionary d;
+    d["id"] = int64_t(l.id);
+    d["seller"] = godot::String::utf8(l.seller_name.c_str());
+    d["shop"] = godot::String::utf8(l.shop.c_str());
+    d["def_id"] = godot::String::utf8(l.item.def_id.c_str());
+    d["quality"] = l.item.quality;
+    d["quantity"] = int64_t(l.item.quantity);
+    d["custom_name"] = godot::String::utf8(l.item.custom_name.c_str());
+    d["color_json"] = godot::String::utf8(l.item.color_json.c_str());
+    d["price"] = int64_t(l.price);
+    d["listed_at"] = int64_t(l.listed_at);
+    return d;
+}
+
+} // namespace
+
+void SwmClient::specialist(int64_t action, const godot::String& id, int64_t target, const godot::Vector3& position,
+                           int64_t amount, int64_t item_id, const godot::String& text) {
+    if (!client()) return;
+    core::net::SpecialistRequest r;
+    r.action = uint8_t(std::clamp<int64_t>(action, 0, 255));
+    r.id = to_std(id);
+    r.target = uint32_t(std::max<int64_t>(0, target));
+    r.position = {position.x, position.y, position.z};
+    r.amount = amount;
+    r.item_id = uint64_t(std::max<int64_t>(0, item_id));
+    r.text = to_std(text);
+    client()->specialist_request(r);
+}
+
+godot::Dictionary SwmClient::get_specialist() const {
+    godot::Dictionary out;
+    if (!client()) return out;
+    const core::net::SpecialistSync& s = client()->specialist();
+    out["revision"] = int64_t(s.revision);
+    godot::Array abilities;
+    for (const core::net::AbilityStatus& a : s.abilities) {
+        godot::Dictionary d;
+        d["id"] = godot::String::utf8(a.id.c_str());
+        d["cooldown"] = double(a.cooldown);
+        abilities.push_back(d);
+    }
+    out["abilities"] = abilities;
+    godot::Array effects;
+    for (const core::net::EffectStatus& e : s.effects) {
+        godot::Dictionary d;
+        d["id"] = godot::String::utf8(e.id.c_str());
+        d["name"] = godot::String::utf8(e.name.c_str());
+        d["remaining"] = double(e.remaining);
+        d["duration"] = double(e.duration);
+        d["flags"] = int64_t(e.flags);
+        effects.push_back(d);
+    }
+    out["effects"] = effects;
+    godot::Array companions;
+    for (const core::CompanionRecord& r : s.companions) companions.push_back(companion_dictionary(r));
+    out["companions"] = companions;
+    out["active_companion"] = int64_t(s.active_companion);
+    out["companion_entity"] = int64_t(s.companion_entity);
+    out["companion_cooldown"] = double(s.companion_cooldown);
+    out["companion_mode"] = int64_t(s.companion_mode);
+    out["companion_slot"] = int64_t(s.companion_slot);
+    godot::Array samples;
+    for (const core::DnaSample& d : s.samples) {
+        godot::Dictionary e;
+        e["id"] = int64_t(d.id);
+        e["template"] = godot::String::utf8(d.template_id.c_str());
+        e["quality"] = d.quality;
+        samples.push_back(e);
+    }
+    out["samples"] = samples;
+    godot::Array contracts, offers, bazaar, mine, prices;
+    for (const core::Contract& c : s.contracts) contracts.push_back(contract_dictionary(c));
+    for (const core::Contract& c : s.offers) offers.push_back(contract_dictionary(c));
+    for (const core::BazaarListing& l : s.bazaar) bazaar.push_back(listing_dictionary(l));
+    for (const core::BazaarListing& l : s.my_listings) mine.push_back(listing_dictionary(l));
+    for (const auto& [def, p] : s.prices) {
+        godot::Dictionary d;
+        d["def_id"] = godot::String::utf8(def.c_str());
+        d["count"] = int64_t(p.count);
+        d["low"] = int64_t(p.low);
+        d["high"] = int64_t(p.high);
+        d["average"] = int64_t(p.average);
+        d["last"] = int64_t(p.last);
+        prices.push_back(d);
+    }
+    out["contracts"] = contracts;
+    out["offers"] = offers;
+    out["offer_source"] = godot::String::utf8(s.offer_source.c_str());
+    out["bazaar"] = bazaar;
+    out["my_listings"] = mine;
+    out["prices"] = prices;
+    out["performing"] = s.performing;
+    out["bounty_flag"] = s.bounty_flag;
+    out["design_from"] = godot::String::utf8(s.design_from.c_str());
+    out["design_appearance"] = godot::String::utf8(s.design_appearance.c_str());
+    out["channel"] = godot::String::utf8(s.channel.c_str());
+    out["channel_remaining"] = double(s.channel_remaining);
+    return out;
+}
+
+godot::Dictionary SwmClient::get_field() const {
+    godot::Dictionary out;
+    if (!client()) return out;
+    const core::net::FieldState& f = client()->field();
+    godot::Array marks;
+    for (const core::net::FieldMark& m : f.marks) {
+        godot::Dictionary d;
+        d["entity"] = int64_t(m.entity);
+        d["remaining"] = double(m.remaining);
+        d["kind"] = int64_t(m.kind);  // 0 marked, 1 tracked, 2 bounty
+        marks.push_back(d);
+    }
+    out["marks"] = marks;
+    godot::PackedInt64Array cloaked, performers;
+    for (const uint32_t e : f.cloaked) cloaked.push_back(int64_t(e));
+    for (const uint32_t e : f.performers) performers.push_back(int64_t(e));
+    out["cloaked"] = cloaked;
+    out["performers"] = performers;
+    godot::Dictionary companions;  // companion entity -> owner entity
+    for (const auto& [entity, owner] : f.companions) companions[int64_t(entity)] = int64_t(owner);
+    out["companions"] = companions;
+    godot::Array deployables;
+    for (const core::net::FieldDeployable& d : f.deployables) {
+        godot::Dictionary e;
+        e["id"] = int64_t(d.id);
+        e["kind"] = godot::String::utf8(std::string(core::deploy_kind_name(core::DeployKind(d.kind))).c_str());
+        e["owner"] = int64_t(d.owner);
+        e["friendly"] = d.friendly;
+        e["position"] = to_godot(d.position);
+        e["radius"] = double(d.radius);
+        e["remaining"] = double(d.remaining);
+        deployables.push_back(e);
+    }
+    out["deployables"] = deployables;
+    godot::Array hazards;
+    for (const core::net::FieldHazard& h : f.hazards) {
+        godot::Dictionary e;
+        e["id"] = int64_t(h.id);
+        e["kind"] = godot::String::utf8(h.kind.c_str());
+        e["position"] = to_godot(h.position);
+        e["radius"] = double(h.radius);
+        e["remaining"] = double(h.remaining);
+        hazards.push_back(e);
+    }
+    out["hazards"] = hazards;
+    godot::Dictionary flair;  // entity -> flags (1 holo flair, 2 inspired)
+    for (const auto& [entity, flags] : f.flair) flair[int64_t(entity)] = int64_t(flags);
+    out["flair"] = flair;
+    return out;
+}
+
+godot::Dictionary SwmClient::get_specialist_book(const godot::String& path) {
+    godot::Dictionary out;
+    core::SpecialistBook book;
+    try {
+        book.load(to_std(path));
+    } catch (const std::exception& error) {
+        godot::UtilityFunctions::push_error("get_specialist_book: ", error.what());
+        return out;
+    }
+    godot::Dictionary abilities;
+    for (const core::AbilityDef& a : book.abilities()) {
+        godot::Dictionary d;
+        d["id"] = godot::String::utf8(a.id.c_str());
+        d["name"] = godot::String::utf8(a.name.c_str());
+        d["description"] = godot::String::utf8(a.description.c_str());
+        d["profession"] = godot::String::utf8(a.profession.c_str());
+        d["level"] = int64_t(a.level);
+        d["effect"] = godot::String::utf8(std::string(core::ability_effect_name(a.effect)).c_str());
+        d["target"] = godot::String::utf8(std::string(core::ability_target_name(a.target)).c_str());
+        d["deploy"] = godot::String::utf8(std::string(core::deploy_kind_name(a.deploy)).c_str());
+        d["cooldown"] = a.cooldown;
+        d["range"] = a.range;
+        d["radius"] = a.radius;
+        d["duration"] = a.duration;
+        d["channel"] = a.channel;
+        d["where"] = a.match_only ? "match" : a.world_only ? "world" : "both";
+        abilities[d["id"]] = d;
+    }
+    out["abilities"] = abilities;
+    godot::Dictionary companions;
+    for (const core::CompanionTemplate& c : book.companions()) {
+        godot::Dictionary d;
+        d["id"] = godot::String::utf8(c.id.c_str());
+        d["name"] = godot::String::utf8(c.name.c_str());
+        d["kind"] = godot::String::utf8(std::string(core::companion_kind_name(c.kind)).c_str());
+        d["role"] = godot::String::utf8(std::string(core::companion_role_name(c.role)).c_str());
+        d["look"] = godot::String::utf8(c.look.c_str());
+        d["tier"] = int64_t(c.tier);
+        d["level"] = int64_t(c.level);
+        d["build_level"] = int64_t(c.build_level);
+        d["health"] = c.health;
+        d["damage"] = c.damage;
+        d["bays"] = int64_t(c.bays);
+        d["mountable"] = c.mountable;
+        d["tactical"] = c.tactical();
+        godot::Array materials;
+        for (const auto& [cat, units] : c.materials) materials.push_back(godot::String::utf8(std::format("{} {}", cat, units).c_str()));
+        d["materials"] = materials;
+        companions[d["id"]] = d;
+    }
+    out["companions"] = companions;
+    godot::Array modules;
+    for (const core::DroidModule& m : book.modules()) {
+        godot::Dictionary d;
+        d["id"] = godot::String::utf8(m.id.c_str());
+        d["name"] = godot::String::utf8(m.name.c_str());
+        d["description"] = godot::String::utf8(m.description.c_str());
+        d["bay"] = godot::String::utf8(m.bay.c_str());
+        d["level"] = int64_t(m.level);
+        modules.push_back(d);
+    }
+    out["modules"] = modules;
+    godot::Array slices;
+    for (const core::SliceDef& s : book.slices()) {
+        godot::Dictionary d;
+        d["id"] = godot::String::utf8(s.id.c_str());
+        d["name"] = godot::String::utf8(s.name.c_str());
+        d["description"] = godot::String::utf8(s.description.c_str());
+        d["applies"] = godot::String::utf8(s.applies.c_str());
+        d["level"] = int64_t(s.level);
+        slices.push_back(d);
+    }
+    out["slices"] = slices;
+    return out;
 }
 
 godot::Array SwmClient::get_workbenches() const {
@@ -1665,6 +1937,11 @@ void SwmClient::_bind_methods() {
     ClassDB::bind_method(D_METHOD("get_professions"), &SwmClient::get_professions);
     ClassDB::bind_method(D_METHOD("get_bank"), &SwmClient::get_bank);
     ClassDB::bind_method(D_METHOD("service", "action", "id", "amount", "item_id"), &SwmClient::service);
+    ClassDB::bind_method(D_METHOD("specialist", "action", "id", "target", "position", "amount", "item_id", "text"),
+                         &SwmClient::specialist);
+    ClassDB::bind_method(D_METHOD("get_specialist"), &SwmClient::get_specialist);
+    ClassDB::bind_method(D_METHOD("get_field"), &SwmClient::get_field);
+    ClassDB::bind_method(D_METHOD("get_specialist_book", "path"), &SwmClient::get_specialist_book);
     ClassDB::bind_method(D_METHOD("get_workbenches"), &SwmClient::get_workbenches);
     ClassDB::bind_method(D_METHOD("get_materials"), &SwmClient::get_materials);
     ClassDB::bind_method(D_METHOD("get_presets"), &SwmClient::get_presets);
@@ -1772,6 +2049,12 @@ godot::Error SwmServer::set_professions(const godot::String& path) {
     try {
         professions_.load(to_std(path));
         has_professions_ = true;
+        // Stage 12: the specialists' abilities and companions, next to it.
+        const std::filesystem::path specialists = std::filesystem::path(to_std(path)).parent_path() / "specialists.ini";
+        if (std::filesystem::exists(specialists)) {
+            specialists_.load(specialists);
+            has_specialists_ = true;
+        }
     } catch (const std::exception& error) {
         godot::UtilityFunctions::push_error("set_professions: ", error.what());
         return godot::ERR_CANT_OPEN;
@@ -1809,6 +2092,7 @@ godot::Error SwmServer::start(int64_t port, const godot::String& bake_prefix, co
     config.battlefield = battlefield_;
     config.catalog = has_catalog_ ? &catalog_ : nullptr;
     config.professions = has_professions_ ? &professions_ : nullptr;
+    config.specialists = has_specialists_ ? &specialists_ : nullptr;
     if (!battlefield_) {
         config.world_vehicles = world_vehicles_;
     }

@@ -13,13 +13,14 @@
 #include "swm/core/movement.h"
 #include "swm/core/persistence.h"
 #include "swm/core/species.h"
+#include "swm/core/specialist.h"
 
 namespace swm::core::net {
 
 // Every packet starts with a magic number, the protocol version and a message
 // type. Peers drop packets with another version. Bump it on any wire change.
 inline constexpr uint16_t protocol_magic = 0x4D53;  // "SM"
-inline constexpr uint16_t protocol_version = 34;
+inline constexpr uint16_t protocol_version = 37;
 inline constexpr uint8_t droid_explosion_weapon = 0xFF;  // Explosion::weapon sentinel for destroyed health/ammo droids
 // ...for a destroyed object (Battlefield::destructibles); clients draw it
 // from the object's own explosion as they see it go.
@@ -338,6 +339,51 @@ struct VehicleState {
     friend bool operator==(const VehicleState&, const VehicleState&) = default;
 };
 
+// Stage 12 (specialist.h): what specialists have put in the field, as one
+// client sees it (in every snapshot).
+struct FieldMark {
+    enum Kind : uint8_t { marked = 0, tracked = 1, bounty = 2 };
+    uint32_t entity = 0;
+    float remaining = 0;
+    uint8_t kind = marked;
+
+    friend bool operator==(const FieldMark&, const FieldMark&) = default;
+};
+
+struct FieldDeployable {
+    uint32_t id = 0;
+    uint8_t kind = 0;  // DeployKind
+    uint32_t owner = 0;
+    bool friendly = false;  // the viewer's side's
+    Vec3 position;
+    float radius = 0;
+    float remaining = 0;
+
+    friend bool operator==(const FieldDeployable&, const FieldDeployable&) = default;
+};
+
+struct FieldHazard {
+    uint32_t id = 0;
+    std::string kind;  // bio, smoke, strike (a call-in about to land)
+    Vec3 position;
+    float radius = 0;
+    float remaining = 0;
+
+    friend bool operator==(const FieldHazard&, const FieldHazard&) = default;
+};
+
+struct FieldState {
+    std::vector<FieldMark> marks;
+    std::vector<uint32_t> cloaked;     // the viewer's side's cloaked (drawn faint); enemies' aren't sent at all
+    std::vector<uint32_t> performers;
+    std::vector<std::pair<uint32_t, uint32_t>> companions;  // companion entity, owner entity
+    std::vector<FieldDeployable> deployables;
+    std::vector<FieldHazard> hazards;
+    std::vector<std::pair<uint32_t, uint8_t>> flair;  // entity, effect flags worth drawing (holo flair, inspired)
+
+    friend bool operator==(const FieldState&, const FieldState&) = default;
+};
+
 // Server -> client, every tick: the world as the server sees it.
 struct Snapshot {
     uint32_t server_tick = 0;
@@ -355,6 +401,7 @@ struct Snapshot {
     std::vector<CorpseLootState> corpses;  // nearby lootable dead creatures/bandits
     std::optional<MatchState> match;  // in a conquest match
     PlayerStatus you;                 // differs per client
+    FieldState field;                 // Stage 12: marks, cloaks, deployables... as this client sees them
 };
 
 // Either direction: leaving.
@@ -513,11 +560,103 @@ struct CraftRequest {
     std::string order_id;
 };
 
+// Stage 12 (specialist.h): Client -> server, what a player does with their
+// specialist and companion professions.
+struct SpecialistRequest {
+    enum Action : uint8_t {
+        use_ability = 0,        // `id`: the ability; `target`: an entity; `position`: where it's aimed
+        companion_summon = 1,   // `amount`: a datapad id (0: the active loadout's Companion Slot)
+        companion_dismiss = 2,
+        companion_command = 3,  // `amount`: CompanionMode; `target`: whom to attack; `position`: where to guard
+        companion_rename = 4,   // `amount`: a datapad id; `text`: its name
+        companion_release = 5,  // `amount`: a datapad id
+        companion_mount = 6,    // `amount`: a datapad id: trained as a mount, its mount item granted
+        engineer_egg = 7,       // `amount`: a DNA sample's id; `item_id`: a second's (0: none)
+        hatch_egg = 8,          // `item_id`: an egg
+        grow_tissue = 9,        // `amount`: a DNA sample's id; `id`: "tissue" or "additive"
+        assemble_droid = 10,    // `id`: the chassis; `text`: its modules, comma-separated
+        register_droid = 11,    // `item_id`: a droid: into the datapad
+        contracts = 12,         // `target`: a mission terminal's index: what it offers you
+        contract_accept = 13,   // `amount`: an offer's id
+        contract_abandon = 14,  // `amount`: a contract's id
+        bazaar_browse = 15,     // `text`: what to search for
+        bazaar_list = 16,       // `item_id`, `amount`: its price
+        bazaar_buy = 17,        // `amount`: a listing's id
+        bazaar_cancel = 18,     // `amount`: a listing's id (yours)
+        design_offer = 19,      // `target`: a player; `text`: their new appearance JSON
+        design_answer = 20,     // `amount`: 1 accepts the design offered you, 0 declines
+        slice_item = 21,        // `item_id`; `id`: the slice
+        dye_item = 22,          // `item_id`; `text`: its color JSON
+        bounty_flag = 23,       // `amount`: 1 opts in to being hunted by other players, 0 out
+        supply_contract = 24,   // `item_id`: supplied to the quartermaster you stand at
+        set_companion_slot = 25,  // `amount`: a datapad id (0: none) for the active loadout
+        cancel_channel = 26,
+    };
+    uint8_t action = 0;
+    std::string id;
+    uint32_t target = 0;
+    Vec3 position;
+    int64_t amount = 0;
+    uint64_t item_id = 0;
+    std::string text;
+};
+
+struct AbilityStatus {
+    std::string id;
+    float cooldown = 0;  // seconds left
+
+    friend bool operator==(const AbilityStatus&, const AbilityStatus&) = default;
+};
+
+struct EffectStatus {
+    std::string id;
+    std::string name;
+    float remaining = 0;
+    float duration = 0;
+    uint16_t flags = 0;  // effect_flag
+
+    friend bool operator==(const EffectStatus&, const EffectStatus&) = default;
+};
+
+// Server -> client, repeated until acknowledged: a character's kit, effects,
+// datapad, contracts, the bazaar page it last browsed and any design offered.
+struct SpecialistSync {
+    uint32_t revision = 0;
+    std::vector<AbilityStatus> abilities;  // the active loadout's, here (match or world)
+    std::vector<EffectStatus> effects;
+    std::vector<CompanionRecord> companions;
+    uint64_t active_companion = 0;
+    uint32_t companion_entity = 0;
+    float companion_cooldown = 0;
+    uint8_t companion_mode = 0;
+    uint64_t companion_slot = 0;  // the active loadout's Companion Slot
+    std::vector<DnaSample> samples;
+    std::vector<Contract> contracts;
+    std::vector<Contract> offers;
+    std::string offer_source;
+    std::vector<BazaarListing> bazaar;     // the last browse
+    std::vector<BazaarListing> my_listings;
+    std::vector<std::pair<std::string, PriceStats>> prices;  // Market Analytics: by item def
+    bool performing = false;
+    bool bounty_flag = false;
+    std::string design_from;        // a design offered, by whom (empty: none)
+    std::string design_appearance;
+    std::string channel;            // an ability being channeled (empty: none)
+    float channel_remaining = 0;
+
+    friend bool operator==(const SpecialistSync&, const SpecialistSync&) = default;
+};
+
+struct SpecialistAck {
+    uint32_t revision = 0;
+};
+
 using Message = std::variant<Hello, Welcome, Refused, InputBatch, Snapshot, Goodbye, SpawnRequest, QueueRequest,
                              Transfer, InventorySync, InventoryAck, SaveLoadoutRequest, SwitchLoadoutRequest,
                              ShopBuyRequest, DestroyItemRequest, LootTakeRequest, VendorSellRequest, UseItemRequest,
                              QuestSync, QuestAck, QuestRequest, ProfessionSync, ProfessionAck, CraftingSync,
-                             CraftingAck, GatherRequest, CraftRequest, ServiceRequest>;
+                             CraftingAck, GatherRequest, CraftRequest, ServiceRequest, SpecialistRequest,
+                             SpecialistSync, SpecialistAck>;
 
 std::vector<uint8_t> encode(const Message& message);
 // Throws PacketError on malformed packets or another protocol version.

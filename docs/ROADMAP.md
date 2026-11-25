@@ -15,12 +15,12 @@ This roadmap combines the completed foundation (**Stages 1–8**) with all newly
 | 4 | Items, weapons and armor | Done | Galaxies gear in an inventory and loadouts |
 | 5 | Tatooine around Mos Eisley | Done | A loop outside the city: hunt, loot, sell, quest |
 | 6 | Vehicles | Partial (see Stage 11 & 12) | Battlefront's in matches, Galaxies' in the world |
-| 7 | Professions (Wave 7A + framework) | Partial (see Stage 12) | Core 1–100 framework & 17 foundation professions live |
+| 7 | Professions (Wave 7A + framework) | Done (Waves 7B & 7C in Stage 12) | Core 1–100 framework & 17 foundation professions live |
 | 8 | Space combat | Done (base maps/ships) | Battlefront II's space battles |
 | **9** | **Bug Fixes, UI/UX Polish & Authentic Mos Eisley** | **Done (1 item open)** | Clean visuals, authentic SWG city layout, terminal audit, and tight open-world QoL (Starport boulder clipping open) |
 | **10** | **4 Factions, 5 Loadouts, Cosmetics, Ammo & Bot Roster** | **Done** | 4-faction system, cosmetic FP & WoW-style reputation, unified ammo, and clothed stock bots |
 | **11** | **Ground/Space Terminals, Clone Wars, Modes, Weather & Telemetry** | **Next** | Dual battle terminals, full Clone Wars roster, extra BF2 modes, Kamino rain, and match analytics |
-| **12** | **Remaining Professions (Waves 7B & 7C) & Creature Mounts** | **Planned** | All 14 remaining specialist, bio/creature, and droid professions + creature mounts |
+| **12** | **Remaining Professions (Waves 7B & 7C) & Creature Mounts** | **Done (follow-ups listed)** | All 14 remaining specialist, bio/creature, and droid professions + creature mounts |
 | **13** | **Server Scalability & Multi-City Expansion** | **Planned (Cities on hold)** | Proximity-based open-world AI simulation, resource audit, and additional cities/planets |
 | **14+** | **Endgame World Systems** | **Planned** | Deep resources & harvesters, housing & player cities, open-world GCW, and full-loot zones |
 
@@ -196,34 +196,48 @@ Players choose Ground or Space and GCW or Clone Wars at dedicated terminals, pla
 
 Complete the remaining 14 professions from [Professions](PROFESSIONS.md) (specialist combat, support, social, economy, animal taming, and modular combat droids) plus open-world creature mounts.
 
+### How it's built
+
+- **Data:** [`game/professions/specialists.ini`](../game/professions/specialists.ini) holds every ability (45), creature and droid companion template, droid module and slice. All 31 professions in `professions.ini` are now `Available`. Slotted professions' kits work only from an Active Specialization Slot; Entertainer, Image Designer, Merchant, Bio-Engineer and Droid Engineer are unslotted (always on). Each ability unlocks at a milestone, which must be learned from a trainer (six new trainers stand in Mos Eisley).
+- **Core:** `core/include/swm/core/specialist.h` holds the rules (abilities, timed effects, companions, taming, eggs, droid modules, contracts, bazaar fees and price stats, slicing, inspiration). `core/src/server_specialists.cpp` plays them on the server. A loadout carries its abilities, specialist levels and Companion Slot companion (`core::Loadout`), so a hub's match server gets them through the usual `set_player_loadouts` handoff.
+- **Persistence:** datapads, DNA samples and the bounty opt-in use per-character extras. The bazaar's listings and sales history use world extras. No new tables. Slices and dyes rewrite an item's color JSON in place (`CharacterStore::update_item_colors`).
+- **Wire (protocol 37):** `SpecialistRequest`, `SpecialistSync` and `SpecialistAck`, plus a `FieldState` at the end of every snapshot (marks, your side's cloaked soldiers, performers, companions, deployables, clouds, incoming strikes, holo flair). Cloaked or smoked enemies aren't sent to you at all, so bots can't see them either.
+- **Client:** `game/scenes/specialist_ui.gd` drives the ability bar (keys 3–8, aimed with the crosshair), the datapad (P), the bazaar (E at a bazaar terminal), companion keys (T: context ping, Y: field/store), squad beacon spawning (N) and field effects in the world (`game/rendering/field_effects.gd`).
+- **Tests:** `core/tests/specialist_test.cpp` covers the data, the rules, the wire and a live server: a bio grenade, a performance, DNA sampling, taming and fielding a companion, an engineered egg hatched, and a bazaar trade between two players.
+
 ### Tasks
 
 **Wave 7B: Specialist Combat, Support, Social & Economy (10 Professions)**
-- [ ] **Bounty Hunter:** Open-world bounty terminal contracts (NPC marks + opt-in PvP marks, connecting to `shared_terminal_mission_bounty.iff`), seeker probe tracking, capture payouts; match recon probes, bolas/net/wrist-rocket/jump-pack gadgets, and HVT spotting.
-- [ ] **Smuggler:** Slicing loot containers, faction terminals, and contraband missions plus permanent **sidegrade weapon/armor slicing**; match faster objective/turret/door slicing, flashbangs, smoke, and EMP disruptors.
-- [ ] **Squad Leader:** Team aura buffs (stamina/reload/morale), tactical ping/target marking, **squad spawn beacon**, and supply/strike call-ins.
-- [ ] **Doctor:** Pharmaceutical crafting (stims, medpacks, bio-antidotes) plus field bacta dispenser, revive/defib tool, and bio cleanse.
-- [ ] **Combat Medic:** Frontline ranged healing darts/grenades paired with `DamageType::bio` area-denial grenades and payloads.
-- [ ] **Ranger:** Wilderness tracking (connecting to `shared_terminal_mission_scout.iff`), short-duration stealth cloak (broken on firing), motion sensors, trip-traps, and deployable **forward camps** for field healing and loadout swaps.
-- [ ] **Entertainer (unified Musician + Dancer):** Cantina and camp performances granting quick **15–30 s Inspiration/focus buffs** (connecting to `shared_terminal_mission_entertainer.iff`), synced band/dance emotes, and optional portable morale holo-emitter.
-- [ ] **Image Designer:** Live character re-customization (hair, markings, blend-shape sliders, species styling) plus custom armor/clothing trim and holographic flair.
-- [ ] **Merchant:** Player vendors, shop slots, Bazaar terminal listings (`shared_terminal_bazaar.iff`), trade analytics, market fee reductions, and faction supply contracts.
-- [ ] **Pilot:** Ground vehicle handling/field repair (Stage 6) and starfighter maneuvers/reactor tuning in Space Battles (Stage 8).
+- [x] **Bounty Hunter:** Bounty terminal contracts on live outlaws and opted-in players (PvP is allowed only between a hunter and their mark, both ways). Seeker probes mark and update your marks; you collect on the kill. In matches: recon probes, HVT spotting. Everywhere: bolas, capture nets, wrist rockets, jump packs.
+- [x] **Smuggler:** Contraband runs to drop points, offered at general, artisan and bounty terminals. Permanent **sidegrade slicing** of weapons and armor (7 slices, 250 cr each, from Smuggler 50). In matches a slotted Smuggler captures posts as fast as two soldiers. Flashbangs (electro damage plus daze), smoke (hides your side inside it) and EMP disruptors (bonus against droids). *Not done: slicing loot containers and faction terminals.*
+- [x] **Squad Leader:** Squad Cohesion aura (passive), Rally, target marking, **squad spawn beacon** (spawn there with N), supply drops and orbital strikes.
+- [x] **Doctor:** Pharmaceutical schematics (bacta stims, antidotes, performance stims, advanced medpacs). Medpacks, bio cleanse, stims, a **bacta dispenser**, a defibrillator revive and field triage.
+- [x] **Combat Medic:** Healing darts, bacta grenades, toxin darts (bio damage over time) and `DamageType::bio` area denial (bio grenades, bio payloads).
+- [x] **Ranger:** Tracking (creatures within 250 m shown on your map) and scout-terminal tracking jobs. Motion sensors, a camouflage **cloak broken by firing** (hides you from enemies, bots and wildlife), trip traps, and **forward camps** that heal and make loadout swaps quick.
+- [x] **Entertainer:** Performances that Inspire everyone within 14 m every 5 s, for 15–30 s by level; performers near each other form a stronger band. Flourishes, a holo-emitter, and gigs from entertainer terminals. *Not done: synced band/dance animations. Performers are tagged in the world; no dance clips are exported yet.*
+- [x] **Image Designer:** Restyle another player (they accept from their datapad) or yourself. Custom trim (dye) on armor and clothing from level 50, and a holographic flair aura from level 75. *Not done: the design tab adjusts the numeric values in a look; picking hair or species styling still needs the character creator's pickers. Dyes are saved but not drawn yet (the client doesn't tint worn models).*
+- [x] **Merchant:** Bazaar terminals (`shared_terminal_bazaar.iff`) take listings: search, buy, take back. Shop slots run 5–25 and fees 6%–2%, both by level. Sellers are paid even when offline. Market Analytics shows price trends from level 50, and faction supply contracts unlock at level 100. *Not done: placed player vendors. Listings carry a shop name instead.*
+- [x] **Pilot:** Experience from vehicle kills, field repair, evasive maneuvers, Reactor Tuning (less vehicle damage) and emergency power. *Not done: handling and speed perks for vehicles.*
 
 **Wave 7C: Animal Taming & Creature Mounts (2 Professions)**
-- [ ] **Bio-Engineer:** Sample DNA from Stage 5 wildlife to craft customized **creature eggs** (inheriting traits, resistances, and colorations), organic armor tissues, and enhanced stim/chef additives.
-- [ ] **Creature Handler:** Active wild taming (approach, bait/tranquilizer darts, bonding sequence), hatching Bio-Engineered eggs, **Datapad / Stables roster**, single-button context pings (*Attack/Harass*, *Hold/Guard*, *Follow/Recall*), behavior modules, and **tactical-sized match pets** (restricted to humanoid-or-smaller beasts in 32v32 matches, 1 active companion per player with death cooldown).
-- [ ] **Open-World Creature Mounts** *(carried over from Stage 6)*: Rideable creatures (dewback, bantha, kaadu, etc.) integrated with the Stage 9 Mount equipment slot & keybind, with riders seated using Galaxies' `all_b_mnt_ride_*` clips.
+- [x] **Bio-Engineer:** Sample DNA from Tatooine's wildlife, living or dead. Engineer **creature eggs** from one or two samples (a second creature's DNA makes it hardier; colors are seeded). Grow organic armor tissues and stim additives (workbench enhancements).
+- [x] **Creature Handler:** Tranquilizer darts, a **bonding channel** (tier by level; wounds and tranquilizers help), hatching eggs, a **datapad** of up to 20 companions, and one-key context pings: **attack** (on an enemy), **guard** (on the ground), **follow** (double tap). Frenzy and mending. Only **tactical-sized** creatures may enter matches. One companion is active per player, with a 60 s (world) or 30 s (match) cooldown after it dies.
+- [x] **Open-World Creature Mounts:** At Creature Handler 50, a tamed eopie, bantha, dewback or ronto can be trained into a mount item. That item goes in the Mount slot and is called with H, riding as a world vehicle (`game/vehicles/swg_mount_*.ini`). The creature's own walk and run clips play as it moves. *Assumption: riders use the speeder-bike straddle pose, because Galaxies' creature ride clips are masks, not poses.*
 
 **Wave 7C: Combat Robots (2 Professions)**
-- [ ] **Droid Engineer:** Modular droid assembly (chassis from SWG droid models + plug-in Core, Primary Function, and Utility bays) and droid repair kits.
-- [ ] **Droid Operations:** Field deployment, remote repair, overcharges, and combat chassis certification running on `core::Bot` + `core::NavGrid` with `DamageType::electro` (EMP/ion) vulnerability and the shared 1-active-companion limit.
+- [x] **Droid Engineer:** Assemble six chassis (MSE-6, probe, R2, 2-1B, B1, droideka) from Material Vault resources, with core, primary-function and utility modules (8). Droids are sellable items. Droid repair kits are a schematic.
+- [x] **Droid Operations:** Register droids into the datapad and field them by certification level. Remote repair and overcharge. Recon droids spot enemies, support droids heal their side, and combat droids fight. Droids take 50% more `DamageType::electro` damage. They share the 1-active-companion limit.
 
 *Deferred / Parked:* **Politician** waits for Stage 14 (Housing & Player Cities); **Jedi / Force** remains parked per [Design](DESIGN.md#open-questions).
 
+**Still to do (found while building Stage 12)**
+- [ ] Re-run `swgtool export-people` so it exports the companion looks: it now reads `specialists.ini` too, including the droid chassis. Check that every droid template exists in your Galaxies files.
+- [ ] Check in the game that creature mount models face forward, and that riders' seats line up.
+- [ ] Draw dyed trim on worn gear, and add dance and music clips for performers.
+
 ### Exit Criteria
 
-Every one of the 31 planned non-deferred professions levels 1–100 with live gameplay loops; players tame or craft tactical companions and take them into matches, ride creature mounts in the open world, and trade through Bazaar terminals.
+Every one of the 31 planned non-deferred professions levels 1–100 with live gameplay loops. Players tame or craft tactical companions and take them into matches, ride creature mounts in the open world, and trade through Bazaar terminals.
 
 ---
 

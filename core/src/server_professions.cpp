@@ -168,6 +168,8 @@ void GameServer::apply_professions(const Client& client, const CharacterLoadout&
     if (config_.professions != nullptr) {
         apply_specializations(loadout, *config_.professions, cl.specializations, client.professions);
     }
+    // Stage 12: its abilities, specialist levels, Companion Slot and slices.
+    fill_specialist_loadout(client, cl, loadout);
 }
 
 } // namespace swm::core
