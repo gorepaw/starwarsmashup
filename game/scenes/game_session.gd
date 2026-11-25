@@ -1681,6 +1681,13 @@ func _setup_scene() -> void:
 	_hub_ui = HubUI.new()
 	add_child(_hub_ui)
 	_hub_ui.setup(layer, self, _battle_ui.art(), _settings)
+	_specialist_ui = SpecialistUIScript.new()
+	add_child(_specialist_ui)
+	_specialist_ui.setup(layer, self, _battle_ui.art(), _settings)
+	_specialist_ui.screen_opened.connect(func() -> void: _capture_mouse(false))
+	_specialist_ui.screen_closed.connect(func() -> void:
+		if _bot == "" and (_pause_menu == null or not _pause_menu.visible):
+			_capture_mouse(true))
 	_hub_ui.queue_requested.connect(func(side: int) -> void: _client.queue(side))
 	_hub_ui.item_bought.connect(func(def_id: String, use_fp: bool) -> void: _client.buy_item(def_id, use_fp))
 	_hub_ui.loadout_saved.connect(func(slot: int, lo: Dictionary) -> void: _client.save_loadout(slot, lo))
