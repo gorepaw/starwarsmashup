@@ -312,6 +312,7 @@ godot::Array SwmClient::get_vendors() const {
             entry["kind"] = godot::String::utf8(v.kind.c_str());
             entry["position"] = to_godot(v.position);
             entry["radius"] = v.radius;
+            entry["detail"] = godot::String::utf8(v.detail.c_str());
             out.push_back(entry);
         }
     }
@@ -636,10 +637,35 @@ godot::Array SwmClient::get_professions() const {
             godot::Dictionary entry;
             entry["id"] = godot::String::utf8(p.id.c_str());
             entry["xp"] = p.xp;
+            entry["trained"] = int64_t(p.trained);
             out.push_back(entry);
         }
     }
     return out;
+}
+
+godot::Dictionary SwmClient::get_bank() const {
+    godot::Dictionary out;
+    godot::Array items;
+    if (client()) {
+        out["credits"] = int64_t(client()->bank_credits());
+        for (const core::ItemInstance& item : client()->bank_items()) {
+            godot::Dictionary d;
+            d["id"] = int64_t(item.id);
+            d["def_id"] = godot::String::utf8(item.def_id.c_str());
+            d["quality"] = item.quality;
+            d["custom_name"] = godot::String::utf8(item.custom_name.c_str());
+            items.push_back(d);
+        }
+    } else {
+        out["credits"] = int64_t(0);
+    }
+    out["items"] = items;
+    return out;
+}
+
+void SwmClient::service(int64_t action, const godot::String& id, int64_t amount, int64_t item_id) {
+    if (client()) client()->service(uint8_t(action), std::string(id.utf8().get_data()), amount, uint64_t(item_id));
 }
 
 godot::Array SwmClient::get_workbenches() const {
@@ -1552,6 +1578,8 @@ void SwmClient::_bind_methods() {
     ClassDB::bind_method(D_METHOD("get_mission_terminals"), &SwmClient::get_mission_terminals);
     ClassDB::bind_method(D_METHOD("get_quests"), &SwmClient::get_quests);
     ClassDB::bind_method(D_METHOD("get_professions"), &SwmClient::get_professions);
+    ClassDB::bind_method(D_METHOD("get_bank"), &SwmClient::get_bank);
+    ClassDB::bind_method(D_METHOD("service", "action", "id", "amount", "item_id"), &SwmClient::service);
     ClassDB::bind_method(D_METHOD("get_workbenches"), &SwmClient::get_workbenches);
     ClassDB::bind_method(D_METHOD("get_materials"), &SwmClient::get_materials);
     ClassDB::bind_method(D_METHOD("get_presets"), &SwmClient::get_presets);

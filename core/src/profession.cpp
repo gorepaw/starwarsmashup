@@ -323,13 +323,21 @@ int combat_level(const ProfessionBook& book, const Loadout& loadout, std::span<c
     return level;
 }
 
-ProfessionPerk profession_perks(const ProfessionDef& def, int level) {
+int64_t milestone_cost(int level) {
+    if (level <= 1) return 0;
+    if (level <= 25) return 500;
+    if (level <= 50) return 2500;
+    if (level <= 75) return 7500;
+    return 20000;
+}
+
+ProfessionPerk profession_perks(const ProfessionDef& def, int level, int trained) {
     ProfessionPerk perk;
     if (def.rank_every > 0) {
         add_perk(perk, def.rank, level / def.rank_every);
     }
     for (const ProfessionMilestone& m : def.milestones) {
-        if (m.level <= level) {
+        if (m.level <= level && m.level <= trained) {
             add_perk(perk, m.perk);
         }
     }
@@ -345,7 +353,11 @@ void apply_specializations(Loadout& loadout, const ProfessionBook& book, std::sp
         if (def->category == ProfessionCategory::armor && def->armor_class != armor) {
             continue;  // trained for other armor than this loadout's
         }
-        const ProfessionPerk perk = profession_perks(*def, book.level_for(profession_xp(progress, id)));
+        int trained = 0;
+        for (const ProfessionProgress& p : progress) {
+            if (p.id == id) trained = p.trained;
+        }
+        const ProfessionPerk perk = profession_perks(*def, book.level_for(profession_xp(progress, id)), trained);
         perks.modifiers.insert(perks.modifiers.end(), perk.stats.begin(), perk.stats.end());
         if (perk.weapons.empty()) continue;
         for (std::optional<WeaponDef>& w : loadout.weapons) {

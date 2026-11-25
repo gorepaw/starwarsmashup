@@ -58,6 +58,12 @@ public:
     virtual void save(std::span<const CharacterRecord> characters) = 0;
     virtual bool remove(PersistentId id) = 0;
 
+    // Small per-character facts that need no table of their own (milestones
+    // learned from trainers, the bank, where the character's clone is kept):
+    // "" when there's none.
+    virtual std::string get_extra(PersistentId, const std::string&) { return {}; }
+    virtual void set_extra(PersistentId, const std::string&, const std::string&) {}
+
     // Inventory, loadouts, and character economy.
     virtual std::vector<ItemInstance> list_items(PersistentId owner_id) = 0;
     virtual ItemInstance grant_item(const ItemInstance& item) = 0;
@@ -108,8 +114,11 @@ public:
     std::vector<RecipePreset> list_presets(PersistentId owner_id) override;
     void save_preset(PersistentId owner_id, const RecipePreset& preset) override;
     bool delete_preset(PersistentId owner_id, const std::string& name) override;
+    std::string get_extra(PersistentId owner_id, const std::string& key) override;
+    void set_extra(PersistentId owner_id, const std::string& key, const std::string& value) override;
 
 private:
+    std::map<PersistentId, std::map<std::string, std::string>> extras_;
     std::map<PersistentId, CharacterRecord> characters_;
     PersistentId next_id_ = 1;
     std::map<PersistentId, ItemInstance> items_;

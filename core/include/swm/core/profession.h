@@ -82,6 +82,7 @@ struct ProfessionDef {
 struct ProfessionProgress {
     std::string id;
     int64_t xp = 0;
+    int trained = 0;  // the highest milestone level learned from a trainer (0: none): milestones count only once learned
 
     friend bool operator==(const ProfessionProgress&, const ProfessionProgress&) = default;
 };
@@ -137,7 +138,10 @@ inline constexpr int quest_trivial_gap = 10;
 
 // A slotted profession's perks at its character's level: its ranks and
 // milestones reached. An armor profession's apply only to armor of its class.
-ProfessionPerk profession_perks(const ProfessionDef& def, int level);
+ProfessionPerk profession_perks(const ProfessionDef& def, int level, int trained = 100);
+
+// What a trainer asks for learning the milestone at `level`: the first is free.
+int64_t milestone_cost(int level);
 
 // Applies a loadout's slotted professions at the character's levels: their
 // statistics as one more piece of gear (slot "specialization", so clients

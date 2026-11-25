@@ -161,6 +161,10 @@ public:
     const std::vector<net::Workbench>& workbenches() const { return workbenches_; }
     const net::CraftingSync& crafting() const { return crafting_; }
     void gather_extract(ResourceCategory category);
+    // Service points (a trainer, the bank, a clinic, a cloning terminal) and the bank (InventorySync).
+    void service(uint8_t action, const std::string& id, int64_t amount, uint64_t item_id);
+    int64_t bank_credits() const { return bank_credits_; }
+    const std::vector<ItemInstance>& bank_items() const { return bank_items_; }
     void harvest_corpse(uint32_t corpse_entity);
     void salvage_item(uint64_t item_id);
     void craft_item(const std::string& schematic_id, std::vector<std::string> resource_ids,
@@ -245,6 +249,8 @@ private:
     std::vector<net::Recruiter> recruiters_;
     std::vector<net::Quartermaster> quartermasters_;
     std::vector<net::Vendor> vendors_;
+    int64_t bank_credits_ = 0;
+    std::vector<ItemInstance> bank_items_;
     std::vector<net::QuestNpc> quest_npcs_;
     std::vector<net::MissionTerminal> mission_terminals_;
     std::vector<net::Workbench> workbenches_;

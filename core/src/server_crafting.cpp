@@ -192,6 +192,7 @@ void GameServer::finish_extraction(Client& client, ResourceCategory cat) {
     const int64_t xp = 15 + int64_t(std::llround(conc * 25.0));
     earn_profession_xp(client, prof, xp);
     notify(client.entity, std::format("Extracted {}x {} ({}% concentration)", qty, res->name, int(conc * 100.0)));
+    quest_event(client, "extract");
 }
 
 // Extractions under way: done after `extract_time` standing where they began;
@@ -336,6 +337,7 @@ void GameServer::handle_craft_request(Client& client, const net::CraftRequest& r
         ++client.crafting_rev;
         client.crafting_sync_tick = 0;
         earn_profession_xp(client, sch->profession, sch->base_xp * batch);
+        quest_event(client, "craft");
         notify(client.entity, std::format("Crafted {}x {} ({}% - {})", batch, sch->name,
                                           int(std::lround(best_q * 100.0)), last_outcome));
     }

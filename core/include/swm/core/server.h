@@ -327,6 +327,10 @@ private:
         ResourceCategory extract_category = ResourceCategory::mineral;
         bool has_extracted = false;
         Vec3 last_extract_site;         // where the last one finished
+        int64_t bank_credits = 0;
+        std::vector<ItemInstance> bank_items;  // ids are the bank's own
+        uint64_t next_bank_id = 1;
+        std::optional<Vec3> bound;      // where their clone is kept (cloning terminals), else the hub's facility
     };
     // A vehicle in a match. Empty, it keeps its own state; driven, its
     // driver's state is its state (MoveState::vehicle), and the driver's
@@ -476,6 +480,12 @@ private:
     // Crafting & gathering (server_crafting.cpp).
     void handle_gather_request(Client& client, const net::GatherRequest& request, double now);
     void update_extractions(double now);
+    void quest_event(Client& client, const std::string& name);
+    // Service points (server_services.cpp): trainers, the bank, clinics and cloning terminals.
+    void handle_service_request(Client& client, const net::ServiceRequest& request);
+    void load_services_data(Client& client);
+    void save_bank(Client& client);
+    const net::Vendor* service_near(const Client& client, const std::string& kind, const std::string& detail = "") const;
     int combat_level_of(const Client& client) const;
     void finish_extraction(Client& client, ResourceCategory category);
     void handle_craft_request(Client& client, const net::CraftRequest& request);

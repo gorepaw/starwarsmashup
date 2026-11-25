@@ -112,8 +112,8 @@ void test_perks() {
     rifle.yaw_spread = 1.0;
     lo.weapons = {rifle, pistol, std::nullopt};
     lo.armor_class = "light";
-    const std::vector<ProfessionProgress> progress{{"pistols", book.xp_for_level(25)}, {"light_armor", 0},
-                                                   {"heavy_armor", book.xp_for_level(100)}};
+    const std::vector<ProfessionProgress> progress{{"pistols", book.xp_for_level(25), 100}, {"light_armor", 0, 100},
+                                                   {"heavy_armor", book.xp_for_level(100), 100}};
     // Pistols at 25 (two ranks, Sidearm Certification, Steady Hand), light
     // armor at 1, heavy armor's not worn: nothing from it.
     const std::vector<std::string> slots{"pistols", "light_armor", "heavy_armor"};
@@ -229,7 +229,21 @@ void test_server_professions() {
         CHECK(!resolved.empty() && resolved[0].weapons[0] && resolved[0].weapons[0]->archetype == "rifle_auto");
         const double slotted_spread = resolved.empty() || !resolved[0].weapons[0] ? 0 : resolved[0].weapons[0]->yaw_spread;
         const WeaponDef e11 = catalog.resolve_weapon(*catalog.find("wp_rifle_e11"));
-        CHECK(near(slotted_spread, e11.yaw_spread * 0.97, 1e-4));  // Rifle Certification, level 2
+        CHECK(near(slotted_spread, e11.yaw_spread * 0.97 / 0.97, 1e-4));  // not learned yet: no certification
+
+        // A trainer teaches the milestone (the first is free); it counts from then.
+        server.set_vendors({{"Rifle Trainer", "trainer", {0, 0, 0}, 4, "rifles"}});
+        client.service(net::ServiceRequest::train, "rifles", 2, 0);  // not the next one to learn
+        run(0.3);
+        CHECK(client.professions().professions.size() >= 1 && client.professions().professions[0].trained == 0);
+        client.service(net::ServiceRequest::train, "rifles", 1, 0);
+        run(0.4);
+        bool learned = false;
+        for (const ProfessionProgress& p : client.professions().professions) learned = learned || (p.id == "rifles" && p.trained == 1);
+        CHECK(learned);
+        const double trained_spread = client.custom_loadouts().empty() || !client.custom_loadouts()[0].weapons[0]
+                                          ? 0 : client.custom_loadouts()[0].weapons[0]->yaw_spread;
+        CHECK(near(trained_spread, e11.yaw_spread * 0.97, 1e-4));  // Rifle Certification, level 2
 
         // Quest and mission experience goes to the carried weapon's and the worn armor's professions.
         server.award_profession_xp("Trainee", {{"pistols", 40}}, 60);
@@ -246,6 +260,7 @@ void test_server_professions() {
         CHECK(saved.has_value());
         const auto progress = saved ? store.list_professions(saved->id) : std::vector<ProfessionProgress>{};
         CHECK(profession_xp(progress, "rifles") == 180);
+        CHECK(saved && store.get_extra(saved->id, "trained:rifles") == "1");
         CHECK(profession_xp(progress, "unarmored") == 41);
         CHECK(profession_xp(progress, "pistols") == 40);
         const auto loadouts = saved ? store.list_loadouts(saved->id) : std::vector<CharacterLoadout>{};

@@ -37,6 +37,8 @@ public:
     void save_quests(PersistentId owner_id, std::span<const QuestProgress> quests) override;
     std::vector<ProfessionProgress> list_professions(PersistentId owner_id) override;
     void save_professions(PersistentId owner_id, std::span<const ProfessionProgress> professions) override;
+    std::string get_extra(PersistentId owner_id, const std::string& key) override;
+    void set_extra(PersistentId owner_id, const std::string& key, const std::string& value) override;
     std::vector<MaterialStack> list_materials(PersistentId owner_id) override;
     void save_materials(PersistentId owner_id, std::span<const MaterialStack> materials) override;
     std::vector<RecipePreset> list_presets(PersistentId owner_id) override;

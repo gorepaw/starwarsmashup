@@ -534,6 +534,8 @@ void GameServer::send_inventory_sync(Client& client) {
     sync.items = client.items;
     sync.loadouts = client.char_loadouts;
     sync.resolved_loadouts = client.custom_loadouts;
+    sync.bank_credits = client.bank_credits;
+    sync.bank_items = client.bank_items;
     send(client.endpoint, sync);
     client.last_sync_tick = tick_;
 }
@@ -640,6 +642,8 @@ void GameServer::handle(const net::Endpoint& from, const net::Datagram& datagram
         handle_gather_request(*client, *gather, now);
     } else if (const auto* craft = std::get_if<net::CraftRequest>(&message)) {
         handle_craft_request(*client, *craft);
+    } else if (const auto* service = std::get_if<net::ServiceRequest>(&message)) {
+        handle_service_request(*client, *service);
     } else if (const auto* save_lo = std::get_if<net::SaveLoadoutRequest>(&message)) {
         if (!conquest_ && store_ != nullptr && config_.catalog != nullptr && client->character != 0 &&
             save_lo->loadout.slot_index >= 0 && save_lo->loadout.slot_index < max_character_loadouts) {
@@ -703,7 +707,9 @@ void GameServer::handle(const net::Endpoint& from, const net::Datagram& datagram
                 });
                 const bool near_gear_vendor = std::any_of(vendors_.begin(), vendors_.end(),
                                                           [&](const net::Vendor& v) {
-                    if (v.kind != "gear_vendor" || def->faction != "neutral") return false;
+                    // A gear vendor sells anything neutral; a garage, vehicles.
+                    if (!((v.kind == "gear_vendor" && def->faction == "neutral") ||
+                          (v.kind == "garage" && def->kind == ItemKind::vehicle))) return false;
                     const Vec3 d = client->state.position - v.position;
                     return std::hypot(d.x, d.z) <= v.radius + 1.5;
                 });
@@ -793,6 +799,7 @@ void GameServer::handle(const net::Endpoint& from, const net::Datagram& datagram
     } else if (const auto* sell = std::get_if<net::VendorSellRequest>(&message)) {
         if (!conquest_ && store_ != nullptr && config_.catalog != nullptr && client->character != 0) {
             const bool near_vendor = std::any_of(vendors_.begin(), vendors_.end(), [&](const net::Vendor& v) {
+                if (v.kind != "junk_dealer" && v.kind != "gear_vendor") return false;  // (a shop buys; a service doesn't)
                 const Vec3 d = client->state.position - v.position;
                 return std::hypot(d.x, d.z) <= v.radius + 1.5;
             });
@@ -971,6 +978,7 @@ GameServer::Client* GameServer::join(const net::Endpoint& from, const std::strin
             joined.quest_rev = 1;
             joined.professions = store_->list_professions(joined.character);
             joined.profession_rev = 1;
+            load_services_data(joined);
             joined.materials = store_->list_materials(joined.character);
             joined.presets = store_->list_presets(joined.character);
             joined.crafting_rev = 1;
@@ -2304,14 +2312,15 @@ void GameServer::respawn(Client& client) {
     client.shield_disrupt_timer = 0;
     const float yaw = client.state.yaw;
     client.state = MoveState{};
-    if (!conquest_ && cloning_facility_) {
+    const std::optional<Vec3> clone_at = client.bound ? client.bound : cloning_facility_;
+    if (!conquest_ && clone_at) {
         const uint32_t slot = client.entity > 0 ? client.entity - 1 : 0;
-        Vec3 pos = world_.clamp(*cloning_facility_ + Vec3{1.5 * (slot % 4), 0, 0});
+        Vec3 pos = world_.clamp(*clone_at + Vec3{1.5 * (slot % 4), 0, 0});
         const double terrain = world_.terrain().height_at(pos.x, pos.z);
         pos.y = world_.support_at(pos.x, pos.z, terrain + 1.0, client.stats.move.step_up).height;
         if (pos.y < -1e8) pos.y = terrain;
         client.state.position = pos;
-        notify(client.entity, "Cloned at Mos Eisley Cloning Facility");
+        notify(client.entity, client.bound ? "Cloned at your cloning terminal" : "Cloned at Mos Eisley Cloning Facility");
     } else {
         client.state.position = spawn_point(client.entity - 1);
     }

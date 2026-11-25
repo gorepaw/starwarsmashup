@@ -57,12 +57,15 @@ struct Quartermaster {
     friend bool operator==(const Quartermaster&, const Quartermaster&) = default;
 };
 
-// A hub's open-world vendor: junk dealer or gear/supplies vendor.
+// A hub's open-world vendor or service point. Shops: "junk_dealer", "gear_vendor",
+// "garage" (vehicles). Services: "trainer" (`detail`: the professions it
+// trains), "bank", "clinic" and "cloning".
 struct Vendor {
     std::string name;
-    std::string kind;  // "junk_dealer" or "gear_vendor"
+    std::string kind;
     Vec3 position;     // game space
     double radius = 4;
+    std::string detail;
 
     friend bool operator==(const Vendor&, const Vendor&) = default;
 };
@@ -358,8 +361,28 @@ struct InventorySync {
     std::vector<ItemInstance> items;
     std::vector<CharacterLoadout> loadouts;
     std::vector<Loadout> resolved_loadouts;
+    int64_t bank_credits = 0;
+    std::vector<ItemInstance> bank_items;  // the bank's: their ids are its own
 
     friend bool operator==(const InventorySync&, const InventorySync&) = default;
+};
+
+// Client -> server: use a service point (a trainer, the bank, a clinic, a
+// cloning terminal) you stand at.
+struct ServiceRequest {
+    enum Action : uint8_t {
+        train = 0,                 // `id`: the profession, `amount`: the milestone's level
+        bank_deposit_credits = 1,  // `amount`
+        bank_withdraw_credits = 2,
+        bank_deposit_item = 3,     // `item_id`: yours
+        bank_withdraw_item = 4,    // `item_id`: the bank's
+        heal = 5,
+        bind = 6,
+    };
+    uint8_t action = 0;
+    std::string id;
+    int64_t amount = 0;
+    uint64_t item_id = 0;
 };
 
 // Client -> server: acknowledges receipt of InventorySync `revision`.
@@ -488,7 +511,7 @@ using Message = std::variant<Hello, Welcome, Refused, InputBatch, Snapshot, Good
                              Transfer, InventorySync, InventoryAck, SaveLoadoutRequest, SwitchLoadoutRequest,
                              ShopBuyRequest, DestroyItemRequest, LootTakeRequest, VendorSellRequest, UseItemRequest,
                              QuestSync, QuestAck, QuestRequest, ProfessionSync, ProfessionAck, CraftingSync,
-                             CraftingAck, GatherRequest, CraftRequest>;
+                             CraftingAck, GatherRequest, CraftRequest, ServiceRequest>;
 
 std::vector<uint8_t> encode(const Message& message);
 // Throws PacketError on malformed packets or another protocol version.

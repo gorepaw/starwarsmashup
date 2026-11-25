@@ -308,6 +308,15 @@ SqliteCharacterStore::SqliteCharacterStore(const std::filesystem::path& path) {
                                      ", this build reads version " + std::to_string(schema_version));
         }
 
+        // Small per-character facts (CharacterStore::get_extra); a table of their own, outside
+        // the versioned ones, so it exists in a database of any version.
+        exec("CREATE TABLE IF NOT EXISTS character_extras ("
+             " owner_id INTEGER NOT NULL,"
+             " key TEXT NOT NULL,"
+             " value TEXT NOT NULL,"
+             " PRIMARY KEY (owner_id, key)"
+             ") STRICT");
+
         constexpr const char* cols =
             "id, name, x, y, z, yaw, species, gender, location, appearance, credits, faction_points, experience, active_loadout";
         find_ = prepare(db_, (std::string("SELECT ") + cols + " FROM characters WHERE id = ?").c_str());
@@ -501,7 +510,39 @@ void SqliteCharacterStore::save(std::span<const CharacterRecord> characters) {
     }
 }
 
+std::string SqliteCharacterStore::get_extra(PersistentId owner_id, const std::string& key) {
+    struct Finalize {
+        sqlite3_stmt* statement;
+        ~Finalize() { sqlite3_finalize(statement); }
+    };
+    sqlite3_stmt* statement = prepare(db_, "SELECT value FROM character_extras WHERE owner_id = ? AND key = ?");
+    Finalize finalize{statement};
+    sqlite3_bind_int64(statement, 1, sqlite3_int64(owner_id));
+    sqlite3_bind_text(statement, 2, key.c_str(), int(key.size()), SQLITE_TRANSIENT);
+    std::string value;
+    const int step = sqlite3_step(statement);
+    if (step == SQLITE_ROW) {
+        const auto* text = reinterpret_cast<const char*>(sqlite3_column_text(statement, 0));
+        value = text ? text : "";
+    } else if (step != SQLITE_DONE) {
+        fail(db_, "get_extra");
+    }
+    return value;
+}
+
+void SqliteCharacterStore::set_extra(PersistentId owner_id, const std::string& key, const std::string& value) {
+    sqlite3_stmt* statement = prepare(db_, "INSERT INTO character_extras (owner_id, key, value) VALUES (?, ?, ?) "
+                                           "ON CONFLICT(owner_id, key) DO UPDATE SET value = excluded.value");
+    sqlite3_bind_int64(statement, 1, sqlite3_int64(owner_id));
+    sqlite3_bind_text(statement, 2, key.c_str(), int(key.size()), SQLITE_TRANSIENT);
+    sqlite3_bind_text(statement, 3, value.c_str(), int(value.size()), SQLITE_TRANSIENT);
+    const int step = sqlite3_step(statement);
+    sqlite3_finalize(statement);
+    if (step != SQLITE_DONE) fail(db_, "set_extra");
+}
+
 bool SqliteCharacterStore::remove(PersistentId id) {
+    exec((std::string("DELETE FROM character_extras WHERE owner_id = ") + std::to_string(id)).c_str());
     {
         Reset r1{remove_items_by_owner_};
         sqlite3_bind_int64(remove_items_by_owner_, 1, sqlite3_int64(id));

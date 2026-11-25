@@ -38,6 +38,7 @@ enum class Type : uint8_t {
     crafting_ack,
     gather_request,
     craft_request,
+    service_request,
 };
 
 void put_vec3(ByteWriter& out, Vec3 v) {
@@ -587,6 +588,7 @@ struct Encoder {
             out.put_string(v.kind);
             put_vec3(out, v.position);
             out.put(v.radius);
+            out.put_string(v.detail);
         }
         out.put(uint8_t(std::min<size_t>(m.quest_npcs.size(), 255)));
         for (size_t i = 0; i < m.quest_npcs.size() && i < 255; ++i) {
@@ -812,7 +814,18 @@ struct Encoder {
             }
             out.put_string(lo.armor_class);
         }
+            out.put(m.bank_credits);
+        out.put(uint16_t(std::min<size_t>(m.bank_items.size(), 512)));
+        for (size_t i = 0; i < m.bank_items.size() && i < 512; ++i) {
+            const ItemInstance& inst = m.bank_items[i];
+            out.put(inst.id);
+            out.put_string(inst.def_id);
+            out.put(float(inst.quality));
+            out.put_string(inst.custom_name);
+            out.put_string(inst.color_json);
+        }
     }
+
     void operator()(const InventoryAck& m) {
         out.put(uint8_t(Type::inventory_ack));
         out.put(m.revision);
@@ -892,6 +905,7 @@ struct Encoder {
         for (size_t i = 0; i < m.professions.size() && i < 255; ++i) {
             out.put_string(m.professions[i].id);
             out.put(m.professions[i].xp);
+            out.put(uint8_t(m.professions[i].trained));
         }
     }
     void operator()(const ProfessionAck& m) {
@@ -931,6 +945,13 @@ struct Encoder {
         out.put(uint8_t(m.action));
         out.put(m.category);
         out.put(m.target_id);
+    }
+    void operator()(const ServiceRequest& m) {
+        out.put(uint8_t(Type::service_request));
+        out.put(m.action);
+        out.put_string(m.id);
+        out.put(m.amount);
+        out.put(m.item_id);
     }
     void operator()(const CraftRequest& m) {
         out.put(uint8_t(Type::craft_request));
@@ -1022,6 +1043,7 @@ Message decode(std::span<const uint8_t> packet) {
             v.kind = in.get_string();
             v.position = get_vec3(in);
             v.radius = in.get<double>();
+            v.detail = in.get_string();
             m.vendors.push_back(std::move(v));
         }
         const size_t npcs = in.get<uint8_t>();
@@ -1323,6 +1345,18 @@ Message decode(std::span<const uint8_t> packet) {
             lo.armor_class = in.get_string();
             m.resolved_loadouts.push_back(std::move(lo));
         }
+        m.bank_credits = in.get<int64_t>();
+        const size_t bcount = in.get<uint16_t>();
+        if (bcount > 512) throw PacketError("too many banked items");
+        for (size_t i = 0; i < bcount; ++i) {
+            ItemInstance inst;
+            inst.id = in.get<uint64_t>();
+            inst.def_id = in.get_string();
+            inst.quality = in.get<float>();
+            inst.custom_name = in.get_string();
+            inst.color_json = in.get_string();
+            m.bank_items.push_back(std::move(inst));
+        }
         message = std::move(m);
         break;
     }
@@ -1417,6 +1451,7 @@ Message decode(std::span<const uint8_t> packet) {
             ProfessionProgress p;
             p.id = in.get_string();
             p.xp = in.get<int64_t>();
+            p.trained = in.get<uint8_t>();
             m.professions.push_back(std::move(p));
         }
         message = std::move(m);
@@ -1464,6 +1499,15 @@ Message decode(std::span<const uint8_t> packet) {
         if (m.category >= resource_category_count) throw PacketError("bad resource category");
         m.target_id = in.get<uint64_t>();
         message = m;
+        break;
+    }
+    case Type::service_request: {
+        ServiceRequest m;
+        m.action = in.get<uint8_t>();
+        m.id = in.get_string();
+        m.amount = in.get<int64_t>();
+        m.item_id = in.get<uint64_t>();
+        message = std::move(m);
         break;
     }
     case Type::craft_request: {

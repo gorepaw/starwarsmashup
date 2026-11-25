@@ -159,6 +159,17 @@ bool MemoryCharacterStore::delete_preset(PersistentId owner_id, const std::strin
     return std::erase_if(it->second, [&](const RecipePreset& p) { return p.name == name; }) > 0;
 }
 
+std::string MemoryCharacterStore::get_extra(PersistentId owner_id, const std::string& key) {
+    const auto owner = extras_.find(owner_id);
+    if (owner == extras_.end()) return {};
+    const auto it = owner->second.find(key);
+    return it == owner->second.end() ? std::string() : it->second;
+}
+
+void MemoryCharacterStore::set_extra(PersistentId owner_id, const std::string& key, const std::string& value) {
+    extras_[owner_id][key] = value;
+}
+
 void ensure_starter_kit(CharacterStore& store, PersistentId char_id) {
     if (!store.list_items(char_id).empty()) {
         return;

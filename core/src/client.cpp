@@ -135,6 +135,17 @@ void GameClient::gather_extract(ResourceCategory category) {
     }
 }
 
+void GameClient::service(uint8_t action, const std::string& id, int64_t amount, uint64_t item_id) {
+    if (status_ == Status::connected) {
+        net::ServiceRequest request;
+        request.action = action;
+        request.id = id;
+        request.amount = amount;
+        request.item_id = item_id;
+        link_.send(config_.server, net::encode(request));
+    }
+}
+
 void GameClient::harvest_corpse(uint32_t corpse_entity) {
     if (status_ == Status::connected && corpse_entity != 0) {
         link_.send(config_.server, net::encode(net::GatherRequest{net::GatherRequest::harvest_corpse, 0, corpse_entity}));
@@ -342,6 +353,8 @@ void GameClient::handle(const net::Datagram& datagram, double now) {
                 items_ = sync->items;
                 char_loadouts_ = sync->loadouts;
                 custom_loadouts_ = sync->resolved_loadouts;
+                bank_credits_ = sync->bank_credits;
+                bank_items_ = sync->bank_items;
                 if (spawned_) {
                     const Species sp = Species(std::min<size_t>(self_.species, species_count - 1));
                     character_stats_ = stats_for(loadout(), sp, config_.base_stats);

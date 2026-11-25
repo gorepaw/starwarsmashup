@@ -185,6 +185,8 @@ public:
     // world's), as get_battlefield()["vehicles"] gives them.
     godot::Array get_vehicle_classes() const;
     godot::Array get_workbenches() const;
+    godot::Dictionary get_bank() const;
+    void service(int64_t action, const godot::String& id, int64_t amount, int64_t item_id);
     godot::Array get_materials() const;
     godot::Array get_presets() const;
     void gather_extract(const godot::String& category_name);

@@ -23,6 +23,8 @@ enum class QuestStepKind : uint8_t {
     collect = 2,  // carry `count` of item `target` (kept; a later deliver step hands them over)
     talk_to = 3,  // talk to the hub person named `npc`
     deliver = 4,  // talk to `npc` carrying `count` of item `target`: they're handed over
+    event = 5,    // do something, `count` times: `target` names it (extract, craft, learn, bank, bind,
+                  // heal, sell, buy, mission)
 };
 
 std::optional<QuestStepKind> quest_step_kind_from_name(std::string_view name);
@@ -143,6 +145,7 @@ public:
     QuestEffects on_kill(std::vector<QuestProgress>& journal, const KillTags& tags, Vec3 at,
                          const std::function<double()>& roll) const;
     QuestEffects on_position(std::vector<QuestProgress>& journal, Vec3 at) const;
+    QuestEffects on_event(std::vector<QuestProgress>& journal, std::string_view name) const;
     QuestEffects on_talk(std::vector<QuestProgress>& journal, std::string_view npc,
                          const std::function<int(const std::string&)>& held) const;
     QuestEffects on_inventory(std::vector<QuestProgress>& journal,

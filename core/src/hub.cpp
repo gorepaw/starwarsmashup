@@ -191,6 +191,15 @@ HubConfig load_hub(const std::filesystem::path& path) {
             v.position = point(s.get("Position").value_or(""), "a [vendor]'s Position");
             v.radius = s.number("Radius", v.radius);
             hub.vendors.push_back(std::move(v));
+        } else if (s.name == "service") {
+            // A service point: Type = trainer (Profession = ids, comma-separated), bank, clinic or cloning.
+            net::Vendor v;
+            v.name = s.get("Name").value_or("Service");
+            v.kind = s.get("Type").value_or("bank");
+            v.detail = s.get("Profession").value_or("");
+            v.position = point(s.get("Position").value_or(""), "a [service]'s Position");
+            v.radius = s.number("Radius", v.radius);
+            hub.vendors.push_back(std::move(v));
         } else if (s.name == "target") {
             HubRangeTarget rt;
             rt.name = s.get("Name").value_or("Target");

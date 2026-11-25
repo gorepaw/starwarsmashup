@@ -187,6 +187,11 @@ void GameServer::quest_kill(uint32_t killer, const KillTags& tags, Vec3 at) {
     apply_quests(*client, quest_book_->on_kill(client->quests, tags, at, [this] { return random_unit(); }));
 }
 
+void GameServer::quest_event(Client& client, const std::string& name) {
+    if (quest_book_ == nullptr || client.quests.empty()) return;
+    apply_quests(client, quest_book_->on_event(client.quests, name));
+}
+
 void GameServer::check_quest_positions() {
     if (quest_book_ == nullptr) return;
     for (Client& client : clients_) {
@@ -263,6 +268,7 @@ void GameServer::handle_quest_request(Client& client, const net::QuestRequest& r
         }
         std::erase(client.offers, request.quest_id);
         apply_quests(client, quest_book_->accept(client.quests, *def));
+        if (def->mission) quest_event(client, "mission");
         break;
     }
     case net::QuestRequest::abandon: {
@@ -290,6 +296,7 @@ std::string GameServer::step_text(const QuestStep& step) const {
     case QuestStepKind::collect: return "Collect " + item_name(step.target);
     case QuestStepKind::talk_to: return "Talk to " + step.npc;
     case QuestStepKind::deliver: return "Bring " + item_name(step.target) + " to " + step.npc;
+    case QuestStepKind::event: return "Do: " + step.target;
     }
     return {};
 }

@@ -108,6 +108,7 @@ std::optional<QuestStepKind> quest_step_kind_from_name(std::string_view name) {
     if (same_ci(name, "collect")) return QuestStepKind::collect;
     if (same_ci(name, "talk_to") || same_ci(name, "talk")) return QuestStepKind::talk_to;
     if (same_ci(name, "deliver")) return QuestStepKind::deliver;
+    if (same_ci(name, "event") || same_ci(name, "do")) return QuestStepKind::event;
     return std::nullopt;
 }
 
@@ -118,6 +119,7 @@ std::string_view quest_step_kind_name(QuestStepKind kind) {
     case QuestStepKind::collect: return "collect";
     case QuestStepKind::talk_to: return "talk_to";
     case QuestStepKind::deliver: return "deliver";
+    case QuestStepKind::event: return "event";
     }
     return "go_to";
 }
@@ -527,6 +529,25 @@ QuestEffects QuestBook::on_kill(std::vector<QuestProgress>& journal, const KillT
         } else if (step.kind == QuestStepKind::collect && target_matches(step.drop_from, tags) && inside(step, at) &&
                    roll && roll() < step.drop_chance) {
             effects.grant.push_back(step.target);
+        }
+    }
+    tidy(journal, *this);
+    return effects;
+}
+
+QuestEffects QuestBook::on_event(std::vector<QuestProgress>& journal, std::string_view name) const {
+    QuestEffects effects;
+    for (QuestProgress& p : journal) {
+        const QuestDef* def = p.done ? nullptr : find(p.id);
+        if (def == nullptr || p.step >= int(def->steps.size())) continue;
+        const QuestStep& step = def->steps[size_t(p.step)];
+        if (step.kind != QuestStepKind::event || !same_ci(step.target, name)) continue;
+        ++p.count;
+        effects.changed = true;
+        if (p.count >= step.count) {
+            advance(p, *def, effects);
+        } else {
+            effects.notes.push_back({def->id, std::format("{}: {}/{}", step.text, p.count, step.count)});
         }
     }
     tidy(journal, *this);
