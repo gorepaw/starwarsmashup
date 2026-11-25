@@ -98,12 +98,55 @@ no more quests for you/ make it grey if quests are just too low level.
      There are no quest levels in the game yet, so "too low level" isn't there to grey by: that waits on
      the level question below. (rendering/place_symbols.gd)
 
-Speaking of level, how does exp work right now? give me a full rundown. do we need to reconcile a base system 
+[ANSWERED] Speaking of level, how does exp work right now? give me a full rundown. do we need to reconcile a base system
 with our new professions work?
+  -> There is no character level: two separate things are called XP.
+     (1) "XP" on the HUD is one running total on the character (characters.experience). Nothing reads it:
+         it gates nothing and has no level.
+         It grows from: kills of creatures and bandits (their archetype's Xp: worrt 20 ... ronto 160),
+         quest rewards (Xp = in the quests: 60-200 now), and battle rewards (250 win / 150 draw / 100
+         loss, +25 per kill, +60 per capture).
+     (2) Each of the 31 professions has its own XP and level 1-100: 100 XP to go from 1 to 2, then 15 more
+         for each level after, so level 25 is 6,540 XP, 50 is 22,540 and 100 is 82,665 (profession.cpp).
+         Only 17 are live (4 armor, 5 weapon, 3 gathering, 5 crafting); the 14 specialist and companion
+         ones wait on what they're about.
+         It's earned by doing the thing: the held weapon's profession gets a creature/bandit kill's
+         whole XP (a match kill is a flat 25), armor gets 1 per 10 damage taken, extracting is 15-40, a
+         harvested corpse 28, salvaging and crafting their schematic's XP, work orders their reward.
+         XP with no one profession's (quests, missions, battle results) goes to the loadout's slotted
+         specialization professions, else its primary weapon's and its armor's, split evenly.
+         Milestones are at 1/25/50/75/100 (certifications, gadgets, abilities); levels in between give
+         small perks; a loadout's slotted professions apply their perks at the character's levels.
+     So the professions ARE the leveling system (docs/PROFESSIONS.md says so: no SWG skill boxes, no base
+     level). What's missing is that nothing says how strong a character is overall, for the things that
+     want one: quest and enemy levels ("too low level" greying), who can use which area, the HUD's XP
+     figure. Recommendation: keep no base level, and give those a number derived from the professions
+     instead, e.g. a "combat level" = the higher of the held weapon's and the worn armor's professions
+     (what you fight with), shown on the HUD in place of the bare XP total, with quests and creatures
+     carrying a level against it (grey when 10 below, red when 5 or more above). Retire the XP total (or
+     keep it as lifetime XP, a statistic). Say if you'd rather have a character level.
 
-I want to come up with a purpose for skill trainers, as well as a purpose for each kind of terminal that was in SWG, 
-then i would like all the terminals to be in their normal places intead of clustered in that testing area, and build 
+[DRAFT: your call] I want to come up with a purpose for skill trainers, as well as a purpose for each kind of terminal that was in SWG,
+then i would like all the terminals to be in their normal places intead of clustered in that testing area, and build
 a more robust starting quest chain to take us around to all of it, as well as teach us about gathering and crafting.
+  -> Not built: it's yours to design, so here is a draft to react to.
+     Skill trainers: levels come from doing, so a trainer sells the milestone: at 1/25/50/75/100 you visit
+       that profession's trainer to learn its unlock (certification, gadget, ability, schematic) for credits
+       (and, at 50+, a short proof quest). They also hand out the first tools: the scanner (surveying),
+       the field knife (foraging), a salvage cutter. One trainer per profession group in each town.
+     Terminals (as in SWG, with what each does here): Bank (a vault for credits and spare items, safe
+       from death; the material vault stays with the workbench); Mission (the destroy missions now; later
+       delivery, crafting and bounty types, one terminal each); Travel/Starport (fast travel between
+       towns and, later, to space); Bazaar (player market, with the Merchant profession, later);
+       Cloning (where you wake; you can re-bind here, and pay for gear insurance); Garage (call, repair
+       and re-colour your vehicles); Medical droid (heals, sells the first buff); Recruiter/War
+       Terminal (queue for battles, as now); Workbench (crafting, as now).
+     Positions: Galaxies' own, from the world snapshot (the mission terminals already are); the
+       others are in the city's data (bank, shuttleport, cloning facility, cantina) once exported.
+     Starting chain (about an hour): meet Ilsa -> junk dealer (sell) -> cloning facility (wake point) ->
+       bank (deposit) -> mission terminal; then trainers: take a rifle certification and a scanner ->
+       a survey spot (extract; walk on; extract again) -> the workbench (craft a first item from it)
+       -> sell/turn it in; then Pests at the Gate; then the first lair mission by speeder.
 
 [DONE] In character creator last i checked twileks had two sets of headtails, a deafult one overlaying the cosmetic 
 choice ones.
@@ -117,7 +160,10 @@ choice ones.
      and the skin no longer fight over pixels; a few skin-colored specks remain where the pants' own
      mesh has gaps.
 
-Our new starting quest/sequence needs to also give us a starting speeder bike pretty quick, its slow to get around
+[DONE] Our new starting quest/sequence needs to also give us a starting speeder bike pretty quick, its slow to get around
+  -> "A Stranger in Mos Eisley", the first quest and now the whole opening, ends with a speeder bike (the
+     item: Use it to call it) with the bacta stim, and Ilsa says so. The longer chain above would move it
+     to wherever you decide.
 
 [DONE] if you shoot an automatic door leaving a mark, when the door opens, the shot marks stay floating in space
   -> A mark made on a door (a Galaxies sliding door, or a Battlefront one) is now hung on the door and
@@ -127,5 +173,14 @@ Our new starting quest/sequence needs to also give us a starting speeder bike pr
   -> Hovering a marker on the map (not just a line in the list) rings it, lights its line and names it in a
      Battlefront-framed tooltip beside the cursor: its name, its kind and how far it is.
 
-do a very cursory investigation into how hard it would be to let us jump onto the SWG buildings. if it would 
+[INVESTIGATED: leave it alone] do a very cursory investigation into how hard it would be to let us jump onto the SWG buildings. if it would
 take very much effort i want to leave it alone.
+  -> Findings, and I'd leave it. A building's collision here is what Galaxies gives characters: its interior
+     floor triangles, and walls rising from the floors' edges. Roofs and outer walls are not floors, so
+     there is nothing to stand on up there. Making it possible takes (1) exporting the buildings' visual
+     meshes (roofs, ledges, props) as collision in swgtool, which means hundreds of buildings' worth of
+     triangles in the server's world and tests that nothing was blocked that people walk through; (2) a
+     way up: jumps reach 1.78 m and the plaza buildings stand several metres, so you would also need steps, crates
+     or a mantle move; (3) the bots' and creatures' navigation to know about it. That's a feature, not a
+     tweak: days, not an afternoon. (Battlefront's maps already do this through their props' collision, so
+     the machinery exists; the missing part is the data.)
