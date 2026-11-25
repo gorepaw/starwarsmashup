@@ -13,10 +13,21 @@ uniform vec2 map_origin;                  // SWG (x, z) of sample (0, 0)
 uniform float map_spacing;
 uniform int map_samples;
 // Where the terrain is taken away (a city's rooms: core::TerrainHoles), game x z.
+// A planet's towns are a patch each (Stage 13): up to 8.
+const int MAX_HOLE_PATCHES = 8;
 uniform sampler2D holes : filter_nearest, repeat_disable;  // R > 0: a hole
+uniform sampler2D holes_1 : filter_nearest, repeat_disable;
+uniform sampler2D holes_2 : filter_nearest, repeat_disable;
+uniform sampler2D holes_3 : filter_nearest, repeat_disable;
+uniform sampler2D holes_4 : filter_nearest, repeat_disable;
+uniform sampler2D holes_5 : filter_nearest, repeat_disable;
+uniform sampler2D holes_6 : filter_nearest, repeat_disable;
+uniform sampler2D holes_7 : filter_nearest, repeat_disable;
 uniform bool has_holes = false;
-uniform vec2 holes_origin;  // game (x, z) of cell (0, 0)'s corner
+uniform int holes_count = 1;
+uniform vec2 holes_origin;  // game (x, z) of cell (0, 0)'s corner (the first patch)
 uniform vec2 holes_size;    // in meters
+uniform vec4 holes_rects[MAX_HOLE_PATCHES];  // the others': origin (x, z), size (x, z)
 
 varying vec2 swg_xz;
 varying vec2 game_xz;
@@ -43,10 +54,21 @@ vec3 family_color(ivec2 sample_index, float macro_blend) {
 	return mix(detail, macro, macro_blend);
 }
 
+bool in_hole(sampler2D patch, vec2 origin, vec2 size, vec2 xz) {
+	vec2 h = (xz - origin) / size;
+	return all(greaterThanEqual(h, vec2(0.0))) && all(lessThan(h, vec2(1.0))) && texture(patch, h).r > 0.001;
+}
+
 void fragment() {
 	if (has_holes) {
-		vec2 h = (game_xz - holes_origin) / holes_size;
-		if (all(greaterThanEqual(h, vec2(0.0))) && all(lessThan(h, vec2(1.0))) && texture(holes, h).r > 0.001) {
+		if (in_hole(holes, holes_origin, holes_size, game_xz)
+				|| (holes_count > 1 && in_hole(holes_1, holes_rects[1].xy, holes_rects[1].zw, game_xz))
+				|| (holes_count > 2 && in_hole(holes_2, holes_rects[2].xy, holes_rects[2].zw, game_xz))
+				|| (holes_count > 3 && in_hole(holes_3, holes_rects[3].xy, holes_rects[3].zw, game_xz))
+				|| (holes_count > 4 && in_hole(holes_4, holes_rects[4].xy, holes_rects[4].zw, game_xz))
+				|| (holes_count > 5 && in_hole(holes_5, holes_rects[5].xy, holes_rects[5].zw, game_xz))
+				|| (holes_count > 6 && in_hole(holes_6, holes_rects[6].xy, holes_rects[6].zw, game_xz))
+				|| (holes_count > 7 && in_hole(holes_7, holes_rects[7].xy, holes_rects[7].zw, game_xz))) {
 			discard;
 		}
 	}

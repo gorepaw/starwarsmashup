@@ -51,8 +51,13 @@ struct TerrainHoles {
 };
 
 void save_terrain_holes(const TerrainHoles& holes, const std::filesystem::path& path);
-// Throws std::runtime_error on a missing or malformed file.
+// Throws std::runtime_error on a missing or malformed file. A file of
+// several patches (one per town: save_terrain_hole_patches) gives its first.
 TerrainHoles load_terrain_holes(const std::filesystem::path& path);
+// A planet's towns are kilometers apart, so their rooms' holes are a patch
+// each, written one after another (each as save_terrain_holes writes one).
+void save_terrain_hole_patches(const std::vector<TerrainHoles>& patches, const std::filesystem::path& path);
+std::vector<TerrainHoles> load_terrain_hole_patches(const std::filesystem::path& path);
 
 class Heightfield {
 public:
@@ -80,8 +85,11 @@ public:
     bool cut_at(double x, double z) const;
     const std::vector<TerrainCut>& cuts() const { return cuts_; }
     void set_cuts(std::vector<TerrainCut> cuts) { cuts_ = std::move(cuts); }
-    const TerrainHoles& holes() const { return holes_; }
-    void set_holes(TerrainHoles holes) { holes_ = std::move(holes); }
+    // The first patch of holes (empty if none).
+    const TerrainHoles& holes() const { return holes_.empty() ? no_holes_ : holes_.front(); }
+    const std::vector<TerrainHoles>& hole_patches() const { return holes_; }
+    void set_holes(TerrainHoles holes) { holes_ = {std::move(holes)}; }
+    void set_hole_patches(std::vector<TerrainHoles> patches) { holes_ = std::move(patches); }
     // The lowest height in the grid.
     double lowest() const;
 
@@ -98,7 +106,8 @@ private:
     double origin_z_ = 0;
     std::vector<float> heights_;
     std::vector<TerrainCut> cuts_;
-    TerrainHoles holes_;
+    std::vector<TerrainHoles> holes_;
+    inline static const TerrainHoles no_holes_{};
 };
 
 // Loads `<prefix>.r32` and the grid layout from `<prefix>.json`, as written by

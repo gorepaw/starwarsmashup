@@ -87,10 +87,7 @@ namespace {
 constexpr uint32_t holes_magic = 0x4C4F4848;  // "HHOL"
 constexpr uint32_t holes_version = 1;
 
-} // namespace
-
-void save_terrain_holes(const TerrainHoles& holes, const std::filesystem::path& path) {
-    std::ofstream out(path, std::ios::binary);
+void write_terrain_holes(std::ostream& out, const TerrainHoles& holes) {
     const auto put = [&](const auto& value) { out.write(reinterpret_cast<const char*>(&value), sizeof(value)); };
     put(holes_magic);
     put(holes_version);
@@ -100,16 +97,18 @@ void save_terrain_holes(const TerrainHoles& holes, const std::filesystem::path& 
     put(int32_t(holes.width));
     put(int32_t(holes.height));
     out.write(reinterpret_cast<const char*>(holes.cells.data()), std::streamsize(holes.cells.size()));
-    if (!out) {
-        throw std::runtime_error("cannot write " + path.string());
-    }
 }
 
-TerrainHoles load_terrain_holes(const std::filesystem::path& path) {
-    std::ifstream in(path, std::ios::binary);
-    if (!in) {
-        throw std::runtime_error("cannot open " + path.string());
-    }
+} // namespace
+
+void save_terrain_holes(const TerrainHoles& holes, const std::filesystem::path& path) {
+    save_terrain_hole_patches({holes}, path);
+}
+
+namespace {
+
+// Reads one patch at the stream's position.
+TerrainHoles read_terrain_holes(std::istream& in, const std::filesystem::path& path) {
     const auto get = [&](auto& value) { in.read(reinterpret_cast<char*>(&value), sizeof(value)); };
     uint32_t magic = 0, version = 0;
     int32_t width = 0, height = 0;
@@ -135,9 +134,43 @@ TerrainHoles load_terrain_holes(const std::filesystem::path& path) {
     return holes;
 }
 
+} // namespace
+
+TerrainHoles load_terrain_holes(const std::filesystem::path& path) {
+    std::ifstream in(path, std::ios::binary);
+    if (!in) {
+        throw std::runtime_error("cannot open " + path.string());
+    }
+    return read_terrain_holes(in, path);
+}
+
+std::vector<TerrainHoles> load_terrain_hole_patches(const std::filesystem::path& path) {
+    std::ifstream in(path, std::ios::binary);
+    if (!in) {
+        throw std::runtime_error("cannot open " + path.string());
+    }
+    std::vector<TerrainHoles> patches;
+    while (in.peek() != std::char_traits<char>::eof()) {
+        patches.push_back(read_terrain_holes(in, path));
+    }
+    return patches;
+}
+
+void save_terrain_hole_patches(const std::vector<TerrainHoles>& patches, const std::filesystem::path& path) {
+    std::ofstream out(path, std::ios::binary);
+    for (const TerrainHoles& patch : patches) {
+        write_terrain_holes(out, patch);
+    }
+    if (!out) {
+        throw std::runtime_error("cannot write " + path.string());
+    }
+}
+
 bool Heightfield::cut_at(double x, double z) const {
-    if (holes_.at(x, z)) {
-        return true;
+    for (const TerrainHoles& patch : holes_) {
+        if (patch.at(x, z)) {
+            return true;
+        }
     }
     if (cuts_.empty()) {
         return false;
@@ -219,7 +252,7 @@ Heightfield load_bake(const std::filesystem::path& prefix) {
         field.set_cuts(std::move(cuts));
     }
     if (const std::filesystem::path holes = prefix.string() + ".holes"; std::filesystem::exists(holes)) {
-        field.set_holes(load_terrain_holes(holes));
+        field.set_hole_patches(load_terrain_hole_patches(holes));
     }
     return field;
 }

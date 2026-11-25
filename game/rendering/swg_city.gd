@@ -47,6 +47,8 @@ static func add_objects(parent: Node, prefix: String, camera_collision := false)
 				SwgColors.apply(models[model], SwgColors.load_colors(file), 0)
 			if camera_collision and models[model] != null and object.get("building", false):
 				SwgBuilding.add_camera_collision(models[model])
+			if models[model] != null:
+				_set_draw_distance(models[model], _draw_distance(object))
 		if models[model] == null:
 			continue
 		var node := (models[model] as Node3D).duplicate() as Node3D
@@ -145,6 +147,37 @@ static func _breathe(node: Node3D, seed: int) -> void:
 	idle.loop_mode = Animation.LOOP_LINEAR
 	player.play("idle")
 	player.seek(idle.length * fposmod(seed * 0.618034, 1.0), true)
+
+
+# How far an object is drawn (Stage 13: a planet's towns are kilometers
+# apart, and all of them are placed at once): buildings from across a town,
+# props less far, what's in rooms only from close by. Set on a model once;
+# its copies keep it.
+static func _draw_distance(object: Dictionary) -> float:
+	if object.get("building", false):
+		return 3000.0
+	if int(object.get("inside", -1)) >= 0:
+		return 150.0
+	if object.get("particles", false):
+		return 350.0
+	if object.get("creature", false):
+		return 500.0
+	return 1200.0
+
+
+static func _set_draw_distance(model: Node, distance: float) -> void:
+	if model is GeometryInstance3D:
+		(model as GeometryInstance3D).visibility_range_end = distance
+		(model as GeometryInstance3D).visibility_range_end_margin = distance * 0.05
+	for child: Node in model.find_children("*", "GeometryInstance3D", true, false):
+		(child as GeometryInstance3D).visibility_range_end = distance
+		(child as GeometryInstance3D).visibility_range_end_margin = distance * 0.05
+	# Rooms' lights only matter from close by.
+	for child: Node in model.find_children("*", "Light3D", true, false):
+		var light := child as Light3D
+		light.distance_fade_enabled = true
+		light.distance_fade_begin = minf(distance, 250.0)
+		light.distance_fade_length = 50.0
 
 
 static func _load_model(path: String) -> Node3D:

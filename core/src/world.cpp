@@ -343,7 +343,8 @@ void World::add_map_collision(const MapCollision& collision) {
         solids_.push_back(s);
     }
     // Rebuild the grid over every solid.
-    grid_.clear();
+    grid_start_.clear();
+    grid_items_.clear();
     if (solids_.empty()) {
         grid_w_ = grid_h_ = 0;
         return;
@@ -360,16 +361,28 @@ void World::add_map_collision(const MapCollision& collision) {
     grid_z0_ = min_z;
     grid_w_ = int((max_x - min_x) / grid_cell_) + 1;
     grid_h_ = int((max_z - min_z) / grid_cell_) + 1;
-    grid_.assign(size_t(grid_w_) * size_t(grid_h_), {});
-    for (uint32_t i = 0; i < solids_.size(); ++i) {
-        const Solid& s = solids_[i];
+    // Count each cell's solids, then file them (in solid order, as before).
+    const size_t cells = size_t(grid_w_) * size_t(grid_h_);
+    grid_start_.assign(cells + 1, 0);
+    const auto each_cell = [&](const Solid& s, auto&& f) {
         const int x0 = int((s.min_x - grid_x0_) / grid_cell_), x1 = int((s.max_x - grid_x0_) / grid_cell_);
         const int z0 = int((s.min_z - grid_z0_) / grid_cell_), z1 = int((s.max_z - grid_z0_) / grid_cell_);
         for (int gz = z0; gz <= z1; ++gz) {
             for (int gx = x0; gx <= x1; ++gx) {
-                grid_[size_t(gz) * size_t(grid_w_) + size_t(gx)].push_back(i);
+                f(size_t(gz) * size_t(grid_w_) + size_t(gx));
             }
         }
+    };
+    for (const Solid& s : solids_) {
+        each_cell(s, [&](size_t c) { ++grid_start_[c + 1]; });
+    }
+    for (size_t c = 0; c < cells; ++c) {
+        grid_start_[c + 1] += grid_start_[c];
+    }
+    grid_items_.resize(grid_start_[cells]);
+    std::vector<uint32_t> fill(grid_start_.begin(), grid_start_.end() - 1);
+    for (uint32_t i = 0; i < solids_.size(); ++i) {
+        each_cell(solids_[i], [&](size_t c) { grid_items_[fill[c]++] = i; });
     }
 }
 
@@ -395,7 +408,7 @@ size_t World::add_map_collision_of(const std::filesystem::path& bake) {
 
 template <class Visit>
 void World::for_solids(double min_x, double max_x, double min_z, double max_z, Visit&& visit) const {
-    if (grid_.empty()) {
+    if (grid_start_.empty()) {
         return;
     }
     const int x0 = std::max(0, int(std::floor((min_x - grid_x0_) / grid_cell_)));
@@ -404,7 +417,7 @@ void World::for_solids(double min_x, double max_x, double min_z, double max_z, V
     const int z1 = std::min(grid_h_ - 1, int(std::floor((max_z - grid_z0_) / grid_cell_)));
     for (int gz = z0; gz <= z1; ++gz) {
         for (int gx = x0; gx <= x1; ++gx) {
-            for (const uint32_t i : grid_[size_t(gz) * size_t(grid_w_) + size_t(gx)]) {
+            for (const uint32_t i : grid_cell(gx, gz)) {
                 if (present(solids_[i])) {
                     visit(solids_[i]);
                 }
@@ -415,7 +428,7 @@ void World::for_solids(double min_x, double max_x, double min_z, double max_z, V
 
 template <class Visit>
 void World::for_solids_along(Vec3 a, Vec3 b, Visit&& visit) const {
-    if (grid_.empty()) {
+    if (grid_start_.empty()) {
         return;
     }
     // Walk the cells the segment's XZ shadow crosses (Amanatides-Woo).
@@ -431,7 +444,7 @@ void World::for_solids_along(Vec3 a, Vec3 b, Visit&& visit) const {
     const int steps = std::abs(end_x - gx) + std::abs(end_z - gz);
     for (int i = 0; i <= steps; ++i) {
         if (gx >= 0 && gx < grid_w_ && gz >= 0 && gz < grid_h_) {
-            for (const uint32_t index : grid_[size_t(gz) * size_t(grid_w_) + size_t(gx)]) {
+            for (const uint32_t index : grid_cell(gx, gz)) {
                 if (present(solids_[index])) {
                     visit(solids_[index]);
                 }

@@ -124,17 +124,35 @@ static func build_material(prefix: String, meta: Dictionary) -> Material:
 	material.set_shader_parameter("map_spacing", float(meta["spacing"]))
 	material.set_shader_parameter("map_samples", samples)
 	# Where a city's rooms take the terrain away (swgtool export-city).
+	# A patch per town (core::save_terrain_hole_patches), one after another; up to 8.
 	var holes := FileAccess.get_file_as_bytes(prefix + ".holes")
-	if holes.size() > 40:
-		var width := holes.decode_s32(32)
-		var height := holes.decode_s32(36)
-		if holes.size() >= 40 + width * height:
-			var cell := holes.decode_double(24)
-			var image := Image.create_from_data(width, height, false, Image.FORMAT_R8, holes.slice(40, 40 + width * height))
-			material.set_shader_parameter("holes", ImageTexture.create_from_image(image))
-			material.set_shader_parameter("has_holes", true)
-			material.set_shader_parameter("holes_origin", Vector2(holes.decode_double(8), holes.decode_double(16)))
+	var at := 0
+	var patch := 0
+	var rects: Array[Vector4] = []
+	rects.resize(8)
+	while at + 40 <= holes.size() and patch < 8:
+		var width := holes.decode_s32(at + 32)
+		var height := holes.decode_s32(at + 36)
+		if width <= 0 or height <= 0 or holes.size() < at + 40 + width * height:
+			break
+		var cell := holes.decode_double(at + 24)
+		var origin := Vector2(holes.decode_double(at + 8), holes.decode_double(at + 16))
+		var image := Image.create_from_data(width, height, false, Image.FORMAT_R8,
+				holes.slice(at + 40, at + 40 + width * height))
+		var texture := ImageTexture.create_from_image(image)
+		if patch == 0:
+			material.set_shader_parameter("holes", texture)
+			material.set_shader_parameter("holes_origin", origin)
 			material.set_shader_parameter("holes_size", Vector2(width, height) * cell)
+		else:
+			material.set_shader_parameter("holes_%d" % patch, texture)
+		rects[patch] = Vector4(origin.x, origin.y, width * cell, height * cell)
+		at += 40 + width * height
+		patch += 1
+	if patch > 0:
+		material.set_shader_parameter("has_holes", true)
+		material.set_shader_parameter("holes_count", patch)
+		material.set_shader_parameter("holes_rects", rects)
 	return material
 
 

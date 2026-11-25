@@ -5,6 +5,7 @@
 #include <limits>
 #include <memory>
 #include <optional>
+#include <span>
 #include <vector>
 
 #include "swm/core/heightfield.h"
@@ -208,7 +209,16 @@ private:
     static constexpr double grid_cell_ = 4;  // meters
     double grid_x0_ = 0, grid_z0_ = 0;
     int grid_w_ = 0, grid_h_ = 0;
-    std::vector<std::vector<uint32_t>> grid_;  // solid indices per cell, rows along +Z
+    // Solid indices per cell, rows along +Z, packed (Stage 13: a planet's
+    // towns are kilometers apart, so most cells are empty; a vector each
+    // cost 24 bytes a cell): cell c's are grid_items_[grid_start_[c] ..
+    // grid_start_[c + 1]).
+    std::vector<uint32_t> grid_start_;
+    std::vector<uint32_t> grid_items_;
+    std::span<const uint32_t> grid_cell(int gx, int gz) const {
+        const size_t c = size_t(gz) * size_t(grid_w_) + size_t(gx);
+        return {grid_items_.data() + grid_start_[c], grid_items_.data() + grid_start_[c + 1]};
+    }
 };
 
 // A world on a bake (swgtool bake-terrain, or bf2tool export-map) with the
