@@ -1,0 +1,66 @@
+Z-fighting clothes: stormtrooper armor, female bith walking around in dress and artisan tuvi, wookie player character, teska vo, bolo dreel, rebel quartermaster
+
+male lekku are fixed per earlier issue in playtestingnotes.txt but female twilek lekku are not
+
+can we stagger idle animations on npcs so they arent all in sync
+
+earlier we were supposed to have gone and put everything in its real star wars galaxies spot. some things didnt get moved or are off. remember we want to find out for real from our gamefiles or the internet not confidently hallucinate
+war terminal: still just sitting at spawn
+rebel and imperial quartermaster: yes these might not have as direct equivalents, but we should find a better spot than middle of the road at spawn
+none of the trainers seem like they are in their actual galaxies positions. and some are in buildings i cant seem to enter
+i believe you that the terminal in the courtyard near tailor neena should be a crafting workbench, but then lets but the activation/icon directly on/over the terminal
+maybe we add a little quest chevron over mission terminals
+junk dealer and general store nside that ship port is weird, put them somewhere better, preferably where real galaxies vendors were, and save that area for later spaceship related stuff
+bacta tank icon and activation seems off of the actual bacta tank.
+bank icon and activation isnt over any specific terminal, should be a 4 different ones if those are all bank terminals
+Any kind of terminal out of all the terminals, if they arent covered later in this doc, tell me and we will come up with functionality for them and implement.
+
+I would like to obscure the loading in with a bf2 style loading screen, loading in from main and into multiplayer matches and back
+
+The starport seems to have like a giant boulder cutting into it
+
+Lets do an orange exclaimation point icon for completed quests
+
+no extracting in cities, including player cities once we have those, so within radius of a building really
+
+when craftig, the text that comes up at the bottom is cut off. also the text that comes up in the starting quest when getting to the cloning facility is too long and gets cut off at either side of the screen, same with the text for completing the wort hides quest
+
+when looting have it loot all if i press e/assigned loot button again and have it automatically harvest as well when i press that. not that harvesting seems to work, please look into that.
+
+give the shield bar a dark outline around it like the hhalth and stam bars have
+
+the image for my gun in the bottom left seems faint
+
+i want the mouse cursor to be the bf2 mouse cursor
+
+when i talk to a questgiver to complete a quest just give the quest completion text, dont have it open up an empty questgiver screen
+
+lets make speeder/mount an equipment slot and have a keybind summon/unsummon it
+
+death penalty in open world, none in place yet right? im thinking 10% of credits, full loot in certain zones later on
+
+we need to handle ammo in the open world. I think we make upper limit on stored ammo (equipped) 999 (99 for heavy) instead of the per weapon. ammo is per type, craftable by weaponsmiths as an item that stacks to 999 (or 99). eventuall ammo with different effects like buring/cryo, but we will avoid sheer powerscaling via ammo, no expensive/endgame ammo. once this system is fully worked out we extend it to the bf2 matches, you use your own ammo in those matches. ammo droids still required to refresh tactical/secondary weapons like grenades. in the open world, tactical/secondary should refresh 1 every 20 seconds, to be potentially reduced by gear/stats later, keeping same cap as in normal bf2 gameplay unless increased by some perk or ability later on.
+
+quest marker tracking doesnt seem to be working right for wort hides finding a wort pack, works fine for turnin though
+
+character model dissapears when occupying turret in bf2 matches
+
+we need rain effects for kamino, look at other weather effects for other planets.
+
+need to look at making it so in the open world only mobs within a certain radius of players is being simulated so our server costs arent massive once the actual giant planets are full of mobs, i want you to look at general server resource economy stuff before we put this online so correct me if im wrong
+
+I would like to eventually incorporate the other bf2 modes other than assualt or whatever
+
+You should get a notification in a bf2 style ui element every time a profession levels up
+
+there should be no q for normalized gear, only gear matters q for bf2 matches. also no adjustable dificulty, lock to what we are calling hard
+
+i want us to take data on all matches so eventual patterns can emerge like faction imbalance
+
+lets make it 5 loadouts instead of 3
+
+i want there to be  separate ground battle terminal and space battle terminal, with each in appropriate places. within each terminal, the only option for now should be galactic civil war and clone wars. yes that means i want you to implement all the clone wars maps if we havent.
+
+There are 4 factions with clone wars added, not 2. and I think faction rewards from the faction quartermaster should be cosmetic only. there should be a cosmetic override tab in the gear screen, so each loadout has its functional choices and its cosmetic choices.So FP becomes a cosmetic currency whereas credits is the power currency. and we need to come up with ranks for you to climb for each faction. When you gain points with a faction (fp gained also gets added to a faction rep for whoever you were fighting for), the opposite faction goes down by half the amount, so theoretically you can max everyone eventually. just use the numbers and ranks from world of warcraft (hated, unfriendly, neutral, friendly, honored, revered, exhalted, with the same numbers), and we can edit for balance and theme later.
+
+We need to generate a large pool of "stock characters" to populate our bot matches. they should be fully clothed in faction appropriate gear of varying combat strength, and have faction appropriate names and a set of 5 loadouts. Rebels should be from across a wide variety of species. CIS droids should basically be a full body cosmetic override (things you can buy at faction quartermaster). We can bring in bf2 character and clothing models where we need to, like the cosmetics and bot gear for clones there probably isnt much galaxies assets for. Anyways, this will solve our hordes of naked men problem once and for all.
