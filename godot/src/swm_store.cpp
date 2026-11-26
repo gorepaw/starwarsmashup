@@ -70,6 +70,32 @@ godot::Dictionary to_dict(const core::CharacterLoadout& lo) {
     return out;
 }
 
+godot::Array modifier_array(const std::vector<core::StatModifier>& modifiers) {
+    godot::Array mods;
+    for (const core::StatModifier& m : modifiers) {
+        godot::Dictionary md;
+        const std::string_view sname = core::stat_name(m.stat);
+        md["stat_name"] = godot::String::utf8(sname.data(), int(sname.size()));
+        md["add"] = m.add;
+        md["multiply"] = m.multiply;
+        mods.push_back(md);
+    }
+    return mods;
+}
+
+godot::Dictionary hit_effect_dict(const core::HitEffect& e) {
+    godot::Dictionary out;
+    out["id"] = godot::String::utf8(e.id.c_str());
+    out["name"] = godot::String::utf8(e.name.c_str());
+    out["chance"] = e.chance;
+    out["duration"] = e.duration;
+    out["damage_per_second"] = e.damage_per_second;
+    const std::string_view dt = core::damage_type_name(e.damage_type);
+    out["damage_type"] = godot::String::utf8(dt.data(), int(dt.size()));
+    out["modifiers"] = modifier_array(e.modifiers);
+    return out;
+}
+
 // A perk in words: "+2% run speed", "5% tighter spread".
 godot::String perk_line(const core::StatModifier& m) {
     std::string name(core::stat_name(m.stat));
@@ -78,6 +104,8 @@ godot::String perk_line(const core::StatModifier& m) {
         what = name == "mitigation" ? "resistance to everything" : name.substr(11) + " resistance";
     } else if (name == "explosion_push_resist") {
         what = "blast knockback resistance";
+    } else if (name == "effect_resistance") {
+        what = "resistance to debuffs";
     } else {
         for (char& c : what) {
             if (c == '_') c = ' ';
@@ -85,7 +113,8 @@ godot::String perk_line(const core::StatModifier& m) {
     }
     char text[96];
     if (m.add != 0) {
-        const bool share = name.rfind("mitigation", 0) == 0 || name == "explosion_push_resist";
+        const bool share = name.rfind("mitigation", 0) == 0 || name == "explosion_push_resist" ||
+                           name == "effect_resistance" || name == "healing_received" || name == "ability_cooldown";
         if (share) {
             std::snprintf(text, sizeof text, "%+.1f%% %s", m.add * 100, what.c_str());
         } else {
@@ -113,6 +142,14 @@ godot::String perk_line(const core::WeaponModifier& m) {
     case core::WeaponModifier::speed: what = less ? "faster swings" : "slower swings"; break;
     case core::WeaponModifier::lunge: what = less ? "shorter lunge" : "stronger lunge"; break;
     case core::WeaponModifier::disrupt: what = less ? "weaker shield disruption" : "stronger shield disruption"; break;
+    case core::WeaponModifier::velocity: what = less ? "slower bolts" : "faster bolts"; break;
+    case core::WeaponModifier::headshot: what = less ? "less headshot damage" : "more headshot damage"; break;
+    case core::WeaponModifier::crit: what = less ? "less critical hit chance" : "more critical hit chance"; break;
+    case core::WeaponModifier::vehicle: what = less ? "less damage to vehicles" : "more damage to vehicles"; break;
+    case core::WeaponModifier::shield: what = less ? "less damage to shields" : "more damage to shields"; break;
+    case core::WeaponModifier::swap: what = less ? "faster weapon swap" : "slower weapon swap"; break;
+    case core::WeaponModifier::recoil: what = less ? "less recoil" : "more recoil"; break;
+    case core::WeaponModifier::aim: what = less ? "slower aiming down sights" : "faster aiming down sights"; break;
     }
     char text[96];
     std::snprintf(text, sizeof text, "%.0f%% %s", pct, what);
@@ -153,6 +190,9 @@ godot::Dictionary to_dict(const core::ItemDef& d, const core::ItemCatalog& catal
         out["damage_type"] = godot::String::utf8(dt.data(), int(dt.size()));
     }
     out["model"] = godot::String::utf8(d.model_path.c_str());
+    if (const core::HitEffect* e = d.hit_effect.empty() ? nullptr : catalog.hit_effect(d.hit_effect)) {
+        out["hit_effect"] = hit_effect_dict(*e);
+    }
 
     godot::Array mods;
     for (const core::StatModifier& m : d.modifiers) {
@@ -647,6 +687,15 @@ godot::Dictionary SwmCharacterStore::resolve_item_stats(const godot::String& def
         out["shield_disrupt"] = w.shield_disrupt;
         const std::string_view dt_name = core::damage_type_name(w.damage_type);
         out["damage_type"] = godot::String::utf8(dt_name.data(), int(dt_name.size()));
+        out["headshot_multiplier"] = w.headshot_multiplier;
+        out["crit_chance"] = w.crit_chance;
+        out["crit_multiplier"] = w.crit_multiplier;
+        out["vehicle_factor"] = w.vehicle_factor;
+        out["shield_factor"] = w.shield_factor;
+        out["swap_time"] = w.swap_time;
+        out["recoil"] = w.recoil;
+        out["aim_speed"] = w.aim_speed;
+        if (w.hit_effect) out["hit_effect"] = hit_effect_dict(*w.hit_effect);
     }
     const core::Gear g = catalog_.resolve_gear(*def, quality, apply_quality);
     godot::Array mods;
@@ -701,6 +750,9 @@ godot::Dictionary SwmCharacterStore::compute_loadout_stats(const godot::String& 
     out["mitigation_bio"] = stats.mitigation_by_type[size_t(core::DamageType::bio)];
     out["mitigation_explosive"] = stats.mitigation_by_type[size_t(core::DamageType::explosive)];
     out["mitigation_melee"] = stats.mitigation_by_type[size_t(core::DamageType::melee)];
+    out["healing_received"] = stats.healing_received;
+    out["ability_cooldown"] = stats.ability_cooldown;
+    out["effect_resistance"] = stats.effect_resistance;
     return out;
 }
 

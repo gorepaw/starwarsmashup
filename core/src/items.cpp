@@ -309,17 +309,62 @@ void apply_bolt_color(WeaponDef& target, std::string_view color_name) {
     }
 }
 
+// What an item (a weapon, or the ammo it fires) adds to a weapon beyond its
+// damage, rate, heat and spread: bolt speed, headshots and crits, damage to
+// vehicles and shields, handling, and its hits' effect.
+void apply_item_extras(WeaponDef& w, const ItemDef& def, const HitEffect* effect) {
+    if (const double v = std::max(0.1, def.velocity_mult); v != 1.0 && w.projectile != Projectile::grenade &&
+                                                         w.projectile != Projectile::melee) {
+        w.bolt_speed *= v;
+        w.bolt_life /= v;  // as far as before, sooner
+        w.damage_transition_delay /= v;
+        w.damage_transition_period /= v;
+    }
+    w.headshot_multiplier *= std::max(0.0, def.headshot_mult);
+    w.crit_chance = std::clamp(w.crit_chance + def.crit_chance, 0.0, 1.0);
+    if (def.crit_mult > 0) w.crit_multiplier = def.crit_mult;
+    w.vehicle_factor *= std::max(0.0, def.vehicle_mult);
+    w.explosion_vehicle_factor *= std::max(0.0, def.vehicle_mult);
+    w.shield_factor *= std::max(0.0, def.shield_mult);
+    w.swap_time *= std::max(0.0, def.swap_mult);
+    if (def.recoil >= 0) w.recoil = def.recoil;
+    w.aim_speed *= std::max(0.1, def.aim_speed_mult);
+    if (effect != nullptr) w.hit_effect = *effect;
+}
+
 } // namespace
 
 void ItemCatalog::load(const std::filesystem::path& catalog_ini, const std::filesystem::path& bf2_items_dir) {
     items_.clear();
     index_.clear();
     bf2_bases_.clear();
+    hit_effects_.clear();
 
     const Ini ini = Ini::load(catalog_ini);
     const std::string where = catalog_ini.string();
 
     for (const Ini::Section& s : ini.sections()) {
+        if (s.name == "hit_effect") {
+            HitEffect e;
+            e.id = s.get("Id").value_or("");
+            if (e.id.empty()) {
+                throw std::runtime_error(where + ": [hit_effect] missing Id");
+            }
+            e.name = s.get("Name").value_or(e.id);
+            e.chance = std::clamp(s.number("Chance", 1.0), 0.0, 1.0);
+            e.duration = std::max(0.0, s.number("Duration", 0.0));
+            e.damage_per_second = std::max(0.0, s.number("DamagePerSecond", 0.0));
+            if (const auto dt = s.get("DamageType")) {
+                const auto type = damage_type_from_name(*dt);
+                if (!type) throw std::runtime_error(where + ": unknown DamageType '" + *dt + "' on " + e.id);
+                e.damage_type = *type;
+            }
+            for (const auto& [k, v] : s.values) {
+                if (k == "Modifier") e.modifiers.push_back(parse_catalog_modifier(v, where + " (" + e.id + ")"));
+            }
+            hit_effects_.push_back(std::move(e));
+            continue;
+        }
         if (s.name != "item") {
             continue;
         }
@@ -409,6 +454,16 @@ void ItemCatalog::load(const std::filesystem::path& catalog_ini, const std::file
         def.melee_lunge = s.number("MeleeLunge", 0.0);
         def.melee_stagger = s.number("MeleeStagger", 0.0);
         def.shield_disrupt = s.number("ShieldDisrupt", 0.0);
+        def.velocity_mult = s.number("VelocityMult", 1.0);
+        def.headshot_mult = s.number("HeadshotMult", 1.0);
+        def.crit_chance = s.number("CritChance", 0.0);
+        def.crit_mult = s.number("CritMult", 0.0);
+        def.vehicle_mult = s.number("VehicleMult", 1.0);
+        def.shield_mult = s.number("ShieldMult", 1.0);
+        def.swap_mult = s.number("SwapMult", 1.0);
+        def.recoil = s.number("Recoil", -1.0);
+        def.aim_speed_mult = s.number("AimSpeedMult", 1.0);
+        def.hit_effect = s.get("OnHit").value_or("");
         if (const auto dt = s.get("DamageType")) {
             def.damage_type = damage_type_from_name(*dt);
         }
@@ -430,6 +485,18 @@ void ItemCatalog::load(const std::filesystem::path& catalog_ini, const std::file
         index_[def.id] = items_.size();
         items_.push_back(std::move(def));
     }
+    for (const ItemDef& def : items_) {
+        if (!def.hit_effect.empty() && hit_effect(def.hit_effect) == nullptr) {
+            throw std::runtime_error(where + ": " + def.id + " has OnHit = " + def.hit_effect + ", no [hit_effect] of that Id");
+        }
+    }
+}
+
+const HitEffect* ItemCatalog::hit_effect(std::string_view id) const {
+    for (const HitEffect& e : hit_effects_) {
+        if (e.id == id) return &e;
+    }
+    return nullptr;
 }
 
 const ItemDef* ItemCatalog::find(std::string_view id) const {
@@ -489,6 +556,7 @@ WeaponDef ItemCatalog::resolve_weapon(const ItemDef& def, double quality, bool a
         w.damage_type = *def.damage_type;
     }
     apply_bolt_color(w, def.bolt_color_name);
+    apply_item_extras(w, def, def.hit_effect.empty() ? nullptr : hit_effect(def.hit_effect));
     w.modifiers = def.modifiers;
     return w;
 }
@@ -583,6 +651,8 @@ Loadout ItemCatalog::build_loadout(const CharacterLoadout& cl, std::span<const I
             opt_w->spread_per_shot *= adef->spread_mult;
             if (adef->damage_type) opt_w->damage_type = *adef->damage_type;
             apply_bolt_color(*opt_w, adef->bolt_color_name);
+            // Burning, cryo, ion: the ammo's effect is every gun's firing it.
+            apply_item_extras(*opt_w, *adef, adef->hit_effect.empty() ? nullptr : hit_effect(adef->hit_effect));
         }
     };
     apply_ammo_slot("ammo_standard", AmmoClass::standard);

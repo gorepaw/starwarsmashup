@@ -42,6 +42,9 @@ enum class Stat : uint8_t {
     shield_recharge,
     shield_delay,
     explosion_push_resist,
+    healing_received,   // times every heal taken (1: as given)
+    ability_cooldown,   // times every ability's cooldown (below 1: sooner)
+    effect_resistance,  // share of a hostile effect's (a debuff's) time shrugged off
 };
 
 std::optional<Stat> stat_from_name(std::string_view name);
@@ -69,6 +72,9 @@ struct CharacterStats {
     double shield_recharge = 0;
     double shield_delay = 5.0;
     double explosion_push_resist = 0;
+    double healing_received = 1;
+    double ability_cooldown = 1;
+    double effect_resistance = 0;  // 0..max_mitigation
 };
 
 // The most of any damage mitigation can absorb.
@@ -91,6 +97,21 @@ enum class Projectile : uint8_t { bolt, missile, grenade, melee };
 // bowcasters the bowcaster. And its animation set by its kind.
 std::string default_weapon_model(std::string_view name);
 std::string default_anim_set(std::string_view name, bool missile);
+
+// What a hit leaves on its target, besides its damage: burning, chilled,
+// ionized (an ammo's, mostly; game/items/swg_catalog.ini's [hit_effect]s).
+// A character gets it as a debuff (a TimedEffect: the same id refreshes,
+// never stacks), its time shortened by its effect_resistance; an NPC, as a
+// snare (its speed: the run_speed multiplier) and damage over time.
+struct HitEffect {
+    std::string id;
+    std::string name;
+    double chance = 1;             // of each hit (each pellet)
+    double duration = 0;           // seconds
+    double damage_per_second = 0;
+    DamageType damage_type = DamageType::laser;
+    std::vector<StatModifier> modifiers;  // while it lasts
+};
 
 enum class AmmoClass : uint8_t { none, standard, heavy };
 inline constexpr int max_standard_ammo = 999;
@@ -198,6 +219,23 @@ struct WeaponDef {
     double melee_lunge = 5.0;
     double melee_stagger = 0.35;
     double shield_disrupt = 2.5;
+    // A hit in the head does this many times the damage (combat.h's
+    // headshot_multiplier unless the weapon says).
+    double headshot_multiplier = 2.0;
+    // A hit (each pellet) is critical with this chance, doing this many times
+    // the damage (after a headshot's). 0: never.
+    double crit_chance = 0;
+    double crit_multiplier = 1.5;
+    // Damage to a Deflector Shield (PSG) times this (vehicles: vehicle_factor).
+    double shield_factor = 1;
+    // Seconds to bring it up from the other held weapon (combat.h's weapon_switch_time).
+    double swap_time = 0.4;
+    // Degrees a shot kicks the shooter's aim up (a player's camera; 0: none).
+    double recoil = 0;
+    // How fast it's brought up to aim down (zoomed): times the standard.
+    double aim_speed = 1;
+    // What its hits leave on their target, if anything (its ammo's).
+    std::optional<HitEffect> hit_effect;
     // Looks only (clients draw bolts, models and effects however their settings allow).
     std::array<double, 4> bolt_color{253 / 255.0, 43 / 255.0, 43 / 255.0, 100 / 255.0};  // LaserGlowColor
     double bolt_length = 1.0;        // LaserLength, m

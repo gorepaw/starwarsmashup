@@ -574,7 +574,8 @@ private:
     void advance_pickups();
     void drop_pickup(Vec3 at);
     double random_unit();
-    void damage(Client& victim, double raw, DamageType type, uint32_t attacker, double shield_disrupt = 0.0);
+    void damage(Client& victim, double raw, DamageType type, uint32_t attacker, double shield_disrupt = 0.0,
+                double shield_factor = 1.0);
     void damage_npc(Npc& npc, double raw, DamageType type, uint32_t attacker);
     Npc* find_npc(uint32_t entity);
     const Npc* find_npc(uint32_t entity) const;
@@ -672,6 +673,14 @@ private:
     bool use_ability(Client& client, const AbilityDef& ability, uint32_t target, Vec3 at);
     void finish_channel(Client& client);
     void give_effect(Client& client, TimedEffect effect);
+    // A hit's effect (the weapon's, its ammo's), if it lands: a debuff on a
+    // character, a snare and damage over time on an NPC.
+    void give_hit_effect(const WeaponDef& weapon, uint32_t attacker, Client& victim);
+    void give_hit_effect(const WeaponDef& weapon, uint32_t attacker, Npc& victim);
+    void update_effects(Client& client, double dt);
+    void update_npc_effects(double dt);
+    // Heals by `amount` times the character's healing_received, up to full; returns how much.
+    double heal(Client& client, double amount);
     int specialist_level(const Client& client, const std::string& profession) const;
     void earn_specialist_xp(Client& client, const std::string& profession, int64_t xp);
     bool is_enemy(const Client& a, uint32_t entity) const;

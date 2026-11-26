@@ -65,7 +65,13 @@ std::optional<WeaponArchetype> weapon_archetype_from_name(std::string_view name)
 std::optional<ItemKind> item_kind_from_name(std::string_view name);
 std::string_view item_kind_name(ItemKind k);
 
-// Static item definition loaded from game/items/swg_catalog.ini.
+// Static item definition loaded from game/items/swg_catalog.ini. Weapon
+// keys (multipliers over the archetype's Battlefront weapon): DamageMult,
+// RateMult, HeatMult, SpreadMult, RangeMult, ClipMult, ReloadMult,
+// VelocityMult, HeadshotMult, VehicleMult, ShieldMult, SwapMult,
+// AimSpeedMult; and CritChance, CritMult, Recoil (degrees), OnHit (a
+// [hit_effect]'s Id). Ammo takes the same (its OnHit goes to every gun
+// firing it).
 struct ItemDef {
     std::string id;
     std::string display_name;
@@ -100,6 +106,16 @@ struct ItemDef {
     double melee_lunge = 0.0;
     double melee_stagger = 0.0;
     double shield_disrupt = 0.0;
+    double velocity_mult = 1.0;  // >1 faster bolts (over the same reach)
+    double headshot_mult = 1.0;  // times the base headshot multiplier
+    double crit_chance = 0.0;    // added to the weapon's (0: none)
+    double crit_mult = 0.0;      // the crit multiplier, if > 0
+    double vehicle_mult = 1.0;   // damage to vehicles
+    double shield_mult = 1.0;    // damage to Deflector Shields
+    double swap_mult = 1.0;      // >1 slower to bring up
+    double recoil = -1;          // degrees of kick a shot (-1: the archetype's)
+    double aim_speed_mult = 1.0; // >1 faster to aim down
+    std::string hit_effect;      // a [hit_effect]'s Id ("" none): ammo's, mostly
     std::optional<DamageType> damage_type;
     std::string bolt_color_name;  // optional red/blue/green/yellow
 
@@ -143,6 +159,9 @@ public:
 
     const ItemDef* find(std::string_view id) const;
     const std::vector<ItemDef>& all() const { return items_; }
+    // A [hit_effect] section's effect by its Id; nullptr if there's none.
+    const HitEffect* hit_effect(std::string_view id) const;
+    const std::vector<HitEffect>& hit_effects() const { return hit_effects_; }
 
     WeaponDef resolve_weapon(const ItemDef& def, double quality = 0.5, bool apply_quality = true) const;
     Gear resolve_gear(const ItemDef& def, double quality = 0.5, bool apply_quality = true) const;
@@ -152,6 +171,7 @@ public:
 private:
     std::vector<ItemDef> items_;
     std::map<std::string, size_t, std::less<>> index_;
+    std::vector<HitEffect> hit_effects_;
     std::map<std::string, WeaponDef, std::less<>> bf2_bases_;
 };
 

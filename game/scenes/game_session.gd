@@ -1352,6 +1352,20 @@ func _update_camera(target: Vector3, delta: float) -> void:
 	_camera.look_at(pivot + basis * Vector3(CAMERA_SHOULDER, 0, -10), Vector3.UP)
 
 
+# A shot's recoil: the weapon's degrees kick the player's aim up (a little
+# to a side), steadier crouched. Bots aim for themselves.
+func _kick(slot: int) -> void:
+	if _bot != "" or slot >= _weapons.size():
+		return
+	var recoil := float((_weapons[slot] as Dictionary).get("recoil", 0.0))
+	if recoil <= 0.0:
+		return
+	if bool(_client.get_presented().get("crouched", false)):
+		recoil /= 1.4  # (combat.h's crouch_aim_factor)
+	_pitch = clampf(_pitch + deg_to_rad(recoil), -1.2, 0.6)
+	_yaw += deg_to_rad(recoil) * randf_range(-0.3, 0.3)
+
+
 func _zoom_steps() -> Array[float]:
 	var steps: Array[float] = []
 	if _weapon >= _weapons.size() or (_weapons[_weapon] as Dictionary).is_empty():
@@ -1376,7 +1390,9 @@ func _update_zoom(delta: float) -> bool:
 			or float(own.get("roll", 0.0)) > 0.0 or _zoom_step > steps.size():
 		_zoom_step = 0
 	var target := steps[_zoom_step - 1] if _zoom_step > 0 else 1.0
-	_zoom = lerpf(_zoom, target, minf(1.0, ZOOM_RATE * delta))
+	var weapon_now: Dictionary = _weapons[_weapon] if _weapon < _weapons.size() else {}
+	var rate := ZOOM_RATE * float(weapon_now.get("aim_speed", 1.0))  # (its aim-down-sights speed)
+	_zoom = lerpf(_zoom, target, minf(1.0, rate * delta))
 	if absf(_zoom - target) < 0.01:
 		_zoom = target
 	var base := deg_to_rad(_settings.field_of_view)
@@ -1537,6 +1553,7 @@ func _update_bolts(delta: float) -> void:
 				own_soldier.throw()
 			else:
 				own_soldier.fire()
+				_kick(int(shot["weapon"]))
 			offset = own_soldier.muzzle() - origin
 		if str(shot.get("projectile", "")) == "melee":
 			if _audio != null:

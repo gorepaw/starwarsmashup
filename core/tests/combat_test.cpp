@@ -151,6 +151,17 @@ void test_switch_and_spread() {
     CHECK(hold(state, loadout, MoveInput::fire, 12, sequence, 1) == 0 && state.combat.weapon == 1);
     CHECK(hold(state, loadout, MoveInput::fire, 2, sequence, 1) == 1);
 
+    // A weapon's own swap time: this pistol comes up in 0.2 s (6 ticks).
+    {
+        Loadout quick = loadout;
+        quick.weapons[sidearm_slot]->swap_time = 0.2;
+        MoveState q;
+        reset_loadout(q, quick, stats_for(quick));
+        uint32_t seq = 0;
+        CHECK(hold(q, quick, MoveInput::fire, 6, seq, 1) == 0 && q.combat.weapon == 1);
+        CHECK(hold(q, quick, MoveInput::fire, 2, seq, 1) == 1);
+    }
+
     // Spread is deterministic per input, and within the cone.
     MoveState a, b;
     reset_loadout(a, loadout, stats_for(loadout));
@@ -707,6 +718,66 @@ void test_deflector_shield() {
     }
 }
 
+// Headshots and crits by the weapon; damage to shields by its factor.
+void test_hit_damage_and_shield_factor() {
+    WeaponDef w;
+    CHECK(near(hit_damage(w, 60, false, 0.0), 60) && near(hit_damage(w, 60, true, 0.0), 120));
+    w.headshot_multiplier = 3;
+    w.crit_chance = 0.25;
+    w.crit_multiplier = 2;
+    CHECK(near(hit_damage(w, 60, true, 0.5), 180));   // no crit (0.5 >= 0.25)
+    CHECK(near(hit_damage(w, 60, false, 0.1), 120));  // a crit
+    CHECK(near(hit_damage(w, 60, true, 0.1), 360));   // both
+    CHECK(!hit_effect_lands(w, 0.0));
+    w.hit_effect = HitEffect{"burning", "Burning", 0.5, 3, 12, DamageType::laser, {}};
+    CHECK(hit_effect_lands(w, 0.4) && !hit_effect_lands(w, 0.6));
+
+    // A shield-breaker (x2): 60 damage takes 120 shield points.
+    double shield = 100;
+    const auto h1 = apply_shield_damage(shield, 40.0, DamageType::laser, 0.0, 2.0);
+    CHECK(near(shield, 20.0) && near(h1.shield_damage, 80.0) && near(h1.health_damage, 0.0));
+    const auto h2 = apply_shield_damage(shield, 40.0, DamageType::laser, 0.0, 2.0);  // 20 points stop 10 damage
+    CHECK(near(shield, 0.0) && near(h2.shield_damage, 20.0) && near(h2.health_damage, 30.0));
+    shield = 100;  // half as good against shields
+    const auto h3 = apply_shield_damage(shield, 60.0, DamageType::laser, 0.0, 0.5);
+    CHECK(near(shield, 70.0) && near(h3.health_damage, 0.0));
+
+    // New character statistics, by name, through gear.
+    CHECK(stat_from_name("healing_received") == Stat::healing_received);
+    CHECK(stat_from_name("ability_cooldown") == Stat::ability_cooldown);
+    CHECK(stat_from_name("effect_resistance") == Stat::effect_resistance);
+    Loadout geared;
+    geared.gear.push_back({"medkit", "belt",
+                           {{Stat::healing_received, 0, 1.25}, {Stat::ability_cooldown, 0, 0.8}, {Stat::effect_resistance, 2.0}}});
+    const CharacterStats s = stats_for(geared);
+    CHECK(near(s.healing_received, 1.25) && near(s.ability_cooldown, 0.8) && near(s.effect_resistance, max_mitigation));
+    CHECK(near(stats_for(Loadout{}).healing_received, 1) && near(stats_for(Loadout{}).effect_resistance, 0));
+}
+
+// A hit's effect on a character: burning (12 a second for 3 s) after a
+// 60-damage bolt, its time halved by effect resistance. The arena's server
+// has no professions' abilities: effects tick anyway.
+void test_hit_effects() {
+    for (const double resist : {0.0, 0.5}) {
+        WeaponDef rifle;
+        rifle.hit_effect = HitEffect{"burning", "Burning", 1.0, 3.0, 12.0, DamageType::laser, {}};
+        Loadout carried;
+        carried.weapons[primary_slot] = rifle;
+        if (resist > 0) carried.gear.push_back({"suit", "chest", {{Stat::effect_resistance, resist}}});
+        Arena arena(0, 0.5, {}, carried);
+        arena.run(0.5, [] {});
+        const uint32_t b = arena.b.entity_id();
+        arena.run(1.0 / 30, [&] { arena.a.set_input(arena.a_aims_at_b(true)); });
+        arena.run(0.3, [&] { arena.a.set_input(arena.a_aims_at_b(false)); });
+        const double early = 400 - arena.server.health_of(b);
+        CHECK(early > 60 && early < 60 + 12 * 3 * (1 - resist));  // the bolt, and burning under way
+        arena.run(4.0, [&] { arena.a.set_input(arena.a_aims_at_b(false)); });
+        const double lost = 400 - arena.server.health_of(b);
+        std::printf("burning with %.0f%% resistance: %.1f damage\n", resist * 100, lost);
+        CHECK(near(lost, 60 + 12 * 3 * (1 - resist), 0.5));
+    }
+}
+
 void test_melee_combat() {
     WeaponDef blade;
     blade.name = "vibroblade";
@@ -868,6 +939,8 @@ void test_unified_ammo() {
 } // namespace
 
 int main() {
+    test_hit_damage_and_shield_factor();
+    test_hit_effects();
     test_loadout_files();
     test_rifle();
     test_heat();

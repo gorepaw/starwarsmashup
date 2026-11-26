@@ -7,7 +7,7 @@ Battlefront's combat never had a persistent world behind it. Galaxies' world nev
 ## Pillars
 
 1. **The world is the map.** Conquest command posts sit on real planet terrain: faction bases, player cities, outposts. The Galactic Civil War becomes literal Battlefront matches over territory players built.
-2. **Horizontal progression.** Aim matters in a shooter, so professions widen your options (weapons, gadgets, vehicles, abilities) instead of creating large stat gaps between players.
+2. **Gear matters, within a flat curve.** Professions widen your options (weapons, gadgets, vehicles, abilities), and gear makes you stronger, but only so far: a player in maxed level-100 gear is about twice a fresh level-1 character (double the health, double the damage), not the hundredfold gap of a classic MMO. Aim still decides most fights.
 3. **Galaxies depth, transparently.** Skill trees, spawning resources with stats, crafting experimentation, and a player economy, with the numbers visible: resource stat tooltips, shown experimentation odds, a skill planner in the game.
 4. **Housing and cities matter.** Placed structures are real geography. In faction zones they can be defended or contested.
 5. **Original assets, modern light.** Meshes and textures stay as shipped. Lighting, atmosphere, and rendering are modern.
@@ -30,7 +30,7 @@ Battlefront's combat never had a persistent world behind it. Galaxies' world nev
 
 - **Open-world combat:** PvE (creatures, NPC factions) and opt-in faction PvP.
 - **Conquest battles:** command-post battles fought in the world over contested territory, plus instanced battles (for example 32v32) launched from the world, whose results feed back into it.
-- **Bots:** AI soldiers fill battles, as in Battlefront. They make solo play and testing possible and keep matches full when few players are online.
+- **Bots:** AI soldiers fill battles, as in Battlefront. They make solo play and testing possible and keep matches full when few players are online. Their AI always plays at Hard; **gear is the lever on their strength**. Matchmaking evens sides by gear: a team facing a player in level-100 gear gets a bot in level-100 gear.
 
 ## Battles and hubs
 
@@ -40,20 +40,21 @@ Battlefront's combat never had a persistent world behind it. Galaxies' world nev
 
 ## Weapons and loadouts
 
-Galaxies has hundreds of weapons and dozens of armor sets. Battlefront has about five weapons per class. The goal is Galaxies' variety without stat gaps that decide fights before they start.
+Galaxies has hundreds of weapons and dozens of armor sets. Battlefront has about five weapons per class. The goal is Galaxies' variety, with gear that matters but never decides a fight on its own.
 
 - **Models from Galaxies, feel from Battlefront:** every weapon is a Galaxies model. Battlefront II defines how it handles, plus its effects and sounds.
 - **Archetypes:** each weapon maps to a Battlefront handling type (automatic blaster, burst rifle, sniper, scatter, launcher, etc.). The archetype decides how it feels: fire mode, projectile, overheating.
-- **Sidegrades:** weapons within an archetype trade off rate of fire, damage, heat, accuracy, and range within a narrow band. Different, not strictly better.
-- **Quality:** crafted quality (later) moves stats slightly within the band. This is where Galaxies-style experimentation lives.
-- **Two queue types:**
-  - **Standard:** quality is flattened. Only the sidegrade choice matters.
-  - **Gear:** quality counts. The Galactic Civil War, and eventually open-world conquest.
-- **Three loadouts:** each character keeps up to three, each a full kit. In a match they're the classes you choose from when you spawn. In the world, switching between them takes several seconds.
+- **Sidegrades:** at the same level, weapons within an archetype trade off rate of fire, damage, heat, accuracy, and range. Different, not strictly better.
+- **Power curve:** gear has level requirements, and higher-level gear is stronger, but the whole range from level 1 to level 100 spans about 2x in each stat (health, damage and so on). Quality (crafting, loot) moves stats a little within an item's level.
+- **Matches count gear:** there is one queue, and gear counts in it. Bots' gear balances the sides (see Bots).
+- **Open-world PvE widens the gap:** in the open world, a silent level-based modifier scales damage and toughness by the difference in level between a player and the creatures and NPCs they fight, so a level-1 character can't take on endgame content, even with good aim. It never applies between players: open-world PvP uses the same 2x curve as matches.
+- **Five loadouts:** each character keeps up to five, each a full kit. In a match they're the classes you choose from when you spawn. In the world, switching between them takes several seconds.
 - **Overheating** from Battlefront stays.
 - **Damage types:** ballistic, laser, electro, bio, explosive and melee.
 - **Gear slots, not classes:** a loadout is a primary weapon, a sidearm, a secondary (throwables and gadgets, used with their own button), armor, a universal **Deflector Shield (PSG)**, active profession specialization slots, and an optional companion slot, filled from the player's inventory and roster.
-- **Any gear can change any character statistic.** Armor mostly sets general damage mitigation, mitigation per damage type, movement speed and health; a heavy weapon could slow its carrier too.
+- **Any gear can change any character statistic.** Armor mostly sets general damage mitigation, mitigation per damage type, movement speed and health; a heavy weapon could slow its carrier too. Gear can also change healing received, ability cooldowns, and resistance to debuffs.
+- **What a weapon can vary:** damage and type, rate of fire, heat, spread, range and falloff, clip and reload, bolt speed, headshot multiplier, critical hit chance and multiplier, damage to vehicles and to Deflector Shields, swap time, recoil, aim-down-sights speed, and an on-hit effect. The keys are listed in `core/include/swm/core/items.h`.
+- **Ammo carries effects:** burning (damage over time), chilled (slowed) and ionized (no shield recharge) come from the ammo equipped in a loadout's ammo slot; every gun firing that ammo applies its effect. An effect refreshes rather than stacks, and debuff resistance shortens it. Later, a weapon or profession ability could treat standard ammo as an effect ammo.
 - **Getting gear before crafting exists:** faction quartermasters sell standard-issue gear for faction points earned in battle. Crafted gear supplements it later.
 - **Shooting range:** every hub has one for trying weapons before committing to them.
 

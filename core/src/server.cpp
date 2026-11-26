@@ -500,6 +500,14 @@ void GameServer::set_npc_pose(uint32_t entity, uint8_t pose) {
     if (Npc* npc = find_npc(entity)) npc->pose = pose;
 }
 
+double GameServer::heal(Client& client, double amount) {
+    if (client.life != Life::alive || amount <= 0) return 0;
+    const double before = client.health;
+    client.health = std::min(client.stats.max_health,
+                             client.health + amount * std::max(0.0, client.stats.healing_received));
+    return client.health - before;
+}
+
 void GameServer::heal_npc(uint32_t entity, double amount) {
     if (Npc* npc = find_npc(entity); npc && npc->life == Life::alive && amount > 0) {
         npc->health = std::min(npc->max_health, npc->health + amount);
@@ -1122,7 +1130,7 @@ void GameServer::handle(const net::Endpoint& from, const net::Datagram& datagram
                 } else if (def != nullptr && def->kind == ItemKind::supply && def->heal_amount > 0 &&
                     client->health < client->stats.max_health && store_->remove_item(use->item_id)) {
                     const double before = client->health;
-                    client->health = std::min(client->stats.max_health, client->health + def->heal_amount);
+                    heal(*client, def->heal_amount);
                     client->items = store_->list_items(client->character);
                     ++client->inventory_rev;
                     client->last_sync_tick = 0;
@@ -1801,7 +1809,7 @@ void GameServer::run_match() {
                 if (std::floor(now) == std::floor(now - dt / station.delay) || !station.reaches(client.state.position)) {
                     continue;
                 }
-                client.health = std::min(client.stats.max_health, client.health + station.health);
+                heal(client, station.health);
                 resupply(client.state, loadout_of(client), station.ammo);
             }
         }
@@ -2151,8 +2159,10 @@ void GameServer::fire(Client& shooter, const Shot& shot, double view_tick) {
                     damage(target, weapon.damage * 0.45, DamageType::melee, shooter.entity, 0.0);
                     target.state.energy = std::max(0.0, target.state.energy - 15.0);
                 } else {
-                    damage(target, weapon.damage, DamageType::melee, shooter.entity, weapon.shield_disrupt);
+                    damage(target, hit_damage(weapon, weapon.damage, false, random_unit()), DamageType::melee,
+                           shooter.entity, weapon.shield_disrupt, weapon.shield_factor);
                     target.state.stagger = std::max(target.state.stagger, float(weapon.melee_stagger));
+                    give_hit_effect(weapon, shooter.entity, target);
                 }
                 impacts_.push_back({shooter.entity, uint8_t(shot.weapon), target_pos + Vec3{0, 1.1, 0}, {0, 1, 0}, true});
             }
@@ -2162,7 +2172,9 @@ void GameServer::fire(Client& shooter, const Shot& shot, double view_tick) {
                 if (npc.hidden || npc.actor_kind < 2 || npc.life != Life::alive) continue;
                 double dist = 0;
                 if (in_arc(npc.state.position, npc.hit_radius, dist)) {
-                    damage_npc(npc, weapon.damage, DamageType::melee, shooter.entity);
+                    damage_npc(npc, hit_damage(weapon, weapon.damage, false, random_unit()), DamageType::melee,
+                               shooter.entity);
+                    give_hit_effect(weapon, shooter.entity, npc);
                     impacts_.push_back(
                         {shooter.entity, uint8_t(shot.weapon), npc.state.position + Vec3{0, 1.0, 0}, {0, 1, 0}, true});
                 }
@@ -2453,8 +2465,9 @@ void GameServer::advance_bolts() {
             // Less after a long flight; double in the head.
             const bool headshot = at.y >= victim_top - head_size;
             const double flown = def.bolt_life - bolt.life;
-            damage(*victim, bolt_damage(def, flown) * (headshot ? headshot_multiplier : 1.0), def.damage_type,
-                   bolt.owner);
+            damage(*victim, hit_damage(def, bolt_damage(def, flown), headshot, random_unit()), def.damage_type,
+                   bolt.owner, 0.0, def.shield_factor);
+            give_hit_effect(def, bolt.owner, *victim);
             if (def.explosion_damage > 0 && def.explosion_outer > 0) {
                 blasts.push_back({bolt, at, normal, false});
             } else {
@@ -2466,8 +2479,9 @@ void GameServer::advance_bolts() {
             const Vec3 at = from + (to - from) * *nearest;
             const bool headshot = hit_npc->actor_kind == 3 && at.y >= victim_top - head_size;
             const double flown = def.bolt_life - bolt.life;
-            damage_npc(*hit_npc, bolt_damage(def, flown) * (headshot ? headshot_multiplier : 1.0),
+            damage_npc(*hit_npc, hit_damage(def, bolt_damage(def, flown), headshot, random_unit()),
                        def.damage_type, bolt.owner);
+            give_hit_effect(def, bolt.owner, *hit_npc);
             if (def.explosion_damage > 0 && def.explosion_outer > 0) {
                 blasts.push_back({bolt, at, normal, false});
             } else {
@@ -2479,7 +2493,7 @@ void GameServer::advance_bolts() {
             const Vec3 at = from + (to - from) * *nearest;
             const bool headshot = at.y >= victim_top - head_size;
             const double flown = def.bolt_life - bolt.life;
-            damage_target(*hit_target, bolt_damage(def, flown) * (headshot ? headshot_multiplier : 1.0),
+            damage_target(*hit_target, hit_damage(def, bolt_damage(def, flown), headshot, random_unit()),
                           def.damage_type, bolt.owner);
             if (def.explosion_damage > 0 && def.explosion_outer > 0) {
                 blasts.push_back({bolt, at, normal, false});
@@ -2709,7 +2723,8 @@ void GameServer::explode(const Blast& blast, std::vector<Blast>& blasts) {
         const double amount = explosion_damage(def, blast.at, target_pos);
         if (amount > 0) {
             const DamageType blast_type = def.damage_type == DamageType::electro ? DamageType::electro : DamageType::explosive;
-            damage(target, amount, blast_type, bolt.owner);
+            damage(target, amount, blast_type, bolt.owner, 0.0, def.shield_factor);
+            give_hit_effect(def, bolt.owner, target);
         }
     }
     if (bolt.team != hostile_npc_team) {
@@ -2718,6 +2733,7 @@ void GameServer::explode(const Blast& blast, std::vector<Blast>& blasts) {
             const double amount = explosion_damage(def, blast.at, npc.state.position);
             if (amount > 0) {
                 damage_npc(npc, amount, DamageType::explosive, bolt.owner);
+                give_hit_effect(def, bolt.owner, npc);
             }
         }
     }
@@ -2826,7 +2842,8 @@ void GameServer::damage_target(RangeTarget& target, double raw, DamageType, uint
 
 // Damage after the victim's mitigation (its armor, mostly), absorbed by any
 // active Deflector Shield before reaching health.
-void GameServer::damage(Client& victim, double raw, DamageType type, uint32_t attacker, double shield_disrupt) {
+void GameServer::damage(Client& victim, double raw, DamageType type, uint32_t attacker, double shield_disrupt,
+                        double shield_factor) {
     const double amount = mitigated_damage(victim.stats, raw, type);
     if (victim.life != Life::alive || amount <= 0) {
         return;
@@ -2836,7 +2853,7 @@ void GameServer::damage(Client& victim, double raw, DamageType type, uint32_t at
         victim.switch_remaining = 0.0;
         notify(victim.entity, "Loadout switch interrupted!");
     }
-    const ShieldHitResult hit = apply_shield_damage(victim.shield, amount, type, shield_disrupt);
+    const ShieldHitResult hit = apply_shield_damage(victim.shield, amount, type, shield_disrupt, shield_factor);
     victim.shield_recharge_timer = std::max(victim.shield_recharge_timer, victim.stats.shield_delay);
     if (hit.disrupt_seconds > 0) {
         victim.shield_disrupt_timer = std::max(victim.shield_disrupt_timer, hit.disrupt_seconds);
@@ -2970,7 +2987,7 @@ void GameServer::advance_pickups() {
             // else, as in Battlefront.
             bool used = false;
             if (def.health > 0 && client.health < client.stats.max_health) {
-                client.health = std::min(client.stats.max_health, client.health + def.health);
+                heal(client, def.health);
                 used = true;
             }
             if (def.ammo_clips > 0 && resupply_clips(client.state, loadout_of(client), def.ammo_clips)) {

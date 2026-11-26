@@ -466,6 +466,26 @@ void put_weapon_def(ByteWriter& out, const WeaponDef& w) {
     out.put(float(w.melee_lunge));
     out.put(float(w.melee_stagger));
     out.put(float(w.shield_disrupt));
+    out.put(float(w.headshot_multiplier));
+    out.put(float(w.crit_chance));
+    out.put(float(w.crit_multiplier));
+    out.put(float(w.shield_factor));
+    out.put(float(w.vehicle_factor));
+    out.put(float(w.explosion_vehicle_factor));
+    out.put(float(w.swap_time));
+    out.put(float(w.recoil));
+    out.put(float(w.aim_speed));
+    out.put(uint8_t(w.hit_effect.has_value()));
+    if (w.hit_effect) {
+        const HitEffect& e = *w.hit_effect;
+        out.put_string(e.id);
+        out.put_string(e.name);
+        out.put(float(e.chance));
+        out.put(float(e.duration));
+        out.put(float(e.damage_per_second));
+        out.put(uint8_t(e.damage_type));
+        put_modifiers(out, e.modifiers);
+    }
     for (double c : w.bolt_color) out.put(float(c));
     out.put(float(w.bolt_length));
     out.put(float(w.bolt_width));
@@ -549,6 +569,28 @@ WeaponDef get_weapon_def(ByteReader& in) {
     w.melee_lunge = in.get<float>();
     w.melee_stagger = in.get<float>();
     w.shield_disrupt = in.get<float>();
+    w.headshot_multiplier = in.get<float>();
+    w.crit_chance = in.get<float>();
+    w.crit_multiplier = in.get<float>();
+    w.shield_factor = in.get<float>();
+    w.vehicle_factor = in.get<float>();
+    w.explosion_vehicle_factor = in.get<float>();
+    w.swap_time = in.get<float>();
+    w.recoil = in.get<float>();
+    w.aim_speed = in.get<float>();
+    if (in.get<uint8_t>() != 0) {
+        HitEffect e;
+        e.id = in.get_string();
+        e.name = in.get_string();
+        e.chance = in.get<float>();
+        e.duration = in.get<float>();
+        e.damage_per_second = in.get<float>();
+        const uint8_t et = in.get<uint8_t>();
+        if (et >= damage_type_count) throw PacketError("bad effect damage type");
+        e.damage_type = DamageType(et);
+        e.modifiers = get_modifiers(in);
+        w.hit_effect = std::move(e);
+    }
     for (double& c : w.bolt_color) c = in.get<float>();
     w.bolt_length = in.get<float>();
     w.bolt_width = in.get<float>();

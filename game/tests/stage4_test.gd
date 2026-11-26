@@ -7,6 +7,7 @@ const BattleUI = preload("res://scenes/battle_ui.gd")
 const Bf2Audio = preload("res://audio/bf2_audio.gd")
 const Bf2Art = preload("res://ui/bf2_art.gd")
 const InventoryScreen = preload("res://ui/inventory_screen.gd")
+const ItemTooltip = preload("res://ui/item_tooltip.gd")
 const QuartermasterScreen = preload("res://ui/quartermaster_screen.gd")
 const WarTerminalScreen = preload("res://ui/war_terminal_screen.gd")
 const HubHud = preload("res://ui/hub_hud.gd")
@@ -103,6 +104,21 @@ func _initialize() -> void:
 	inv_scr.inventory = items
 	inv_scr.loadouts = loadouts
 	inv_scr.open_screen()
+	# Ammo equips like gear (double-click), into its slot, and says what its hits do.
+	var burning := {"id": 990001, "def_id": "ammo_tibanna_burning", "quality": 0.5, "quantity": 100}
+	inv_scr.inventory = items + [burning]
+	var saved: Array = []
+	inv_scr.loadout_saved.connect(func(_slot: int, lo: Dictionary) -> void: saved.append(lo))
+	inv_scr._quick_equip(burning)
+	assert(saved.size() == 1 and int((saved[0]["gear_ids"] as Dictionary).get("ammo_standard", 0)) == 990001,
+			"burning ammo didn't equip into the ammo slot")
+	var burning_def: Dictionary = {}
+	for d: Dictionary in catalog:
+		if str(d.get("id", "")) == "ammo_tibanna_burning":
+			burning_def = d
+	var tip := ItemTooltip.build_lines(burning_def, burning, store)
+	assert(tip.any(func(l: Dictionary) -> bool: return str(l["text"]).begins_with("On hit: Burning")),
+			"burning ammo's tooltip doesn't name its effect")
 	inv_scr.close_screen()
 	inv_scr.free()
 	var qm_scr := QuartermasterScreen.new(art)

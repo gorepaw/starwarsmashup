@@ -32,6 +32,9 @@ static func stat_label(stat_name: String) -> String:
 		"shield_recharge": return "Shield Recharge /s"
 		"shield_delay": return "Shield Delay"
 		"explosion_push_resist": return "Blast Knockback Resist"
+		"healing_received": return "Healing Received"
+		"ability_cooldown": return "Ability Cooldowns"
+		"effect_resistance": return "Debuff Resist"
 	return stat_name.replace("_", " ").capitalize()
 
 
@@ -42,7 +45,7 @@ static func format_modifier(m: Dictionary) -> String:
 	var mult := float(m.get("multiply", 1.0))
 	var parts: PackedStringArray = []
 	if absf(add) > 1e-4:
-		if raw_name.begins_with("mitigation") or raw_name == "explosion_push_resist":
+		if raw_name.begins_with("mitigation") or raw_name in ["explosion_push_resist", "effect_resistance"]:
 			parts.append("%s%d%%" % ["+" if add > 0 else "", roundi(add * 100.0)])
 		elif raw_name == "shield_delay":
 			parts.append("%s%.1fs" % ["+" if add > 0 else "", add])
@@ -88,6 +91,8 @@ static func build_lines(def: Dictionary, inst: Dictionary, store: Object, equipp
 			lines.append({"text": "Heat / Shot: %+d%%" % roundi((hm - 1.0) * 100.0), "color": GOOD if hm < 1.0 else BAD})
 		if absf(sm - 1.0) > 1e-3:
 			lines.append({"text": "Spread: %+d%%" % roundi((sm - 1.0) * 100.0), "color": GOOD if sm < 1.0 else BAD})
+		if def.has("hit_effect"):
+			lines.append(effect_line(def["hit_effect"]))
 	if kind == "supply":
 		var heal := float(def.get("heal_amount", 0.0))
 		if heal > 0.0:
@@ -145,6 +150,7 @@ static func build_lines(def: Dictionary, inst: Dictionary, store: Object, equipp
 				lines.append({"text": "Clip: %d  (Reload %.1f s)" % [clip, float(stats.get("reload_time", 1.5))], "color": Bf2Screen.TEXT})
 			elif heat > 0:
 				lines.append({"text": "Heat / shot: %d%%" % roundi(heat * 100.0), "color": Bf2Screen.TEXT})
+		lines.append_array(_handling_lines(stats))
 
 	var mods: Array = stats.get("modifiers", def.get("modifiers", []))
 	var eq_map := {}
@@ -167,6 +173,52 @@ static func build_lines(def: Dictionary, inst: Dictionary, store: Object, equipp
 	if not equipped_def.is_empty():
 		lines.append({"text": "Equipped: %s" % str(equipped_def.get("name", "")), "color": Bf2Screen.DIM})
 	return lines
+
+
+# "On hit: Burning (12 laser dmg/s, -20% Run Speed) for 3s, 35% chance".
+static func effect_line(e: Dictionary) -> Dictionary:
+	var parts: PackedStringArray = []
+	var dps := float(e.get("damage_per_second", 0.0))
+	if dps > 0.0:
+		parts.append("%.0f %s dmg/s" % [dps, str(e.get("damage_type", ""))])
+	for m: Dictionary in e.get("modifiers", []):
+		parts.append(format_modifier(m))
+	var txt := "On hit: %s" % str(e.get("name", ""))
+	if not parts.is_empty():
+		txt += " (%s)" % ", ".join(parts)
+	txt += " for %.1fs" % float(e.get("duration", 0.0))
+	var chance := float(e.get("chance", 1.0))
+	if chance < 0.999:
+		txt += ", %d%% chance" % roundi(chance * 100.0)
+	return {"text": txt, "color": Bf2Screen.ACCENT}
+
+
+# A weapon's handling beyond damage, where it isn't standard.
+static func _handling_lines(stats: Dictionary) -> Array:
+	var out: Array = []
+	var head := float(stats.get("headshot_multiplier", 2.0))
+	if absf(head - 2.0) > 1e-3:
+		out.append({"text": "Headshots: x%.2f" % head, "color": GOOD if head > 2.0 else BAD})
+	var crit := float(stats.get("crit_chance", 0.0))
+	if crit > 0.0:
+		out.append({"text": "Critical hits: %d%% for x%.2f" % [roundi(crit * 100.0), float(stats.get("crit_multiplier", 1.5))],
+				"color": GOOD})
+	for entry: Array in [["vehicle_factor", "Vs Vehicles"], ["shield_factor", "Vs Shields"]]:
+		var f := float(stats.get(entry[0], 1.0))
+		if absf(f - 1.0) > 1e-3:
+			out.append({"text": "%s: %+d%%" % [entry[1], roundi((f - 1.0) * 100.0)], "color": GOOD if f > 1.0 else BAD})
+	var swap := float(stats.get("swap_time", 0.4))
+	if absf(swap - 0.4) > 1e-3:
+		out.append({"text": "Swap: %.2fs" % swap, "color": GOOD if swap < 0.4 else BAD})
+	var aim := float(stats.get("aim_speed", 1.0))
+	if absf(aim - 1.0) > 1e-3:
+		out.append({"text": "Aim Speed: %+d%%" % roundi((aim - 1.0) * 100.0), "color": GOOD if aim > 1.0 else BAD})
+	var recoil := float(stats.get("recoil", 0.0))
+	if recoil > 0.0:
+		out.append({"text": "Recoil: %.1f deg" % recoil, "color": Bf2Screen.TEXT})
+	if stats.has("hit_effect"):
+		out.append(effect_line(stats["hit_effect"]))
+	return out
 
 
 static func _cmp_line(label: String, val: float, eq_val: float, val_str: String, higher_better: bool, has_eq: bool) -> Dictionary:

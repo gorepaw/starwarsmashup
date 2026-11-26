@@ -353,9 +353,47 @@ void GameServer::refresh_effect_gear(Client& client) {
 
 void GameServer::give_effect(Client& client, TimedEffect effect) {
     if (client.life != Life::alive) return;
+    if (effect.flags & effect_flag::debuff) {  // shrugged off in part (effect_resistance)
+        const double kept = 1.0 - std::clamp(client.stats.effect_resistance, 0.0, max_mitigation);
+        effect.remaining *= kept;
+        effect.duration *= kept;
+        if (effect.remaining <= 0) return;
+    }
     if (add_effect(client.spec.effects, std::move(effect))) refresh_effect_gear(client);
     ++client.spec.revision;
     client.spec.sync_tick = 0;
+}
+
+void GameServer::give_hit_effect(const WeaponDef& weapon, uint32_t attacker, Client& victim) {
+    if (!hit_effect_lands(weapon, random_unit())) return;
+    const HitEffect& h = *weapon.hit_effect;
+    TimedEffect e;
+    e.id = "hit:" + h.id;
+    e.name = h.name;
+    e.source = attacker;
+    e.remaining = h.duration;
+    e.duration = h.duration;
+    e.modifiers = h.modifiers;
+    e.damage_per_second = h.damage_per_second;
+    e.damage_type = h.damage_type;
+    e.flags = effect_flag::debuff;
+    give_effect(victim, std::move(e));
+}
+
+void GameServer::give_hit_effect(const WeaponDef& weapon, uint32_t attacker, Npc& victim) {
+    if (victim.life != Life::alive || !hit_effect_lands(weapon, random_unit())) return;
+    const HitEffect& h = *weapon.hit_effect;
+    const std::string id = "hit:" + h.id;
+    npc_base_speed_.try_emplace(victim.entity, victim.walk_speed, victim.run_speed);
+    for (NpcEffect& e : npc_effects_) {
+        if (e.entity == victim.entity && e.id == id) {  // refreshed, never stacked
+            e.remaining = std::max(e.remaining, h.duration);
+            e.source = attacker;
+            return;
+        }
+    }
+    npc_effects_.push_back({victim.entity, id, h.duration, modifier_multiply(h.modifiers, Stat::run_speed),
+                            h.damage_per_second, h.damage_type, attacker, false});
 }
 
 void GameServer::mark_entity(uint32_t entity, int team, uint32_t owner, double seconds, uint8_t kind) {
@@ -435,7 +473,7 @@ void GameServer::handle_specialist_request(Client& client, const net::Specialist
             return;
         }
         if (use_ability(client, *ability, request.target, request.position)) {
-            client.spec.cooldowns[ability->id] = ability->cooldown;
+            client.spec.cooldowns[ability->id] = ability->cooldown * client.stats.ability_cooldown;
             ++client.spec.revision;
             client.spec.sync_tick = 0;
         }
@@ -617,9 +655,7 @@ bool GameServer::use_ability(Client& client, const AbilityDef& a, uint32_t targe
             notify(client.entity, "No ally in reach");
             return false;
         }
-        const double before = t->health;
-        t->health = std::min(t->stats.max_health, t->health + a.amount);
-        const double healed = t->health - before;
+        const double healed = heal(*t, a.amount);
         if (healed > 0 && t != &client) notify(t->entity, std::format("{} healed you (+{})", client.name, int(healed)));
         earn_specialist_xp(client, profession, healed > 0 ? a.xp + int64_t(healed / 10) : a.xp / 4);
         return true;
@@ -627,9 +663,7 @@ bool GameServer::use_ability(Client& client, const AbilityDef& a, uint32_t targe
     case AbilityEffect::heal_area: {
         double healed = 0;
         for (Client* t : allies_near(point, std::max(1.0, a.radius))) {
-            const double before = t->health;
-            t->health = std::min(t->stats.max_health, t->health + a.amount);
-            healed += t->health - before;
+            healed += heal(*t, a.amount);
         }
         earn_specialist_xp(client, profession, a.xp + int64_t(healed / 10));
         return true;
@@ -1199,7 +1233,7 @@ void GameServer::update_companions(double dt) {
                 for (Client& t : clients_) {
                     if (t.life == Life::alive && flat_distance(t.state.position, me) <= 8 &&
                         (&t == owner || (conquest_ ? allied(t.team, owner->team) : true))) {
-                        t.health = std::min(t.stats.max_health, t.health + 25 * (c.overcharge > 0 ? c.overcharge_factor : 1));
+                        heal(t, 25 * (c.overcharge > 0 ? c.overcharge_factor : 1));
                     }
                 }
             } else if (c.stats.role == CompanionRole::recon) {
@@ -1299,9 +1333,76 @@ void GameServer::specialist_kill(uint32_t victim, uint32_t killer, bool npc) {
 // ---------------------------------------------------------------------------
 // The tick
 
+// A character's timed effects: damage over time, then time running out. A
+// dead character's are gone.
+void GameServer::update_effects(Client& client, double dt) {
+    SpecialistState& spec = client.spec;
+    if (client.life != Life::alive) {
+        if (!spec.effects.empty()) {
+            const bool had_stats = effects_gear(spec.effects).has_value();
+            spec.effects.clear();
+            if (had_stats) refresh_effect_gear(client);
+            ++spec.revision;
+            spec.sync_tick = 0;
+        }
+        return;
+    }
+    for (const TimedEffect& e : spec.effects) {
+        if (e.damage_per_second > 0) damage(client, e.damage_per_second * dt, e.damage_type, e.source);
+    }
+    if (client.life != Life::alive) return;
+    const size_t before = spec.effects.size();
+    if (tick_effects(spec.effects, dt)) refresh_effect_gear(client);
+    if (spec.effects.size() != before) {
+        ++spec.revision;
+        spec.sync_tick = 0;
+    }
+    // A loadout rebuilt elsewhere (a level, a save) lost its effects' gear: put it back.
+    if (!client.custom_loadouts.empty() && effects_gear(spec.effects).has_value()) {
+        const Loadout& lo = loadout_of(client);
+        if (std::none_of(lo.gear.begin(), lo.gear.end(), [](const Gear& g) { return g.slot == "effects"; })) {
+            refresh_effect_gear(client);
+        }
+    }
+}
+
+// Snares, toxins, tranquilizers and hits' effects on NPCs.
+void GameServer::update_npc_effects(double dt) {
+    for (NpcEffect& e : npc_effects_) {
+        e.remaining -= dt;
+        if (e.dps > 0) {
+            if (Npc* n = find_npc(e.entity)) damage_npc(*n, e.dps * dt, e.type, e.source);
+        }
+    }
+    std::erase_if(npc_effects_, [&](const NpcEffect& e) { return e.remaining <= 0 || find_npc(e.entity) == nullptr; });
+    for (auto it = npc_base_speed_.begin(); it != npc_base_speed_.end();) {
+        Npc* n = find_npc(it->first);
+        if (n == nullptr) {
+            it = npc_base_speed_.erase(it);
+            continue;
+        }
+        double factor = 1;
+        bool any = false;
+        for (const NpcEffect& e : npc_effects_) {
+            if (e.entity == it->first) {
+                factor = std::min(factor, std::clamp(e.speed, 0.05, 1.0));
+                any = true;
+            }
+        }
+        n->walk_speed = it->second.first * factor;
+        n->run_speed = it->second.second * factor;
+        it = any ? std::next(it) : npc_base_speed_.erase(it);
+    }
+}
+
 void GameServer::update_specialists(double dt) {
     const SpecialistBook* book = config_.specialists;
-    if (book == nullptr) return;
+    if (book == nullptr) {
+        // No abilities or companions here, but hits still leave their effects (an ammo's).
+        for (Client& client : clients_) update_effects(client, dt);
+        update_npc_effects(dt);
+        return;
+    }
     specialist_clock_ += dt;
 
     // Characters: their effects, channels and cooldowns.
@@ -1310,35 +1411,11 @@ void GameServer::update_specialists(double dt) {
         if (tick_ % 15 == client.entity % 15) refresh_abilities(client);
         for (auto& [id, left] : spec.cooldowns) left = std::max(0.0, left - dt);
         spec.companion_cooldown = std::max(0.0, spec.companion_cooldown - dt);
+        update_effects(client, dt);
         if (client.life != Life::alive) {
-            if (!spec.effects.empty()) {
-                const bool had_stats = effects_gear(spec.effects).has_value();
-                spec.effects.clear();
-                if (had_stats) refresh_effect_gear(client);
-                ++spec.revision;
-                spec.sync_tick = 0;
-            }
             if (!spec.channel.empty()) spec.channel.clear();
             spec.performing = false;
         } else {
-            for (const TimedEffect& e : spec.effects) {
-                if (e.damage_per_second > 0) damage(client, e.damage_per_second * dt, e.damage_type, e.source);
-            }
-            if (client.life == Life::alive) {
-                const size_t before = spec.effects.size();
-                if (tick_effects(spec.effects, dt)) refresh_effect_gear(client);
-                if (spec.effects.size() != before) {
-                    ++spec.revision;
-                    spec.sync_tick = 0;
-                }
-                // A loadout rebuilt elsewhere (a level, a save) lost its effects' gear: put it back.
-                if (!client.custom_loadouts.empty() && effects_gear(spec.effects).has_value()) {
-                    const Loadout& lo = loadout_of(client);
-                    if (std::none_of(lo.gear.begin(), lo.gear.end(), [](const Gear& g) { return g.slot == "effects"; })) {
-                        refresh_effect_gear(client);
-                    }
-                }
-            }
             if (!spec.channel.empty()) {
                 spec.channel_remaining -= dt;
                 if (flat_distance(client.state.position, spec.channel_from) > 1.0 || client.state.vehicle >= 0) {
@@ -1431,7 +1508,7 @@ void GameServer::update_specialists(double dt) {
             for (Client& c : clients_) {
                 if (c.life == Life::alive && friendly(c) && flat_distance(c.state.position, d.position) <= d.radius) {
                     const double before = c.health;
-                    c.health = std::min(c.stats.max_health, c.health + d.amount * dt);
+                    heal(c, d.amount * dt);
                     healed += c.health - before;
                     // A camp: loadout swaps there are quick.
                     if (d.kind == DeployKind::camp && c.switching_to >= 0) c.switch_remaining = std::min(c.switch_remaining, 0.5);
@@ -1581,32 +1658,7 @@ void GameServer::update_specialists(double dt) {
         return true;
     });
 
-    // Snares, toxins and tranquilizers on NPCs.
-    for (NpcEffect& e : npc_effects_) {
-        e.remaining -= dt;
-        if (e.dps > 0) {
-            if (Npc* n = find_npc(e.entity)) damage_npc(*n, e.dps * dt, e.type, e.source);
-        }
-    }
-    std::erase_if(npc_effects_, [&](const NpcEffect& e) { return e.remaining <= 0 || find_npc(e.entity) == nullptr; });
-    for (auto it = npc_base_speed_.begin(); it != npc_base_speed_.end();) {
-        Npc* n = find_npc(it->first);
-        if (n == nullptr) {
-            it = npc_base_speed_.erase(it);
-            continue;
-        }
-        double factor = 1;
-        bool any = false;
-        for (const NpcEffect& e : npc_effects_) {
-            if (e.entity == it->first) {
-                factor = std::min(factor, std::clamp(e.speed, 0.05, 1.0));
-                any = true;
-            }
-        }
-        n->walk_speed = it->second.first * factor;
-        n->run_speed = it->second.second * factor;
-        it = any ? std::next(it) : npc_base_speed_.erase(it);
-    }
+    update_npc_effects(dt);
 
     update_companions(dt);
 }
@@ -2426,7 +2478,7 @@ bool GameServer::use_specialist_item(Client& client, const ItemDef& def, uint64_
         if (store_ == nullptr || !store_->remove_item(item_id)) return true;
         if (def.id == "doc_antidote") {
             if (remove_effects(client.spec.effects, effect_flag::debuff)) refresh_effect_gear(client);
-            client.health = std::min(client.stats.max_health, client.health + def.heal_amount);
+            heal(client, def.heal_amount);
         } else {
             TimedEffect e;
             e.id = "doc_stim";

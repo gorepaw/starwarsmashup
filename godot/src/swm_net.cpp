@@ -1876,6 +1876,9 @@ godot::Array SwmClient::get_weapons() const {
         entry["zoom_min"] = w.zoom_min;
         entry["zoom_max"] = w.zoom_max;
         entry["zoom_first_person"] = w.zoom_first_person;
+        entry["recoil"] = w.recoil;        // degrees a shot kicks the aim up
+        entry["aim_speed"] = w.aim_speed;  // times the standard zoom-in rate
+        entry["swap_time"] = w.swap_time;
         entry["projectile"] = w.projectile == core::Projectile::bolt      ? "bolt"
                               : w.projectile == core::Projectile::missile ? "missile"
                               : w.projectile == core::Projectile::grenade ? "grenade"

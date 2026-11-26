@@ -225,12 +225,12 @@ std::optional<Shot> simulate_weapons(MoveState& state, const MoveInput& pressed,
     }
 
     // Switching between the held weapons (to one the loadout has) cancels a
-    // reload and takes a moment.
+    // reload and takes a moment: the weapon brought up's swap time.
     const uint8_t wanted = uint8_t(input.weapon);
     if (wanted != c.weapon && wanted < hand_slots && weapon_in_slot(loadout, wanted)) {
         c.weapon = wanted;
         c.reload = 0;
-        c.cooldown = std::max(c.cooldown, weapon_switch_time);
+        c.cooldown = std::max(c.cooldown, weapon_in_slot(loadout, wanted)->swap_time);
     }
 
     // The secondary (a throwable) is used instead of firing, when ready.
@@ -478,13 +478,15 @@ std::optional<double> segment_hits_cylinder(Vec3 a, Vec3 b, Vec3 feet, double ra
 }
 
 ShieldHitResult apply_shield_damage(double& shield, double mitigated_amount, DamageType type,
-                                    double extra_shield_disrupt) {
+                                    double extra_shield_disrupt, double shield_factor) {
     ShieldHitResult out;
     if (mitigated_amount <= 0) {
         return out;
     }
+    // Shield points a point of damage takes (a weapon's shield factor).
+    const double f = std::max(0.05, shield_factor);
     if (type == DamageType::electro) {
-        const double drain = mitigated_amount * 1.75;
+        const double drain = mitigated_amount * 1.75 * f;
         if (shield <= 0) {
             out.health_damage = mitigated_amount;
         } else if (shield >= drain) {
@@ -502,23 +504,35 @@ ShieldHitResult apply_shield_damage(double& shield, double mitigated_amount, Dam
     if (type == DamageType::melee) {
         const double pierce = mitigated_amount * 0.5;
         const double shield_portion = mitigated_amount - pierce;
-        const double absorbed = std::min(shield, shield_portion);
+        const double absorbed = std::min(shield, shield_portion * f);
         shield -= absorbed;
         double extra = 0;
         if (extra_shield_disrupt > 2.5 && shield > 0) {
-            extra = std::min(shield, shield_portion * 0.5);
+            extra = std::min(shield, shield_portion * 0.5 * f);
             shield -= extra;
         }
         out.shield_damage = absorbed + extra;
-        out.health_damage = pierce + (shield_portion - absorbed);
+        out.health_damage = pierce + (shield_portion - absorbed / f);
         out.disrupt_seconds = std::max(2.5, extra_shield_disrupt);
         return out;
     }
-    const double absorbed = std::min(shield, mitigated_amount);
+    const double absorbed = std::min(shield, mitigated_amount * f);
     shield -= absorbed;
     out.shield_damage = absorbed;
-    out.health_damage = mitigated_amount - absorbed;
+    out.health_damage = mitigated_amount - absorbed / f;
     return out;
+}
+
+double hit_damage(const WeaponDef& weapon, double base, bool headshot, double roll) {
+    double amount = base * (headshot ? weapon.headshot_multiplier : 1.0);
+    if (weapon.crit_chance > 0 && roll < weapon.crit_chance) {
+        amount *= weapon.crit_multiplier;
+    }
+    return amount;
+}
+
+bool hit_effect_lands(const WeaponDef& weapon, double roll) {
+    return weapon.hit_effect && weapon.hit_effect->duration > 0 && roll < weapon.hit_effect->chance;
 }
 
 } // namespace swm::core

@@ -34,7 +34,8 @@ inline constexpr int specialization_slots = 3;
 // reload (its time), recovery (how fast bloom settles, larger is faster) or
 // range (how far bolts carry before their damage falls off).
 struct WeaponModifier {
-    enum Field : uint8_t { spread, heat, reload, recovery, range, speed, lunge, disrupt };
+    enum Field : uint8_t { spread, heat, reload, recovery, range, speed, lunge, disrupt,
+                           velocity, headshot, crit, vehicle, shield, swap, recoil, aim };
     Field field = spread;
     double multiply = 1;
 

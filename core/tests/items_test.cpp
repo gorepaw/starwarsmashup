@@ -143,7 +143,13 @@ int main() {
             << "[item]\nId = h1\nKind = weapon\nArchetype = heavy_launcher\nSlot = primary\n"
             << "[item]\nId = a_burn\nKind = ammo\nAmmoClass = standard\nAmmoBatch = 100\n"
             << "DamageMult = 1.15\nRateMult = 0.87\nDamageType = laser\nBoltColor = red\n"
-            << "[item]\nId = a_hvy\nKind = ammo\nAmmoClass = heavy\nAmmoBatch = 12\n";
+            << "OnHit = burn\n"
+            << "[item]\nId = a_hvy\nKind = ammo\nAmmoClass = heavy\nAmmoBatch = 12\n"
+            << "[hit_effect]\nId = burn\nName = Burning\nChance = 0.5\nDuration = 3\nDamagePerSecond = 12\n"
+            << "DamageType = laser\nModifier = run_speed * 0.9\n"
+            << "[item]\nId = r2\nKind = weapon\nArchetype = rifle_auto\nSlot = primary\nVelocityMult = 2\n"
+            << "HeadshotMult = 1.5\nCritChance = 0.1\nCritMult = 2.5\nVehicleMult = 0.5\nShieldMult = 1.5\n"
+            << "SwapMult = 0.5\nRecoil = 0.8\nAimSpeedMult = 1.25\n";
     }
     ItemCatalog ammo_cat;
     ammo_cat.load(ammo_ini);
@@ -161,6 +167,42 @@ int main() {
     CHECK(std_lo.unified_standard_ammo == max_standard_ammo);
     CHECK(std_lo.weapons[primary_slot] && std_lo.weapons[primary_slot]->ammo_class == AmmoClass::standard);
     CHECK(std::abs(std_lo.weapons[primary_slot]->damage - WeaponDef{}.damage * 1.15) < 1e-6);
+    // The ammo's effect is the gun's firing it.
+    CHECK(ammo_cat.hit_effect("burn") != nullptr && ammo_cat.hit_effects().size() == 1);
+    const auto& burn = std_lo.weapons[primary_slot]->hit_effect;
+    CHECK(burn && burn->id == "burn" && burn->name == "Burning" && burn->chance == 0.5 && burn->duration == 3 &&
+          burn->damage_per_second == 12 && burn->damage_type == DamageType::laser && burn->modifiers.size() == 1);
+    // Without the ammo, none.
+    CharacterLoadout bare;
+    bare.primary_id = 1;
+    CHECK(!ammo_cat.build_loadout(bare, ainv, Species::human, false).weapons[primary_slot]->hit_effect);
+
+    // A weapon's handling keys, over the archetype's.
+    const WeaponDef base = ammo_cat.resolve_weapon(*ammo_cat.find("r1"), 0.5, false);
+    const WeaponDef tuned = ammo_cat.resolve_weapon(*ammo_cat.find("r2"), 0.5, false);
+    CHECK(std::abs(tuned.bolt_speed - base.bolt_speed * 2) < 1e-6);
+    CHECK(std::abs(tuned.bolt_speed * tuned.bolt_life - base.bolt_speed * base.bolt_life) < 1e-6);  // as far
+    CHECK(std::abs(tuned.headshot_multiplier - base.headshot_multiplier * 1.5) < 1e-6);
+    CHECK(std::abs(tuned.crit_chance - 0.1) < 1e-9 && std::abs(tuned.crit_multiplier - 2.5) < 1e-9);
+    CHECK(std::abs(tuned.vehicle_factor - base.vehicle_factor * 0.5) < 1e-6);
+    CHECK(std::abs(tuned.shield_factor - 1.5) < 1e-9 && std::abs(tuned.swap_time - base.swap_time * 0.5) < 1e-9);
+    CHECK(std::abs(tuned.recoil - 0.8) < 1e-9 && std::abs(tuned.aim_speed - 1.25) < 1e-9);
+    CHECK(base.recoil == 0 && base.aim_speed == 1 && !base.hit_effect);
+
+    // An OnHit naming no [hit_effect] is an error.
+    {
+        std::ofstream out(ammo_ini);
+        out << "[item]\nId = a_bad\nKind = ammo\nOnHit = nothing\n";
+    }
+    bool threw = false;
+    try {
+        ItemCatalog bad;
+        bad.load(ammo_ini);
+    } catch (const std::exception&) {
+        threw = true;
+    }
+    std::filesystem::remove(ammo_ini);
+    CHECK(threw);
 
     CharacterLoadout hcl;
     hcl.primary_id = 3;

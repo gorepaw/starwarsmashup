@@ -43,9 +43,9 @@ WeaponModifier parse_weapon_modifier(const std::string& text, const std::string&
     std::string name, op;
     double value = 0;
     if (!(fields >> name >> op >> value) || op != "*") {
-        throw std::runtime_error(where + ": Weapon is \"<spread|heat|reload|recovery|range|speed|lunge|disrupt> * <n>\", not \"" + text + "\"");
+        throw std::runtime_error(where + ": Weapon is \"<spread|heat|reload|recovery|range|speed|lunge|disrupt|velocity|headshot|crit|vehicle|shield|swap|recoil|aim> * <n>\", not \"" + text + "\"");
     }
-    static constexpr std::array<std::pair<std::string_view, WeaponModifier::Field>, 8> fields_by_name{{
+    static constexpr std::array<std::pair<std::string_view, WeaponModifier::Field>, 16> fields_by_name{{
         {"spread", WeaponModifier::spread},
         {"heat", WeaponModifier::heat},
         {"reload", WeaponModifier::reload},
@@ -54,6 +54,14 @@ WeaponModifier parse_weapon_modifier(const std::string& text, const std::string&
         {"speed", WeaponModifier::speed},
         {"lunge", WeaponModifier::lunge},
         {"disrupt", WeaponModifier::disrupt},
+        {"velocity", WeaponModifier::velocity},
+        {"headshot", WeaponModifier::headshot},
+        {"crit", WeaponModifier::crit},
+        {"vehicle", WeaponModifier::vehicle},
+        {"shield", WeaponModifier::shield},
+        {"swap", WeaponModifier::swap},
+        {"recoil", WeaponModifier::recoil},
+        {"aim", WeaponModifier::aim},
     }};
     for (const auto& [n, f] : fields_by_name) {
         if (same(n, name)) {
@@ -113,6 +121,35 @@ void apply_weapon(WeaponDef& w, const WeaponModifier& m) {
         break;
     case WeaponModifier::disrupt:
         w.shield_disrupt *= m.multiply;
+        break;
+    case WeaponModifier::velocity:  // faster bolts, as far
+        if (w.projectile == Projectile::bolt || w.projectile == Projectile::missile) {
+            w.bolt_speed *= m.multiply;
+            w.bolt_life /= std::max(0.1, m.multiply);
+            w.damage_transition_delay /= std::max(0.1, m.multiply);
+        }
+        break;
+    case WeaponModifier::headshot:
+        w.headshot_multiplier *= m.multiply;
+        break;
+    case WeaponModifier::crit:  // the chance
+        w.crit_chance = std::clamp(w.crit_chance * m.multiply, 0.0, 1.0);
+        break;
+    case WeaponModifier::vehicle:
+        w.vehicle_factor *= m.multiply;
+        w.explosion_vehicle_factor *= m.multiply;
+        break;
+    case WeaponModifier::shield:
+        w.shield_factor *= m.multiply;
+        break;
+    case WeaponModifier::swap:
+        w.swap_time *= m.multiply;
+        break;
+    case WeaponModifier::recoil:
+        w.recoil *= m.multiply;
+        break;
+    case WeaponModifier::aim:
+        w.aim_speed *= m.multiply;
         break;
     }
 }

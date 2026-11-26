@@ -118,7 +118,17 @@ struct ShieldHitResult {
     bool overloaded = false;
 };
 
+// `shield_factor` (the weapon's) scales what reaches the shield; what it
+// doesn't stop goes to health as unscaled damage.
 ShieldHitResult apply_shield_damage(double& shield, double mitigated_amount, DamageType type,
-                                    double extra_shield_disrupt = 0.0);
+                                    double extra_shield_disrupt = 0.0, double shield_factor = 1.0);
+
+// A hit's damage before mitigation: `base` (a bolt's after its falloff), times
+// the weapon's headshot multiplier in the head, times its crit multiplier if
+// `roll` (uniform in [0, 1)) falls under its crit chance.
+double hit_damage(const WeaponDef& weapon, double base, bool headshot, double roll);
+
+// Whether a hit with this weapon leaves its effect (`roll` uniform in [0, 1)).
+bool hit_effect_lands(const WeaponDef& weapon, double roll);
 
 } // namespace swm::core

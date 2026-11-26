@@ -12,7 +12,7 @@ namespace swm::core {
 
 namespace {
 
-constexpr std::array<std::pair<std::string_view, Stat>, 22> stat_names{{
+constexpr std::array<std::pair<std::string_view, Stat>, 25> stat_names{{
     {"max_health", Stat::max_health},
     {"run_speed", Stat::run_speed},
     {"strafe_speed", Stat::strafe_speed},
@@ -35,6 +35,9 @@ constexpr std::array<std::pair<std::string_view, Stat>, 22> stat_names{{
     {"shield_recharge", Stat::shield_recharge},
     {"shield_delay", Stat::shield_delay},
     {"explosion_push_resist", Stat::explosion_push_resist},
+    {"healing_received", Stat::healing_received},
+    {"ability_cooldown", Stat::ability_cooldown},
+    {"effect_resistance", Stat::effect_resistance},
 }};
 
 constexpr std::array<std::string_view, damage_type_count> damage_type_names{"ballistic", "laser",     "electro",
@@ -59,6 +62,9 @@ double& stat_value(CharacterStats& stats, Stat stat, double& jump_height) {
     case Stat::shield_recharge: return stats.shield_recharge;
     case Stat::shield_delay: return stats.shield_delay;
     case Stat::explosion_push_resist: return stats.explosion_push_resist;
+    case Stat::healing_received: return stats.healing_received;
+    case Stat::ability_cooldown: return stats.ability_cooldown;
+    case Stat::effect_resistance: return stats.effect_resistance;
     default: return stats.mitigation_by_type[size_t(stat) - size_t(Stat::mitigation_ballistic)];
     }
 }
@@ -181,6 +187,8 @@ CharacterStats stats_for(const Loadout& loadout, const CharacterStats& base) {
     stats.max_health = std::max(1.0, stats.max_health);
     stats.shield_delay = std::max(0.5, stats.shield_delay);
     stats.explosion_push_resist = std::clamp(stats.explosion_push_resist, 0.0, max_mitigation);
+    stats.effect_resistance = std::clamp(stats.effect_resistance, 0.0, max_mitigation);
+    stats.ability_cooldown = std::max(0.1, stats.ability_cooldown);  // (never instant)
     return stats;
 }
 
@@ -301,6 +309,14 @@ WeaponDef weapon_from_section(const Ini& ini, size_t section, const std::string&
     w.melee_lunge = s.number("MeleeLunge", w.melee_lunge);
     w.melee_stagger = s.number("MeleeStagger", w.melee_stagger);
     w.shield_disrupt = s.number("ShieldDisrupt", w.shield_disrupt);
+    // Not Battlefront's: ours, for weapons written by hand.
+    w.headshot_multiplier = std::max(1.0, s.number("HeadshotMultiplier", w.headshot_multiplier));
+    w.crit_chance = std::clamp(s.number("CritChance", w.crit_chance), 0.0, 1.0);
+    w.crit_multiplier = std::max(1.0, s.number("CritMultiplier", w.crit_multiplier));
+    w.shield_factor = std::max(0.0, s.number("ShieldScale", w.shield_factor));
+    w.swap_time = std::max(0.0, s.number("SwapTime", w.swap_time));
+    w.recoil = std::max(0.0, s.number("Recoil", w.recoil));
+    w.aim_speed = std::max(0.1, s.number("AimSpeed", w.aim_speed));
     const auto read_color = [&](const char* key, std::array<double, 4>& out) {
         if (const auto color = s.get(key)) {
             std::istringstream fields(*color);
