@@ -2,14 +2,18 @@
 // vendor buying, supply usage, and SQLite credit/item persistence.
 
 #include <cmath>
+#include <cstdio>
 #include <filesystem>
+#include <string>
 #include <vector>
 
 #include "swm/core/client.h"
 #include "swm/core/heightfield.h"
+#include "swm/core/ini.h"
 #include "swm/core/items.h"
 #include "swm/core/loot.h"
 #include "swm/core/net/link.h"
+#include "swm/core/quest.h"
 #include "swm/core/server.h"
 #include "swm/core/sqlite_store.h"
 #include "swm/core/wildlife.h"
@@ -95,6 +99,53 @@ void test_tatooine_loot_tables() {
         }
     }
     CHECK(gear_drops > 0);
+}
+
+// Every item a hub's data names is in the catalog: an unknown id drops loot with
+// no definition, and arms a bandit with the fallback blaster instead.
+void test_hub_data_names_known_items() {
+    const auto root = repo_root();
+    ItemCatalog catalog;
+    catalog.load(root / "game" / "items" / "swg_catalog.ini");
+
+    const auto known = [&](const std::string& id, const std::string& file) {
+        const bool found = catalog.find(id) != nullptr;
+        if (!found) std::fprintf(stderr, "%s names an unknown item: %s\n", file.c_str(), id.c_str());
+        return found;
+    };
+    int files = 0;
+    for (const auto& entry : std::filesystem::directory_iterator(root / "game" / "hubs")) {
+        const std::string name = entry.path().filename().string();
+        if (name.ends_with("_loot.ini")) {
+            LootTableSet tables;
+            tables.load(entry.path());
+            const Ini ini = Ini::load(entry.path());
+            for (const Ini::Section& s : ini.sections()) {
+                const LootTable* t = tables.find(s.get("Id").value_or(""));
+                if (t == nullptr) continue;
+                for (const LootEntry& e : t->junk_pool) CHECK(known(e.item_id, name));
+                for (const LootEntry& e : t->gear_pool) CHECK(known(e.item_id, name));
+            }
+        } else if (name.ends_with("_spawns.ini")) {
+            for (const BanditArchetype& b : load_world_spawns(entry.path()).bandits) CHECK(known(b.weapon_id, name));
+        } else if (name.ends_with("_quests.ini")) {
+            QuestBook quests;
+            quests.load(entry.path());
+            for (const QuestDef& q : quests.quests()) {
+                for (const std::string& id : q.reward.items) CHECK(known(id, name));
+                for (const QuestStep& step : q.steps) {
+                    if (step.kind == QuestStepKind::collect || step.kind == QuestStepKind::deliver) {
+                        CHECK(known(step.target, name));
+                    }
+                }
+            }
+        } else {
+            continue;
+        }
+        ++files;
+    }
+    CHECK(files >= 30);
+    CHECK(BanditArchetype{}.weapon_id == "wp_rifle_e11" && catalog.find(BanditArchetype{}.weapon_id) != nullptr);
 }
 
 void test_corpse_loot_vendor_and_credit_persistence() {
@@ -248,6 +299,7 @@ void test_corpse_loot_vendor_and_credit_persistence() {
 int main() {
     test_catalog_junk_and_supplies();
     test_tatooine_loot_tables();
+    test_hub_data_names_known_items();
     test_corpse_loot_vendor_and_credit_persistence();
     return swm::test::finish("loot_test");
 }

@@ -55,7 +55,7 @@ struct BanditArchetype {
     int tier = 1;
     double health = 220;
     BotSkill skill;
-    std::string weapon_id = "wp_carbine_e11";
+    std::string weapon_id = "wp_rifle_e11";
     double aggro_radius = 35;
     double leash_radius = 85;
     double respawn_time = 30;

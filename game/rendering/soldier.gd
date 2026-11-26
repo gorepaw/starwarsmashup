@@ -719,11 +719,7 @@ func set_weapon(path: String) -> void:
 		_weapon.queue_free()
 		_weapon = null
 	var template: Node3D = null
-	if path.begins_with("procedural:"):
-		if not _weapon_models.has(path):
-			_weapon_models[path] = _make_procedural_weapon(path)
-		template = _weapon_models[path]
-	elif path != "":
+	if path != "":
 		var full := "res://imported_assets/" + path
 		if not _weapon_models.has(full):
 			_weapon_models[full] = null
@@ -774,47 +770,6 @@ func muzzle() -> Vector3:
 	if _muzzle != null and model.visible:
 		return _muzzle.global_position
 	return model.global_position + Vector3.UP * 1.4
-
-
-static func _make_procedural_weapon(kind: String) -> Node3D:
-	var root := Node3D.new()
-	var metal := StandardMaterial3D.new()
-	metal.albedo_color = Color(0.24, 0.26, 0.3)
-	metal.metallic = 0.85
-	metal.roughness = 0.3
-	var edge := StandardMaterial3D.new()
-	edge.albedo_color = Color(0.45, 0.9, 1.0) if kind != "procedural:melee_baton" else Color(1.0, 0.72, 0.25)
-	edge.emission_enabled = true
-	edge.emission = edge.albedo_color
-	edge.emission_energy_multiplier = 0.9
-	var hilt := MeshInstance3D.new()
-	var hilt_mesh := CylinderMesh.new()
-	hilt_mesh.top_radius = 0.018
-	hilt_mesh.bottom_radius = 0.018
-	hilt_mesh.height = 0.16
-	hilt.mesh = hilt_mesh
-	hilt.material_override = metal
-	hilt.rotation.x = PI * 0.5
-	root.add_child(hilt)
-	var blade := MeshInstance3D.new()
-	var box := BoxMesh.new()
-	if kind == "procedural:melee_lance":
-		hilt_mesh.height = 1.1
-		box.size = Vector3(0.025, 0.06, 0.55)
-		blade.position = Vector3(0.0, 0.0, 0.75)
-	elif kind == "procedural:melee_knuckler":
-		box.size = Vector3(0.08, 0.07, 0.16)
-		blade.position = Vector3(0.0, 0.0, 0.06)
-	elif kind == "procedural:melee_baton":
-		box.size = Vector3(0.032, 0.032, 0.52)
-		blade.position = Vector3(0.0, 0.0, 0.32)
-	else:
-		box.size = Vector3(0.016, 0.045, 0.55)
-		blade.position = Vector3(0.0, 0.0, 0.34)
-	blade.mesh = box
-	blade.material_override = edge
-	root.add_child(blade)
-	return root
 
 
 static func _signed_angle(from: Vector2, to: Vector2) -> float:

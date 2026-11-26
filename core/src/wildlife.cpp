@@ -114,7 +114,7 @@ WorldSpawns load_world_spawns(const std::filesystem::path& path) {
             b.health = std::max(20.0, s.number("Health", 220));
             b.skill = BotSkill::preset(s.get("Difficulty").value_or("normal"));
             b.skill.fire_range = std::max(15.0, s.number("FireRange", b.skill.fire_range));
-            b.weapon_id = s.get("Weapon").value_or("wp_carbine_e11");
+            b.weapon_id = s.get("Weapon").value_or("wp_rifle_e11");
             b.aggro_radius = std::max(5.0, s.number("AggroRadius", 35));
             b.leash_radius = std::max(25.0, s.number("LeashRadius", 85));
             b.respawn_time = std::max(2.0, s.number("RespawnTime", 30));

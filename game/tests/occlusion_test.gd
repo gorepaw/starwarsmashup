@@ -7,7 +7,8 @@ extends SceneTree
 
 const PlayerAppearance = preload("res://rendering/player_appearance.gd")
 const SwgOcclusion = preload("res://rendering/swg_occlusion.gd")
-const TROOPER := ["helmet", "chest", "bicep_l", "bracer_l", "gloves", "belt", "leggings", "boots"]
+const TROOPER := ["helmet", "chest", "bicep_l", "bicep_r", "bracer_l", "bracer_r", "gloves", "belt", "leggings",
+		"boots"]
 
 var _failed := false
 var _shots := []  # [character, name]

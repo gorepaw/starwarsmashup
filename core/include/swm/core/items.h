@@ -84,7 +84,7 @@ struct ItemDef {
     int ammo_batch = 100;
     std::string armor_class;  // armor: light, medium or heavy (its armor profession's)
     std::string vehicle;      // a vehicle: its class (a world vehicle class file's Name), called by using it
-    std::string model_path;  // relative to game/imported_assets/, may contain {g} for m/f
+    std::string model_path;  // relative to game/imported_assets/, may contain {g} for m/f; worn pieces may list several, comma-separated
     std::string bf2_base;    // overrides archetype's default BF2 weapon .ini if non-empty
 
     // Weapon sidegrade multipliers over the BF2 archetype base.

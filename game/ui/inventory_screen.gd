@@ -298,7 +298,7 @@ func _resolve_stage_worn(lo: Dictionary) -> Array:
 			by_slot[covered] = mp
 	var out: Array = []
 	for s: String in by_slot:
-		out.append(by_slot[s])
+		out.append_array((by_slot[s] as String).split(",", false))  # (a pair of arms is two models)
 	return out
 
 

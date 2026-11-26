@@ -1523,6 +1523,10 @@ int cmd_export_items(const std::vector<std::string>& args) {
     struct WeaponEntry {
         const char* id;
         const char* lod;
+        // Melee weapons stand along Y in Galaxies; the guns, and the hold point, lie forward along +Z.
+        // 1 or -1: a quarter turn lays its +Y or -Y end forward (0: held as modeled).
+        float forward_y = 0;
+        bool add_muzzle = false; // names no muzzle hardpoint: one is made at its front
     };
     const WeaponEntry weapons[] = {
         {"wp_carbine_e11", "appearance/lod/wp_carbine_e11.lod"},
@@ -1534,24 +1538,42 @@ int cmd_export_items(const std::vector<std::string>& args) {
         {"wp_rifle_laser", "appearance/lod/wp_rifle_laser.lod"},
         {"wp_rifle_bowcaster", "appearance/lod/wp_sp_bowcaster.lod"},
         {"wp_rifle_sg82", "appearance/lod/wp_rifle_sg82.lod"},
-        {"wp_pistol_dh17", "appearance/lod/wp_pistol_dh17.lod"},
         {"wp_pistol_dl44", "appearance/lod/wp_pistol_dl44.lod"},
         {"wp_pistol_d18", "appearance/lod/wp_pistol_d18.lod"},
-        {"wp_pistol_scout_blaster", "appearance/lod/wp_pistol_scout_blaster.lod"},
-        {"wp_heavy_rocket_launcher", "appearance/lod/wp_hvy_rocket_launcher.lod"},
+        {"wp_pistol_scout_blaster", "appearance/lod/wp_pistol_scout.lod"},
+        {"wp_heavy_rocket_launcher", "appearance/lod/wp_hvy_launcher.lod", 0, true},
         {"wp_grenade_c22", "appearance/lod/wp_grenade_c22.lod"},
-        {"wp_grenade_fragmentation", "appearance/lod/wp_grenade_fragmentation.lod"},
         {"wp_grenade_glop", "appearance/lod/wp_grenade_glop.lod"},
+        {"wp_melee_vibroblade", "appearance/lod/wp_mle_knife_vibroblade.lod", 1},
+        {"wp_melee_stun_baton", "appearance/lod/wp_mle_baton_stun.lod", 1},
+        {"wp_melee_vibrolance", "appearance/lod/wp_mle_lance_vibrolance.lod", -1},  // its long blade is at -Y
+        {"wp_melee_vibroknuckler", "appearance/lod/wp_sp_vibroknuckler.lod"},  // across the fist, as modeled
     };
 
     size_t weapon_count = 0;
     for (const auto& w : weapons) {
         if (!lib.contains(w.lod)) {
+            std::cerr << "skipping weapon " << w.id << ": no " << w.lod << "\n";
             continue;
         }
         try {
             const std::string mesh_path = "appearance/" + lod_highest_detail(lib.read(w.lod));
-            const StaticMesh sm = parse_static_mesh(lib.read(mesh_path));
+            StaticMesh sm = parse_static_mesh(lib.read(mesh_path));
+            if (w.forward_y != 0) {
+                // A quarter turn about X.
+                const float s = w.forward_y;
+                const auto lay_forward = [s](Vec3& v) { v = Vec3{v.x, -s * v.z, s * v.y}; };
+                for (StaticMesh::Part& part : sm.parts) {
+                    for (Vec3& p : part.positions) lay_forward(p);
+                    for (Vec3& n : part.normals) lay_forward(n);
+                }
+                for (Hardpoint& hp : sm.hardpoints) {
+                    Vec3 at{0, hp.transform.at(1, 3), hp.transform.at(2, 3)};
+                    lay_forward(at);
+                    hp.transform.at(1, 3) = at.y;
+                    hp.transform.at(2, 3) = at.z;
+                }
+            }
             const std::filesystem::path dir = out_root / "weapons" / w.id;
             std::filesystem::create_directories(dir);
             Gltf gltf;
@@ -1565,6 +1587,28 @@ int cmd_export_items(const std::vector<std::string>& args) {
                 gltf.nodes.push_back({.name = "hp_" + hp.name,
                                       .translation = Vec3{m.at(0, 3), m.at(1, 3), m.at(2, 3)}});
                 root_node.children.push_back(hp_node);
+            }
+            if (w.add_muzzle) {
+                // The middle of its frontmost 2 cm.
+                std::vector<Vec3> points;
+                for (const StaticMesh::Part& part : sm.parts) {
+                    for (const Vec3& p : part.positions) points.push_back(to_gltf(p));
+                }
+                float front = -1e9f;
+                for (const Vec3& p : points) front = std::max(front, p.z);
+                float x = 0, y = 0;
+                int count = 0;
+                for (const Vec3& p : points) {
+                    if (p.z < front - 0.02f) continue;
+                    x += p.x;
+                    y += p.y;
+                    ++count;
+                }
+                if (count > 0) {
+                    root_node.children.push_back(int(gltf.nodes.size()));
+                    gltf.nodes.push_back(
+                        {.name = "hp_muzzle", .translation = Vec3{x / float(count), y / float(count), front}});
+                }
             }
             const int root_idx = int(gltf.nodes.size());
             gltf.nodes.push_back(std::move(root_node));
@@ -1584,12 +1628,13 @@ int cmd_export_items(const std::vector<std::string>& args) {
     };
     const WearableEntry wearables[] = {
         // Ubese
-        {"armor/ubese", "helmet", "appearance/armor_ubese_helmet_hum_m.sat", "appearance/armor_ubese_helmet_hum_f.sat"},
+        {"armor/ubese", "helmet", "appearance/armor_ubese_helmet_m.sat", "appearance/armor_ubese_helmet_f.sat"},
         {"armor/ubese", "chest", "appearance/armor_ubese_shirt_m.sat", "appearance/armor_ubese_shirt_f.sat"},
         {"armor/ubese", "leggings", "appearance/armor_ubese_pants_m.sat", "appearance/armor_ubese_pants_f.sat"},
         {"armor/ubese", "boots", "appearance/armor_ubese_boots_m.sat", "appearance/armor_ubese_boots_f.sat"},
         {"armor/ubese", "gloves", "appearance/armor_ubese_gloves_m.sat", "appearance/armor_ubese_gloves_f.sat"},
         {"armor/ubese", "bracer_l", "appearance/armor_ubese_bracer_l_m.sat", "appearance/armor_ubese_bracer_l_f.sat"},
+        {"armor/ubese", "bracer_r", "appearance/armor_ubese_bracer_r_m.sat", "appearance/armor_ubese_bracer_r_f.sat"},
         // Padded
         {"armor/padded", "chest", "appearance/armor_padded_s01_chest_plate_m.sat", "appearance/armor_padded_s01_chest_plate_f.sat"},
         {"armor/padded", "leggings", "appearance/armor_padded_s01_leggings_m.sat", "appearance/armor_padded_s01_leggings_f.sat"},
@@ -1599,6 +1644,8 @@ int cmd_export_items(const std::vector<std::string>& args) {
         {"armor/stormtrooper", "chest", "appearance/armor_stormtrooper_chest_plate_m.sat", "appearance/armor_stormtrooper_chest_plate_f.sat"},
         {"armor/stormtrooper", "bicep_l", "appearance/armor_stormtrooper_bicep_l_m.sat", "appearance/armor_stormtrooper_bicep_l_f.sat"},
         {"armor/stormtrooper", "bracer_l", "appearance/armor_stormtrooper_bracer_l_m.sat", "appearance/armor_stormtrooper_bracer_l_f.sat"},
+        {"armor/stormtrooper", "bicep_r", "appearance/armor_stormtrooper_bicep_r_m.sat", "appearance/armor_stormtrooper_bicep_r_f.sat"},
+        {"armor/stormtrooper", "bracer_r", "appearance/armor_stormtrooper_bracer_r_m.sat", "appearance/armor_stormtrooper_bracer_r_f.sat"},
         {"armor/stormtrooper", "gloves", "appearance/armor_stormtrooper_gloves_m.sat", "appearance/armor_stormtrooper_gloves_f.sat"},
         {"armor/stormtrooper", "belt", "appearance/armor_stormtrooper_utility_belt_m.sat", "appearance/armor_stormtrooper_utility_belt_f.sat"},
         {"armor/stormtrooper", "leggings", "appearance/armor_stormtrooper_leggings_m.sat", "appearance/armor_stormtrooper_leggings_f.sat"},
@@ -1610,7 +1657,7 @@ int cmd_export_items(const std::vector<std::string>& args) {
         {"armor/composite", "boots", "appearance/armor_composite_s01_boots_m.sat", "appearance/armor_composite_s01_boots_f.sat"},
         {"armor/composite", "gloves", "appearance/armor_composite_s01_gloves_m.sat", "appearance/armor_composite_s01_gloves_f.sat"},
         // Clothing
-        {"clothing", "shirt_tunic", "appearance/shirt_s01_m.sat", "appearance/shirt_s01_f.sat"},
+        {"clothing", "shirt_tunic", "appearance/shirt_s03_m.sat", "appearance/shirt_s03_f.sat"},
         {"clothing", "jacket_rebel", "appearance/jacket_s10_m.sat", "appearance/jacket_s10_f.sat"},
         {"clothing", "pants_cargo", "appearance/pants_s05_m.sat", "appearance/pants_s05_f.sat"},
         {"clothing", "boots_leather", "appearance/boots_s14_m.sat", "appearance/boots_s14_f.sat"},
@@ -1623,6 +1670,7 @@ int cmd_export_items(const std::vector<std::string>& args) {
             const char* sat = g == 0 ? item.sat_m : item.sat_f;
             const char* base_sat = g == 0 ? "appearance/hum_m.sat" : "appearance/hum_f.sat";
             if (!lib.contains(sat) || !lib.contains(base_sat)) {
+                std::cerr << "skipping wearable " << sat << ": not found (or no " << base_sat << ")\n";
                 continue;
             }
             try {
