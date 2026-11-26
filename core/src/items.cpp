@@ -12,7 +12,7 @@
 namespace swm::core {
 namespace {
 
-const std::array<WeaponArchetypeInfo, 8> archetype_table{{
+const std::array<WeaponArchetypeInfo, 11> archetype_table{{
     {WeaponArchetype::rifle_auto, "rifle_auto", "imp_weap_inf_rifle", "rifle", "primary"},
     {WeaponArchetype::carbine_burst, "carbine_burst", "all_weap_inf_rifle", "rifle", "primary"},
     {WeaponArchetype::sniper, "sniper", "imp_weap_inf_sniper_rifle", "rifle", "primary"},
@@ -21,6 +21,10 @@ const std::array<WeaponArchetypeInfo, 8> archetype_table{{
     {WeaponArchetype::heavy_launcher, "heavy_launcher", "imp_weap_inf_rocket_launcher", "bazooka", "primary"},
     {WeaponArchetype::grenade, "grenade", "imp_weap_inf_thermaldetonator", "grenade", "secondary"},
     {WeaponArchetype::melee, "melee", "", "melee", "primary"},
+    // Beams: Battlefront II's chaingun, the closest thing it has to a stream.
+    {WeaponArchetype::beam, "beam", "rep_weap_inf_chaingun", "rifle", "primary"},
+    {WeaponArchetype::beam_cannon, "beam_cannon", "rep_weap_inf_chaingun", "rifle", "primary"},
+    {WeaponArchetype::flamer, "flamer", "", "rifle", "primary"},
 }};
 
 WeaponDef default_archetype_weapon(WeaponArchetype a) {
@@ -121,6 +125,48 @@ WeaponDef default_archetype_weapon(WeaponArchetype a) {
         w.explosion_push = 10.0;
         w.push_inner = 2.5;
         w.push_outer = 6.5;
+        break;
+    case WeaponArchetype::beam:
+    case WeaponArchetype::beam_cannon:
+        // rep_weap_inf_chaingun's, where it isn't imported.
+        w.name = "rep_weap_inf_chaingun";
+        w.shot_delay = 0.05;
+        w.rounds_per_clip = 0;
+        w.reload_time = 0;
+        w.heat_per_shot = 0.02;
+        w.heat_recover_rate = 0.25;
+        w.heat_threshold = 0.2;
+        w.yaw_spread = 0.25;
+        w.pitch_spread = 0.25;
+        w.spread_per_shot = 0.125;
+        w.spread_recover_rate = 1.0;
+        w.spread_limit = 2.5;
+        w.zoom_min = 2.5;
+        w.zoom_max = 2.5;
+        w.damage = 25;
+        w.bolt_speed = 20000;
+        w.bolt_gravity = 0.1;
+        w.bolt_life = 0.05;
+        break;
+    case WeaponArchetype::flamer:
+        // Battlefront II has none: a cone of slow, short-lived pellets that
+        // drop (some 11 m), on heat. ASSUMPTION: by eye, about the
+        // chaingun's damage a second before its effect.
+        w.name = "swg_flamer";
+        w.shot_delay = 0.1;
+        w.rounds_per_clip = 0;
+        w.reload_time = 0;
+        w.heat_per_shot = 0.04;
+        w.heat_recover_rate = 0.3;
+        w.heat_threshold = 0.3;
+        w.shots_per_salvo = 3;
+        w.yaw_spread = 6;
+        w.pitch_spread = 4;
+        w.spread_per_shot = 0;
+        w.damage = 9;
+        w.bolt_speed = 18;
+        w.bolt_gravity = 0.2;
+        w.bolt_life = 0.6;
         break;
     case WeaponArchetype::melee:
         w.name = "swg_melee";

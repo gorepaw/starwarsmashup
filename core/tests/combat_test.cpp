@@ -10,6 +10,7 @@
 
 #include "swm/core/client.h"
 #include "swm/core/combat.h"
+#include "swm/core/items.h"
 #include "swm/core/net/link.h"
 #include "swm/core/server.h"
 #include "swm/core/world.h"
@@ -778,6 +779,54 @@ void test_hit_effects() {
     }
 }
 
+// The beam and flamer archetypes (docs/WEAPONS.md), as the catalog makes
+// them without Battlefront's files: a beam is near-instant and runs on heat;
+// a flamer's cone dies out short of 12 m, and burns what it reaches.
+void test_beam_and_flamer() {
+    const std::filesystem::path ini = "swm_beam_test_catalog.ini";
+    {
+        std::ofstream out(ini);
+        out << "[item]\nId = beam\nKind = weapon\nArchetype = beam\n"
+            << "[item]\nId = flame\nKind = weapon\nArchetype = flamer\nOnHit = burn\n"
+            << "[item]\nId = long_flame\nKind = weapon\nArchetype = flamer\nOnHit = burn\nVelocityMult = 3\n"
+            << "RangeMult = 3\n"
+            << "[hit_effect]\nId = burn\nName = Burning\nDuration = 3\nDamagePerSecond = 12\n";
+    }
+    ItemCatalog catalog;
+    catalog.load(ini);
+    std::filesystem::remove(ini);
+
+    const WeaponDef beam = catalog.resolve_weapon(*catalog.find("beam"));
+    CHECK(beam.rounds_per_clip == 0 && beam.heat_per_shot > 0 && beam.bolt_speed >= 10000);
+    {
+        Loadout carried;
+        carried.weapons[primary_slot] = beam;
+        Arena arena(0, 0.5, {}, carried);
+        arena.run(0.5, [] {});
+        const uint32_t b = arena.b.entity_id();
+        arena.run(2.0 / 30, [&] { arena.a.set_input(arena.a_aims_at_b(true)); });
+        CHECK(arena.server.health_of(b) < 400);  // already: 12 m in a tick
+        arena.run(0.5, [&] { arena.a.set_input(arena.a_aims_at_b(true)); });
+        std::printf("beam: %.0f damage in 0.57 s\n", 400 - arena.server.health_of(b));
+        CHECK(arena.server.health_of(b) < 400 - 100);
+    }
+
+    const WeaponDef flame = catalog.resolve_weapon(*catalog.find("flame"));
+    CHECK(flame.shots_per_salvo > 1 && flame.rounds_per_clip == 0 && flame.hit_effect);
+    for (const bool reach : {false, true}) {
+        Loadout carried;
+        carried.weapons[primary_slot] = catalog.resolve_weapon(*catalog.find(reach ? "long_flame" : "flame"));
+        Arena arena(0, 0.5, {}, carried);
+        arena.run(0.5, [] {});
+        const uint32_t b = arena.b.entity_id();
+        arena.run(0.5, [&] { arena.a.set_input(arena.a_aims_at_b(true)); });
+        arena.run(1.5, [&] { arena.a.set_input(arena.a_aims_at_b(false)); });
+        const double lost = 400 - arena.server.health_of(b);
+        std::printf("flamer at 12 m%s: %.0f damage\n", reach ? " (three times the reach)" : "", lost);
+        CHECK(reach ? lost > 12 * 1.5 : lost == 0);  // burning still going after the stream stops
+    }
+}
+
 void test_melee_combat() {
     WeaponDef blade;
     blade.name = "vibroblade";
@@ -939,6 +988,7 @@ void test_unified_ammo() {
 } // namespace
 
 int main() {
+    test_beam_and_flamer();
     test_hit_damage_and_shield_factor();
     test_hit_effects();
     test_loadout_files();

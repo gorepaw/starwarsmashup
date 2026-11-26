@@ -7,9 +7,9 @@ Every weapon model in Galaxies, sorted into our seven categories, and how we tur
 | Category | Slot | Profession | Archetypes (handling from Battlefront II) |
 |---|---|---|---|
 | Sniper | Primary | Rifles | `sniper` |
-| Rifle | Primary | Rifles | `rifle_auto` (new: `beam`) |
+| Rifle | Primary | Rifles | `rifle_auto`, `beam` |
 | Carbine / shotgun | Primary | Carbines | `carbine_burst`, `scatter` |
-| Heavy | Primary | Heavy Weapons | `heavy_launcher` (new: `beam`, `flamer`) |
+| Heavy | Primary | Heavy Weapons | `heavy_launcher`, `beam_cannon`, `flamer` |
 | Sidearm | Sidearm | Pistols | `pistol` (and `scatter` for scatter pistols) |
 | Melee | Sidearm if one-handed, primary if two-handed | Melee | `melee` |
 | Tactical | Secondary | Heavy Weapons | `grenade` (new: `placed` for mines and traps) |
@@ -50,9 +50,9 @@ Model names are the files under `appearance/` in the Galaxies archives. Where a 
 | `wp_rifle_ewok_crossbow` | Ewok Crossbow | Slow, heavy bolt |
 | `wp_rifle_lightning_cannon` | Lightning Rifle, Light Lightning Cannon | `beam`: electro |
 | `wp_rifle_beam_rifle` | Beam Rifle, Heavy Acid Rifle | `beam`: bio (acid) |
-| `wp_pistol_spraystick` | Spraystick | A rifle despite the file name; short-range spray, so it could be a shotgun |
+| `wp_pistol_spraystick` | Spraystick | Built as a shotgun (`scatter`): a short poison spray |
 
-The E-11 rifle has no model of its own: Galaxies uses the carbine's model for it.
+The E-11 rifle has no model of its own: Galaxies uses the carbine's model for it. Our E-11 keeps Battlefront's rifle handling (`rifle_auto`), as the soldier's standard weapon.
 
 ### Carbine / shotgun (20)
 
@@ -232,20 +232,22 @@ Galaxies' variants of one model (quest, Corsec, noob, Lithitanium, "light" or "h
 
 ### 4. New archetypes only where handling really differs
 
-Most weapons fit the eight archetypes we have. Three handling styles don't:
+Most weapons fit the archetypes we had. These handling styles didn't:
 
-- **`beam`:** a continuous hitscan stream that builds heat (lightning, particle and acid beams). Battlefront II's arc caster and chaingun are the closest bases.
-- **`flamer`:** a short cone that damages over time and applies burning.
-- **`placed`:** a mine or trap set on the ground that triggers on proximity. Battlefront II has landmines and detpacks; we'd import their definitions, since only 37 Battlefront II weapon definitions are imported today.
+- **`beam`** (Rifles) and **`beam_cannon`** (Heavy Weapons): a near-instant stream that runs on heat, built on Battlefront II's chaingun (`rep_weap_inf_chaingun`: 20,000 m/s, 20 shots a second). The cannons hit harder and slow their carrier. Done.
+- **`flamer`** (Heavy Weapons): a cone of slow pellets that drop and die out at about 11 m, on heat, setting its effect (the flamethrower burns, the acid launcher poisons). Battlefront II has no flamethrower, so the numbers are our own. Done.
+- **`placed`:** a mine or trap set on the ground that triggers on proximity. Battlefront II has landmines and detpacks; we'd import their definitions, since only 37 Battlefront II weapon definitions are imported today. Comes with tactical.
 
-The rest is the sidegrade multipliers we already have, plus effects: ion (droids and vehicles), sonic, bleed, snare, stun. They can go on guns through `OnHit`, the same way ammo carries burning, chilled and ionized.
+The rest is the sidegrade multipliers we already have, plus effects through `OnHit`, the same way ammo carries burning, chilled and ionized. The primaries added **poisoned** (bio, 8 a second for 4 s, 35% of hits) and **snared** (60% run speed for 2 s, 30% of hits).
+
+Still to come for these archetypes: their look. Beams and flames are drawn as bolts for now, and the particle beam doesn't pierce or the lightning cannon chain, as Galaxies' do.
 
 ### 5. Order of work
 
 As planned in itemsideas: primaries, then sidearms, then tactical.
 
 1. ~~**Exporter and catalog plumbing** (steps 1 and 2), fixing the existing weapons.~~ Done.
-2. **Primaries:** snipers (6), rifles (14), carbines and shotguns (20), heavy (6). That's 46 items and the `beam` and `flamer` archetypes.
+2. ~~**Primaries:** snipers (6), rifles (14), carbines and shotguns (20), heavy (6), and the `beam`, `beam_cannon` and `flamer` archetypes.~~ Done: 45 items (35 new), every one within budget. The black DH-17 (a recolor) and the DXR-6 carbine (the disruptor's model) aren't separate items. The laser carbine moved to carbine handling.
 3. **Sidearms:** pistols (30) and one-handed melee (22).
 4. **Two-handed melee** (25).
 5. **Tactical:** grenades (6), mines and the laser trap (4) with `placed`, and scout traps (6).
