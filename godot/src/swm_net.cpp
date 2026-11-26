@@ -2186,6 +2186,17 @@ godot::Error SwmServer::set_crafting(const godot::String& resources_path, const 
 
 godot::Error SwmServer::start(int64_t port, const godot::String& bake_prefix, const godot::Vector2& spawn) {
     stop();  // the server refers to the ground, store and link replaced below
+    if (galaxy_config_) {
+        // This server's own planet (its bake's) is the galaxy's home: hosted
+        // on Coronet, Corellia is home, not the galaxy's first planet.
+        const std::string stem = std::filesystem::path(to_std(bake_prefix)).filename().string();
+        auto& planets = galaxy_config_->planets;
+        const auto own = std::find_if(planets.begin(), planets.end(),
+                                      [&](const core::PlanetConfig& p) { return p.stem() == stem; });
+        if (own != planets.end()) {
+            std::rotate(planets.begin(), own, own + 1);
+        }
+    }
     try {
         ground_ = core::load_bake(to_std(bake_prefix));
         world_ = make_world(ground_, to_std(bake_prefix), buildings_);

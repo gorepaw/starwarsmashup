@@ -32,6 +32,7 @@ swgtool bake-terrain <dir> <out_prefix> --trn <path.trn> --center <x> <z> --samp
                      [--snapshot <path.ws>]
 swgtool terrain-trace <dir> --trn <path.trn> --at <x> <z>
 swgtool export-water <dir> <out_prefix> --trn <path.trn>
+swgtool ground-preview <dir> <bake_prefix> --trn <path.trn>
 swgtool export-building <dir> <out_dir> --pob <path.pob> --name <name>
 swgtool pob-check <dir>
 swgtool snapshot <dir> <path.ws> [--match <text>] [--near <x> <z> <radius>] [--inside <id>]
@@ -74,7 +75,7 @@ swgtool export-city <dir> <bake_prefix> --snapshot <path.ws> --center <x> <z> --
   - `<out_prefix>.shaders`: one byte per sample, the ground-texture family as an index into the JSON's `shader_families`, 255 for none.
   - `<out_prefix>.json`: grid origin, spacing, height range, and the texture families with their texture file names.
   - `<out_prefix>_textures/`: the families' textures as PNG.
-  - `<out_prefix>_preview.png` (shaded relief) and `<out_prefix>_ground_preview.png` (relief tinted by each family's map color), both north up.
+  - `<out_prefix>_preview.png` (shaded relief) and `<out_prefix>_ground_preview.png` (relief tinted by each family's look, its first texture's average color, and blue where water stands; the game's minimap), both north up. `ground-preview` redraws the latter from a bake as it stands (its `.r32`, `.shaders` and `.json`), without baking.
   - `<out_prefix>.water`, if the terrain has water: its water tables, a line each: name, surface height, point count, the outline's x z pairs in game space, then its texture (its Galaxies water shader's main texture, written to `<out_prefix>_textures/`) and meters per repeat. A table is the header's global water table or a polygon or rectangle boundary's local one (decoded from Naboo's file: after the boundary's feathering, BPOL 0005 has enabled, height, shader size and shader; BREC 0003 enabled, a water type, height, shader size and shader). `core::load_bake` reads them; `export-water` writes just this file, without baking.
 
   With `--snapshot`, compares the baked heights against the world snapshot's placed objects. Example, 4 km around Mos Eisley at 4 m:

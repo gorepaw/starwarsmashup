@@ -1197,7 +1197,10 @@ GameServer::Client* GameServer::join(const net::Endpoint& from, const std::strin
         return &clients_.back();
     }
 
-    Vec3 spawn = spawn_point(joined.entity - 1);
+    // Side by side with whoever's already in (by players, not entity ids:
+    // a hub's people take ids too, which put a lone player meters off the
+    // spawn point, off a shuttleport's ticket counter).
+    Vec3 spawn = spawn_point(uint32_t(clients_.size()));
     std::string where = "new";
     if (store_ != nullptr) {
         try {

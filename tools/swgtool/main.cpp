@@ -62,6 +62,7 @@ constexpr const char* usage = R"(usage:
                        [--snapshot <path.ws>]
   swgtool terrain-trace <dir> --trn <path.trn> --at <x> <z>
   swgtool export-water <dir> <out_prefix> --trn <path.trn>
+  swgtool ground-preview <dir> <bake_prefix> --trn <path.trn>
   swgtool export-building <dir> <out_dir> --pob <path.pob> --name <name>
   swgtool pob-check <dir>
   swgtool snapshot <dir> <path.ws> [--match <text>] [--near <x> <z> <radius>] [--inside <id>]
@@ -568,7 +569,45 @@ int cmd_export_character(const std::vector<std::string>& args) {
 
 // Shaded relief for eyeballing a bake: tinted sand to rock by height, or,
 // with `terrain`, by each sample's ground texture family (its map color).
-ImageRgba hillshade(const TerrainGrid& grid, const ProceduralTerrain* terrain = nullptr) {
+// The ground preview's colors: each texture family's (by id) look, its first
+// texture's average color (the families' own map colors are the terrain
+// editor's, mostly its default yellow), and where water stands, the water's.
+struct PreviewLook {
+    std::map<int32_t, std::array<float, 3>> tints;
+    std::vector<WaterTable> water;
+};
+
+std::array<float, 3> average_color(const ImageRgba& image) {
+    double sum[3] = {0, 0, 0};
+    const size_t count = image.pixels.size() / 4;
+    for (size_t i = 0; i < count; ++i) {
+        for (int ch = 0; ch < 3; ++ch) {
+            sum[ch] += image.pixels[i * 4 + size_t(ch)];
+        }
+    }
+    std::array<float, 3> out{0.3f, 0.3f, 0.3f};
+    if (count > 0) {
+        for (int ch = 0; ch < 3; ++ch) {
+            out[size_t(ch)] = float(sum[ch] / double(count) / 255.0);
+        }
+    }
+    return out;
+}
+
+bool in_outline(const std::vector<std::array<double, 2>>& outline, double x, double z) {
+    bool inside = false;
+    for (size_t i = 0, j = outline.size() - 1; i < outline.size(); j = i++) {
+        const auto& a = outline[i];
+        const auto& b = outline[j];
+        if ((a[1] > z) != (b[1] > z) && x < a[0] + (z - a[1]) * (b[0] - a[0]) / (b[1] - a[1])) {
+            inside = !inside;
+        }
+    }
+    return inside;
+}
+
+ImageRgba hillshade(const TerrainGrid& grid, const ProceduralTerrain* terrain = nullptr,
+                    const PreviewLook* look = nullptr) {
     const auto [lo_it, hi_it] = std::minmax_element(grid.heights.begin(), grid.heights.end());
     const float lo = *lo_it, range = std::max(*hi_it - *lo_it, 1.0f);
     const Vec3 light = normalized(Vec3{-1, 2, -1});
@@ -588,9 +627,30 @@ ImageRgba hillshade(const TerrainGrid& grid, const ProceduralTerrain* terrain = 
             const float t = (grid.at(column, row) - lo) / range;
             float base[3] = {0.85f - 0.3f * t, 0.72f - 0.3f * t, 0.5f - 0.15f * t};
             if (terrain) {
-                const ShaderFamily* family = terrain->family(grid.shaders[grid.index(column, row)]);
+                const int32_t id = grid.shaders[grid.index(column, row)];
+                const ShaderFamily* family = terrain->family(id);
+                const auto tint = look ? look->tints.find(id) : decltype(look->tints)::const_iterator{};
                 for (int ch = 0; ch < 3; ++ch) {
-                    base[ch] = family ? family->color[size_t(ch)] / 255.0f : 0.3f;
+                    base[ch] = look && tint != look->tints.end() ? tint->second[size_t(ch)]
+                               : family                         ? family->color[size_t(ch)] / 255.0f
+                                                                : 0.3f;
+                }
+            }
+            if (look) {
+                // Under water (the highest table holding the point, over the ground): blue.
+                const double x = grid.origin_x + column * grid.spacing, z = grid.origin_z + row * grid.spacing;
+                double surface = -1e30;
+                for (const WaterTable& t : look->water) {
+                    if (t.height > surface && in_outline(t.outline, x, z)) {
+                        surface = t.height;
+                    }
+                }
+                if (grid.at(column, row) < surface) {
+                    const float depth = std::clamp(float(surface - grid.at(column, row)) / 20.0f, 0.0f, 1.0f);
+                    const float water[3] = {0.22f - 0.1f * depth, 0.42f - 0.12f * depth, 0.55f - 0.1f * depth};
+                    for (int ch = 0; ch < 3; ++ch) {
+                        base[ch] = water[ch] / std::max(shade, 0.15f) * 0.8f;
+                    }
                 }
             }
             // Image rows run top to bottom; put +Z (north) at the top.
@@ -653,6 +713,54 @@ size_t write_water(TreLibrary& library, const ProceduralTerrain& terrain, const 
         out << '\n';
     }
     return tables.size();
+}
+
+// Redraws a bake's <prefix>_ground_preview.png (the game's minimap) from
+// the bake as it is (its .r32, .shaders and .json; a hand-edited .r32 too),
+// tinted by its ground textures' colors, its water blue, as bake-terrain now
+// draws it.
+int cmd_ground_preview(const std::vector<std::string>& args) {
+    const std::string trn = option(args, "--trn");
+    if (args.size() < 2 || trn.empty()) {
+        std::cerr << usage;
+        return 2;
+    }
+    TreLibrary library(args[0]);
+    const ProceduralTerrain terrain = parse_procedural_terrain(library.read(trn));
+    const std::filesystem::path prefix = args[1];
+    const core::Heightfield field = core::load_bake(prefix);
+    TerrainGrid grid;
+    grid.samples = field.samples();
+    grid.spacing = field.spacing();
+    grid.origin_x = field.origin_x();
+    grid.origin_z = field.origin_z();
+    grid.heights = field.heights();
+    std::ifstream shader_file(prefix.string() + ".shaders", std::ios::binary);
+    const std::vector<uint8_t> indices(std::istreambuf_iterator<char>(shader_file), {});
+    grid.shaders.assign(grid.heights.size(), -1);
+    for (size_t i = 0; i < grid.shaders.size() && i < indices.size(); ++i) {
+        if (indices[i] < terrain.shader_families.size()) {
+            grid.shaders[i] = terrain.shader_families[indices[i]].id;
+        }
+    }
+    PreviewLook look;
+    look.water = terrain.water_tables();
+    for (const ShaderFamily& family : terrain.shader_families) {
+        for (const ShaderFamily::Child& child : family.children) {
+            try {
+                const std::string texture = shader_main_texture(library.read("shader/" + child.shader + ".sht"));
+                if (!texture.empty()) {
+                    look.tints[family.id] = average_color(decode_dds(library.read(texture)));
+                    break;
+                }
+            } catch (const std::exception&) {
+            }
+        }
+    }
+    write_png(prefix.string() + "_ground_preview.png", hillshade(grid, &terrain, &look));
+    std::cerr << std::format("{} families tinted, {} water tables; wrote {}_ground_preview.png\n", look.tints.size(),
+                             look.water.size(), prefix.string());
+    return 0;
 }
 
 int cmd_export_water(const std::vector<std::string>& args) {
@@ -718,6 +826,8 @@ int cmd_bake_terrain(const std::vector<std::string>& args) {
     const std::filesystem::path texture_dir = prefix.string() + "_textures";
     std::filesystem::create_directories(texture_dir);
     std::string families_json;
+    PreviewLook look;
+    look.water = terrain.water_tables();
     for (size_t f = 0; f < terrain.shader_families.size(); ++f) {
         const ShaderFamily& family = terrain.shader_families[f];
         std::string children_json;
@@ -727,7 +837,11 @@ int cmd_bake_terrain(const std::vector<std::string>& args) {
                 const std::string texture = shader_main_texture(library.read("shader/" + child.shader + ".sht"));
                 if (!texture.empty()) {
                     png = std::filesystem::path(texture).stem().string() + ".png";
-                    write_png(texture_dir / png, decode_dds(library.read(texture)));
+                    const ImageRgba decoded = decode_dds(library.read(texture));
+                    write_png(texture_dir / png, decoded);
+                    if (!look.tints.contains(family.id)) {
+                        look.tints[family.id] = average_color(decoded);
+                    }
                 }
             } catch (const std::exception& e) {
                 std::cerr << "  warning: shader " << child.shader << ": " << e.what() << "\n";
@@ -754,7 +868,7 @@ int cmd_bake_terrain(const std::vector<std::string>& args) {
         std::cerr << std::format("{} water table(s) -> {}.water\n", tables, prefix.string());
     }
     write_png(prefix.string() + "_preview.png", hillshade(grid));
-    write_png(prefix.string() + "_ground_preview.png", hillshade(grid, &terrain));
+    write_png(prefix.string() + "_ground_preview.png", hillshade(grid, &terrain, &look));
     std::cerr << std::format("heights {:.1f} .. {:.1f} m; wrote {}.r32/.shaders/.json, previews, and textures\n", *lo,
                              *hi, prefix.string());
     for (size_t f = 0; f < terrain.shader_families.size(); ++f) {
@@ -1573,6 +1687,9 @@ int main(int argc, char** argv) {
         }
         if (command == "bake-terrain") {
             return cmd_bake_terrain(args);
+        }
+        if (command == "ground-preview") {
+            return cmd_ground_preview(args);
         }
         if (command == "export-water") {
             return cmd_export_water(args);
