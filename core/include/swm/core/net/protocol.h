@@ -20,7 +20,7 @@ namespace swm::core::net {
 // Every packet starts with a magic number, the protocol version and a message
 // type. Peers drop packets with another version. Bump it on any wire change.
 inline constexpr uint16_t protocol_magic = 0x4D53;  // "SM"
-inline constexpr uint16_t protocol_version = 40;
+inline constexpr uint16_t protocol_version = 41;
 inline constexpr uint8_t droid_explosion_weapon = 0xFF;  // Explosion::weapon sentinel for destroyed health/ammo droids
 // ...for a destroyed object (Battlefield::destructibles); clients draw it
 // from the object's own explosion as they see it go.
@@ -133,6 +133,7 @@ struct LootItemEntry {
     uint8_t slot = 0;
     std::string def_id;
     float quality = 0.5f;
+    uint8_t mark = 0;
 
     friend bool operator==(const LootItemEntry&, const LootItemEntry&) = default;
 };

@@ -6,6 +6,7 @@
 #include <stdexcept>
 
 #include "swm/core/ini.h"
+#include "swm/core/items.h"
 
 namespace swm::core {
 namespace {
@@ -77,6 +78,8 @@ void LootTableSet::load(const std::filesystem::path& ini_path) {
         t.gear_chance = std::clamp(s.number("GearChance", 0.0), 0.0, 1.0);
         t.gear_quality_min = std::clamp(s.number("GearQualityMin", 0.25), 0.0, 1.0);
         t.gear_quality_max = std::clamp(s.number("GearQualityMax", 0.85), t.gear_quality_min, 1.0);
+        t.gear_mark_min = clamp_mark(int(s.number("GearMarkMin", 0)));
+        t.gear_mark_max = std::max(t.gear_mark_min, clamp_mark(int(s.number("GearMarkMax", double(t.gear_mark_min)))));
         for (const auto& [k, v] : s.values) {
             if (same_ci(k, "Junk")) {
                 t.junk_pool.push_back(parse_entry(v, where + " (" + t.id + ")"));
@@ -114,7 +117,11 @@ RolledLoot LootTableSet::roll(std::string_view table_id, uint64_t& rng_state) co
         if (const LootEntry* e = pick_weighted(t->gear_pool, rng_state)) {
             const double q = t->gear_quality_min +
                              next_unit(rng_state) * (t->gear_quality_max - t->gear_quality_min);
-            out.items.push_back({e->item_id, std::clamp(q, 0.0, 1.0)});
+            // A range of marks takes one more roll (none for a single mark).
+            const int mark = t->gear_mark_max > t->gear_mark_min
+                                 ? int(roll_int_range(t->gear_mark_min, t->gear_mark_max, rng_state))
+                                 : t->gear_mark_min;
+            out.items.push_back({e->item_id, std::clamp(q, 0.0, 1.0), mark});
         }
     }
     return out;

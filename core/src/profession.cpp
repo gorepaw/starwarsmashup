@@ -360,6 +360,28 @@ int combat_level(const ProfessionBook& book, const Loadout& loadout, std::span<c
     return level;
 }
 
+const ProfessionDef* mark_profession(const ProfessionBook& book, const ItemDef& def) {
+    if (def.kind == ItemKind::weapon) return book.for_archetype(weapon_archetype_info(def.archetype).id);
+    if (def.kind == ItemKind::armor) return book.for_armor(def.armor_class);
+    return nullptr;
+}
+
+int level_for_item(const ProfessionBook& book, const ItemDef& def, std::span<const ProfessionProgress> progress) {
+    if (const ProfessionDef* p = mark_profession(book, def)) {
+        return book.level_for(profession_xp(progress, p->id));
+    }
+    int level = 1;
+    for (const ProfessionProgress& p : progress) {
+        level = std::max(level, book.level_for(p.xp));
+    }
+    return level;
+}
+
+bool can_use_mark(const ProfessionBook& book, const ItemDef& def, int mark,
+                  std::span<const ProfessionProgress> progress) {
+    return clamp_mark(mark) == 0 || level_for_item(book, def, progress) >= mark_level(mark);
+}
+
 int64_t milestone_cost(int level) {
     if (level <= 1) return 0;
     if (level <= 25) return 500;

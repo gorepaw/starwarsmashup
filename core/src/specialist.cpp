@@ -645,9 +645,9 @@ PriceStats price_stats(std::span<const BazaarSale> sales, std::string_view def_i
 std::string format_listings(std::span<const BazaarListing> listings) {
     std::string out;
     for (const BazaarListing& l : listings) {
-        out += std::format("{}|{}|{}|{}|{}|{}|{:.4f}|{}|{}|{}|{}|{}\n", l.id, l.seller, escape(l.seller_name),
+        out += std::format("{}|{}|{}|{}|{}|{}|{:.4f}|{}|{}|{}|{}|{}|{}\n", l.id, l.seller, escape(l.seller_name),
                            escape(l.shop), l.item.id, escape(l.item.def_id), l.item.quality, l.item.quantity,
-                           escape(l.item.custom_name), escape(l.item.color_json), l.price, l.listed_at);
+                           escape(l.item.custom_name), escape(l.item.color_json), l.price, l.listed_at, l.item.mark);
     }
     return out;
 }
@@ -671,6 +671,7 @@ std::vector<BazaarListing> parse_listings(std::string_view text) {
         l.item.color_json = unescape(f[9]);
         l.price = std::clamp<int64_t>(to_int(f[10]), 1, bazaar_max_price);
         l.listed_at = to_int(f[11]);
+        if (f.size() > 12) l.item.mark = clamp_mark(int(to_int(f[12])));
         if (l.id == 0 || l.item.def_id.empty()) continue;
         out.push_back(std::move(l));
     }

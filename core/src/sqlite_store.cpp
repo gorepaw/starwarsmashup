@@ -112,7 +112,8 @@ SqliteCharacterStore::SqliteCharacterStore(const std::filesystem::path& path) {
                  " quality REAL NOT NULL DEFAULT 0.5,"
                  " quantity INTEGER NOT NULL DEFAULT 1,"
                  " custom_name TEXT NOT NULL DEFAULT '',"
-                 " color_json TEXT NOT NULL DEFAULT '{}'"
+                 " color_json TEXT NOT NULL DEFAULT '{}',"
+                 " mark INTEGER NOT NULL DEFAULT 0"
                  ") STRICT");
             exec("CREATE TABLE loadouts ("
                  " owner_id INTEGER NOT NULL,"
@@ -164,7 +165,7 @@ SqliteCharacterStore::SqliteCharacterStore(const std::filesystem::path& path) {
                  ") STRICT");
             exec(("PRAGMA user_version = " + std::to_string(schema_version)).c_str());
             exec("COMMIT");
-        } else if (version >= 1 && version <= 6) {
+        } else if (version >= 1 && version <= 7) {
             exec("BEGIN");
             if (version == 1) {
                 exec("ALTER TABLE characters ADD COLUMN species TEXT NOT NULL DEFAULT 'human'");
@@ -238,6 +239,9 @@ SqliteCharacterStore::SqliteCharacterStore(const std::filesystem::path& path) {
             if (version >= 3 && version <= 6) {
                 exec("ALTER TABLE items ADD COLUMN quantity INTEGER NOT NULL DEFAULT 1");
             }
+            if (version <= 7) {
+                exec("ALTER TABLE items ADD COLUMN mark INTEGER NOT NULL DEFAULT 0");
+            }
             exec("CREATE TABLE IF NOT EXISTS faction_reputation ("
                  " owner_id INTEGER NOT NULL,"
                  " faction_id TEXT NOT NULL,"
@@ -303,8 +307,8 @@ SqliteCharacterStore::SqliteCharacterStore(const std::filesystem::path& path) {
                                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
         update_ = prepare(db_, "UPDATE characters SET x = ?, y = ?, z = ?, yaw = ?, location = ?, appearance = ? WHERE id = ?");
         delete_ = prepare(db_, "DELETE FROM characters WHERE id = ?");
-        list_items_ = prepare(db_, "SELECT id, owner_id, def_id, quality, quantity, custom_name, color_json FROM items WHERE owner_id = ? ORDER BY id ASC");
-        grant_item_ = prepare(db_, "INSERT INTO items (owner_id, def_id, quality, quantity, custom_name, color_json) VALUES (?, ?, ?, ?, ?, ?)");
+        list_items_ = prepare(db_, "SELECT id, owner_id, def_id, quality, quantity, custom_name, color_json, mark FROM items WHERE owner_id = ? ORDER BY id ASC");
+        grant_item_ = prepare(db_, "INSERT INTO items (owner_id, def_id, quality, quantity, custom_name, color_json, mark) VALUES (?, ?, ?, ?, ?, ?, ?)");
         remove_item_ = prepare(db_, "DELETE FROM items WHERE id = ?");
         update_item_quantity_ = prepare(db_, "UPDATE items SET quantity = ? WHERE id = ?");
         remove_items_by_owner_ = prepare(db_, "DELETE FROM items WHERE owner_id = ?");
@@ -612,6 +616,7 @@ std::vector<ItemInstance> SqliteCharacterStore::list_items(PersistentId owner_id
         inst.quantity = std::max(1, sqlite3_column_int(list_items_, 4));
         inst.custom_name = col_str(5);
         inst.color_json = col_str(6);
+        inst.mark = clamp_mark(sqlite3_column_int(list_items_, 7));
         out.push_back(std::move(inst));
     }
     return out;
@@ -628,6 +633,8 @@ ItemInstance SqliteCharacterStore::grant_item(const ItemInstance& item) {
     sqlite3_bind_int(grant_item_, 4, copy.quantity);
     sqlite3_bind_text(grant_item_, 5, copy.custom_name.c_str(), int(copy.custom_name.size()), SQLITE_TRANSIENT);
     sqlite3_bind_text(grant_item_, 6, copy.color_json.c_str(), int(copy.color_json.size()), SQLITE_TRANSIENT);
+    copy.mark = clamp_mark(copy.mark);
+    sqlite3_bind_int(grant_item_, 7, copy.mark);
     if (sqlite3_step(grant_item_) != SQLITE_DONE) {
         fail(db_, "grant_item " + copy.def_id);
     }

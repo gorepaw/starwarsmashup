@@ -492,6 +492,35 @@ void ItemCatalog::load(const std::filesystem::path& catalog_ini, const std::file
     }
 }
 
+int clamp_mark(int mark) { return std::clamp(mark, 0, max_mark); }
+
+int mark_level(int mark) { return std::max(1, clamp_mark(mark) * 10); }
+
+double mark_scale(int mark) { return 1.0 + 0.1 * clamp_mark(mark); }
+
+std::string mark_name(int mark) {
+    static constexpr std::array<const char*, max_mark + 1> numerals{"",   "I",   "II", "III", "IV", "V",
+                                                                    "VI", "VII", "VIII", "IX", "X"};
+    const int m = clamp_mark(mark);
+    return m == 0 ? std::string() : std::string("Mk ") + numerals[size_t(m)];
+}
+
+std::string item_display_name(const ItemDef& def, int mark) {
+    const std::string name = def.display_name.empty() ? def.id : def.display_name;
+    const std::string mk = mark_name(mark);
+    return mk.empty() ? name : name + " " + mk;
+}
+
+double defense_mark_weight(std::string_view slot) {
+    if (slot == "deflector_shield") return 0.30;
+    if (slot == "chest") return 0.20;
+    if (slot == "leggings") return 0.14;
+    if (slot == "helmet") return 0.10;
+    if (slot == "boots") return 0.06;
+    if (slot == "gloves" || slot == "biceps" || slot == "bracers" || slot == "belt") return 0.05;
+    return 0.0;
+}
+
 const HitEffect* ItemCatalog::hit_effect(std::string_view id) const {
     for (const HitEffect& e : hit_effects_) {
         if (e.id == id) return &e;
@@ -504,7 +533,7 @@ const ItemDef* ItemCatalog::find(std::string_view id) const {
     return it == index_.end() ? nullptr : &items_[it->second];
 }
 
-WeaponDef ItemCatalog::resolve_weapon(const ItemDef& def, double quality, bool apply_quality) const {
+WeaponDef ItemCatalog::resolve_weapon(const ItemDef& def, double quality, bool apply_quality, int mark) const {
     WeaponDef w = default_archetype_weapon(def.archetype);
     if (const auto it = bf2_bases_.find(def.bf2_base); it != bf2_bases_.end()) {
         w = it->second;
@@ -514,16 +543,17 @@ WeaponDef ItemCatalog::resolve_weapon(const ItemDef& def, double quality, bool a
     w.anim_set = def.anim_set;
     w.archetype = weapon_archetype_info(def.archetype).id;
 
-    // Quality scales combat power within a narrow ±8% band in Gear queue;
-    // Standard queue flattens quality to 0.5 (multiplier 1.0).
+    // Quality moves damage within ±8% of the item's level; its mark scales
+    // it along the level curve (x1 at Mk 0 to x2 at Mk X).
     const double q = std::clamp(apply_quality ? quality : 0.5, 0.0, 1.0);
     const double q_mult = 1.0 + (q - 0.5) * 0.16;
+    const double power = def.damage_mult * q_mult * mark_scale(mark);
 
-    w.damage *= def.damage_mult * q_mult;
+    w.damage *= power;
     if (w.damage_final > 0) {
-        w.damage_final *= def.damage_mult * q_mult;
+        w.damage_final *= power;
     }
-    w.explosion_damage *= def.damage_mult * q_mult;
+    w.explosion_damage *= power;
     w.shot_delay /= std::max(0.1, def.rate_mult);
     w.heat_per_shot *= def.heat_mult / (1.0 + (q - 0.5) * 0.08);
     w.yaw_spread *= def.spread_mult;
@@ -561,7 +591,7 @@ WeaponDef ItemCatalog::resolve_weapon(const ItemDef& def, double quality, bool a
     return w;
 }
 
-Gear ItemCatalog::resolve_gear(const ItemDef& def, double quality, bool apply_quality) const {
+Gear ItemCatalog::resolve_gear(const ItemDef& def, double quality, bool apply_quality, int mark) const {
     Gear g;
     g.name = def.id;
     g.slot = def.slot;
@@ -570,6 +600,12 @@ Gear ItemCatalog::resolve_gear(const ItemDef& def, double quality, bool apply_qu
     for (StatModifier m : def.modifiers) {
         if (m.add > 0) {
             m.add *= q_mult;
+            // A Deflector Shield's mark grows its capacity and recharge; worn
+            // gear's marks go to health as a whole (build_loadout).
+            if (def.kind == ItemKind::deflector_shield &&
+                (m.stat == Stat::shield_capacity || m.stat == Stat::shield_recharge)) {
+                m.add *= mark_scale(mark);
+            }
         }
         g.modifiers.push_back(m);
     }
@@ -594,12 +630,13 @@ Loadout ItemCatalog::build_loadout(const CharacterLoadout& cl, std::span<const I
     for (size_t s = 0; s < weapon_slots; ++s) {
         if (const ItemInstance* inst = find_inst(w_ids[s])) {
             if (const ItemDef* def = find(inst->def_id)) {
-                out.weapons[s] = resolve_weapon(*def, inst->quality, apply_quality);
+                out.weapons[s] = resolve_weapon(*def, inst->quality, apply_quality, inst->mark);
             }
         }
     }
 
     std::vector<std::string> armor_classes;
+    double marked_weight = 0;  // the slots' weights times their pieces' marks
     for (const auto& [slot, item_id] : cl.gear_ids) {
         if (!species_can_wear_slot(species, slot)) {
             continue;
@@ -607,7 +644,8 @@ Loadout ItemCatalog::build_loadout(const CharacterLoadout& cl, std::span<const I
         if (const ItemInstance* inst = find_inst(item_id)) {
             if (const ItemDef* def = find(inst->def_id)) {
                 if (def->kind == ItemKind::armor || def->kind == ItemKind::deflector_shield) {
-                    out.gear.push_back(resolve_gear(*def, inst->quality, apply_quality));
+                    out.gear.push_back(resolve_gear(*def, inst->quality, apply_quality, inst->mark));
+                    marked_weight += defense_mark_weight(slot) * clamp_mark(inst->mark);
                 }
                 if (def->kind == ItemKind::armor) {
                     armor_classes.push_back(def->armor_class);
@@ -616,6 +654,18 @@ Loadout ItemCatalog::build_loadout(const CharacterLoadout& cl, std::span<const I
         }
     }
     out.armor_class = loadout_armor_class(armor_classes);
+
+    // Health along the level curve: the weighted mark of what's worn, over
+    // the slots this species can wear.
+    if (marked_weight > 0) {
+        double wearable = 0;
+        for (const std::string_view slot : {"deflector_shield", "helmet", "chest", "biceps", "bracers", "gloves", "belt",
+                                            "leggings", "boots"}) {
+            if (species_can_wear_slot(species, slot)) wearable += defense_mark_weight(slot);
+        }
+        const double mark = wearable > 0 ? marked_weight / wearable : 0;
+        out.gear.push_back(Gear{"marks", "", {{Stat::max_health, 0, 1.0 + 0.1 * mark}}});
+    }
 
     if (!out.weapons[primary_slot] && !out.weapons[sidearm_slot]) {
         out.weapons[primary_slot] = WeaponDef{};

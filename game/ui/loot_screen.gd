@@ -87,7 +87,7 @@ func _paint() -> void:
 				_hover_entry = entry
 			frame(r, "border_3_pieces", Color(0.75, 0.88, 1.0) if hovered else Color(0.85, 0.85, 0.9))
 			var kind := str(def.get("kind", "junk"))
-			var title := str(def.get("name", did))
+			var title := ItemTooltip.item_name(def, entry)
 			text("gamefont_small", title, Vector2(x + 12 * u, ry + 5 * u), "Left", ACCENT if kind != "junk" else TEXT)
 			var sub := ""
 			if kind == "junk":
@@ -109,9 +109,10 @@ func _paint() -> void:
 	if not _hover_entry.is_empty():
 		var hdid := str(_hover_entry.get("def_id", ""))
 		var hdef: Dictionary = _def_by_id.get(hdid, {})
-		var hinst := {"def_id": hdid, "quality": float(_hover_entry.get("quality", 0.5))}
+		var hinst := {"def_id": hdid, "quality": float(_hover_entry.get("quality", 0.5)),
+				"mark": int(_hover_entry.get("mark", 0))}
 		var lines := ItemTooltip.build_lines(hdef, hinst, store)
-		ItemTooltip.draw(self, _mouse_pos, str(hdef.get("name", hdid)), lines)
+		ItemTooltip.draw(self, _mouse_pos, ItemTooltip.item_name(hdef, hinst), lines)
 
 
 func cid_ok(c: Dictionary) -> bool:

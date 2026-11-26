@@ -1,9 +1,11 @@
 // Stage 5 Milestone 3: Loot tables, corpse looting, junk dealer selling, gear
 // vendor buying, supply usage, and SQLite credit/item persistence.
 
+#include <array>
 #include <cmath>
 #include <cstdio>
 #include <filesystem>
+#include <fstream>
 #include <string>
 #include <vector>
 
@@ -99,6 +101,32 @@ void test_tatooine_loot_tables() {
         }
     }
     CHECK(gear_drops > 0);
+}
+
+// A table's gear drops at Mk tiers between GearMarkMin and GearMarkMax.
+void test_loot_marks() {
+    const std::filesystem::path ini = "swm_loot_marks_test.ini";
+    {
+        std::ofstream out(ini);
+        out << "[loot_table]\nId = marked\nJunkMin = 0\nGearChance = 1\nGearMarkMin = 3\nGearMarkMax = 5\n"
+            << "Gear = wp_rifle_e11\n"
+            << "[loot_table]\nId = mk7\nJunkMin = 0\nGearChance = 1\nGearMarkMin = 7\nGearMarkMax = 7\n"
+            << "Gear = wp_rifle_e11\n"
+            << "[loot_table]\nId = plain\nJunkMin = 0\nGearChance = 1\nGearMarkMax = 14\nGear = wp_rifle_e11\n";
+    }
+    LootTableSet tables;
+    tables.load(ini);
+    std::filesystem::remove(ini);
+    CHECK(tables.find("plain")->gear_mark_max == max_mark);
+    uint64_t rng = 99;
+    std::array<int, max_mark + 1> seen{};
+    for (int i = 0; i < 200; ++i) {
+        const RolledLoot r = tables.roll("marked", rng);
+        CHECK(r.items.size() == 1 && r.items[0].mark >= 3 && r.items[0].mark <= 5);
+        ++seen[size_t(r.items[0].mark)];
+        CHECK(tables.roll("mk7", rng).items[0].mark == 7);
+    }
+    CHECK(seen[3] > 0 && seen[4] > 0 && seen[5] > 0);
 }
 
 // Every item a hub's data names is in the catalog: an unknown id drops loot with
@@ -299,6 +327,7 @@ void test_corpse_loot_vendor_and_credit_persistence() {
 int main() {
     test_catalog_junk_and_supplies();
     test_tatooine_loot_tables();
+    test_loot_marks();
     test_hub_data_names_known_items();
     test_corpse_loot_vendor_and_credit_persistence();
     return swm::test::finish("loot_test");

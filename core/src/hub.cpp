@@ -530,7 +530,8 @@ Hub::Hub(GameServer& server, uint16_t port, const World& world, HubConfig config
             std::vector<net::LootItemEntry> entries;
             entries.reserve(rolled.items.size());
             for (size_t i = 0; i < rolled.items.size() && i < 250; ++i) {
-                entries.push_back({uint8_t(i), rolled.items[i].def_id, float(rolled.items[i].quality)});
+                entries.push_back({uint8_t(i), rolled.items[i].def_id, float(rolled.items[i].quality),
+                                   uint8_t(rolled.items[i].mark)});
             }
             server_.set_corpse_loot(npc_entity, killer_entity, info->name, info->state.position, std::move(entries));
         }

@@ -137,6 +137,29 @@ void test_perks() {
     CHECK(combat_level(book, lo, levels) == 12);
     CHECK(combat_level(book, lo, {}) == 1);
 
+    // A marked item asks for its own profession's level: a rifle Rifles', light
+    // armor Light Armor's; a Deflector Shield the character's highest.
+    {
+        ItemDef rifle_item;
+        rifle_item.kind = ItemKind::weapon;
+        rifle_item.archetype = WeaponArchetype::rifle_auto;
+        ItemDef light_item;
+        light_item.kind = ItemKind::armor;
+        light_item.armor_class = "light";
+        ItemDef shield_item;
+        shield_item.kind = ItemKind::deflector_shield;
+        const std::vector<ProfessionProgress> mine{{"rifles", book.xp_for_level(42)},
+                                                   {"light_armor", book.xp_for_level(9)},
+                                                   {"pistols", book.xp_for_level(61)}};
+        CHECK(mark_profession(book, rifle_item) && mark_profession(book, rifle_item)->id == "rifles");
+        CHECK(mark_profession(book, shield_item) == nullptr);
+        CHECK(level_for_item(book, rifle_item, mine) == 42 && level_for_item(book, shield_item, mine) == 61);
+        CHECK(can_use_mark(book, rifle_item, 4, mine) && !can_use_mark(book, rifle_item, 5, mine));
+        CHECK(can_use_mark(book, light_item, 0, mine) && !can_use_mark(book, light_item, 1, mine));
+        CHECK(can_use_mark(book, shield_item, 6, mine) && !can_use_mark(book, shield_item, 7, mine));
+        CHECK(can_use_mark(book, shield_item, 0, {}) && !can_use_mark(book, shield_item, 1, {}));
+    }
+
     // Armor classes: the most pieces, the heavier on a tie.
     CHECK(loadout_armor_class(std::vector<std::string>{}) == "none");
     CHECK(loadout_armor_class(std::vector<std::string>{"light", "medium"}) == "medium");

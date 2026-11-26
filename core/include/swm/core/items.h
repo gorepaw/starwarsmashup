@@ -132,9 +132,33 @@ struct ItemInstance {
     std::string custom_name;
     std::string color_json = "{}";
     int quantity = 1;
+    int mark = 0;  // its Mk, 0..max_mark (0: unmarked, level 1); see mark_scale
 
     friend bool operator==(const ItemInstance&, const ItemInstance&) = default;
 };
+
+// Mk tiers (docs/DESIGN.md, Power curve): any item at levels 1 (Mk 0, the
+// plain item), 10 (Mk I), 20 (Mk II) ... 100 (Mk X). An item's mark is its
+// owned copy's, so every item has every tier without a catalog entry each;
+// which tiers drop or sell is up to loot tables and vendors.
+inline constexpr int max_mark = 10;
+int clamp_mark(int mark);
+// The level a mark asks for: 1 for Mk 0, else 10 a mark.
+int mark_level(int mark);
+// What a mark multiplies an item's power by: 1 at Mk 0, 2 at Mk X (a
+// weapon's damage; worn gear's share of the character's health, see
+// defense_mark_weight; a Deflector Shield's capacity and recharge).
+double mark_scale(int mark);
+// "Mk IV" ("" for Mk 0).
+std::string mark_name(int mark);
+// "E-11 Blaster Rifle Mk IV".
+std::string item_display_name(const ItemDef& def, int mark);
+// A worn slot's share of the health a loadout's marks give: the Deflector
+// Shield's 0.3, the chest's 0.2 and so on, summing to 1 over every slot. A
+// character's health is times mark_scale of the weighted mark over the slots
+// their species can wear (an empty slot is Mk 0), so a Wookiee's comes from
+// the Deflector Shield alone; 0 for any other slot.
+double defense_mark_weight(std::string_view slot);
 
 // One of a character's up to 5 saved loadouts.
 struct CharacterLoadout {
@@ -163,8 +187,8 @@ public:
     const HitEffect* hit_effect(std::string_view id) const;
     const std::vector<HitEffect>& hit_effects() const { return hit_effects_; }
 
-    WeaponDef resolve_weapon(const ItemDef& def, double quality = 0.5, bool apply_quality = true) const;
-    Gear resolve_gear(const ItemDef& def, double quality = 0.5, bool apply_quality = true) const;
+    WeaponDef resolve_weapon(const ItemDef& def, double quality = 0.5, bool apply_quality = true, int mark = 0) const;
+    Gear resolve_gear(const ItemDef& def, double quality = 0.5, bool apply_quality = true, int mark = 0) const;
     Loadout build_loadout(const CharacterLoadout& cl, std::span<const ItemInstance> inventory, Species species,
                           bool apply_quality = true) const;
 

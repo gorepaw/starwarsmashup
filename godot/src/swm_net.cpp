@@ -435,6 +435,7 @@ godot::Array SwmClient::get_corpses() const {
                 idict["slot"] = int64_t(it.slot);
                 idict["def_id"] = godot::String::utf8(it.def_id.c_str());
                 idict["quality"] = double(it.quality);
+                idict["mark"] = int64_t(it.mark);
                 items.push_back(idict);
             }
             entry["items"] = items;
@@ -453,6 +454,7 @@ godot::Array SwmClient::get_inventory() const {
             entry["owner_id"] = int64_t(inst.owner_id);
             entry["def_id"] = godot::String::utf8(inst.def_id.c_str());
             entry["quality"] = inst.quality;
+            entry["mark"] = int64_t(inst.mark);
             entry["quantity"] = int64_t(inst.quantity);
             entry["custom_name"] = godot::String::utf8(inst.custom_name.c_str());
             entry["color_json"] = godot::String::utf8(inst.color_json.c_str());
@@ -700,6 +702,7 @@ godot::Dictionary SwmClient::get_bank() const {
             d["id"] = int64_t(item.id);
             d["def_id"] = godot::String::utf8(item.def_id.c_str());
             d["quality"] = item.quality;
+            d["mark"] = int64_t(item.mark);
             d["custom_name"] = godot::String::utf8(item.custom_name.c_str());
             items.push_back(d);
         }
@@ -761,6 +764,7 @@ godot::Dictionary listing_dictionary(const core::BazaarListing& l) {
     d["shop"] = godot::String::utf8(l.shop.c_str());
     d["def_id"] = godot::String::utf8(l.item.def_id.c_str());
     d["quality"] = l.item.quality;
+    d["mark"] = int64_t(l.item.mark);
     d["quantity"] = int64_t(l.item.quantity);
     d["custom_name"] = godot::String::utf8(l.item.custom_name.c_str());
     d["color_json"] = godot::String::utf8(l.item.color_json.c_str());

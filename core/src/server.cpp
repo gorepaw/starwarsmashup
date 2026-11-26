@@ -882,10 +882,20 @@ void GameServer::handle(const net::Endpoint& from, const net::Datagram& datagram
     } else if (const auto* save_lo = std::get_if<net::SaveLoadoutRequest>(&message)) {
         if (!conquest_ && store_ != nullptr && config_.catalog != nullptr && client->character != 0 &&
             save_lo->loadout.slot_index >= 0 && save_lo->loadout.slot_index < max_character_loadouts) {
+            // Owned, and (a marked item) at a level the character has reached.
             const auto owns = [&](uint64_t id) {
                 if (id == 0) return true;
-                return std::any_of(client->items.begin(), client->items.end(),
-                                   [id](const ItemInstance& inst) { return inst.id == id; });
+                const auto it = std::find_if(client->items.begin(), client->items.end(),
+                                             [id](const ItemInstance& inst) { return inst.id == id; });
+                if (it == client->items.end()) return false;
+                const ItemDef* def = config_.catalog->find(it->def_id);
+                if (def == nullptr || config_.professions == nullptr ||
+                    can_use_mark(*config_.professions, *def, it->mark, client->professions)) {
+                    return true;
+                }
+                notify(client->entity, std::format("{} needs level {}.", item_display_name(*def, it->mark),
+                                                   mark_level(it->mark)));
+                return false;
             };
             CharacterLoadout clean = save_lo->loadout;
             clean.specializations = config_.professions
@@ -1041,11 +1051,13 @@ void GameServer::handle(const net::Endpoint& from, const net::Datagram& datagram
                 if (!taken.empty()) {
                     for (const net::LootItemEntry& entry : taken) {
                         if (store_ != nullptr && client->character != 0) {
-                            store_->grant_item({0, client->character, entry.def_id, double(entry.quality), "", "{}"});
+                            store_->grant_item(
+                                {0, client->character, entry.def_id, double(entry.quality), "", "{}", 1, entry.mark});
                         } else {
                             uint64_t next_id = 1;
                             for (const ItemInstance& cur : client->items) next_id = std::max(next_id, cur.id + 1);
-                            client->items.push_back({next_id, 0, entry.def_id, double(entry.quality), "", "{}"});
+                            client->items.push_back(
+                                {next_id, 0, entry.def_id, double(entry.quality), "", "{}", 1, entry.mark});
                         }
                     }
                     if (store_ != nullptr && client->character != 0) {
@@ -1055,7 +1067,7 @@ void GameServer::handle(const net::Endpoint& from, const net::Datagram& datagram
                     client->last_sync_tick = 0;
                     if (taken.size() == 1 && config_.catalog != nullptr) {
                         const ItemDef* def = config_.catalog->find(taken[0].def_id);
-                        notify(client->entity, "Looted " + (def ? def->display_name : taken[0].def_id));
+                        notify(client->entity, "Looted " + (def ? item_display_name(*def, taken[0].mark) : taken[0].def_id));
                     } else {
                         notify(client->entity, std::format("Looted {} item(s)", taken.size()));
                     }

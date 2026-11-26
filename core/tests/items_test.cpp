@@ -87,6 +87,46 @@ int main() {
     CHECK(near(hum_stats.mitigation_by_type[size_t(DamageType::laser)], 0.12));
     CHECK(near(wke_stats.mitigation_by_type[size_t(DamageType::laser)], 0.12));
 
+    // Mk tiers: names, levels, and the power curve (x2 at Mk X).
+    CHECK(mark_name(0).empty() && mark_name(4) == "Mk IV" && mark_name(10) == "Mk X" && mark_name(12) == "Mk X");
+    CHECK(mark_level(0) == 1 && mark_level(1) == 10 && mark_level(9) == 90 && mark_level(10) == 100);
+    CHECK(item_display_name(*e11, 4) == "E-11 Blaster Carbine Mk IV" &&
+          item_display_name(*e11, 0) == "E-11 Blaster Carbine");
+    CHECK(near(catalog.resolve_weapon(*e11, 0.5, true, 10).damage, base_w.damage * 2));
+    CHECK(near(catalog.resolve_weapon(*e11, 0.5, true, 5).damage, base_w.damage * 1.5));
+    CHECK(near(catalog.resolve_weapon(*e11, 1.0, true, 10).damage, base_w.damage * 2 * 1.08));
+    {
+        double total = 0;
+        for (const std::string_view s : {"deflector_shield", "helmet", "chest", "biceps", "bracers", "gloves", "belt",
+                                         "leggings", "boots"}) {
+            total += defense_mark_weight(s);
+        }
+        CHECK(near(total, 1.0) && defense_mark_weight("shirt") == 0);
+
+        std::vector<ItemInstance> marked = inv;
+        for (ItemInstance& i : marked) i.mark = 10;
+        const Loadout hum10_lo = catalog.build_loadout(cl, marked, Species::human, true);
+        const CharacterStats hum10 = stats_for(hum10_lo, Species::human);
+        // Chest and Deflector Shield worn (0.2 + 0.3 of the weight) at Mk X: x1.5.
+        CHECK(near(hum10.max_health, 450.0 * 1.5));
+        CHECK(near(hum10.mitigation_by_type[size_t(DamageType::laser)], 0.12));  // marks don't touch mitigation
+        CHECK(near(hum10_lo.weapons[primary_slot]->damage, hum_lo.weapons[primary_slot]->damage * 2));
+        // A Wookiee wears only the Deflector Shield: its Mk X is the whole curve.
+        const CharacterStats wke10 =
+            stats_for(catalog.build_loadout(cl, marked, Species::wookiee, true), Species::wookiee);
+        CHECK(near(wke10.max_health, wke_stats.max_health * 2));
+        // Unmarked: no change.
+        CHECK(catalog.build_loadout(cl, inv, Species::human, true).gear.size() == 2);
+
+        // A Deflector Shield's mark grows its capacity and recharge.
+        ItemDef psg;
+        psg.kind = ItemKind::deflector_shield;
+        psg.slot = "deflector_shield";
+        psg.modifiers = {{Stat::shield_capacity, 100}, {Stat::shield_recharge, 20}, {Stat::mitigation, 0.1}};
+        const Gear g = catalog.resolve_gear(psg, 0.5, true, 10);
+        CHECK(near(g.modifiers[0].add, 200) && near(g.modifiers[1].add, 40) && near(g.modifiers[2].add, 0.1));
+    }
+
     // Starter kit + resolve_worn_models (appearance overrides & Wookiee slot blocking)
     MemoryCharacterStore store;
     const auto bob = store.create_character({0, "Bob", {0, 0, 0}, 0, "human", "male"});

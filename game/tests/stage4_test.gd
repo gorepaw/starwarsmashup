@@ -119,6 +119,23 @@ func _initialize() -> void:
 	var tip := ItemTooltip.build_lines(burning_def, burning, store)
 	assert(tip.any(func(l: Dictionary) -> bool: return str(l["text"]).begins_with("On hit: Burning")),
 			"burning ammo's tooltip doesn't name its effect")
+	# A marked copy: its name and tooltip say its Mk and the level it asks for,
+	# and it hits harder (Mk IV: x1.4).
+	var e11_def: Dictionary = {}
+	for d: Dictionary in catalog:
+		if str(d.get("id", "")) == "wp_rifle_e11":
+			e11_def = d
+	var mk4 := {"id": 990002, "def_id": "wp_rifle_e11", "quality": 0.5, "mark": 4}
+	assert(ItemTooltip.item_name(e11_def, mk4) == str(e11_def["name"]) + " Mk IV", "no Mk in the name")
+	assert(store.item_display_name("wp_rifle_e11", 4) == ItemTooltip.item_name(e11_def, mk4), "names disagree")
+	var mk_tip := ItemTooltip.build_lines(e11_def, mk4, store)
+	var says_level := func(l: Dictionary) -> bool: return str(l["text"]).begins_with("Mk IV: requires") and str(l["text"]).ends_with("level 40")
+	assert(mk_tip.any(says_level), "a marked item's tooltip doesn't say its level")
+	var dmg0 := float(store.resolve_item_stats("wp_rifle_e11", 0.5, true)["damage"])
+	var dmg4 := float(store.resolve_item_stats("wp_rifle_e11", 0.5, true, 4)["damage"])
+	assert(absf(dmg4 - dmg0 * 1.4) < 0.01, "Mk IV doesn't hit 1.4x as hard")
+	var chest_req: Dictionary = store.mark_requirement("armor_stormtrooper_chest", 10)
+	assert(absf(float(chest_req["health"]) - 0.2) < 1e-6, "a Mk X chest isn't a fifth of the health curve")
 	inv_scr.close_screen()
 	inv_scr.free()
 	var qm_scr := QuartermasterScreen.new(art)

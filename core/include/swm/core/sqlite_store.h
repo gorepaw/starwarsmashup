@@ -52,7 +52,7 @@ public:
     std::vector<MatchTelemetry> list_matches(size_t limit) override;  // Stage 11
 
     // The schema version this build writes (PRAGMA user_version).
-    static constexpr int schema_version = 7;
+    static constexpr int schema_version = 8;
 
 private:
     void close();

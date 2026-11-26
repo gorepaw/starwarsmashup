@@ -7,6 +7,8 @@ extends "res://ui/bf2_screen.gd"
 signal request(action: int, id: String, target: int, position: Vector3, amount: int, item_id: int, text: String)
 signal closed
 
+const ItemTooltip = preload("res://ui/item_tooltip.gd")
+
 const BROWSE := 15
 const LIST := 16
 const BUY := 17
@@ -68,14 +70,14 @@ func _gui_input(event: InputEvent) -> void:
 	super._gui_input(event)
 
 
-func _name(def_id: String, custom := "") -> String:
+func _name(def_id: String, custom := "", mark := 0) -> String:
 	if custom != "":
 		return custom
 	if _defs.size() != catalog.size():
 		_defs.clear()
 		for d: Dictionary in catalog:
 			_defs[str(d.get("id", ""))] = d
-	return str((_defs.get(def_id, {}) as Dictionary).get("name", def_id))
+	return ItemTooltip.item_name(_defs.get(def_id, {"name": def_id}), {"mark": mark})
 
 
 func _paint() -> void:
@@ -111,7 +113,7 @@ func _paint() -> void:
 		var l: Dictionary = listings[_scroll + i]
 		var rect := Rect2(lx, y + i * 38 * u, half, 36 * u)
 		draw_rect(rect, Color(0.18, 0.22, 0.3, 0.5) if _hover == "buy:%d" % int(l["id"]) else Color(0.1, 0.13, 0.18, 0.4))
-		text("gamefont_tiny", "%s  Q%d" % [_name(str(l["def_id"]), str(l.get("custom_name", ""))), roundi(float(l.get("quality", 0.5)) * 100)],
+		text("gamefont_tiny", "%s  Q%d" % [_name(str(l["def_id"]), str(l.get("custom_name", "")), int(l.get("mark", 0))), roundi(float(l.get("quality", 0.5)) * 100)],
 				Vector2(rect.position.x + 8 * u, rect.position.y + 3 * u), "Left", TEXT)
 		var who := str(l.get("shop", "")) if str(l.get("shop", "")) != "" else str(l.get("seller", ""))
 		var trend := ""
@@ -133,7 +135,7 @@ func _paint() -> void:
 			break
 		var rect := Rect2(rx, ry, half, 28 * u)
 		draw_rect(rect, Color(0.1, 0.13, 0.18, 0.4))
-		text("gamefont_tiny", "%s  ·  %d Cr" % [_name(str(l["def_id"]), str(l.get("custom_name", ""))), int(l["price"])],
+		text("gamefont_tiny", "%s  ·  %d Cr" % [_name(str(l["def_id"]), str(l.get("custom_name", "")), int(l.get("mark", 0))), int(l["price"])],
 				Vector2(rect.position.x + 8 * u, ry + 7 * u), "Left", TEXT)
 		button(Rect2(rect.end.x - 96 * u, ry + 1 * u, 90 * u, 26 * u), "Take back", "cancel:%d" % int(l["id"]))
 		ry += 30 * u
@@ -150,7 +152,7 @@ func _paint() -> void:
 		var rect := Rect2(rx, ry, half, 26 * u)
 		var iid := int(item["id"])
 		draw_rect(rect, Color(0.2, 0.25, 0.35, 0.6) if iid == _selected or _hover == "pick:%d" % iid else Color(0.1, 0.13, 0.18, 0.4))
-		text("gamefont_tiny", _name(str(item["def_id"]), str(item.get("custom_name", ""))), Vector2(rect.position.x + 8 * u, ry + 6 * u),
+		text("gamefont_tiny", _name(str(item["def_id"]), str(item.get("custom_name", "")), int(item.get("mark", 0))), Vector2(rect.position.x + 8 * u, ry + 6 * u),
 				"Left", ACCENT if iid == _selected else TEXT)
 		region(rect, "pick:%d" % iid)
 		ry += 28 * u

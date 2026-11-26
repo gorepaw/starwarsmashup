@@ -39,6 +39,7 @@ godot::Dictionary to_dict(const core::ItemInstance& inst) {
     out["owner_id"] = int64_t(inst.owner_id);
     out["def_id"] = godot::String::utf8(inst.def_id.c_str());
     out["quality"] = inst.quality;
+    out["mark"] = int64_t(inst.mark);
     out["quantity"] = int64_t(inst.quantity);
     out["custom_name"] = godot::String::utf8(inst.custom_name.c_str());
     out["color_json"] = godot::String::utf8(inst.color_json.c_str());
@@ -657,13 +658,36 @@ godot::Error SwmCharacterStore::ensure_starter_kit(int64_t char_id) {
     }
 }
 
+godot::String SwmCharacterStore::item_display_name(const godot::String& def_id, int64_t mark) const {
+    const core::ItemDef* def = catalog_.find(to_std(def_id));
+    return def == nullptr ? def_id : godot::String::utf8(core::item_display_name(*def, int(mark)).c_str());
+}
+
+godot::Dictionary SwmCharacterStore::mark_requirement(const godot::String& def_id, int64_t mark) const {
+    godot::Dictionary out;
+    out["level"] = int64_t(core::mark_level(int(mark)));
+    out["profession"] = godot::String();
+    const core::ItemDef* def = catalog_.find(to_std(def_id));
+    if (def != nullptr && core::clamp_mark(int(mark)) > 0) {
+        if (const core::ProfessionDef* p = core::mark_profession(professions_, *def)) {
+            out["profession"] = godot::String::utf8(p->name.c_str());
+        }
+    }
+    // Worn gear's mark: its slot's share of the health curve, for a species
+    // that wears every slot (build_loadout).
+    out["health"] = def != nullptr && (def->kind == core::ItemKind::armor || def->kind == core::ItemKind::deflector_shield)
+                        ? core::defense_mark_weight(def->slot) * (core::mark_scale(int(mark)) - 1.0)
+                        : 0.0;
+    return out;
+}
+
 godot::Dictionary SwmCharacterStore::resolve_item_stats(const godot::String& def_id, double quality,
-                                                        bool apply_quality) const {
+                                                        bool apply_quality, int64_t mark) const {
     godot::Dictionary out;
     const core::ItemDef* def = catalog_.find(to_std(def_id));
     if (def == nullptr) return out;
     if (def->kind == core::ItemKind::weapon) {
-        const core::WeaponDef w = catalog_.resolve_weapon(*def, quality, apply_quality);
+        const core::WeaponDef w = catalog_.resolve_weapon(*def, quality, apply_quality, int(mark));
         out["damage"] = w.damage;
         out["shot_delay"] = w.shot_delay;
         out["rounds_per_clip"] = int64_t(w.rounds_per_clip);
@@ -697,7 +721,7 @@ godot::Dictionary SwmCharacterStore::resolve_item_stats(const godot::String& def
         out["aim_speed"] = w.aim_speed;
         if (w.hit_effect) out["hit_effect"] = hit_effect_dict(*w.hit_effect);
     }
-    const core::Gear g = catalog_.resolve_gear(*def, quality, apply_quality);
+    const core::Gear g = catalog_.resolve_gear(*def, quality, apply_quality, int(mark));
     godot::Array mods;
     for (const core::StatModifier& m : g.modifiers) {
         godot::Dictionary md;
@@ -732,6 +756,7 @@ godot::Dictionary SwmCharacterStore::compute_loadout_stats(const godot::String& 
         inst.id = d.has("id") ? uint64_t(int64_t(d["id"])) : 0;
         inst.def_id = d.has("def_id") ? to_std(d["def_id"]) : "";
         inst.quality = d.has("quality") ? double(d["quality"]) : 0.5;
+        inst.mark = d.has("mark") ? core::clamp_mark(int(int64_t(d["mark"]))) : 0;
         inv.push_back(std::move(inst));
     }
     const core::Species sp = core::species_from_name(to_std(species)).value_or(core::Species::human);
@@ -890,8 +915,11 @@ void SwmCharacterStore::_bind_methods() {
                          &SwmCharacterStore::add_rewards);
     ClassDB::bind_method(D_METHOD("set_active_loadout", "char_id", "slot_index"),
                          &SwmCharacterStore::set_active_loadout);
-    ClassDB::bind_method(D_METHOD("resolve_item_stats", "def_id", "quality", "apply_quality"),
-                         &SwmCharacterStore::resolve_item_stats, DEFVAL(0.5), DEFVAL(true));
+    ClassDB::bind_method(D_METHOD("resolve_item_stats", "def_id", "quality", "apply_quality", "mark"),
+                         &SwmCharacterStore::resolve_item_stats, DEFVAL(0.5), DEFVAL(true), DEFVAL(0));
+    ClassDB::bind_method(D_METHOD("item_display_name", "def_id", "mark"), &SwmCharacterStore::item_display_name,
+                         DEFVAL(0));
+    ClassDB::bind_method(D_METHOD("mark_requirement", "def_id", "mark"), &SwmCharacterStore::mark_requirement);
     ClassDB::bind_method(D_METHOD("compute_loadout_stats", "species", "loadout", "items", "apply_quality"),
                          &SwmCharacterStore::compute_loadout_stats, DEFVAL(true));
     ClassDB::bind_method(D_METHOD("load_professions", "path"), &SwmCharacterStore::load_professions);

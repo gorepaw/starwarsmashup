@@ -46,7 +46,13 @@ public:
     godot::Error set_active_loadout(int64_t char_id, int64_t slot_index);
 
     godot::Dictionary resolve_item_stats(const godot::String& def_id, double quality = 0.5,
-                                           bool apply_quality = true) const;
+                                           bool apply_quality = true, int64_t mark = 0) const;
+    // An item's name at a mark ("E-11 Blaster Rifle Mk IV"), and what the
+    // mark asks for: {level, profession (its name; "" for the character's
+    // highest), health (worn gear: the max health it adds, as a share)};
+    // level 1 and "" for Mk 0.
+    godot::String item_display_name(const godot::String& def_id, int64_t mark) const;
+    godot::Dictionary mark_requirement(const godot::String& def_id, int64_t mark) const;
     godot::Dictionary compute_loadout_stats(const godot::String& species, const godot::Dictionary& loadout,
                                               const godot::Array& items, bool apply_quality = true) const;
 

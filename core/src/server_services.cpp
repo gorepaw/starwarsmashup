@@ -122,6 +122,7 @@ void GameServer::load_services_data(Client& client) {
         item.quality = std::atof(f[2].c_str());
         item.custom_name = f[3];
         item.color_json = f[4];
+        if (f.size() > 5) item.mark = clamp_mark(std::atoi(f[5].c_str()));
         client.next_bank_id = std::max(client.next_bank_id, item.id + 1);
         client.bank_items.push_back(std::move(item));
     }
@@ -137,8 +138,8 @@ void GameServer::save_bank(Client& client) {
     if (store_ == nullptr || client.character == 0) return;
     std::string text;
     for (const ItemInstance& item : client.bank_items) {
-        text += std::format("{}\t{}\t{}\t{}\t{}\n", item.id, escape(item.def_id), item.quality, escape(item.custom_name),
-                            escape(item.color_json));
+        text += std::format("{}\t{}\t{}\t{}\t{}\t{}\n", item.id, escape(item.def_id), item.quality,
+                            escape(item.custom_name), escape(item.color_json), item.mark);
     }
     try {
         store_->set_extra(client.character, "bank_credits", std::to_string(client.bank_credits));
@@ -261,7 +262,7 @@ void GameServer::handle_service_request(Client& client, const net::ServiceReques
         const auto it = std::find_if(client.bank_items.begin(), client.bank_items.end(),
                                      [&](const ItemInstance& i) { return i.id == req.item_id; });
         if (it == client.bank_items.end()) return;
-        store_->grant_item({0, client.character, it->def_id, it->quality, it->custom_name, it->color_json});
+        store_->grant_item({0, client.character, it->def_id, it->quality, it->custom_name, it->color_json, 1, it->mark});
         const std::string name = item_name(it->def_id);
         client.bank_items.erase(it);
         client.items = store_->list_items(client.character);

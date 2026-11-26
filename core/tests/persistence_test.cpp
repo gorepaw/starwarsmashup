@@ -79,6 +79,12 @@ void test_store(CharacterStore& store) {
     const ItemInstance i2 = store.grant_item({0, created_wke.id, "psg_mark1", 0.5, "", "{}"});
     CHECK(i1.id != 0 && i2.id > i1.id);
     CHECK(store.list_items(created_wke.id).size() == 2);
+    // An item's Mk tier is kept.
+    const ItemInstance mk7 = store.grant_item({0, created_wke.id, "wp_pistol_dl44", 0.6, "", "{}", 1, 7});
+    CHECK(mk7.mark == 7);
+    const auto with_mk = store.list_items(created_wke.id);
+    CHECK(with_mk.size() == 3 && with_mk[2].mark == 7 && with_mk[0].mark == 0);
+    CHECK(store.remove_item(mk7.id));
 
     CharacterLoadout lo;
     lo.slot_index = 0;
@@ -188,8 +194,9 @@ void test_sqlite_file() {
         SqliteCharacterStore migrated(v2.path);
         const auto ch = migrated.find_by_name("v2char");
         CHECK(ch && ch->species == "wookiee" && ch->credits == 0 && ch->faction_points == 0);
-        const auto granted = migrated.grant_item({0, ch->id, "psg_mark1", 0.5, "", "{}"});
+        const auto granted = migrated.grant_item({0, ch->id, "psg_mark1", 0.5, "", "{}", 1, 3});
         CHECK(granted.id > 0 && migrated.list_items(ch->id).size() == 1);
+        CHECK(migrated.list_items(ch->id)[0].mark == 3);
     }
 }
 

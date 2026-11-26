@@ -24,12 +24,15 @@ struct LootTable {
     double gear_chance = 0.0;
     double gear_quality_min = 0.25;
     double gear_quality_max = 0.85;
+    int gear_mark_min = 0;  // its gear's Mk tiers (items.h), rolled evenly between
+    int gear_mark_max = 0;
     std::vector<LootEntry> gear_pool;
 };
 
 struct RolledLootItem {
     std::string def_id;
     double quality = 0.5;
+    int mark = 0;
 };
 
 struct RolledLoot {

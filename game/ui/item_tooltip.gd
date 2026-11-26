@@ -6,6 +6,14 @@ extends RefCounted
 const Bf2Screen = preload("res://ui/bf2_screen.gd")
 const GOOD := Color(0.45, 0.95, 0.5)
 const BAD := Color(1.0, 0.4, 0.35)
+const MARK_NUMERALS := ["", "I", "II", "III", "IV", "V", "VI", "VII", "VIII", "IX", "X"]
+
+
+# An item's name with its owned copy's Mk tier ("E-11 Blaster Rifle Mk IV").
+static func item_name(def: Dictionary, inst: Dictionary = {}) -> String:
+	var base := str(def.get("name", def.get("id", inst.get("def_id", "?"))))
+	var mark := clampi(int(inst.get("mark", 0)), 0, 10)
+	return base if mark == 0 else "%s Mk %s" % [base, MARK_NUMERALS[mark]]
 
 
 static func stat_label(stat_name: String) -> String:
@@ -69,6 +77,15 @@ static func build_lines(def: Dictionary, inst: Dictionary, store: Object, equipp
 			"color": Bf2Screen.DIM})
 	if not inst.is_empty() and kind != "junk" and kind != "supply" and kind != "quest" and kind != "ammo":
 		lines.append({"text": "Quality: %d%%" % roundi(quality * 100.0), "color": Bf2Screen.ACCENT})
+	var mark := clampi(int(inst.get("mark", 0)), 0, 10)
+	if mark > 0:
+		var req: Dictionary = store.mark_requirement(def_id, mark) if store != null else {}
+		var prof := str(req.get("profession", ""))
+		lines.append({"text": "Mk %s: requires %slevel %d" % [MARK_NUMERALS[mark], prof + " " if prof != "" else "",
+				int(req.get("level", mark * 10))], "color": Bf2Screen.ACCENT})
+		var health := float(req.get("health", 0.0))
+		if health > 0.0:
+			lines.append({"text": "Max Health: +%d%% (with a full kit)" % roundi(health * 100.0), "color": GOOD})
 	if kind == "ammo":
 		var ac := str(def.get("ammo_class", "standard")).capitalize()
 		var cap := 99 if ac == "Heavy" else 999
@@ -104,11 +121,12 @@ static func build_lines(def: Dictionary, inst: Dictionary, store: Object, equipp
 	if desc != "":
 		lines.append({"text": desc, "color": Bf2Screen.TEXT})
 
-	var stats: Dictionary = store.resolve_item_stats(def_id, quality, true) if store != null else {}
+	var stats: Dictionary = store.resolve_item_stats(def_id, quality, true, mark) if store != null else {}
 	var eq_stats: Dictionary = {}
 	if not equipped_def.is_empty() and store != null:
 		var eq_q := float(equipped_inst.get("quality", 0.5)) if not equipped_inst.is_empty() else 0.5
-		eq_stats = store.resolve_item_stats(str(equipped_def.get("id", "")), eq_q, true)
+		eq_stats = store.resolve_item_stats(str(equipped_def.get("id", "")), eq_q, true,
+				int(equipped_inst.get("mark", 0)))
 
 	if kind == "weapon" and not stats.is_empty():
 		var dmg := float(stats.get("damage", 0.0))
@@ -171,7 +189,7 @@ static func build_lines(def: Dictionary, inst: Dictionary, store: Object, equipp
 		lines.append({"text": txt, "color": col})
 
 	if not equipped_def.is_empty():
-		lines.append({"text": "Equipped: %s" % str(equipped_def.get("name", "")), "color": Bf2Screen.DIM})
+		lines.append({"text": "Equipped: %s" % item_name(equipped_def, equipped_inst), "color": Bf2Screen.DIM})
 	return lines
 
 

@@ -390,12 +390,12 @@ func _paint() -> void:
 		var ddef: Dictionary = _def_by_id.get(str(_dragging_inst.get("def_id", "")), {})
 		var ghost := Rect2(_mouse_pos + Vector2(10, 10) * u, Vector2(180, 26) * u)
 		frame(ghost, "border_popup")
-		text("gamefont_tiny", str(ddef.get("name", "")), ghost.position + Vector2(8, 6) * u, "Left", ACCENT)
+		text("gamefont_tiny", ItemTooltip.item_name(ddef, _dragging_inst), ghost.position + Vector2(8, 6) * u, "Left", ACCENT)
 	elif not _hover_inst.is_empty():
 		var hdef: Dictionary = _def_by_id.get(str(_hover_inst.get("def_id", "")), {})
 		var eq := _find_equipped_for_def(hdef)
 		var lines := ItemTooltip.build_lines(hdef, _hover_inst, store, eq.get("def", {}), eq.get("inst", {}))
-		ItemTooltip.draw(self, _mouse_pos, str(hdef.get("name", "")), lines)
+		ItemTooltip.draw(self, _mouse_pos, ItemTooltip.item_name(hdef, _hover_inst), lines)
 
 
 func _paint_paperdoll(box: Rect2) -> void:
@@ -450,7 +450,7 @@ func _paint_paperdoll(box: Rect2) -> void:
 		var eq_name := "Blocked" if blocked else "(Empty)"
 		if not blocked and not eq_inst.is_empty():
 			var edef: Dictionary = _def_by_id.get(str(eq_inst.get("def_id", "")), {})
-			eq_name = str(edef.get("name", ""))
+			eq_name = ItemTooltip.item_name(edef, eq_inst)
 		# Its two rows centred in the slot (slots shrink when there are many).
 		var pad := maxf(2.0 * u, (slot_h - 30.0 * u) * 0.5)
 		text("gamefont_tiny", s_lbl, Vector2(sx + 6 * u, sy + pad), "Left", DIM)
@@ -535,7 +535,7 @@ func _paint_inventory(box: Rect2) -> void:
 		frame(r, "border_3_pieces", Color(0.75, 0.88, 1.0) if (hovered or selected) else Color(0.85, 0.85, 0.9))
 		var used_in := _loadout_badges(iid)
 		var kind := str(def.get("kind", ""))
-		text("gamefont_small", str(def.get("name", inst.get("def_id", ""))), Vector2(x + 8 * u, ry + 5 * u),
+		text("gamefont_small", ItemTooltip.item_name(def, inst), Vector2(x + 8 * u, ry + 5 * u),
 				"Left", ACCENT if selected else TEXT)
 		var sub_txt := ""
 		if kind == "junk":

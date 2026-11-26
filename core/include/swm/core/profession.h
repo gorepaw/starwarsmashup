@@ -133,6 +133,16 @@ std::vector<std::string> routed_professions(const ProfessionBook& book, const Lo
 // missions have levels against it.
 int combat_level(const ProfessionBook& book, const Loadout& loadout, std::span<const ProfessionProgress> progress);
 
+// The profession whose level a marked item asks for: a weapon's archetype's,
+// armor's class's; nullptr for anything else (a Deflector Shield, ammo),
+// which asks for the character's highest profession level.
+const ProfessionDef* mark_profession(const ProfessionBook& book, const ItemDef& def);
+// A character's level for an item's mark: mark_profession's, else their highest.
+int level_for_item(const ProfessionBook& book, const ItemDef& def, std::span<const ProfessionProgress> progress);
+// Whether a character may equip an item at this mark (mark_level).
+bool can_use_mark(const ProfessionBook& book, const ItemDef& def, int mark,
+                  std::span<const ProfessionProgress> progress);
+
 // A quest this many levels below a character's combat level isn't worth
 // their while: its giver is shown grey.
 inline constexpr int quest_trivial_gap = 10;

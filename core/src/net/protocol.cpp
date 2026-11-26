@@ -752,6 +752,7 @@ void put_listing(ByteWriter& out, const BazaarListing& l) {
     out.put(l.item.id);
     out.put_string(l.item.def_id);
     out.put(float(l.item.quality));
+    out.put(uint8_t(clamp_mark(l.item.mark)));
     out.put(uint16_t(std::clamp(l.item.quantity, 1, 65535)));
     out.put_string(l.item.custom_name);
     out.put_long_string(l.item.color_json);
@@ -768,6 +769,7 @@ BazaarListing get_listing(ByteReader& in) {
     l.item.id = in.get<uint64_t>();
     l.item.def_id = in.get_string();
     l.item.quality = in.get<float>();
+    l.item.mark = clamp_mark(in.get<uint8_t>());
     l.item.quantity = std::max<int>(1, in.get<uint16_t>());
     l.item.custom_name = in.get_string();
     l.item.color_json = in.get_long_string();
@@ -1076,6 +1078,7 @@ struct Encoder {
                 out.put(c.items[ii].slot);
                 out.put_string(c.items[ii].def_id);
                 out.put(c.items[ii].quality);
+                out.put(c.items[ii].mark);
             }
         }
         out.put(uint8_t(m.match.has_value()));
@@ -1128,6 +1131,7 @@ struct Encoder {
             out.put(inst.owner_id);
             out.put_string(inst.def_id);
             out.put(float(inst.quality));
+            out.put(uint8_t(clamp_mark(inst.mark)));
             out.put(uint16_t(std::clamp(inst.quantity, 1, 65535)));
             out.put_string(inst.custom_name);
             out.put_string(inst.color_json);
@@ -1162,6 +1166,7 @@ struct Encoder {
             out.put(inst.id);
             out.put_string(inst.def_id);
             out.put(float(inst.quality));
+            out.put(uint8_t(clamp_mark(inst.mark)));
             out.put(uint16_t(std::clamp(inst.quantity, 1, 65535)));
             out.put_string(inst.custom_name);
             out.put_string(inst.color_json);
@@ -1671,6 +1676,7 @@ Message decode(std::span<const uint8_t> packet) {
                 entry.slot = in.get<uint8_t>();
                 entry.def_id = in.get_string();
                 entry.quality = in.get<float>();
+                entry.mark = uint8_t(clamp_mark(in.get<uint8_t>()));
                 c.items.push_back(std::move(entry));
             }
             m.corpses.push_back(std::move(c));
@@ -1753,6 +1759,7 @@ Message decode(std::span<const uint8_t> packet) {
             inst.owner_id = in.get<uint64_t>();
             inst.def_id = in.get_string();
             inst.quality = in.get<float>();
+            inst.mark = clamp_mark(in.get<uint8_t>());
             inst.quantity = std::max<int>(1, in.get<uint16_t>());
             inst.custom_name = in.get_string();
             inst.color_json = in.get_string();
@@ -1792,6 +1799,7 @@ Message decode(std::span<const uint8_t> packet) {
             inst.id = in.get<uint64_t>();
             inst.def_id = in.get_string();
             inst.quality = in.get<float>();
+            inst.mark = clamp_mark(in.get<uint8_t>());
             inst.quantity = std::max<int>(1, in.get<uint16_t>());
             inst.custom_name = in.get_string();
             inst.color_json = in.get_string();

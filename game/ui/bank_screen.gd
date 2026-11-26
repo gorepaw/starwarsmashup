@@ -10,6 +10,8 @@ extends "res://ui/bf2_screen.gd"
 signal service_requested(action: int, id: String, amount: int, item_id: int)
 signal closed
 
+const ItemTooltip = preload("res://ui/item_tooltip.gd")
+
 const DEPOSIT_CREDITS := 1
 const WITHDRAW_CREDITS := 2
 const DEPOSIT_ITEM := 3
@@ -61,7 +63,7 @@ func _name_of(item: Dictionary) -> String:
 	var custom := str(item.get("custom_name", ""))
 	if custom != "":
 		return custom
-	return str((_defs.get(str(item.get("def_id", "")), {}) as Dictionary).get("name", item.get("def_id", "?")))
+	return ItemTooltip.item_name(_defs.get(str(item.get("def_id", "")), {}), item)
 
 
 # What you carry that can be banked: not a quest item.
