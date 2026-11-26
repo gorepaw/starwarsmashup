@@ -22,6 +22,7 @@ const InfoTerminalScreen = preload("res://ui/info_terminal_screen.gd")
 const TravelScreen = preload("res://ui/travel_screen.gd")
 const MultiScanner3D = preload("res://rendering/multi_scanner.gd")
 const TeamTags = preload("res://rendering/team_tags.gd")
+const SwgCity = preload("res://rendering/swg_city.gd")
 
 const TALK_REACH := 4.5     # meters from a quest NPC to talk to them (the server allows 6)
 const OFFER_REACH := 8.0    # an offer closes when you walk further than this from it
@@ -41,6 +42,11 @@ const CRAFT_COLOR := Color(0.75, 0.5, 1.0)
 const HOLO_HEIGHT := 2.6   # m over a place's ground, its hologram
 const STATION_HOLO_HEIGHT := 3.7  # over a crafting station's (they stand up to 2.9 m)
 const TERMINAL_CHEVRON_HEIGHT := 2.9  # over a mission terminal's (2.1 m)
+# Where the city has the terminal's or station's model, its symbol is this
+# far over its top (measured: SwgCity.prop_top); the heights above where not.
+const HOLO_OVER_PROP := 0.9
+const CHEVRON_OVER_PROP := 0.55
+const BARE_TERMINAL_HOLO_HEIGHT := 1.9  # a battle terminal with nothing drawn: about a terminal's height
 const PLACE_HOLO_SCALE := 2.5  # a place's hologram, as big as a soldier's this many times (ASSUMPTION, by eye)
 const CLONING_HOLO_SCALE := 3.6  # a cloning facility's, larger: it has no terminal of its own to see
 const TARGET_HOLO_ID := 1 << 40  # practice targets' hologram ids, past any entity's
@@ -97,6 +103,8 @@ var _holograms: TeamTags      # holograms over the world's people and places (nu
 var _holograms_looked := false
 var _holo_anchors := {}       # place key -> Node3D standing where it is
 var _over_roofs := {}         # place key -> its hologram's height over a building's roof (cloning)
+var _over_props := {}         # place key -> its hologram's height over its terminal's or station's top
+var _waypoint_ground := {}    # quest waypoint (x, z) -> where it is on the floor
 var _target_nodes: Dictionary = {}  # target_id -> {root, body, label, hits: Array[{t, dmg}], last_dmg, flash}
 var _notice_id := 0
 var _notice := ""
@@ -521,7 +529,13 @@ func toggle_workbench(client: Object) -> bool:
 		return false
 	close_all_screens()
 	_sync_screen_data(client)
-	_workbench_screen.open_screen()
+	# At a station, its own; elsewhere the vault, orders and salvage, and the
+	# schematics to look over (made only at their stations).
+	var wb := at_workbench(client)
+	if wb.is_empty():
+		_workbench_screen.open_screen("none", "Workbench")
+	else:
+		_workbench_screen.open_screen(str(wb.get("kind", "general")), str(wb.get("name", "Workbench")))
 	return true
 
 
@@ -598,6 +612,8 @@ func clear_recruiters() -> void:
 			(_holo_anchors[key] as Node).queue_free()
 	_holo_anchors.clear()
 	_over_roofs.clear()
+	_over_props.clear()
+	_waypoint_ground.clear()
 	for node: Node in _recruiter_nodes:
 		if is_instance_valid(node):
 			node.queue_free()
@@ -722,11 +738,15 @@ func at_workbench(client: Object) -> Dictionary:
 	if client == null or not client.is_spawned():
 		return {}
 	var position: Vector3 = client.get_presented()["position"]
+	var best: Dictionary = {}
+	var best_d := INF
 	for wb: Dictionary in client.get_workbenches():
 		var at: Vector3 = wb["position"]
-		if Vector2(position.x - at.x, position.z - at.z).length() <= float(wb["radius"]):
-			return wb
-	return {}
+		var d := Vector2(position.x - at.x, position.z - at.z).length()
+		if d <= float(wb["radius"]) and d < best_d:  # the nearest, where stations stand together
+			best = wb
+			best_d = d
+	return best
 
 
 # The nearest of the people quests name, within talking reach.
@@ -854,7 +874,7 @@ func _update_quest_hud(client: Object) -> void:
 		distance = "%d m" % roundi(meters) if meters < 1000 else "%.1f km" % (meters / 1000.0)
 		var camera := _world_root.get_viewport().get_camera_3d() if _world_root != null else null
 		if camera != null and meters > 3.0:
-			waypoint = _screen_marker(camera, at + Vector3.UP * 2.2, distance)
+			waypoint = _screen_marker(camera, _waypoint_marker(client, at, own), distance)
 	_hub_hud.tracker = {"title": str(quest.get("title", "")), "step": str(steps.back()) if not steps.is_empty() else "",
 			"progress": progress, "distance": distance, "log_key": _key_name("quest_log")}
 	_hub_hud.waypoint = waypoint
@@ -927,7 +947,8 @@ func _update_objective_markers(client: Object) -> void:
 		if at.distance_to(own) <= MARKER_RANGE:
 			var key := "mt%d" % int(t["index"])
 			seen[key] = true
-			_place_marker(key, _single_chevron, 0.0012, _mission_terminal_color(str(t.get("kind", "general"))), at + Vector3.UP * TERMINAL_CHEVRON_HEIGHT)
+			_place_marker(key, _single_chevron, 0.0012, _mission_terminal_color(str(t.get("kind", "general"))),
+					at + Vector3.UP * _height_over_prop(key, at, CHEVRON_OVER_PROP, TERMINAL_CHEVRON_HEIGHT))
 	for key: String in _marker_nodes.keys():
 		if not seen.has(key):
 			if is_instance_valid(_marker_nodes[key]):
@@ -979,7 +1000,7 @@ func _world_holograms() -> TeamTags:
 					"alliance": models + "com_icon_alliance.gltf", "empire": models + "com_icon_imperial.gltf",
 					"neutral": "hud/textures/hud_flag_icon.png", "quest": "gen:quest", "coins": "gen:coins",
 					"chest": "gen:chest", "star": "gen:star", "cross": "gen:cross", "clone": "gen:clone",
-					"wrench": "gen:wrench", "shuttle": "gen:shuttle", "fighter": "gen:fighter"}})
+					"wrench": "gen:wrench", "shuttle": "gen:shuttle", "fighter": "gen:fighter", "news": "gen:news"}})
 			if tags.available():
 				_holograms = tags
 			break
@@ -1038,14 +1059,17 @@ func _update_place_holograms(client: Object, delta: float) -> void:
 		if kind == "travel_offworld":
 			continue  # another planet's starport (Stage 13)
 		if not is_shop(kind):
-			# A service point: a star (trainers, newsnet, gambling, data_terminal), coins (the bank, bazaar),
+			# A service point: a star (trainers, gambling, data_terminal), a holoprojector (newsnet), coins (the bank, bazaar),
 			# a shuttle (travel), a cross (clinics) or a ringed one, larger (cloning), in the terminals' blue.
-			var symbol: String = {"trainer": "star", "bank": "coins", "bazaar": "coins", "newsnet": "star",
+			var symbol: String = {"trainer": "star", "bank": "coins", "bazaar": "coins", "newsnet": "news",
 					"gambling": "star", "data_terminal": "star", "travel": "shuttle", "starport": "shuttle",
 					"cloning": "clone"}.get(kind, "cross")
 			var key := "service:%d" % vi
 			var height := HOLO_HEIGHT
-			if kind == "cloning":
+			if kind != "cloning" and kind != "trainer":
+				# a terminal (only a trainer is someone): over its top
+				height = _height_over_prop(key, v["position"], HOLO_OVER_PROP, HOLO_HEIGHT)
+			elif kind == "cloning":
 				# A cloning facility is the building itself (its middle): its
 				# hologram stands over its roof, to be seen from the street.
 				if not _over_roofs.has(key):
@@ -1070,12 +1094,15 @@ func _update_place_holograms(client: Object, delta: float) -> void:
 		_place_hologram("qm:%d" % qi, q["position"], sym, SHOP_COLOR, seen)
 	for ri in _bare_recruiters.size():
 		var r: Dictionary = _bare_recruiters[ri]
-		_place_hologram("recruiter:%d" % ri, r["position"], "fighter" if str(r.get("kind", "")) == "space" else "neutral",
-				TERMINAL_COLOR, seen)
+		var rkey := "recruiter:%d" % ri
+		_place_hologram(rkey, r["position"], "fighter" if str(r.get("kind", "")) == "space" else "neutral",
+				TERMINAL_COLOR, seen, _height_over_prop(rkey, r["position"], HOLO_OVER_PROP, BARE_TERMINAL_HOLO_HEIGHT))
 	var wbs: Array = client.get_workbenches()
 	for wbi in wbs.size():
 		var wb: Dictionary = wbs[wbi]
-		_place_hologram("workbench:%d" % wbi, wb["position"], "wrench", CRAFT_COLOR, seen, STATION_HOLO_HEIGHT)
+		var wkey := "workbench:%d" % wbi
+		_place_hologram(wkey, wb["position"], "wrench", CRAFT_COLOR, seen,
+				_height_over_prop(wkey, wb["position"], HOLO_OVER_PROP, STATION_HOLO_HEIGHT))
 	var quests: Dictionary = client.get_quests()
 	for npc: Dictionary in client.get_quest_npcs():
 		if bool(npc.get("giver", false)):
@@ -1110,6 +1137,46 @@ func _giver_state(quests: Dictionary, giver: String) -> int:
 	if (quests.get("waiting_givers", PackedStringArray()) as PackedStringArray).has(giver):
 		return GIVER_WAITING
 	return GIVER_DONE
+
+
+# A hologram's height over `at` to stand `margin` m over the top of the
+# terminal or station there (its model in the city, measured: they're from
+# a knee-high console to a crafting station 2.9 m tall, and `at` is the
+# floor's height round it, so not always its foot); `fallback` where the city
+# has none there. Measured once per place.
+func _height_over_prop(key: String, at: Vector3, margin: float, fallback: float) -> float:
+	if _over_props.has(key):
+		return _over_props[key]
+	var world: Node = _world_root.get("_world") if _world_root != null else null
+	if world == null or not world.has_meta(SwgCity.PROPS):
+		return fallback  # (not loaded yet: not cached)
+	var top := SwgCity.prop_top(world, at)
+	if is_nan(top):  # (the server's spot a floor off: a house's cellar under it)
+		top = SwgCity.prop_top(world, at, 1.2, 15.0, 15.0)
+	var height := fallback if is_nan(top) else top - at.y + margin
+	_over_props[key] = height
+	return height
+
+
+# Where a quest's waypoint marker stands: over its terminal or station if
+# one is there, else over the place (2.2 m). A step's Position is known only
+# across (y 0): it's put on the floor there first (from the player's height,
+# 30 m up, down), once it can be.
+func _waypoint_marker(client: Object, at: Vector3, own: Vector3) -> Vector3:
+	var key := "%.1f,%.1f" % [at.x, at.z]
+	if absf(at.y) >= 0.001:
+		return at + Vector3.UP * 2.2  # a person (where they stand)
+	if _waypoint_ground.has(key):
+		at = _waypoint_ground[key]
+	else:
+		var from := Vector3(at.x, own.y + 30.0, at.z)
+		var to := Vector3(at.x, own.y - 30.0, at.z)
+		var t := float(client.raycast(from, to))
+		if t < 0.0:
+			return Vector3(at.x, own.y + 2.2, at.z)  # (not loaded there yet)
+		at = from.lerp(to, t)
+		_waypoint_ground[key] = at
+	return at + Vector3.UP * _height_over_prop("waypoint:" + key, at, CHEVRON_OVER_PROP, 2.2)
 
 
 # A hologram's height over `at` to stand over whatever roof is over it (none:

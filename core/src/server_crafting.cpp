@@ -288,6 +288,23 @@ void GameServer::handle_craft_request(Client& client, const net::CraftRequest& r
         if (store_ == nullptr || client.character == 0 || config_.catalog == nullptr) return;
         const SchematicDef* sch = book.find_schematic(req.schematic_id);
         if (sch == nullptr) return;
+        // At a station that makes it (where the world has stations at all).
+        if (!workbenches_.empty()) {
+            bool near_one = false;
+            bool fits = false;
+            for (const net::Workbench& wb : workbenches_) {
+                const Vec3 d = client.state.position - wb.position;
+                if (std::hypot(d.x, d.z) > wb.radius + 1.0) continue;
+                near_one = true;
+                fits = fits || station_makes(wb.kind, sch->profession);
+            }
+            if (!fits) {
+                notify(client.entity, near_one ? std::format("{} is made at a {}.", sch->name,
+                                                             station_name(station_for(sch->profession)))
+                                               : std::string("Stand at a crafting station to craft."));
+                return;
+            }
+        }
         const int lv = profession_level(config_.professions, client.professions, sch->profession);
         if (lv < sch->required_level) {
             notify(client.entity, std::format("Requires {} level {}.", sch->profession, sch->required_level));

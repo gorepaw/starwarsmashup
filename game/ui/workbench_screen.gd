@@ -16,13 +16,24 @@ const TABS := [
 	["salvage", "Salvage"],
 ]
 const CRAFTERS := [
-	["all", "All"],
 	["weaponsmith", "Weaponsmith"],
+	["droid_engineer", "Droid Engineer"],
 	["armorsmith", "Armorsmith"],
 	["tailor", "Tailor"],
 	["chef", "Chef"],
+	["doctor", "Doctor"],
+	["bio_engineer", "Bio-Engineer"],
 	["architect", "Architect"],
 ]
+# What each kind of station makes (as core's station_makes: Galaxies'
+# stations each made their own professions' schematics); a "general" one
+# everything. The server holds to it.
+const STATION_MAKES := {
+	"weapon": ["weaponsmith", "droid_engineer"],
+	"clothing": ["armorsmith", "tailor"],
+	"food": ["chef", "doctor", "bio_engineer"],
+	"structure": ["architect"],
+}
 const VAULT_CATS := [
 	["all", "All"],
 	["mineral", "Mineral"],
@@ -56,7 +67,7 @@ var inventory: Array = []
 var loadouts: Array = []
 var professions: Dictionary = {}
 var feedback := ""
-var station_kind := "general"
+var station_kind := "general"  # a station's kind; "none" away from one (nothing is made)
 var station_title := ""
 
 var _tab := "workbench"
@@ -78,23 +89,10 @@ var _cat_by_id: Dictionary = {}
 func open_screen(kind := "general", title := "") -> void:
 	station_kind = kind
 	station_title = title
-	match kind:
-		"weapon":
-			_prof_filter = "weaponsmith"
-		"clothing":
-			_prof_filter = "armorsmith"
-		"food":
-			_prof_filter = "chef"
-		"structure":
-			_prof_filter = "architect"
-		_:
-			_prof_filter = "all"
+	_prof_filter = "all"
 	_rebuild_lookups()
 	var list := _filtered_schematics()
-	if not list.is_empty():
-		_select_schematic(str(list[0].get("id", "")))
-	elif not schematics.is_empty():
-		_select_schematic(str(schematics[0].get("id", "")))
+	_select_schematic(str(list[0].get("id", "")) if not list.is_empty() else "")
 	visible = true
 	queue_redraw()
 
@@ -136,9 +134,46 @@ func _equipped_ids() -> Dictionary:
 	return out
 
 
+# Whether this station makes a profession's schematics.
+func _makes(profession: String) -> bool:
+	var makes: Array = STATION_MAKES.get(station_kind, [])
+	return makes.is_empty() or makes.has(profession)
+
+
+# Where the rest are made: "Others at the Armor & Clothing, Food & Chemical...
+# stations".
+func _elsewhere_note() -> String:
+	var names := {"weapon": "Weapon & Droid", "clothing": "Armor & Clothing", "food": "Food & Chemical",
+			"structure": "Structure & Machinery"}
+	var others := PackedStringArray()
+	for kind: String in STATION_MAKES:
+		if kind != station_kind:
+			others.append(names[kind])
+	return "Others at the %s stations" % ", ".join(others)
+
+
+# The station a profession's schematics are made at, by name.
+static func _station_name_for(profession: String) -> String:
+	for kind: String in STATION_MAKES:
+		if (STATION_MAKES[kind] as Array).has(profession):
+			return {"weapon": "Weapon & Droid", "clothing": "Armor & Clothing", "food": "Food & Chemical",
+					"structure": "Structure & Machinery"}[kind] + " Crafting Station"
+	return "crafting station"
+
+
+# The professions' filter chips this station shows: "All", then each it makes.
+func _crafters() -> Array:
+	var out: Array = [["all", "All"]]
+	for chip: Array in CRAFTERS:
+		if _makes(str(chip[0])):
+			out.append(chip)
+	return out
+
+
 func _filtered_schematics() -> Array:
 	var out := schematics.filter(func(s: Dictionary) -> bool:
-		return _prof_filter == "all" or str(s.get("profession", "")) == _prof_filter)
+		var prof := str(s.get("profession", ""))
+		return _makes(prof) and (_prof_filter == "all" or prof == _prof_filter))
 	out.sort_custom(func(a: Dictionary, b: Dictionary) -> bool:
 		var pa := bool(_pinned.get(str(a.get("id", "")), false))
 		var pb := bool(_pinned.get(str(b.get("id", "")), false))
@@ -230,10 +265,14 @@ func _paint() -> void:
 
 func _paint_workbench(rect: Rect2) -> void:
 	var px := rect.position.x
-	for chip: Array in CRAFTERS:
+	for chip: Array in _crafters():
 		var cw: float = art.text_width("gamefont_tiny", chip[1], u) + 20 * u
 		button(Rect2(px, rect.position.y, cw, 22 * u), chip[1], "pfilter:" + str(chip[0]), _prof_filter == chip[0])
 		px += cw + 5 * u
+	if STATION_MAKES.has(station_kind):
+		text("gamefont_tiny", _elsewhere_note(), Vector2(rect.end.x, rect.position.y + 4 * u), "Right", DIM)
+	elif station_kind == "none":
+		text("gamefont_tiny", "Craft at a crafting station", Vector2(rect.end.x, rect.position.y + 4 * u), "Right", WARN)
 	var y := rect.position.y + 30 * u
 	var col_h := rect.end.y - y
 
@@ -278,7 +317,11 @@ func _paint_workbench(rect: Rect2) -> void:
 	var lv := _prof_level(prof)
 	text("gamefont_tiny", "%s (Lv %d / Req %d)   +%d XP" % [prof.capitalize(), lv, req, int(sch.get("base_xp", 60))],
 			Vector2(cx, cy), "Left", GOOD if lv >= req else BAD)
-	cy += 22 * u
+	cy += 18 * u
+	if station_kind == "none":
+		text("gamefont_tiny", "Made at a " + _station_name_for(prof), Vector2(cx, cy), "Left", WARN)
+		cy += 18 * u
+	cy += 4 * u
 	text("gamefont_tiny", "Auto-Fill:", Vector2(cx, cy + 4 * u), "Left", DIM)
 	button(Rect2(cx + 68 * u, cy, 68 * u, 22 * u), "Quality", "fill:best_quality")
 	button(Rect2(cx + 140 * u, cy, 68 * u, 22 * u), "Best Stat", "fill:best_stat")
@@ -368,7 +411,7 @@ func _paint_workbench(rect: Rect2) -> void:
 		button(Rect2(rx + 240 * u, ry, 30 * u, 22 * u), "X", "del_preset:" + pname)
 		ry += 25 * u
 
-	var ready := lv >= req
+	var ready := lv >= req and station_kind != "none"
 	for i in slots.size():
 		var rid := str(_slot_resources[i]) if i < _slot_resources.size() else ""
 		if rid == "" or _vault_amount(rid) < int((slots[i] as Dictionary).get("amount", 1)):

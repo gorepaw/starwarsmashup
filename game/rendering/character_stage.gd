@@ -142,6 +142,16 @@ func apply_appearance(appearance: Dictionary, scale_min: float, scale_max: float
 		var val := clampf(float(blends.get(blend_name, 0.0)), 0.0, 1.0)
 		for entry: Dictionary in _blend_indices[blend_name]:
 			(entry["mesh"] as MeshInstance3D).set_blend_shape_value(int(entry["idx"]), val)
+	# What's worn follows the body's shape.
+	if worn_node != null and is_instance_valid(worn_node):
+		for m: Node in worn_node.get_children():
+			var mi := m as MeshInstance3D
+			if mi == null or mi.mesh == null:
+				continue
+			for i in mi.mesh.get_blend_shape_count():
+				var bname := String(mi.mesh.get_blend_shape_name(i))
+				if blends.has(bname):
+					mi.set_blend_shape_value(i, clampf(float(blends[bname]), 0.0, 1.0))
 
 	var color_overrides: Dictionary = appearance.get("colors", {})
 	if not colors_data.is_empty():

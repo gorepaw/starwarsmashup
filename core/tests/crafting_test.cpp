@@ -144,7 +144,9 @@ void test_server_client_crafting_loopback() {
 
         GameServer server(srv_link, world, config, &store);
         server.set_looks({"object/mobile/shared_dressed_commoner_tatooine_rodian_male_01.iff"});
-        server.set_crafting(&crafting, {{"Mos Eisley Workbench", {3, 0, 3}, 4.0}});
+        // At first only an Armor & Clothing station in reach (a weapon one far off).
+        server.set_crafting(&crafting, {{"Armor & Clothing Crafting Station", {3, 0, 3}, 4.0, "clothing"},
+                                        {"Weapon & Droid Crafting Station", {80, 0, 80}, 4.0, "weapon"}});
 
         GameClient client(cli_link, world, ClientConfig{.server = server_ep, .name = "Artisan"});
         double now = 0.0;
@@ -156,8 +158,15 @@ void test_server_client_crafting_loopback() {
         };
         run(0.5);
         CHECK(client.status() == GameClient::Status::connected);
-        CHECK(client.workbenches().size() == 1);
-        CHECK(client.workbenches()[0].name == "Mos Eisley Workbench");
+        CHECK(client.workbenches().size() == 2);
+        CHECK(client.workbenches()[0].name == "Armor & Clothing Crafting Station");
+        CHECK(client.workbenches()[0].kind == "clothing");
+        // The stations' professions.
+        CHECK(station_makes("weapon", "weaponsmith") && station_makes("weapon", "droid_engineer"));
+        CHECK(!station_makes("weapon", "tailor") && !station_makes("clothing", "weaponsmith"));
+        CHECK(station_makes("clothing", "armorsmith") && station_makes("food", "doctor"));
+        CHECK(station_makes("structure", "architect") && station_makes("general", "chef"));
+        CHECK(station_name(station_for("chef")) == "Food & Chemical Crafting Station");
 
         // Extract mineral + gas twice so we have plenty for a batch of 2 + 1 spare D-18 pistols.
         for (int i = 0; i < 3; ++i) {
@@ -187,8 +196,13 @@ void test_server_client_crafting_loopback() {
         CHECK(client.crafting().presets.size() == 1);
         CHECK(client.crafting().presets[0].name == "D-18 Batch");
 
-        // Craft 3x D-18 Blaster Pistols (2 for wo_pistols_militia, 1 to salvage).
+        // A pistol isn't made at an Armor & Clothing station...
         const size_t inv_before = client.items().size();
+        client.craft_item("sch_wp_pistol_d18", {min_id, gas_id}, {}, 70, 3);
+        run(0.4);
+        CHECK(client.items().size() == inv_before);
+        // ...but at a Weapon & Droid one: 3x D-18 Blaster Pistols (2 for wo_pistols_militia, 1 to salvage).
+        server.set_crafting(&crafting, {{"Weapon & Droid Crafting Station", {3, 0, 3}, 4.0, "weapon"}});
         client.craft_item("sch_wp_pistol_d18", {min_id, gas_id}, {}, 70, 3);
         run(0.4);
         CHECK(client.items().size() == inv_before + 3);

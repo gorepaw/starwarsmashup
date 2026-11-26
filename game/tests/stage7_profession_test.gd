@@ -53,7 +53,7 @@ func _initialize() -> void:
 	_screen.loadout_saved.connect(func(slot: int, lo: Dictionary) -> void: saved.append([slot, lo["specializations"]]))
 	_screen.open_screen()
 	_screen._on_click("slot:rifles", Vector2.ZERO)
-	_screen._on_click("slot:bounty_hunter", Vector2.ZERO)  # Wave 7B: not in the game yet
+	_screen._on_click("slot:merchant", Vector2.ZERO)  # a specialist with no slot
 	_screen._on_click("slot:weaponsmith", Vector2.ZERO)    # not a combat profession
 	_screen._on_click("slot:medium_armor", Vector2.ZERO)
 	_screen._on_click("slot:pistols", Vector2.ZERO)
@@ -99,7 +99,7 @@ func _process(_delta: float) -> bool:
 			var hub_ui: Node = _session.get("_hub_ui")
 			assert(hub_ui.toggle_professions(client), "the planner didn't open")
 			var lo: Dictionary = (client.get_character_loadouts()[0] as Dictionary).duplicate(true)
-			lo["specializations"] = ["carbines", "bounty_hunter", "light_armor", "carbines"]
+			lo["specializations"] = ["carbines", "merchant", "light_armor", "carbines"]
 			client.save_loadout(int(lo["slot_index"]), lo)
 			_next("saved")
 		"saved":

@@ -825,14 +825,42 @@ void test_unified_ammo() {
     CHECK(state.combat.weapons[primary_slot].reserve == 12);
     CHECK(remaining_unified_ammo(state.combat, lo, AmmoClass::standard) == 22);
 
-    // Expend grenade and check ammo droid resupply: refills grenade, leaves unified standard untouched!
+    // Expend grenade and check ammo droid resupply: refills the grenade, and
+    // standard rounds carried (under droid_standard_ammo_cap) as a rifle's own.
     state.combat.weapons[secondary_slot].rounds = 0;
     CHECK(resupply(state, lo, 0.5));
     CHECK(state.combat.weapons[secondary_slot].rounds == 1);
-    CHECK(remaining_unified_ammo(state.combat, lo, AmmoClass::standard) == 22);
+    const int given = int(std::ceil(0.5 * droid_standard_ammo_cap));  // half a full load (the cap)
+    CHECK(remaining_unified_ammo(state.combat, lo, AmmoClass::standard) == std::min(droid_standard_ammo_cap, 22 + given));
+    CHECK(state.combat.weapons[primary_slot].reserve == state.combat.weapons[sidearm_slot].reserve);  // one pool
+    // Up to the cap, and no further.
+    for (int i = 0; i < 100; ++i) resupply(state, lo, 0.5);
+    CHECK(remaining_unified_ammo(state.combat, lo, AmmoClass::standard) == droid_standard_ammo_cap);
+    CHECK(!resupply(state, lo, 0.5));
+    // More than the cap carried: none taken away.
+    {
+        Loadout rich = lo;
+        rich.unified_standard_ammo = 450;
+        MoveState s2;
+        reset_loadout(s2, rich, stats_for(rich));
+        resupply(s2, rich, 0.5);
+        CHECK(remaining_unified_ammo(s2.combat, rich, AmmoClass::standard) == 450);
+    }
+    // Heavy rounds carried don't come from a droid.
+    {
+        Loadout heavy = lo;
+        heavy.weapons[primary_slot]->ammo_class = AmmoClass::heavy;
+        heavy.weapons[sidearm_slot] = std::nullopt;
+        heavy.unified_standard_ammo = -1;
+        heavy.unified_heavy_ammo = 5;
+        MoveState s3;
+        reset_loadout(s3, heavy, stats_for(heavy));
+        resupply(s3, heavy, 0.5);
+        CHECK(remaining_unified_ammo(s3.combat, heavy, AmmoClass::heavy) == 5);
+    }
 
     // Exhaust standard ammo completely.
-    hold(state, lo, MoveInput::fire, 120, seq, sidearm_slot);
+    hold(state, lo, MoveInput::fire, 1600, seq, sidearm_slot);  // (200 rounds, a shot each 0.2 s)
     CHECK(state.combat.weapons[sidearm_slot].reserve == 0);
     CHECK(hold(state, lo, MoveInput::fire, 15, seq, sidearm_slot) == 0);
 }

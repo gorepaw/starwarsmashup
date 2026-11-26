@@ -169,4 +169,14 @@ private:
 int64_t material_amount(std::span<const MaterialStack> vault, std::string_view resource_id);
 void add_material(std::vector<MaterialStack>& vault, std::string_view resource_id, int64_t delta);
 
+// Crafting stations (a hub's [workbench] Type, net::Workbench::kind) make
+// their professions' schematics only, as Galaxies' did: "weapon" (Weapon &
+// Droid) a weaponsmith's and droid engineer's, "clothing" (Armor & Clothing)
+// an armorsmith's and tailor's, "food" (Food & Chemical) a chef's, doctor's
+// and bio-engineer's, "structure" (Structure & Machinery) an architect's;
+// "general" everything.
+std::string_view station_for(std::string_view profession);  // its kind ("general" for one none names)
+bool station_makes(std::string_view station_kind, std::string_view profession);
+std::string_view station_name(std::string_view station_kind);  // "Weapon & Droid Crafting Station"
+
 } // namespace swm::core

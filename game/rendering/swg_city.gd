@@ -37,6 +37,7 @@ static func add_objects(parent: Node, prefix: String, camera_collision := false,
 	var count := 0
 	var bounds := {}  # model -> its meshes' bounds (for footprints)
 	var footprints: Array = parent.get_meta(FOOTPRINTS, [])
+	var props: Dictionary = parent.get_meta(PROPS, {})
 	for object: Dictionary in parsed["objects"]:
 		placed.append(null)
 		if radius > 0.0:
@@ -79,12 +80,14 @@ static func add_objects(parent: Node, prefix: String, camera_collision := false,
 		parent.add_child(node)
 		placed[placed.size() - 1] = node
 		count += 1
-		if int(object.get("inside", -1)) < 0 and not object.get("particles", false) and not object.get("creature", false):
+		if not object.get("particles", false) and not object.get("creature", false) and not object.get("building", false):
 			if not bounds.has(model):
 				bounds[model] = _bounds(models[model] as Node3D)
-			var footprint := _footprint(node, bounds[model])
-			if not footprint.is_empty():
-				footprints.append(footprint)
+			if int(object.get("inside", -1)) < 0:
+				var footprint := _footprint(node, bounds[model])
+				if not footprint.is_empty():
+					footprints.append(footprint)
+			_add_prop(props, node, bounds[model])
 		if object.get("creature", false):
 			_breathe(node, placed.size())
 		var inside := int(object.get("inside", -1))
@@ -92,6 +95,7 @@ static func add_objects(parent: Node, prefix: String, camera_collision := false,
 			_light_furniture(node, placed[inside], dir.path_join(str(parsed["objects"][inside]["model"])),
 					int(object.get("cell", 0)), cells)
 	parent.set_meta(FOOTPRINTS, footprints)
+	parent.set_meta(PROPS, props)
 	for template: Variant in models.values():
 		if template != null:
 			(template as Node).free()
@@ -106,6 +110,63 @@ const DOORS_GROUP := &"swg_doors"  # the sliding doors' nodes (a mark on one goe
 const FOOTPRINTS := "swg_footprints"
 const FOOTPRINT_AREA := 10.0
 const FOOTPRINT_HEIGHT := 2.2
+
+
+# The props' extents (on the parent): a terminal's, a crafting station's,
+# a crate's, so what stands over one (a place's hologram) can stand just over
+# its top. A grid of PROP_CELL m cells (Vector2i) -> [[x, z, radius, base y,
+# top y], ...], game space. Not furniture taller than PROP_MAX_HEIGHT or wider
+# than PROP_MAX_RADIUS (a wall, an awning).
+const PROPS := "swg_props"
+const PROP_CELL := 8.0
+const PROP_MAX_HEIGHT := 4.5
+const PROP_MAX_RADIUS := 3.0
+
+
+static func _add_prop(props: Dictionary, node: Node3D, box: AABB) -> void:
+	if box.size.y < 0.5 or box.size.y > PROP_MAX_HEIGHT * 1.5:
+		return
+	var lo := Vector3(INF, INF, INF)
+	var hi := -lo
+	for i in 8:
+		var p := node.transform * box.get_endpoint(i)
+		lo = lo.min(p)
+		hi = hi.max(p)
+	# Across, from its own box (however it's turned).
+	var radius := Vector2(box.size.x, box.size.z).length() * 0.5 * node.basis.get_scale().x
+	if hi.y - lo.y > PROP_MAX_HEIGHT or radius > PROP_MAX_RADIUS:
+		return
+	var middle := node.transform * box.get_center()
+	var cx := middle.x
+	var cz := middle.z
+	var cell := Vector2i(floori(cx / PROP_CELL), floori(cz / PROP_CELL))
+	if not props.has(cell):
+		props[cell] = []
+	(props[cell] as Array).append([cx, cz, radius, lo.y, hi.y])
+
+
+# The top of the prop standing at `at` (game space: its middle within reach
+# of `at` across, its base within `below` m under at.y or `above` over), or
+# NAN if none: the nearest (across, then up and down).
+static func prop_top(parent: Node, at: Vector3, reach := 1.2, below := 3.5, above := 4.0) -> float:
+	if parent == null:
+		return NAN
+	var props: Dictionary = parent.get_meta(PROPS, {})
+	var home := Vector2i(floori(at.x / PROP_CELL), floori(at.z / PROP_CELL))
+	var best := NAN
+	var best_score := INF
+	for dx in range(-1, 2):
+		for dz in range(-1, 2):
+			for p: Array in props.get(home + Vector2i(dx, dz), []):
+				var d := Vector2(float(p[0]) - at.x, float(p[1]) - at.z).length()
+				var base := float(p[3])
+				if d > maxf(reach, float(p[2]) * 0.8) or base < at.y - below or base > at.y + above:
+					continue
+				var score := d + 0.25 * absf(base - at.y)
+				if score < best_score:
+					best_score = score
+					best = float(p[4])
+	return best
 
 
 # A model's meshes' bounds, in its own space (an empty AABB if it has none).

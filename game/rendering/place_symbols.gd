@@ -3,7 +3,8 @@
 # (somewhere to sell, the bank), a chest (a shop), a star (a trainer), a
 # cross (a clinic), a ringed cross (a cloning facility), a wrench (crafting:
 # Battlefront's own, hud_active_repair_icon, is too small to stay sharp), a
-# shuttle (travel) and a starfighter (a space battle terminal). Drawn here in
+# shuttle (travel), a starfighter (a space battle terminal) and a holoprojector
+# broadcasting (NewsNet, the HoloNet). Drawn here in
 # white (the hologram tints them): a translucent body with a bright outline,
 # as its own hologram icons are.
 #
@@ -11,7 +12,7 @@
 extends RefCounted
 
 const SIZE := 96
-const NAMES := ["quest", "coins", "chest", "star", "cross", "clone", "wrench", "shuttle", "fighter"]
+const NAMES := ["quest", "coins", "chest", "star", "cross", "clone", "wrench", "shuttle", "fighter", "news"]
 const BODY := 0.32      # how solid a symbol's inside is (its outline is 1.0)
 const STROKE := 4.5     # outline width, pixels
 
@@ -44,6 +45,8 @@ static func texture(name: String) -> Texture2D:
 			_shuttle(image)
 		"fighter":
 			_fighter(image)
+		"news":
+			_news(image)
 	image.generate_mipmaps()
 	var made := ImageTexture.create_from_image(image)
 	_cache[name] = made
@@ -175,6 +178,22 @@ static func _fighter(image: Image) -> void:
 			d = minf(d, _box(p, tip, Vector2(4, 12), 2.0))
 		return d)
 	_paint(image, func(p: Vector2) -> float: return _circle(p, Vector2(48, 48), 6.0), false, 1.0)  # its nose
+
+
+# NewsNet, the HoloNet: a holoprojector on its stand, broadcasting (three
+# arcs rising from its emitter).
+static func _news(image: Image) -> void:
+	var emitter := Vector2(48, 60)
+	_paint(image, func(p: Vector2) -> float:
+		var base := _ellipse(p, Vector2(48, 86), Vector2(24, 6))
+		var stem := _segment(p, Vector2(48, 64), Vector2(48, 84)) - 4.0
+		return minf(base, stem))
+	_paint(image, func(p: Vector2) -> float: return _circle(p, emitter, 9.0), true, 1.0)
+	for r: float in [22.0, 35.0, 48.0]:
+		_paint(image, func(p: Vector2) -> float:
+			var q := p - emitter
+			var off_up := absf(atan2(q.x, -q.y)) - 0.8  # radians past the arc's ends
+			return maxf(absf(q.length() - r) - 3.2, off_up * q.length()), false, 1.0)
 
 
 static func _chest(image: Image) -> void:

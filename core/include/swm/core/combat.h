@@ -84,7 +84,10 @@ std::optional<double> segment_hits_cylinder(Vec3 a, Vec3 b, Vec3 feet, double ra
 // A droid's resupply: each weapon that carries limited ammo gets `fraction`
 // of its full ammunition back (clip and spare clips together), up to full:
 // a gun's as spare rounds, a secondary's (grenades) into its clip first.
-// Returns whether anything changed.
+// Standard rounds carried in the inventory (the unified pool) come back
+// while there are fewer than droid_standard_ammo_cap (`fraction` of that,
+// up to it); heavy rounds don't. Returns whether anything changed.
+constexpr int droid_standard_ammo_cap = 200;
 bool resupply(MoveState& state, const Loadout& loadout, double fraction);
 
 // A dropped ammo or dual pack's resupply: each weapon that carries limited

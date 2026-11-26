@@ -152,9 +152,32 @@ bool resupply(MoveState& state, const Loadout& loadout, double fraction) {
     if (fraction <= 0) {
         return false;
     }
-    return add_ammo(state, loadout, [&](const WeaponDef& def) {
+    const auto amount_for = [&](const WeaponDef& def) {
         return std::max(1, int(std::ceil(fraction * def.ammo * def.rounds_per_clip)));
-    });
+    };
+    bool changed = add_ammo(state, loadout, amount_for);
+    // Standard rounds carried (the unified pool, from the inventory's
+    // stacks) come from a droid too while under droid_standard_ammo_cap:
+    // `fraction` of that, as a weapon's own would of its full load; heavy
+    // rounds only from what's carried.
+    if (loadout.unified_ammo(AmmoClass::standard) >= 0) {
+        for (int slot = 0; slot < weapon_slots; ++slot) {
+            const WeaponDef* def = weapon_in_slot(loadout, slot);
+            if (def == nullptr || def->ammo_class != AmmoClass::standard) {
+                continue;
+            }
+            const int total = remaining_unified_ammo(state.combat, loadout, AmmoClass::standard);
+            if (total < droid_standard_ammo_cap) {
+                const int given = std::max(1, int(std::ceil(fraction * droid_standard_ammo_cap)));
+                const int added = std::min(given, droid_standard_ammo_cap - total);
+                const int reserve = std::max<int>(0, state.combat.weapons[size_t(slot)].reserve);
+                sync_unified_pool(state.combat, loadout, AmmoClass::standard, reserve + added);
+                changed = true;
+            }
+            break;  // (one pool, shared by them all)
+        }
+    }
+    return changed;
 }
 
 bool resupply_clips(MoveState& state, const Loadout& loadout, int clips) {

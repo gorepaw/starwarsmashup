@@ -413,4 +413,30 @@ void add_material(std::vector<MaterialStack>& vault, std::string_view resource_i
     }
 }
 
+std::string_view station_for(std::string_view profession) {
+    static constexpr std::array<std::pair<std::string_view, std::string_view>, 8> stations{{
+        {"weaponsmith", "weapon"},  {"droid_engineer", "weapon"}, {"armorsmith", "clothing"},
+        {"tailor", "clothing"},     {"chef", "food"},             {"doctor", "food"},
+        {"bio_engineer", "food"},   {"architect", "structure"},
+    }};
+    for (const auto& [prof, kind] : stations) {
+        if (prof == profession) return kind;
+    }
+    return "general";
+}
+
+bool station_makes(std::string_view station_kind, std::string_view profession) {
+    if (station_kind == "general") return true;
+    const std::string_view wanted = station_for(profession);
+    return wanted == "general" || wanted == station_kind;
+}
+
+std::string_view station_name(std::string_view station_kind) {
+    if (station_kind == "weapon") return "Weapon & Droid Crafting Station";
+    if (station_kind == "clothing") return "Armor & Clothing Crafting Station";
+    if (station_kind == "food") return "Food & Chemical Crafting Station";
+    if (station_kind == "structure") return "Structure & Machinery Crafting Station";
+    return "crafting station";
+}
+
 } // namespace swm::core

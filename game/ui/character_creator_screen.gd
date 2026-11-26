@@ -31,6 +31,7 @@ var _species_idx := 0
 var _gender := "male"
 var _tab := 0
 var _face_page := 0
+var _color_page := 0
 
 var _sliders: Dictionary = {}        # customization name -> float (0..1)
 var _colors: Dictionary = {}         # variable -> int palette index
@@ -43,6 +44,12 @@ var _char_name := ""
 var _error_msg := ""
 var _camera_face := false
 var _turntable_dragging := false
+var _clothed := true                 # the plain clothes a new character starts in, on the stage
+var _clothes: Dictionary = {}        # covered slot -> model path ("{g}" for the gender)
+
+# What a new character starts in (core: plain_clothes): the slot each covers.
+const PLAIN_CLOTHES := {"cloth_shirt_tunic": "chest", "cloth_pants_cargo": "leggings", "cloth_boots_leather": "boots"}
+const SWATCH_LIMIT := 32             # palette entries offered (and randomized over)
 
 
 func open(store: Object, stage: CharacterStage) -> void:
@@ -56,6 +63,7 @@ func open(store: Object, stage: CharacterStage) -> void:
 	_char_name = _random_name()
 	_error_msg = ""
 	_camera_face = false
+	_load_clothes()
 	_reload_species()
 	visible = true
 	grab_focus()
@@ -64,6 +72,36 @@ func open(store: Object, stage: CharacterStage) -> void:
 
 func is_face_camera() -> bool:
 	return _camera_face
+
+
+func _load_clothes() -> void:
+	_clothes.clear()
+	if _store == null:
+		return
+	var catalog: Array = _store.get_catalog()
+	if catalog.is_empty() and _store.load_catalog(ProjectSettings.globalize_path("res://items/swg_catalog.ini"),
+			ProjectSettings.globalize_path("res://imported_assets/items")) == OK:
+		catalog = _store.get_catalog()
+	for def: Dictionary in catalog:
+		var id := str(def.get("id", ""))
+		if PLAIN_CLOTHES.has(id) and str(def.get("model", "")) != "":
+			_clothes[PLAIN_CLOTHES[id]] = str(def["model"])
+
+
+# The plain clothes this species can wear (none in a slot it can't).
+func _wearable_clothes() -> Array:
+	var blocked: PackedStringArray = _current_species().get("blocked_slots", PackedStringArray())
+	var g := "f" if _gender == "female" else "m"
+	var out: Array = []
+	for slot: String in _clothes:
+		if not blocked.has(slot):
+			out.append(str(_clothes[slot]).replace("{g}", g))
+	return out
+
+
+func _apply_clothes() -> void:
+	if _stage != null:
+		_stage.set_worn_models(_wearable_clothes() if _clothed else [], "")
 
 
 func _current_species() -> Dictionary:
@@ -95,7 +133,10 @@ func _reload_species() -> void:
 			if bool(c.get("discrete", false)) or vars_str.begins_with("index_"):
 				if not seen_disc.has(vars_str) and vars_str != "":
 					seen_disc[vars_str] = true
-					_discrete_vars.append({"name": cname, "variable": vars_str})
+					var shown := cname.replace("_", " ").capitalize()
+					if str(c.get("group", "")) == "lekku":
+						shown = "Lekku " + shown
+					_discrete_vars.append({"name": shown, "variable": vars_str})
 			elif not seen_sliders.has(cname):
 				seen_sliders[cname] = true
 				_sliders[cname] = 0.5 if "," in vars_str or bool(c.get("is_scale", false)) else 0.0
@@ -119,7 +160,36 @@ func _reload_species() -> void:
 		_register_hair_colors(seen_cvars)
 	else:
 		_stage.set_hair("", _colors)
+	_order_color_vars()
+	_apply_clothes()
 	_apply_to_stage()
+
+
+# The colours in the order the species' customizations list them (skin,
+# markings, eyes...), named for them, and the hair style's; where they list
+# any, not what they don't (an eye's white: no one chose it in Galaxies).
+func _order_color_vars() -> void:
+	var rank := {}
+	var names := {}
+	var lekku := {}
+	for c: Dictionary in _stage.species_meta.get("customizations", []):
+		if str(c.get("type", "")) != "color":
+			continue
+		var v := str(c.get("variables", ""))
+		if not rank.has(v):
+			rank[v] = rank.size()
+			names[v] = str(c.get("name", "")).trim_prefix("color_").replace("_", " ").capitalize()
+		if str(c.get("group", "")) == "lekku" and v != "index_color_skin":
+			lekku[v] = true
+	for i in _color_vars.size():
+		var cv: Dictionary = _color_vars[i]
+		var v := str(cv["variable"])
+		if names.has(v):
+			cv["label"] = "Lekku Pattern Color" if lekku.has(v) else str(names[v])
+		cv["order"] = int(rank.get(v, 1000 + i))
+	if not rank.is_empty():
+		_color_vars = _color_vars.filter(func(cv: Dictionary) -> bool: return rank.has(str(cv["variable"])) or bool(cv["hair"]))
+	_color_vars.sort_custom(func(a: Dictionary, b: Dictionary) -> bool: return int(a["order"]) < int(b["order"]))
 
 
 func _register_hair_colors(seen_cvars: Dictionary) -> void:
@@ -131,10 +201,11 @@ func _register_hair_colors(seen_cvars: Dictionary) -> void:
 		for key: String in ["MAIN", "HUEB"]:
 			var f: Variant = mats[m].get(key)
 			if f is Dictionary:
-				_register_color_var(f, palettes, seen_cvars)
+				_register_color_var(f, palettes, seen_cvars, "Hair" if key == "MAIN" else "Hair Accent")
 
 
-func _register_color_var(factor: Dictionary, palettes: Dictionary, seen: Dictionary) -> void:
+# `hair_label` names a hair style's colours (their variables are only numbered).
+func _register_color_var(factor: Dictionary, palettes: Dictionary, seen: Dictionary, hair_label := "") -> void:
 	var v := str(factor.get("variable", ""))
 	if v == "" or seen.has(v):
 		return
@@ -146,10 +217,11 @@ func _register_color_var(factor: Dictionary, palettes: Dictionary, seen: Diction
 	seen[v] = true
 	_colors[v] = int(factor.get("index", 0))
 	var label := v.trim_prefix("index_color_").replace("_", " ").capitalize()
-	if label == "1": label = "Fur / Skin"
+	if hair_label != "": label = hair_label
+	elif label == "1": label = "Fur / Skin"
 	elif label == "2": label = "Eyes"
 	elif label == "3": label = "Markings"
-	_color_vars.append({"variable": v, "label": label, "palette": pal, "count": count})
+	_color_vars.append({"variable": v, "label": label, "palette": pal, "count": count, "hair": hair_label != ""})
 
 
 func _apply_to_stage() -> void:
@@ -198,9 +270,14 @@ func _paint() -> void:
 	button(Rect2(left.position.x + 18 * u, gy + 24 * u, 92 * u, 30 * u), "Male", "gender:male", _gender == "male")
 	button(Rect2(left.position.x + 120 * u, gy + 24 * u, 92 * u, 30 * u), "Female", "gender:female", _gender == "female")
 
-	# Top-center: Camera toggle
-	button(Rect2(size.x * 0.5 - 110 * u, 18 * u, 140 * u, 30 * u),
+	# Top, between the panels: the camera and clothes toggles.
+	var mid := (left.end.x + size.x - 368 * u) * 0.5
+	button(Rect2(mid - 145 * u, 18 * u, 140 * u, 30 * u),
 			"View: Face" if _camera_face else "View: Full", "cam_toggle", _camera_face)
+	var can_dress := not _wearable_clothes().is_empty()
+	button(Rect2(mid + 5 * u, 18 * u, 140 * u, 30 * u),
+			("Clothes: On" if _clothed else "Clothes: Off") if can_dress else "No Clothes",
+			"clothes", _clothed and can_dress, false, can_dress)
 
 	# Right panel: Customization tabs
 	var right := Rect2(size.x - 368 * u, 18 * u, 350 * u, 500 * u)
@@ -278,27 +355,40 @@ func _paint_sliders(x: float, y: float, w: float, groups: Array) -> void:
 
 
 func _paint_colors(x: float, y: float, w: float) -> void:
+	# Every colour the species has, a page at a time when they don't all fit.
+	const COLS := 16
+	const ROOM := 360.0  # (u) above the page buttons
+	var pages: Array = [[]]
+	var used := 0.0
+	for cv: Dictionary in _color_vars:
+		var h := 18.0 + ceilf(float(mini(int(cv["count"]), SWATCH_LIMIT)) / COLS) * 20.0 + 10.0
+		if used + h > ROOM and not (pages.back() as Array).is_empty():
+			pages.append([])
+			used = 0.0
+		(pages.back() as Array).append(cv)
+		used += h
+	_color_page = clampi(_color_page, 0, pages.size() - 1)
 	var cy := y
-	for ci in mini(_color_vars.size(), 4):
-		var cv: Dictionary = _color_vars[ci]
+	var cell := (w - 4 * u) / COLS
+	for cv: Dictionary in pages[_color_page]:
 		var vname: String = cv["variable"]
 		text("gamefont_small", str(cv["label"]), Vector2(x, cy), "Left", TEXT)
-		cy += 20 * u
+		cy += 18 * u
 		var pal: PackedByteArray = cv["palette"]
-		var count := mini(int(cv["count"]), 24)
+		var count := mini(int(cv["count"]), SWATCH_LIMIT)
 		var cur := int(_colors.get(vname, 0))
-		var cols := 12
-		var cell := (w - 4 * u) / cols
 		for idx in count:
-			var col := idx % cols
-			var row := idx / cols
-			var r := Rect2(Vector2(x + col * cell, cy + row * 22 * u), Vector2(cell - 3 * u, 18 * u))
-			var c := Color8(pal[idx * 3], pal[idx * 3 + 1], pal[idx * 3 + 2])
-			draw_rect(r, c)
+			var r := Rect2(Vector2(x + (idx % COLS) * cell, cy + (idx / COLS) * 20 * u), Vector2(cell - 3 * u, 16 * u))
+			draw_rect(r, Color8(pal[idx * 3], pal[idx * 3 + 1], pal[idx * 3 + 2]))
 			if idx == cur:
 				draw_rect(r, ACCENT, false, maxf(2.0, u))
 			region(r, "color:%s:%d" % [vname, idx])
-		cy += (ceili(float(count) / cols) * 22 + 12) * u
+		cy += (ceili(float(count) / COLS) * 20 + 10) * u
+	if pages.size() > 1:
+		var py := y + 368 * u
+		button(Rect2(x, py, 70 * u, 28 * u), "< Prev", "cpage:-1", false, false, _color_page > 0)
+		text("gamefont_small", "Page %d / %d" % [_color_page + 1, pages.size()], Vector2(x + w * 0.5, py + 5 * u), "Center", DIM)
+		button(Rect2(x + w - 70 * u, py, 70 * u, 28 * u), "Next >", "cpage:1", false, false, _color_page + 1 < pages.size())
 
 
 func _paint_hair(x: float, y: float, w: float) -> void:
@@ -312,7 +402,7 @@ func _paint_hair(x: float, y: float, w: float) -> void:
 	for d: Dictionary in _discrete_vars:
 		var vname := str(d["variable"])
 		var val := int(_colors.get(vname, 0))
-		text("gamefont_small", str(d["name"]).replace("_", " ").capitalize(), Vector2(x, dy), "Left", TEXT)
+		text("gamefont_small", str(d["name"]), Vector2(x, dy), "Left", TEXT)
 		button(Rect2(x + w - 120 * u, dy - 4 * u, 40 * u, 26 * u), "-", "disc:%s:-1" % vname)
 		text("gamefont_small", str(val), Vector2(x + w - 60 * u, dy), "Center", ACCENT)
 		button(Rect2(x + w - 40 * u, dy - 4 * u, 40 * u, 26 * u), "+", "disc:%s:1" % vname)
@@ -354,6 +444,12 @@ func _on_click(id: String, at: Vector2) -> void:
 		_camera_face = not _camera_face
 	elif id.begins_with("page:"):
 		_face_page = maxi(0, _face_page + int(id.substr(5)))
+	elif id.begins_with("cpage:"):
+		_color_page = maxi(0, _color_page + int(id.substr(6)))
+	elif id == "clothes":
+		_clothed = not _clothed
+		_apply_clothes()
+		_apply_to_stage()
 	elif id.begins_with("cslider:"):
 		_on_drag(id, at)
 	elif id.begins_with("color:"):
@@ -367,6 +463,14 @@ func _on_click(id: String, at: Vector2) -> void:
 			var span := _hairs.size() - min_idx
 			_hair_idx = min_idx + posmod(_hair_idx - min_idx + step, span)
 			_stage.set_hair(str(_hairs[_hair_idx]["gltf"]) if _hair_idx >= 0 else "", _colors)
+			# This style's colours in place of the last one's.
+			_color_vars = _color_vars.filter(func(cv: Dictionary) -> bool: return not bool(cv["hair"]))
+			var seen := {}
+			for cv: Dictionary in _color_vars:
+				seen[str(cv["variable"])] = true
+			if _hair_idx >= 0:
+				_register_hair_colors(seen)
+			_order_color_vars()
 			_apply_to_stage()
 	elif id.begins_with("disc:"):
 		var parts := id.split(":")
@@ -404,7 +508,7 @@ func _randomize_look() -> void:
 		_sliders[k] = randf()
 	for cv: Dictionary in _color_vars:
 		var count := int(cv["count"])
-		_colors[str(cv["variable"])] = randi() % mini(count, 48)
+		_colors[str(cv["variable"])] = randi() % mini(count, SWATCH_LIMIT)
 	if not _hairs.is_empty():
 		var min_idx := -1 if _allow_bald else 0
 		_hair_idx = randi_range(min_idx, _hairs.size() - 1)

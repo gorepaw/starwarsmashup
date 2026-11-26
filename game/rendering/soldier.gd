@@ -491,6 +491,7 @@ func pose(state: Dictionary, delta: float) -> void:
 	if ride != _ride_clip:
 		_set_ride(ride)
 	if _ride_clip != &"":
+		_seat_hips()
 		return
 	var rolling := float(state.get("roll", 0.0)) > 0.0
 	if rolling and not first_person:
@@ -622,6 +623,22 @@ func _set_ride(clip: StringName) -> void:
 		if _tree != null:
 			_tree.active = true
 	_ride_clip = &""
+
+
+# The ride pose's lift of the hips to the seat is in the model's own size,
+# so a body drawn smaller (a short character: model.scale under 1) sat that
+# much lower, into its saddle, and a taller one over it. Raised (or lowered)
+# by the difference, its hips are where the pose puts a full-sized body's.
+func _seat_hips() -> void:
+	if _skeleton == null or is_equal_approx(model.scale.y, 1.0):
+		return
+	var hips := _skeleton.find_bone("root")
+	if hips < 0:
+		hips = _skeleton.find_bone("bone_pelvis")
+	if hips < 0:
+		return
+	var in_model := model.global_transform.affine_inverse() * (_skeleton.global_transform * _skeleton.get_bone_global_pose(hips).origin)
+	model.position.y += in_model.y * (1.0 - model.scale.y)
 
 
 func _pose_simple(state: Dictionary) -> void:

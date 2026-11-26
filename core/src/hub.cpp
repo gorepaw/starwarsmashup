@@ -426,6 +426,23 @@ Hub::Hub(GameServer& server, uint16_t port, const World& world, HubConfig config
         p = world_.clamp(p);
         const World::Ground g = world_.ground_at(p.x, p.z, reach, 0.5);
         p.y = g.on_floor ? g.height : world_.terrain().height_at(p.x, p.z);
+        // A terminal set against a wall has its middle in the wall, a little
+        // past its room's floor (Mos Eisley's Imperial mission terminal, 5 cm
+        // past a house's living room, over its cellar 10 m down): where the
+        // floor under it is a storey or more down, the floor it's against.
+        if (g.on_floor && p.y < reach - 3.0) {
+            constexpr double against = 0.5;  // m
+            double best = p.y;
+            for (int i = 0; i < 8; ++i) {
+                const double a = i * std::numbers::pi / 4;
+                const World::Ground near =
+                    world_.ground_at(p.x + against * std::cos(a), p.z + against * std::sin(a), reach, 0.5);
+                if (near.on_floor && near.height > best + 2.5) {
+                    best = near.height;
+                }
+            }
+            p.y = best;
+        }
     };
     for (net::Recruiter& recruiter : config_.recruiters) {
         snap_floor(recruiter.position);
@@ -443,7 +460,9 @@ Hub::Hub(GameServer& server, uint16_t port, const World& world, HubConfig config
     // collision: the floor under its middle is its own top (a crafting
     // station's 2.1-2.9 m up), so its symbol floated a station's height too
     // high. It stands on the floor around it: where, a little way off on
-    // most sides, the floor is lower, that (the highest of those).
+    // most sides, the floor is lower (by less than a station is tall), that
+    // (the highest of those). Its symbol is placed by its model, measured
+    // (scenes/hub_ui.gd), so this needn't find its foot exactly.
     const auto snap_object = [&](Vec3& p) {
         snap_floor(p);
         constexpr double off = 1.8;  // m: past a station's or terminal's footprint
@@ -452,7 +471,8 @@ Hub::Hub(GameServer& server, uint16_t port, const World& world, HubConfig config
         for (const auto& [dx, dz] : {std::pair{off, 0.0}, {-off, 0.0}, {0.0, off}, {0.0, -off}}) {
             const World::Ground g = world_.ground_at(p.x + dx, p.z + dz, p.y + 0.1, 0.5);
             const double floor = g.on_floor ? g.height : world_.terrain().height_at(p.x + dx, p.z + dz);
-            if (floor < p.y - 0.4) {
+            // (No lower than a station is tall: not a cellar under its building.)
+            if (floor < p.y - 0.4 && floor > p.y - 3.2) {
                 ++lower;
                 base = std::max(base, floor);
             }
