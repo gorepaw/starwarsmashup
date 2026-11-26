@@ -16,7 +16,7 @@ const PlayerAppearance = preload("res://rendering/player_appearance.gd")
 const PER_PAGE := 6
 const CATEGORY_OF := {"sniper": "sniper", "rifle_auto": "rifle", "carbine_burst": "carbine", "scatter": "carbine",
 		"heavy_launcher": "heavy", "pistol": "sidearm", "melee": "melee", "grenade": "tactical", "beam": "rifle",
-		"beam_cannon": "heavy", "flamer": "heavy"}
+		"beam_cannon": "heavy", "flamer": "heavy", "scatter_pistol": "sidearm"}
 const PLAIN := "clothing/shirt_tunic_m.gltf,clothing/pants_cargo_m.gltf,clothing/boots_leather_m.gltf"
 
 var _pages: Array = []  # [name, [item dicts]]

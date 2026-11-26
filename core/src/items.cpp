@@ -12,7 +12,7 @@
 namespace swm::core {
 namespace {
 
-const std::array<WeaponArchetypeInfo, 11> archetype_table{{
+const std::array<WeaponArchetypeInfo, 12> archetype_table{{
     {WeaponArchetype::rifle_auto, "rifle_auto", "imp_weap_inf_rifle", "rifle", "primary"},
     {WeaponArchetype::carbine_burst, "carbine_burst", "all_weap_inf_rifle", "rifle", "primary"},
     {WeaponArchetype::sniper, "sniper", "imp_weap_inf_sniper_rifle", "rifle", "primary"},
@@ -25,6 +25,7 @@ const std::array<WeaponArchetypeInfo, 11> archetype_table{{
     {WeaponArchetype::beam, "beam", "rep_weap_inf_chaingun", "rifle", "primary"},
     {WeaponArchetype::beam_cannon, "beam_cannon", "rep_weap_inf_chaingun", "rifle", "primary"},
     {WeaponArchetype::flamer, "flamer", "", "rifle", "primary"},
+    {WeaponArchetype::scatter_pistol, "scatter_pistol", "", "pistol", "sidearm"},
 }};
 
 WeaponDef default_archetype_weapon(WeaponArchetype a) {
@@ -167,6 +168,23 @@ WeaponDef default_archetype_weapon(WeaponArchetype a) {
         w.bolt_speed = 18;
         w.bolt_gravity = 0.2;
         w.bolt_life = 0.6;
+        break;
+    case WeaponArchetype::scatter_pistol:
+        // Battlefront II has none: the shotgun's spread on the pistol's heat,
+        // about a pistol's damage a second up close; its pellets spread wide
+        // and die out at 24 m.
+        w.name = "swg_scatter_pistol";
+        w.shot_delay = 0.6;
+        w.rounds_per_clip = 0;
+        w.heat_per_shot = 0.3;
+        w.heat_recover_rate = 0.45;
+        w.heat_threshold = 0.35;
+        w.shots_per_salvo = 5;
+        w.damage = 28;
+        w.bolt_speed = 240;
+        w.bolt_life = 0.1;
+        w.yaw_spread = 5;
+        w.pitch_spread = 5;
         break;
     case WeaponArchetype::melee:
         w.name = "swg_melee";

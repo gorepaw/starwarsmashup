@@ -300,6 +300,20 @@ int main() {
         bow_lo.primary_id = 1;
         CHECK(sp_cat.build_loadout(bow_lo, bow_inv, Species::wookiee).weapons[primary_slot]->name == "bow");
         CHECK(sp_cat.build_loadout(bow_lo, bow_inv, Species::human).weapons[primary_slot]->name != "bow");
+
+        // Sidearms (docs/WEAPONS.md): the scatter pistol is a pistol-sized
+        // spread on heat; one-handed melee is carried as a sidearm.
+        const ItemDef* sp = real.find("wp_pistol_scatter");
+        CHECK(sp && sp->slot == "sidearm" && sp->anim_set == "pistol");
+        if (sp) {
+            const WeaponDef w = real.resolve_weapon(*sp);
+            CHECK(w.shots_per_salvo > 1 && w.rounds_per_clip == 0 && w.heat_per_shot > 0);
+            CHECK(w.archetype == "scatter_pistol" && w.ammo_class == AmmoClass::standard);
+        }
+        for (const char* id : {"wp_melee_vibroblade", "wp_melee_sword", "wp_melee_vibroknuckler"}) {
+            const ItemDef* m = real.find(id);
+            CHECK(m && m->archetype == WeaponArchetype::melee && m->slot == "sidearm");
+        }
     }
 
     return swm::test::finish("items_test");

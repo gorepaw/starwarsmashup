@@ -53,6 +53,7 @@ enum class WeaponArchetype : uint8_t {
     beam,         // a rifle's continuous stream: near-instant, heat only (lightning, beam rifles)
     beam_cannon,  // a heavy weapon's (the particle and lightning beam cannons)
     flamer,       // a short cone of fire or acid: heat only, sets its effect (flamethrower, acid launcher)
+    scatter_pistol,  // a spread of bolts at sidearm size, on heat (the scatter pistol)
 };
 
 struct WeaponArchetypeInfo {
