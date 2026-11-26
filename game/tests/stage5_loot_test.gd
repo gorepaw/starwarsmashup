@@ -31,8 +31,11 @@ func _initialize() -> void:
 			assert(int(def.get("sell_value", 0)) > 0, "junk missing sell_value: " + str(def.get("id", "")))
 		elif k == "supply":
 			supply_count += 1
-			assert(float(def.get("heal_amount", 0.0)) > 0.0, "supply missing heal_amount")
-			assert(int(def.get("cost_credits", 0)) > 0, "supply missing cost_credits")
+			# Tatooine's healing supplies heal and sell (later supplies, like a
+			# creature egg or a droid, needn't do either).
+			if str(def.get("id", "")) in ["supply_field_rations", "supply_bacta_stim", "supply_medpac_adv"]:
+				assert(float(def.get("heal_amount", 0.0)) > 0.0, "supply missing heal_amount: " + str(def["id"]))
+				assert(int(def.get("cost_credits", 0)) > 0, "supply missing cost_credits: " + str(def["id"]))
 	assert(junk_count >= 14, "expected >= 14 junk items, got %d" % junk_count)
 	assert(supply_count >= 3, "expected >= 3 supply items, got %d" % supply_count)
 	print("Stage 5 Milestone 3 catalog: OK (%d junk, %d supplies)" % [junk_count, supply_count])

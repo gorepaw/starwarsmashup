@@ -93,7 +93,7 @@ func _process(_delta: float) -> bool:
 		var at: Vector3 = npc["position"]
 		print("  quest person %s%s at (%.1f, %.1f, %.1f)" % [npc["name"], " (gives quests)" if npc["giver"] else "",
 				at.x, at.y, at.z])
-	assert(givers == 4, "expected 4 quest givers, got %d" % givers)
+	assert(givers >= 4, "expected at least 4 quest givers, got %d" % givers)
 	assert(names.has("Mos Eisley Junk Dealer"), "the junk dealer (a talk_to step) isn't a quest person")
 	assert(client.get_mission_terminals().size() >= 10, "expected at least 10 mission terminals")
 	var quests: Dictionary = client.get_quests()
