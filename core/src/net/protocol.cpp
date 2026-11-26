@@ -862,8 +862,9 @@ struct Encoder {
             put_vec3(out, q.position);
             out.put(q.radius);
         }
-        out.put(uint8_t(std::min<size_t>(m.vendors.size(), 255)));
-        for (size_t i = 0; i < m.vendors.size() && i < 255; ++i) {
+        // (Two bytes: a planet's towns have more than 255 trainers, shops and terminals.)
+        out.put(uint16_t(std::min<size_t>(m.vendors.size(), 65535)));
+        for (size_t i = 0; i < m.vendors.size() && i < 65535; ++i) {
             const Vendor& v = m.vendors[i];
             out.put_string(v.name);
             out.put_string(v.kind);
@@ -1417,7 +1418,7 @@ Message decode(std::span<const uint8_t> packet) {
             q.radius = in.get<double>();
             m.quartermasters.push_back(std::move(q));
         }
-        const size_t vs = in.get<uint8_t>();
+        const size_t vs = in.get<uint16_t>();
         for (size_t i = 0; i < vs; ++i) {
             Vendor v;
             v.name = in.get_string();
@@ -1537,7 +1538,7 @@ Message decode(std::span<const uint8_t> packet) {
         for (size_t i = 0; i < events; ++i) {
             CombatEvent event;
             const uint8_t kind = in.get<uint8_t>();
-            if (kind < CombatEvent::hit || kind > CombatEvent::flag_captured) {
+            if (kind < CombatEvent::hit || kind > CombatEvent::shielded) {
                 throw PacketError("unknown combat event");
             }
             event.kind = CombatEvent::Kind(kind);

@@ -322,9 +322,12 @@ struct Impact {
 struct CombatEvent {
     // Flag events (Stage 11): attacker = the soldier (0: none), victim = the
     // flag's index, damage = the soldier's team.
+    // shielded: a shot a capital ship's shield took (victim = the system it
+    // covers, a destructible's index; damage = what it would have done).
     enum Kind : uint8_t {
         hit = 1, kill = 2, captured = 3, neutralized = 4,
         flag_taken = 5, flag_dropped = 6, flag_returned = 7, flag_captured = 8,
+        shielded = 9,
     };
     Kind kind = hit;
     uint32_t attacker = 0;

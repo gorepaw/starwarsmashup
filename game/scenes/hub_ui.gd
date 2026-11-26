@@ -39,7 +39,10 @@ const TERMINAL_COLOR := Color(0.45, 0.85, 1.0)
 const SHOP_COLOR := Color(0.35, 0.92, 0.55)
 const CRAFT_COLOR := Color(0.75, 0.5, 1.0)
 const HOLO_HEIGHT := 2.6   # m over a place's ground, its hologram
+const STATION_HOLO_HEIGHT := 3.7  # over a crafting station's (they stand up to 2.9 m)
+const TERMINAL_CHEVRON_HEIGHT := 2.9  # over a mission terminal's (2.1 m)
 const PLACE_HOLO_SCALE := 2.5  # a place's hologram, as big as a soldier's this many times (ASSUMPTION, by eye)
+const CLONING_HOLO_SCALE := 3.6  # a cloning facility's, larger: it has no terminal of its own to see
 const TARGET_HOLO_ID := 1 << 40  # practice targets' hologram ids, past any entity's
 
 # Stage 11: `mode` is the game mode id wanted ("conquest", "ctf", "1flag",
@@ -87,10 +90,13 @@ var _shown_loadouts: Array = []    # the loadouts the profession screen was last
 var _settings: Settings
 var _world_root: Node3D
 var _recruiter_nodes: Array = []
+var _bare_recruiters: Array = []  # battle terminals the city draws none for: a hologram stands for each
+var _recruiters_added := false
 var _corpse_nodes: Dictionary = {}  # corpse_entity -> {icon, label}
 var _holograms: TeamTags      # holograms over the world's people and places (null: no insignia exported)
 var _holograms_looked := false
 var _holo_anchors := {}       # place key -> Node3D standing where it is
+var _over_roofs := {}         # place key -> its hologram's height over a building's roof (cloning)
 var _target_nodes: Dictionary = {}  # target_id -> {root, body, label, hits: Array[{t, dmg}], last_dmg, flash}
 var _notice_id := 0
 var _notice := ""
@@ -591,10 +597,13 @@ func clear_recruiters() -> void:
 		if is_instance_valid(_holo_anchors[key]):
 			(_holo_anchors[key] as Node).queue_free()
 	_holo_anchors.clear()
+	_over_roofs.clear()
 	for node: Node in _recruiter_nodes:
 		if is_instance_valid(node):
 			node.queue_free()
 	_recruiter_nodes.clear()
+	_bare_recruiters.clear()
+	_recruiters_added = false
 	for entry: Dictionary in _corpse_nodes.values():
 		for k in ["icon", "label"]:
 			var n: Variant = entry.get(k)
@@ -618,43 +627,26 @@ func on_world_arrived() -> void:
 	_notice_id = 0
 
 
+# The battle terminals the city doesn't draw (a Galaxies terminal stands for
+# most): each gets a hologram, as the world's other places do (a starfighter
+# for space battles, Battlefront's command post icon for ground ones).
 func add_recruiters(client: Object, world: Node3D) -> void:
-	if not _recruiter_nodes.is_empty() or client == null or world == null:
+	if _recruiters_added or client == null or world == null:
 		return
 	var recruiters: Array = client.get_recruiters()
-	if not recruiters.is_empty():
-		var material := StandardMaterial3D.new()
-		material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
-		material.albedo_color = Color(1.0, 0.8, 0.25)
-		var terminals: Array[Vector3] = []
-		for node: Node in world.get_children():
-			if node.has_meta("recruiter"):
-				terminals.append((node as Node3D).position)
-		for recruiter: Dictionary in recruiters:
-			var position: Vector3 = recruiter["position"]
-			var drawn := terminals.any(func(at: Vector3) -> bool:
-				return Vector2(at.x - position.x, at.z - position.z).length() < 1.5)
-			var pillar := MeshInstance3D.new()
-			var box := BoxMesh.new()
-			box.size = Vector3(0.6, 2.2, 0.6)
-			pillar.mesh = box
-			pillar.material_override = material
-			pillar.position = position + Vector3.UP * 1.1
-			var label := Label3D.new()
-			label.text = str(recruiter["name"])
-			label.billboard = BaseMaterial3D.BILLBOARD_ENABLED
-			label.fixed_size = true
-			label.pixel_size = 0.0015
-			label.font_size = 28
-			label.outline_size = 8
-			label.modulate = material.albedo_color
-			label.position = position + Vector3.UP * 3.2
-			for node: Node3D in [pillar, label]:
-				if drawn:
-					node.free()
-					continue
-				_world_root.add_child(node)
-				_recruiter_nodes.append(node)
+	if recruiters.is_empty():
+		return
+	_recruiters_added = true
+	var terminals: Array[Vector3] = []
+	for node: Node in world.get_children():
+		if node.has_meta("recruiter"):
+			terminals.append((node as Node3D).position)
+	for recruiter: Dictionary in recruiters:
+		var position: Vector3 = recruiter["position"]
+		var drawn := terminals.any(func(at: Vector3) -> bool:
+			return Vector2(at.x - position.x, at.z - position.z).length() < 1.5)
+		if not drawn:
+			_bare_recruiters.append(recruiter)
 
 
 # Keys 1 and 2 at an open battle terminal: a side of the era it shows.
@@ -689,13 +681,17 @@ func at_vendor(client: Object) -> Dictionary:
 	if client == null or not client.is_spawned():
 		return {}
 	var position: Vector3 = client.get_presented()["position"]
+	var best: Dictionary = {}
+	var best_d := INF
 	for v: Dictionary in client.get_vendors():
 		if not is_shop(str(v["kind"])):
 			continue
 		var at: Vector3 = v["position"]
-		if Vector2(position.x - at.x, position.z - at.z).length() <= float(v["radius"]):
-			return v
-	return {}
+		var d := Vector2(position.x - at.x, position.z - at.z).length()
+		if d <= float(v["radius"]) and d < best_d:  # the nearest, where they stand together
+			best = v
+			best_d = d
+	return best
 
 
 # Shops (junk dealer, gear vendor, garage) trade; service points (trainer,
@@ -709,13 +705,17 @@ func at_service(client: Object) -> Dictionary:
 	if client == null or not client.is_spawned():
 		return {}
 	var position: Vector3 = client.get_presented()["position"]
+	var best: Dictionary = {}
+	var best_d := INF
 	for v: Dictionary in client.get_vendors():
 		if is_shop(str(v["kind"])) or str(v["kind"]) == "travel_offworld":
 			continue  # (another planet's starport: not here)
 		var at: Vector3 = v["position"]
-		if Vector2(position.x - at.x, position.z - at.z).length() <= float(v["radius"]):
-			return v
-	return {}
+		var d := Vector2(position.x - at.x, position.z - at.z).length()
+		if d <= float(v["radius"]) and d < best_d:  # the nearest (trainers stand side by side)
+			best = v
+			best_d = d
+	return best
 
 
 func at_workbench(client: Object) -> Dictionary:
@@ -927,7 +927,7 @@ func _update_objective_markers(client: Object) -> void:
 		if at.distance_to(own) <= MARKER_RANGE:
 			var key := "mt%d" % int(t["index"])
 			seen[key] = true
-			_place_marker(key, _single_chevron, 0.0012, _mission_terminal_color(str(t.get("kind", "general"))), at + Vector3.UP * 2.35)
+			_place_marker(key, _single_chevron, 0.0012, _mission_terminal_color(str(t.get("kind", "general"))), at + Vector3.UP * TERMINAL_CHEVRON_HEIGHT)
 	for key: String in _marker_nodes.keys():
 		if not seen.has(key):
 			if is_instance_valid(_marker_nodes[key]):
@@ -978,7 +978,8 @@ func _world_holograms() -> TeamTags:
 			var tags := TeamTags.new("res://imported_assets", {"images": {
 					"alliance": models + "com_icon_alliance.gltf", "empire": models + "com_icon_imperial.gltf",
 					"neutral": "hud/textures/hud_flag_icon.png", "quest": "gen:quest", "coins": "gen:coins",
-					"chest": "gen:chest", "star": "gen:star", "cross": "gen:cross", "wrench": "hud/textures/hud_active_repair_icon.png"}})
+					"chest": "gen:chest", "star": "gen:star", "cross": "gen:cross", "clone": "gen:clone",
+					"wrench": "gen:wrench", "shuttle": "gen:shuttle", "fighter": "gen:fighter"}})
 			if tags.available():
 				_holograms = tags
 			break
@@ -1037,10 +1038,21 @@ func _update_place_holograms(client: Object, delta: float) -> void:
 		if kind == "travel_offworld":
 			continue  # another planet's starport (Stage 13)
 		if not is_shop(kind):
-			# A service point: a star (trainers, newsnet, gambling, data_terminal), coins (the bank, bazaar) or a cross (clinics, cloning), in the terminals' blue.
-			var symbol: String = {"trainer": "star", "bank": "coins", "bazaar": "coins",
-					"newsnet": "star", "gambling": "star", "data_terminal": "star", "travel": "star", "starport": "star"}.get(kind, "cross")
-			_place_hologram("service:%d" % vi, v["position"], symbol, TERMINAL_COLOR, seen)
+			# A service point: a star (trainers, newsnet, gambling, data_terminal), coins (the bank, bazaar),
+			# a shuttle (travel), a cross (clinics) or a ringed one, larger (cloning), in the terminals' blue.
+			var symbol: String = {"trainer": "star", "bank": "coins", "bazaar": "coins", "newsnet": "star",
+					"gambling": "star", "data_terminal": "star", "travel": "shuttle", "starport": "shuttle",
+					"cloning": "clone"}.get(kind, "cross")
+			var key := "service:%d" % vi
+			var height := HOLO_HEIGHT
+			if kind == "cloning":
+				# A cloning facility is the building itself (its middle): its
+				# hologram stands over its roof, to be seen from the street.
+				if not _over_roofs.has(key):
+					_over_roofs[key] = _height_over_roof(client, v["position"])
+				height = _over_roofs[key]
+			_place_hologram(key, v["position"], symbol, TERMINAL_COLOR, seen, height,
+					CLONING_HOLO_SCALE if kind == "cloning" else PLACE_HOLO_SCALE)
 			continue
 		var side := side_of_template(str(by_name.get(str(v["name"]), "")))
 		var plain := "coins" if kind == "junk_dealer" else "chest"
@@ -1056,10 +1068,14 @@ func _update_place_holograms(client: Object, delta: float) -> void:
 			"republic": sym = "republic"
 			"separatists": sym = "cis"
 		_place_hologram("qm:%d" % qi, q["position"], sym, SHOP_COLOR, seen)
+	for ri in _bare_recruiters.size():
+		var r: Dictionary = _bare_recruiters[ri]
+		_place_hologram("recruiter:%d" % ri, r["position"], "fighter" if str(r.get("kind", "")) == "space" else "neutral",
+				TERMINAL_COLOR, seen)
 	var wbs: Array = client.get_workbenches()
 	for wbi in wbs.size():
 		var wb: Dictionary = wbs[wbi]
-		_place_hologram("workbench:%d" % wbi, wb["position"], "wrench", CRAFT_COLOR, seen)
+		_place_hologram("workbench:%d" % wbi, wb["position"], "wrench", CRAFT_COLOR, seen, STATION_HOLO_HEIGHT)
 	var quests: Dictionary = client.get_quests()
 	for npc: Dictionary in client.get_quest_npcs():
 		if bool(npc.get("giver", false)):
@@ -1096,7 +1112,19 @@ func _giver_state(quests: Dictionary, giver: String) -> int:
 	return GIVER_DONE
 
 
-func _place_hologram(key: String, at: Vector3, side: String, color: Color, seen: Dictionary) -> void:
+# A hologram's height over `at` to stand over whatever roof is over it (none:
+# HOLO_HEIGHT).
+func _height_over_roof(client: Object, at: Vector3) -> float:
+	var from := at + Vector3.UP * 40.0
+	var to := at + Vector3.UP * 0.5
+	var t := float(client.raycast(from, to))
+	if t < 0.0:
+		return HOLO_HEIGHT
+	return maxf(HOLO_HEIGHT, from.lerp(to, t).y - at.y + 2.4)
+
+
+func _place_hologram(key: String, at: Vector3, side: String, color: Color, seen: Dictionary,
+		height := HOLO_HEIGHT, scale := PLACE_HOLO_SCALE) -> void:
 	seen[key] = true
 	var anchor: Node3D = _holo_anchors.get(key)
 	if anchor == null:
@@ -1104,7 +1132,7 @@ func _place_hologram(key: String, at: Vector3, side: String, color: Color, seen:
 		_world_root.add_child(anchor)
 		_holo_anchors[key] = anchor
 	anchor.position = at
-	_holograms.show(key.hash(), anchor, side, true, true, HOLO_HEIGHT, color, PLACE_HOLO_SCALE)
+	_holograms.show(key.hash(), anchor, side, true, true, height, color, scale)
 
 
 # A practice target's damage per second over the last few seconds (0 when

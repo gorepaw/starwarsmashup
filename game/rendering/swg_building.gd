@@ -20,17 +20,72 @@ static func load_lit(path: String) -> Node3D:
 		return null
 	var building: Node3D = document.generate_scene(state)
 	var cells: Array = layout["cells"]
+	var rooms: Array[AABB] = []  # its interior cells' bounds, in its own space
 	for i in cells.size():
 		var cell: Dictionary = cells[i]
 		var mesh := building.find_child(cell["name"] + "_mesh", true, false) as MeshInstance3D
 		if mesh != null and i > 0:  # cell 0 is the outside, lit by the sun
 			apply_cell_lighting(mesh, cell)
+			rooms.append(_in_building(building, mesh) * mesh.get_aabb())
+		elif mesh != null:
+			building.set_meta(EXTERIOR, building.get_path_to(mesh))
 		for suffix in ["_floor", "_walls"]:
 			var collision := building.find_child(cell["name"] + suffix, true, false) as Node3D
 			if collision != null:
 				collision.visible = false
 	draw_additive(building)
+	if not rooms.is_empty() and building.has_meta(EXTERIOR):
+		building.set_meta(ROOMS, rooms)
+		var all := rooms[0]
+		for room in rooms:
+			all = all.merge(room)
+		building.set_meta(ROOMS_REACH, all.get_center().length() + all.size.length() * 0.5 + 1.0)
 	return building
+
+
+const EXTERIOR := "swg_exterior"  # a building's outside cell's mesh (r0's), a NodePath from it
+const ROOMS := "swg_rooms"        # its interior cells' bounds
+const ROOMS_REACH := "swg_rooms_reach"  # m from its origin that all of them lie within
+
+# The buildings with rooms (load_lit's) among `parent`'s children.
+static func with_rooms(parent: Node) -> Array[Node3D]:
+	var out: Array[Node3D] = []
+	for node: Node in parent.get_children():
+		if node.has_meta(ROOMS):
+			out.append(node as Node3D)
+	return out
+
+
+# Galaxies draws a building's outside (its r0 cell) from within only through
+# the portals that lead out; drawn whole, its walls cut through the rooms
+# they wrap (Mos Eisley's starport's sandstone shell through its lobby's
+# doorways). So a building's outside isn't drawn while the camera is in one of
+# its rooms.
+static func update_exteriors(buildings: Array[Node3D], camera: Vector3) -> void:
+	for building in buildings:
+		if not is_instance_valid(building):
+			continue
+		var inside := false
+		var reach := float(building.get_meta(ROOMS_REACH, 1e9))
+		if building.global_position.distance_squared_to(camera) <= reach * reach:
+			var local := building.global_transform.affine_inverse() * camera
+			for room: AABB in building.get_meta(ROOMS):
+				if room.grow(0.25).has_point(local):
+					inside = true
+					break
+		var exterior := building.get_node_or_null(building.get_meta(EXTERIOR)) as Node3D
+		if exterior != null and exterior.visible == inside:
+			exterior.visible = not inside
+
+
+static func _in_building(building: Node3D, node: Node3D) -> Transform3D:
+	var xf := Transform3D.IDENTITY
+	var at: Node = node
+	while at != null and at != building:
+		if at is Node3D:
+			xf = (at as Node3D).transform * xf
+		at = at.get_parent()
+	return xf
 
 
 # Physics collision from a building's drawn cells (each <cell>_mesh: walls,

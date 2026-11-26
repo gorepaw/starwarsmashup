@@ -346,6 +346,15 @@ std::optional<Shot> simulate_character(MoveState& state, const MoveInput& input,
         aimed.yaw = float(yaw);
         aimed.pitch = float(pitch);
         state.roll_yaw = float(yaw);  // the guns' way, for drawing them
+        // Its second weapon (a starfighter's torpedoes, a gunship's
+        // missiles) on the secondary button, its first on fire: each fires
+        // its own, switching to it first.
+        if (input.held(MoveInput::secondary) && weapon_in_slot(vehicle.loadout, 1) != nullptr) {
+            aimed.weapon = 1;
+            aimed.buttons |= MoveInput::fire;
+        } else if (input.held(MoveInput::fire)) {
+            aimed.weapon = 0;
+        }
         aimed.buttons &= uint8_t(~(MoveInput::secondary | MoveInput::crouch | MoveInput::jump));
         std::optional<Shot> shot = simulate_weapons(state, aimed, vehicle.loadout, dt);
         if (shot) {

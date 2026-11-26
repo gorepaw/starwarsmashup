@@ -17,7 +17,7 @@ This roadmap combines the completed foundation (**Stages 1–8**) with all newly
 | 6 | Vehicles | Done (tow cable in Stage 11, creature mounts in Stage 12) | Battlefront's in matches, Galaxies' in the world |
 | 7 | Professions (Wave 7A + framework) | Done (Waves 7B & 7C in Stage 12) | Core 1–100 framework & 17 foundation professions live |
 | 8 | Space combat | Done (base maps/ships) | Battlefront II's space battles |
-| **9** | **Bug Fixes, UI/UX Polish & Authentic Mos Eisley** | **Done (1 item open)** | Clean visuals, authentic SWG city layout, terminal audit, and tight open-world QoL (Starport boulder clipping open) |
+| **9** | **Bug Fixes, UI/UX Polish & Authentic Mos Eisley** | **Done** | Clean visuals, authentic SWG city layout, terminal audit, and tight open-world QoL |
 | **10** | **4 Factions, 5 Loadouts, Cosmetics, Ammo & Bot Roster** | **Done** | 4-faction system, cosmetic FP & WoW-style reputation, unified ammo, and clothed stock bots |
 | **11** | **Ground/Space Terminals, Clone Wars, Modes, Weather & Telemetry** | **Done (follow-ups listed)** | Dual battle terminals, full Clone Wars roster, extra BF2 modes, Kamino rain, and match analytics |
 | **12** | **Remaining Professions (Waves 7B & 7C) & Creature Mounts** | **Done (follow-ups listed)** | All 14 remaining specialist, bio/creature, and droid professions + creature mounts |
@@ -65,7 +65,8 @@ Fix immediate visual, collision, HUD, and gameplay bugs, polish the open-world l
 - [x] **Fix turret character model disappearance:** Prevent the player's character model from vanishing when occupying a turret in BF2 matches.
 
 **World Collision, Loading & Weather (Pre-Stage 11 Quick Fix)**
-- [ ] **Fix Mos Eisley Starport boulder clipping:** Remove or adjust the giant boulder intersecting the Mos Eisley Starport structure/terrain.
+- [x] **Fix Mos Eisley Starport boulder clipping:** Remove or adjust the giant boulder intersecting the Mos Eisley Starport structure/terrain.
+  - *Fixed (after Stage 13):* no boulder: the starport's outside cell (`r0`, its sandstone shell) cut through its lobby's doorways, drawn whole. Galaxies draws a building's outside from within only through the portals that lead out; now it isn't drawn while the camera is in one of the building's rooms (`SwgBuilding.update_exteriors`).
 - [x] **Battlefront II–style loading screens:** Obscure world/map loads with a BF2-style loading screen across all major transitions (main menu → hub, hub → multiplayer/bot match, match → hub).
 
 **HUD, Cursor & Text Polish**
@@ -289,6 +290,13 @@ Ensure the open-world server scales economically before going online, then expan
     - *Dathomir:* the Science Outpost (the hub), Trade Outpost and the Imperial prison, with the Nightsister and Singing Mountain strongholds, caves and the slave mine exported as landmarks (1,701 objects); 12 trainers in the outposts' sheds and houses; 33 lairs and 10 camps of baz nitch, kwi, brackaset, bolma, purbole, shear mites, reptilian fliers, malkloc, gaping spiders, graul and rancors, and Nightsisters, the Singing Mountain clan and escaped prisoners; 10 quests from 7 givers; a red, dusky sky.
     - *Kashyyyk* has terrain on these discs but no world snapshot or client regions, so no verified towns: not brought in.
   - [x] *The galaxy:* `galaxy.ini` names all ten planets, with travel.iff's twelve routes (a fare serves both ways; where the table prices the two directions differently, the lower). The dedicated server loads all ten in 8 s, in 1.4 GB. A new character joins on the spawn point itself (it was staggered by entity id, which a hub's people take too, putting a lone player up to 21 m off a shuttleport's counter). The minimap (`<bake>_ground_preview.png`) is tinted by each ground texture's own color, water blue (it used the terrain editor's map colors, mostly its default yellow); `swgtool ground-preview` redraws it from a bake as it stands. Test: `game/tests/stage13_galaxy_test.gd` (Coronet's starport offers the seven planets travel.iff routes it to, and a ticket lands on Talus at Dearic's starport), and each planet's `stage13_<planet>_test.gd`.
+
+### Playtest fixes (after Stage 13)
+
+- [x] **Trainers:** each teaches one profession. The 248 hub trainers who taught two to four kept the one their outfit fits; 393 new ones (one per other profession, in Galaxies' trainer outfit for it: `dressed_pistol_trainer_*`, `dressed_doctor_trainer_*`...) stand beside them, each spot checked against the planet's collision (the same floor, clear of walls and people). A service is the nearest within reach, where several are.
+- [x] **Places' holograms:** crafting stations and mission terminals stand on the floor round them (the floor under their middle was their own top, so their symbols floated a station's height too high); a wrench of our own for crafting (Battlefront's, 32 px, was blurry); a shuttle for travel (it was a trainer's star); a cloning facility's ringed cross, larger, over its roof; a starfighter over a space battle terminal the city doesn't draw (a yellow box and an unstyled label before).
+- [x] **Space:** a starfighter's camera is set by its size (TrackCenter and TrackOffset put it inside every one but the X-wing), and the view key gives a cockpit view (EyePointOffset) in any vehicle. Starfighters take off with jump and land with crouch (the throttle alone launched them along the deck), rest on their lowest point (`LandedHeight` at least the model's depth under its origin), and fire their second weapon (torpedoes, missiles) on the secondary button. Their own shots are drawn from their guns (they were the pilot's rifle's). Space maps' posts show each side's insignia (`com_icon_swap` drawn as is was no side's), hangar ceiling turrets hang where the map has them (dropped to the floor, they hung in the air), turrets set in a hull take hits that strike the hull just in front of them, and a shield taking a shot says so (the reticle flashes blue).
+- [x] **UI:** loadouts can be renamed; tooltips wrap; the options are two pages, Settings and Keybinds (scrolled); the ability bar has icons (our own, in the place symbols' style) and hides under full screens; a mount isn't worn; the HUD's held weapon is drawn once (its "shadow" was offset far down and right); the space terminal's placeholder travel tab is gone (other planets are reached from the starports); the first loading screen stays up until the world is in; the radar shows the buildings round you; the main menu looks over Mos Eisley with starfighters passing.
 
 ### Exit Criteria
 

@@ -1222,6 +1222,7 @@ void Bot::ride(GameClient& client, const World& world, double now) {
         // flyers or strafe unshielded enemy critical ship systems & frigates.
         if (me.grounded || field.in_landing_region(me.position)) {
             controls.forward = 1;
+            controls.jump = me.grounded;  // take off
             controls.yaw = me.yaw;
             controls.pitch = me.grounded ? 0.12f : 0.05f;
             controls.sprint = !me.grounded && me.energy > 50.0;

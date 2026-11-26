@@ -62,6 +62,7 @@ var shield_fraction := -1.0  # 0..1 when wearing a Deflector Shield (PSG), < 0 w
 var minimap := {}         # {texture, left_x, top_z, right_x, bottom_z} (game space), or empty
 var map_range := MAP_RANGE  # meters to the small map's edge (a hub's open world shows further)
 var map_markers: Array = []  # [{position: Vector2 (game x, z), color, kind: "post" | "soldier" | "droid", label, icon}]
+var map_structures: Array = []  # [PackedVector2Array]: buildings' outlines (game x, z) near the player, drawn on the radar
 var map_player := {}      # {position: Vector2, yaw}
 var messages: Array = []  # [{text, color, age}], newest last
 # Our adjustments to Battlefront's placements: element name -> offset, in
@@ -308,11 +309,11 @@ func _model(node: Dictionary, xf: Transform2D, color: Color, z: float, screen: V
 		var size := panel.size.x * WEAPON_PANEL_SHARE / WEAPON_PROFILE_WIDTH
 		var at := panel.get_center() + Vector2(panel.size.x * 0.18, 0.0)
 		placed = Transform2D(0.0, Vector2(size, size), 0.0, at)
-		var bright := Color(minf(1.4, color.r + 0.4), minf(1.4, color.g + 0.4), minf(1.4, color.b + 0.4), maxf(color.a, 0.96))
+		# Once, in the HUD's color for it (a "shadow" drawn offset under it
+		# was offset in the profile's units, far down and right of it).
 		_add(z, func() -> void:
 			draw_set_transform_matrix(placed)
-			draw_mesh(model["mesh"], model["texture"], Transform2D(0.0, Vector2(1.5, 1.5)), Color(0.02, 0.04, 0.08, 0.45))
-			draw_mesh(model["mesh"], model["texture"], Transform2D(), bright))
+			draw_mesh(model["mesh"], model["texture"], Transform2D(), color))
 		return
 	_add(z, func() -> void:
 		draw_set_transform_matrix(placed)
@@ -428,6 +429,30 @@ func _map(node: Dictionary, xf: Transform2D, color: Color, z: float, screen: Vec
 	_add(z, func() -> void:
 		draw_set_transform_matrix(xf)
 		draw_polygon(points, PackedColorArray([map_color]), uvs, texture))
+	# The buildings round you, as darker blocks over the ground (cut to the disc).
+	var blocks: Array[PackedVector2Array] = []
+	var turn := Transform2D(yaw, Vector2.ZERO).scaled(Vector2(meters, meters))
+	var reach := map_range * 1.15 + 30.0  # m: (its far corner may reach in)
+	for outline: PackedVector2Array in map_structures:
+		if (outline[0] - player).length_squared() > reach * reach:
+			continue
+		var on_map := PackedVector2Array()
+		var inside := true
+		for p in outline:
+			var q := turn * (p - player)
+			on_map.append(q)
+			inside = inside and q.length() < radius
+		if inside:
+			blocks.append(on_map)  # (only those on the rim are cut)
+		else:
+			for piece in Geometry2D.intersect_polygons(on_map, points):
+				blocks.append(piece)
+	if not blocks.is_empty():
+		var block_color := Color(0.16, 0.13, 0.1, 0.7 * color.a)
+		_add(z - 0.5, func() -> void:
+			draw_set_transform_matrix(xf)
+			for block in blocks:
+				draw_colored_polygon(block, block_color))
 	var backdrop := _child(node, "BackdropSmall")
 	var mask := _texture(str(_prop(backdrop, "Mask").get("text", "map_mask")))
 	if mask != null:

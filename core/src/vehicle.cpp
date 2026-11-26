@@ -126,6 +126,13 @@ VehicleClass load_vehicle_class(const std::filesystem::path& path) {
             v.bounds_max = {hi.x, std::max(hi.y, lo.y + 0.5), hi.z};
         }
     }
+    if (v.kind == VehicleKind::flyer) {
+        // Landed, on its lowest point: most starfighters give no
+        // LandedHeight (and some too little), and sat on their middle sank
+        // half into a hangar's deck.
+        v.landed_height = std::max(v.landed_height, -v.bounds_min.y);
+        v.takeoff_height = std::max(v.takeoff_height, v.landed_height + 1.0);  // (it lifts before it flies)
+    }
     // A walker steps over a third of its height (ASSUMPTION); a hover
     // vehicle glides over what's under its altitude and a bit.
     v.step_up = v.kind == VehicleKind::walker ? std::max(0.6, v.bounds_max.y / 3) : std::max(0.6, v.altitude + 0.4);
@@ -213,13 +220,15 @@ VehicleClass load_vehicle_class(const std::filesystem::path& path) {
     return v;
 }
 
-// A flyer. Landed (grounded) it sits at LandedHeight and, given throttle,
-// lifts to TakeoffHeight in TakeoffTime and flies off at MinSpeed. Flying,
-// its nose turns and pitches toward the look (TurnRate, PitchRate) and it
-// goes along it at a speed between MinSpeed and MaxSpeed (forward speeds
-// up, back slows; BoostSpeed on energy), never into the ground: low, slow
-// and level with the throttle back, it settles and lands (ASSUMPTION).
-// Hitting the ground or a wall stops it (the server reckons the damage).
+// A flyer. Landed (grounded) it sits at LandedHeight; the jump button (its
+// take-off) lifts it straight up to TakeoffHeight in TakeoffTime, and it
+// flies off at MinSpeed. Flying, its nose turns and pitches toward the look
+// (TurnRate, PitchRate) and it goes along it at a speed between MinSpeed and
+// MaxSpeed (forward speeds up, back slows; BoostSpeed on energy), never into
+// the ground. The crouch button (its landing) over the ground (in space, a
+// hangar's) slows it and sets it down at LandingSpeed; low, slow and level
+// with the throttle back, it settles and lands too (ASSUMPTION). Hitting the
+// ground or a wall stops it (the server reckons the damage).
 std::vector<VehicleClass> load_vehicle_classes(const std::filesystem::path& dir) {
     std::vector<std::filesystem::path> files;
     if (std::filesystem::is_directory(dir)) {
@@ -249,12 +258,62 @@ void simulate_flyer(MoveState& state, const MoveState& before, const MoveInput& 
         if (!space || in_hangar || ground > field->min_fly_y) {
             state.position.y = ground + vehicle.landed_height;
         }
-        if (f > 0.1) {
-            // Lifting off: up to its takeoff height, then away.
+        if (input.held(MoveInput::jump)) {
+            // Taking off: straight up to its takeoff height, then away.
             state.grounded = false;
             state.velocity = {0, (vehicle.takeoff_height - vehicle.landed_height) / vehicle.takeoff_time, 0};
         }
         return;
+    }
+    if (state.velocity.y > 0 && std::hypot(state.velocity.x, state.velocity.z) < 0.01) {
+        // Still lifting off: up, level, then forward at MinSpeed.
+        const double floor =
+            world.ground_at(before.position.x, before.position.z, before.position.y + 0.5, 1.5).height;
+        const double top = floor + vehicle.takeoff_height;
+        state.pitch = 0;
+        state.roll = 0;
+        // (Far over any floor, as out in open space: away at once.)
+        state.position.y = std::min(top, before.position.y + state.velocity.y * dt);
+        if (before.position.y - floor > vehicle.takeoff_height + 2.0) {
+            state.position.y = before.position.y;
+        }
+        if (state.position.y >= top - 1e-6 || before.position.y - floor > vehicle.takeoff_height + 2.0) {
+            const double s = std::sin(double(state.yaw)), c = std::cos(double(state.yaw));
+            state.velocity = Vec3{-s, 0, -c} * vehicle.min_speed;
+        }
+        return;
+    }
+    {
+        // Landing (the crouch button), over the ground near enough: slowing
+        // to a stop as it comes straight down.
+        const double floor =
+            world.ground_at(before.position.x, before.position.z, before.position.y + 0.5, 1.5).height;
+        const bool over_floor = space ? field->in_landing_region(before.position) && before.position.y - floor <= 35.0
+                                      : before.position.y - floor <= vehicle.takeoff_height + 12.0;
+        if (input.held(MoveInput::crouch) && over_floor) {
+            const Vec3 flat{state.velocity.x, 0, state.velocity.z};
+            const double h = flat.length();
+            const double slowed = std::max(0.0, h - std::max(vehicle.acceleration, 10.0) * 2 * dt);
+            Vec3 velocity = h > 1e-6 ? flat * (slowed / h) : Vec3{};
+            velocity.y = -std::max(1.0, vehicle.landing_speed);
+            Vec3 position = before.position + velocity * dt;
+            state.pitch = float(double(before.pitch) * std::max(0.0, 1 - 4 * dt));
+            state.roll = float(double(before.roll) * std::max(0.0, 1 - 4 * dt));
+            if (position.y <= floor + vehicle.landed_height) {
+                position.y = floor + vehicle.landed_height;
+                state.position = world.clamp(position);
+                state.velocity = {};
+                state.grounded = true;
+                state.pitch = 0;
+                state.roll = 0;
+                return;
+            }
+            const Vec3 moved = world.resolve_walls(before.position, position, vehicle.radius(), vehicle.height(),
+                                                   vehicle.step_up, velocity, blocks_vehicles);
+            state.position = world.clamp(moved);
+            state.velocity = velocity;
+            return;
+        }
     }
     // Visual roll/bank into turns.
     const double yaw_delta = wrap_angle(double(state.yaw) - double(before.yaw));
@@ -277,9 +336,8 @@ void simulate_flyer(MoveState& state, const MoveState& before, const MoveInput& 
                           : f < -0.1 ? vehicle.min_speed
                                      : std::clamp(speed, vehicle.min_speed, vehicle.max_speed);
     const double rate = boosting ? vehicle.boost_acceleration : vehicle.acceleration;
-    const bool lifting = speed < vehicle.min_speed * 0.5 && state.velocity.y > 0;  // just off the ground
-    double next = lifting ? vehicle.min_speed
-                          : speed + std::clamp(wished - speed, -rate * dt, rate * dt);
+    // (Slowed by a landing it broke off: back up to MinSpeed at once.)
+    double next = std::max(vehicle.min_speed, speed + std::clamp(wished - speed, -rate * dt, rate * dt));
     const double s = std::sin(double(state.yaw)), c = std::cos(double(state.yaw));
     const double cp = std::cos(pitch), sp = std::sin(pitch);
     Vec3 velocity{-s * cp * next, sp * next, -c * cp * next};

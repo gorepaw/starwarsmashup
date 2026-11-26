@@ -160,9 +160,38 @@ void test_space_flight_and_hangar_landing() {
     state.grounded = true;
     constexpr double dt = 1.0 / 60.0;
 
+    // On a hangar's deck, throttle alone doesn't take off: the jump button does.
+    {
+        const Heightfield deck = flat_ground(0.0f);
+        const World deck_world(deck);
+        MoveState lift;
+        lift.position = {0, f.landed_height, 0};
+        lift.grounded = true;
+        MoveInput throttle;
+        throttle.forward = 127;
+        for (int i = 0; i < 60; ++i) {
+            simulate_vehicle(lift, throttle, deck_world, f, dt, &field);
+        }
+        CHECK(lift.grounded);
+        // Taking off, it rises straight up to its takeoff height, then flies on.
+        throttle.buttons = MoveInput::jump;
+        simulate_vehicle(lift, throttle, deck_world, f, dt, &field);
+        CHECK(!lift.grounded);
+        for (int i = 0; i < int(f.takeoff_time * 60) - 5; ++i) {
+            simulate_vehicle(lift, throttle, deck_world, f, dt, &field);
+        }
+        CHECK(std::hypot(lift.position.x, lift.position.z) < 1e-6);
+        CHECK(lift.position.y > f.landed_height + 0.5);
+        for (int i = 0; i < 60; ++i) {
+            simulate_vehicle(lift, throttle, deck_world, f, dt, &field);
+        }
+        CHECK(std::hypot(lift.position.x, lift.position.z) > 5.0);
+    }
+
     // Take off and continuously turn right while pitching sharply down past y = 0.
     MoveInput input;
     input.forward = 127;
+    input.buttons = MoveInput::jump;
     input.pitch = -1.25f;
     for (int i = 0; i < 6 * 60; ++i) {
         input.yaw -= float(1.2 * dt);
@@ -194,6 +223,27 @@ void test_space_flight_and_hangar_landing() {
     }
     CHECK(state.grounded);
     CHECK(state.velocity.length() < 1e-6);
+
+    // The landing button sets it down from higher and faster, in a hangar.
+    state.grounded = false;
+    state.position = {0, 20.0, 0};
+    state.velocity = {0, 0, -40};
+    input = MoveInput{};
+    input.forward = 127;
+    input.buttons = MoveInput::crouch;
+    for (int i = 0; i < 10 * 60 && !state.grounded; ++i) {
+        simulate_vehicle(state, input, hangar_world, f, dt, &field);
+    }
+    CHECK(state.grounded);
+    CHECK(std::abs(state.position.y - f.landed_height) < 1e-6);
+    // ...but not out in open space.
+    state.grounded = false;
+    state.position = {250, 5.0, 0};
+    state.velocity = {0, 0, -40};
+    for (int i = 0; i < 60; ++i) {
+        simulate_vehicle(state, input, hangar_world, f, dt, &field);
+    }
+    CHECK(!state.grounded);
 }
 
 void test_space_systems_and_scoring() {
@@ -420,14 +470,17 @@ void test_exported_space_assets() {
                 state.grounded = true;
                 MoveInput input;
                 input.forward = 127;
+                input.buttons = MoveInput::jump;  // take off
                 input.yaw = float(s.yaw);
                 for (int i = 0; i < 12 * 60; ++i) {
                     simulate_vehicle(state, input, *world, f.vehicles[size_t(index)], 1.0 / 60.0, &f);
                 }
                 const bool out = (state.position - s.position).length() > 300 && !f.in_landing_region(state.position);
                 if (!out) {
-                    std::fprintf(stderr, "%s: %s from %s stays in its hangar\n", name,
-                                 f.vehicles[size_t(index)].name.c_str(), s.name.c_str());
+                    std::fprintf(stderr, "%s: %s from %s stays in its hangar (at %.1f %.1f %.1f from %.1f %.1f %.1f, %s)\n",
+                                 name, f.vehicles[size_t(index)].name.c_str(), s.name.c_str(), state.position.x,
+                                 state.position.y, state.position.z, s.position.x, s.position.y, s.position.z,
+                                 state.grounded ? "landed" : "flying");
                 }
                 CHECK(out);
             }

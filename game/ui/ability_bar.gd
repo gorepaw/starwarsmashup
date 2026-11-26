@@ -5,6 +5,8 @@
 # only: SpecialistUI sets what it shows and handles the keys.
 extends "res://ui/bf2_screen.gd"
 
+const AbilityIcons = preload("res://ui/ability_icons.gd")
+
 const SLOT := 54.0          # units, a slot's side
 const GAP := 6.0
 const READY := Color(0.55, 0.85, 1.0)
@@ -13,7 +15,7 @@ const BUFF := Color(0.4, 0.85, 0.55)
 const DEBUFF := Color(1.0, 0.4, 0.35)
 
 # Set by SpecialistUI before each redraw:
-var slots: Array = []        # [{key, name, cooldown, total, where}]; at most six
+var slots: Array = []        # [{key, id, name, cooldown, total, where}]; at most six
 var effects: Array = []      # [{name, remaining, debuff}]
 var companion := {}          # {name, health, max_health, mode, cooldown}; empty: none
 var channel := {}            # {name, progress (0..1)}; empty: none
@@ -37,12 +39,22 @@ func _paint() -> void:
 		draw_rect(rect, Color(0.06, 0.08, 0.12, 0.8))
 		frame(rect, "border_popup")
 		var name := str(s.get("name", ""))
-		var words := name.split(" ", false)
-		var first := (words[0] if words.size() > 0 else name).substr(0, 9)
-		var second := (words[1] if words.size() > 1 else "").substr(0, 9)
-		text("gamefont_tiny", first, Vector2(rect.get_center().x, rect.position.y + 16 * u), "Center", READY, 0.9)
-		if second != "":
-			text("gamefont_tiny", second, Vector2(rect.get_center().x, rect.position.y + 28 * u), "Center", READY, 0.9)
+		var icon := AbilityIcons.texture(str(s.get("id", "")))
+		if icon != null:
+			# Its icon, its name small under it.
+			var side := 34.0 * u
+			draw_texture_rect(icon, Rect2(rect.get_center().x - side * 0.5, rect.position.y + 4 * u, side, side), false, READY)
+			var short := name.split(" ", false)[0] if name != "" else ""
+			while short.length() > 1 and art.text_width("gamefont_tiny", short, u * 0.75) > (SLOT - 18.0) * u:
+				short = short.left(short.length() - 1)
+			text("gamefont_tiny", short, Vector2(rect.get_center().x + 6 * u, rect.end.y - 13 * u), "Center", READY, 0.75)
+		else:
+			var words := name.split(" ", false)
+			var first := (words[0] if words.size() > 0 else name).substr(0, 9)
+			var second := (words[1] if words.size() > 1 else "").substr(0, 9)
+			text("gamefont_tiny", first, Vector2(rect.get_center().x, rect.position.y + 16 * u), "Center", READY, 0.9)
+			if second != "":
+				text("gamefont_tiny", second, Vector2(rect.get_center().x, rect.position.y + 28 * u), "Center", READY, 0.9)
 		var cd := float(s.get("cooldown", 0.0))
 		var total := maxf(0.001, float(s.get("total", 1.0)))
 		if cd > 0.05:

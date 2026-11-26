@@ -36,6 +36,7 @@ signal screen_opened
 signal screen_closed
 
 var _bar: AbilityBar
+var covered := false  # a full screen is open over the game (inventory, a terminal, the menu): no bar under it
 var _datapad: DatapadScreen
 var _bazaar: BazaarScreen
 var _field: FieldEffectsScript
@@ -258,7 +259,7 @@ func update(client: Object, camera: Camera3D, catalog: Array, delta: float) -> v
 			slots.append({"key": key, "name": "", "cooldown": 0.0, "total": 1.0})
 			continue
 		var a: Dictionary = abilities.get(str(entry["id"]), {})
-		slots.append({"key": key, "name": str(a.get("name", entry["id"])),
+		slots.append({"key": key, "id": str(entry["id"]), "name": str(a.get("name", entry["id"])),
 				"cooldown": _cooldown_left(entry), "total": float(a.get("cooldown", 1.0))})
 	_bar.slots = slots
 	var effects: Array = []
@@ -297,7 +298,8 @@ func update(client: Object, camera: Camera3D, catalog: Array, delta: float) -> v
 	if hint == "" and _beacon_ready(client):
 		hint = "Press %s to spawn at your squad's beacon" % _key_name("beacon_spawn")
 	_bar.hint = hint
-	_bar.visible = spawned and (not slots.is_empty() or not companion.is_empty() or not effects.is_empty() or hint != "")
+	_bar.visible = spawned and not covered \
+			and (not slots.is_empty() or not companion.is_empty() or not effects.is_empty() or hint != "")
 	_bar.queue_redraw()
 	if _datapad.visible:
 		_fill_datapad(client)

@@ -86,11 +86,52 @@ var _stage_key := ""
 var _stage_worn_key := ""
 var _stage_rect := Rect2()
 var _rotating := false
+var _name_edit: LineEdit       # a loadout's new name, while renaming
 
 
 func _ready() -> void:
+	_name_edit = LineEdit.new()
+	_name_edit.visible = false
+	_name_edit.max_length = 20
+	_name_edit.placeholder_text = "Loadout name, then Enter"
+	_name_edit.text_submitted.connect(_on_rename_submitted)
+	_name_edit.gui_input.connect(func(event: InputEvent) -> void:
+		if event is InputEventKey and event.pressed and (event as InputEventKey).physical_keycode == KEY_ESCAPE:
+			_name_edit.visible = false  # (Escape: not renamed after all)
+			_name_edit.release_focus()
+			queue_redraw())
+	add_child(_name_edit)
 	if not DisplayServer.get_name().to_lower().contains("headless"):
 		_setup_viewport()
+
+
+# Names the loadout being edited (blank: its default, "Loadout N").
+func _on_rename_submitted(new_name: String) -> void:
+	_name_edit.visible = false
+	_name_edit.release_focus()
+	var lo := _current_loadout().duplicate(true)
+	var cleaned := new_name.strip_edges()
+	lo["name"] = cleaned if cleaned != "" else "Loadout %d" % (_edit_slot + 1)
+	for i in loadouts.size():  # shown at once; the server's copy follows
+		if int((loadouts[i] as Dictionary).get("slot_index", -1)) == _edit_slot:
+			loadouts[i] = lo
+	loadout_saved.emit(_edit_slot, lo)
+	queue_redraw()
+
+
+# A loadout's name for its tab: "L1" until it's named, then as much of its
+# name as fits.
+func _tab_label(slot: int) -> String:
+	var named := ""
+	for lo: Dictionary in loadouts:
+		if int(lo.get("slot_index", -1)) == slot:
+			named = str(lo.get("name", ""))
+	if named == "" or named == "Loadout %d" % (slot + 1):
+		named = "L%d" % (slot + 1)
+	var suffix := " *" if slot == active_loadout_idx else ""
+	while named.length() > 1 and art.text_width("gamefont_small", named + suffix, u) > 70.0 * u:
+		named = named.left(named.length() - 1)
+	return named + suffix
 
 
 func _setup_viewport() -> void:
@@ -138,6 +179,8 @@ func open_screen() -> void:
 
 func close_screen() -> void:
 	visible = false
+	if _name_edit != null:
+		_name_edit.visible = false
 	_dragging_inst = {}
 	_drag_active = false
 	if _viewport != null:
@@ -238,6 +281,8 @@ func _resolve_stage_worn(lo: Dictionary) -> Array:
 		if inst.is_empty():
 			continue
 		var def: Dictionary = _def_by_id.get(str(inst.get("def_id", "")), {})
+		if str(def.get("kind", "")) == "vehicle":
+			continue  # (a mount's model is the vehicle it summons, not worn)
 		var mp := str(def.get("model", "")).replace("{g}", gen_code)
 		if mp != "":
 			by_slot[slot] = mp
@@ -327,8 +372,7 @@ func _paint() -> void:
 	var x := box.position.x + 16 * u
 	var y := box.position.y + 12 * u
 	for s in 5:
-		var lbl := "L%d%s" % [s + 1, " *" if s == active_loadout_idx else ""]
-		button(Rect2(x + s * 86 * u, y, 80 * u, 28 * u), lbl, "tab:%d" % s, _edit_slot == s)
+		button(Rect2(x + s * 86 * u, y, 80 * u, 28 * u), _tab_label(s), "tab:%d" % s, _edit_slot == s)
 
 	button(Rect2(x + 438 * u, y, 134 * u, 28 * u),
 			"Active" if _edit_slot == active_loadout_idx else "Activate Loadout",
@@ -359,8 +403,13 @@ func _paint_paperdoll(box: Rect2) -> void:
 	var x := box.position.x + 10 * u
 	var y := box.position.y + 10 * u
 	var lo := _current_loadout()
-	text("gamefont_small", "%s (%s)" % [str(lo.get("name", "Loadout")), species.capitalize()],
-			Vector2(x, y + 4 * u), "Left", ACCENT)
+	if _name_edit.visible:
+		_name_edit.position = Vector2(x, y)
+		_name_edit.size = Vector2(box.size.x - 340 * u, 24 * u)
+	else:
+		text("gamefont_small", "%s (%s)" % [str(lo.get("name", "Loadout")), species.capitalize()],
+				Vector2(x, y + 4 * u), "Left", ACCENT)
+	button(Rect2(box.end.x - 320 * u, y, 68 * u, 24 * u), "Rename", "rename", _name_edit.visible)
 	button(Rect2(box.end.x - 246 * u, y, 108 * u, 24 * u), "Gear (Combat)", "pmode:gear", _paperdoll_mode == "gear")
 	button(Rect2(box.end.x - 134 * u, y, 130 * u, 24 * u), "Cosmetic Override", "pmode:appearance", _paperdoll_mode == "appearance")
 
@@ -402,11 +451,13 @@ func _paint_paperdoll(box: Rect2) -> void:
 		if not blocked and not eq_inst.is_empty():
 			var edef: Dictionary = _def_by_id.get(str(eq_inst.get("def_id", "")), {})
 			eq_name = str(edef.get("name", ""))
-		text("gamefont_tiny", s_lbl, Vector2(sx + 6 * u, sy + 5 * u), "Left", DIM)
-		text("gamefont_tiny", eq_name, Vector2(sx + 6 * u, sy + 21 * u), "Left",
+		# Its two rows centred in the slot (slots shrink when there are many).
+		var pad := maxf(2.0 * u, (slot_h - 30.0 * u) * 0.5)
+		text("gamefont_tiny", s_lbl, Vector2(sx + 6 * u, sy + pad), "Left", DIM)
+		text("gamefont_tiny", eq_name, Vector2(sx + 6 * u, sy + pad + 15 * u), "Left",
 				Color(0.5, 0.5, 0.55) if blocked else (TEXT if eq_id > 0 else DIM))
 		if not blocked and eq_id > 0:
-			var clear_r := Rect2(r.end.x - 20 * u, sy + 4 * u, 16 * u, 16 * u)
+			var clear_r := Rect2(r.end.x - 20 * u, sy + pad, 16 * u, 16 * u)
 			button(clear_r, "x", "unequip:%s:%s" % ["app" if is_app else "gear", s_id])
 
 	# Bottom stats summary
@@ -651,9 +702,15 @@ func _find_equipped_for_def(def: Dictionary) -> Dictionary:
 
 
 func _on_click(id: String, _at: Vector2) -> void:
-	if id.begins_with("tab:"):
+	if id == "rename":
+		_name_edit.text = str(_current_loadout().get("name", ""))
+		_name_edit.visible = true
+		_name_edit.grab_focus()
+		_name_edit.select_all()
+	elif id.begins_with("tab:"):
 		_edit_slot = int(id.substr(4))
 		_confirm_destroy_id = 0
+		_name_edit.visible = false
 		_sync_stage()
 	elif id.begins_with("pmode:"):
 		_paperdoll_mode = id.substr(6)

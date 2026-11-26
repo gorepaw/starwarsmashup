@@ -186,7 +186,14 @@ static func draw(screen: Control, at: Vector2, title: String, lines: Array) -> v
 	var u: float = screen.u
 	var w := 270.0 * u
 	var line_h := 16.0 * u
-	var h := (34.0 + lines.size() * 16.0) * u
+	# Long lines (a description) wrap to the box's width.
+	var rows: Array = []  # [text, color]
+	for entry: Dictionary in lines:
+		for row in wrap_rows(screen.art, "gamefont_tiny", str(entry["text"]), w - 20 * u, u):
+			rows.append([row, entry["color"]])
+	var title_rows := wrap_rows(screen.art, "gamefont_small", title, w - 20 * u, u)
+	var title_h := 20.0 * title_rows.size() + 8.0
+	var h := (title_h + 6.0 + rows.size() * 16.0) * u
 	var pos := at + Vector2(14, 14) * u
 	if pos.x + w > screen.size.x - 8 * u:
 		pos.x = at.x - w - 10 * u
@@ -196,8 +203,27 @@ static func draw(screen: Control, at: Vector2, title: String, lines: Array) -> v
 	pos.y = maxf(8 * u, pos.y)
 	var box := Rect2(pos, Vector2(w, h))
 	screen.frame(box, "border_popup")
-	screen.text("gamefont_small", title, Vector2(box.position.x + 10 * u, box.position.y + 8 * u), "Left", Bf2Screen.ACCENT)
-	var y := box.position.y + 28 * u
-	for entry: Dictionary in lines:
-		screen.text("gamefont_tiny", str(entry["text"]), Vector2(box.position.x + 10 * u, y), "Left", entry["color"])
+	for i in title_rows.size():
+		screen.text("gamefont_small", title_rows[i], Vector2(box.position.x + 10 * u, box.position.y + (8 + 20 * i) * u),
+				"Left", Bf2Screen.ACCENT)
+	var y := box.position.y + title_h * u
+	for row: Array in rows:
+		screen.text("gamefont_tiny", row[0], Vector2(box.position.x + 10 * u, y), "Left", row[1])
 		y += line_h
+
+
+# `text` broken at spaces into rows no wider than `width` (pixels) in a
+# Battlefront font at `scale`.
+static func wrap_rows(art: RefCounted, font: String, text: String, width: float, scale: float) -> PackedStringArray:
+	var rows := PackedStringArray()
+	var row := ""
+	for word in text.split(" ", false):
+		var candidate := word if row == "" else row + " " + word
+		if row != "" and art.text_width(font, candidate, scale) > width:
+			rows.append(row)
+			row = word
+		else:
+			row = candidate
+	if row != "" or rows.is_empty():
+		rows.append(row)
+	return rows

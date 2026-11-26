@@ -23,6 +23,10 @@ const FRIEND_COLOR := Color(0.35, 0.6, 1.0)
 const ENEMY_COLOR := Color(1.0, 0.3, 0.25)
 const NEUTRAL_COLOR := Color(0.9, 0.9, 0.9)
 const HUB_MAP_RANGE := 250.0  # meters to the radar's edge in a hub's open world (ASSUMPTION: by eye)
+const STRUCTURE_CELL := 128.0  # m: the radar's structures are filed by cells this big
+var _structure_cells := {}      # Vector2i -> [outline]
+var _structures_cell := Vector2i(1 << 30, 0)  # the cell _structures_shown is for
+var _structures_shown: Array = []
 const POST_BEAM_HEIGHT := 30.0
 const HOLO_LENS_HEIGHT := 0.32
 const HOLO_LENS_RADIUS := 0.15
@@ -51,6 +55,8 @@ var _cone_shader: Shader
 var _team_tags: TeamTags
 var _fired := {}
 var _hit_flash := 0.0
+var _shield_flash := 0.0       # a capital ship's shield took our shot
+var _shield_notice := 0.0      # until we're told again
 var _aimed := {}            # what the reticle is on this frame (an aim candidate; {} nothing)
 var _shot_target := ""      # what you last hit (its candidate key), shown for SHOT_TARGET_TIME
 var _shot_time := 0.0
@@ -308,6 +314,15 @@ func aiming_at_peaceful() -> bool:
 	return bool(_aimed.get("peaceful", false))
 
 
+# A shot of ours a capital ship's shield took: the reticle's target marker
+# flashes blue, and now and then the feed says so.
+func note_shielded() -> void:
+	_shield_flash = 0.15
+	if _shield_notice <= 0.0:
+		add_feed_line("Shield absorbing fire: destroy its shield generator first")
+		_shield_notice = 6.0
+
+
 func note_hit() -> void:
 	_hit_flash = 0.15
 	if not _aimed.is_empty():
@@ -433,6 +448,8 @@ func update_hud(client: Object, weapons: Array, remotes_count: int, max_health: 
 	_hud.text = "\n".join(lines)
 	_update_match_hud(client, delta, hub_ui, generation, who_cb)
 	_hit_flash = maxf(0.0, _hit_flash - delta)
+	_shield_flash = maxf(0.0, _shield_flash - delta)
+	_shield_notice = maxf(0.0, _shield_notice - delta)
 	_shot_time = maxf(0.0, _shot_time - delta)
 	_crosshair.visible = _bf2_hud == null
 	_feed.visible = _bf2_hud == null
@@ -602,6 +619,9 @@ func _update_bf2_hud(client: Object, weapons: Array, max_health: float, delta: f
 		if _hit_flash > 0:
 			b["player1.weapon1.target.hit"] = true
 			b["player1.weapon1.target.hitColor"] = Color8(223, 60, 60)
+		elif _shield_flash > 0:
+			b["player1.weapon1.target.hit"] = true
+			b["player1.weapon1.target.hitColor"] = Color8(80, 170, 255)
 		var slot: int = own["weapon"]
 		var weapon: Dictionary = weapons[slot] if slot < weapons.size() else {}
 		if not weapon.is_empty():
@@ -750,6 +770,7 @@ func _update_hub_minimap() -> void:
 	var bake := str(_map_meta.get("bake", ""))
 	if bake == "" or _bf2_hud.map_player.is_empty():
 		return
+	_bf2_hud.map_structures = _structures_near(_bf2_hud.map_player["position"])
 	var file := bake + "_ground_preview.png"
 	if _bf2_hud.minimap.get("file", "") != file:
 		var path := ProjectSettings.globalize_path(file if file.begins_with("res://") else "res://" + file)
@@ -766,10 +787,38 @@ func _update_hub_minimap() -> void:
 	_bf2_hud.map_markers.append_array(hub_markers)
 
 
+# The world's structures' outlines (SwgCity's footprints) for the radar,
+# filed by STRUCTURE_CELL so only those near are looked at.
+func set_structures(outlines: Array) -> void:
+	_structure_cells.clear()
+	_structures_cell = Vector2i(1 << 30, 0)
+	for outline: PackedVector2Array in outlines:
+		var center := Vector2.ZERO
+		for p in outline:
+			center += p / outline.size()
+		var cell := Vector2i(floori(center.x / STRUCTURE_CELL), floori(center.y / STRUCTURE_CELL))
+		if not _structure_cells.has(cell):
+			_structure_cells[cell] = []
+		(_structure_cells[cell] as Array).append(outline)
+
+
+func _structures_near(at: Vector2) -> Array:
+	var cell := Vector2i(floori(at.x / STRUCTURE_CELL), floori(at.y / STRUCTURE_CELL))
+	if cell != _structures_cell:
+		_structures_cell = cell
+		_structures_shown = []
+		var reach := ceili(HUB_MAP_RANGE * 1.5 / STRUCTURE_CELL)
+		for dx in range(-reach, reach + 1):
+			for dz in range(-reach, reach + 1):
+				_structures_shown.append_array(_structure_cells.get(cell + Vector2i(dx, dz), []))
+	return _structures_shown
+
+
 func _update_minimap(client: Object, team: int, game: Dictionary) -> void:
 	if _battlefield.is_empty():
 		_update_hub_minimap()
 		return
+	_bf2_hud.map_structures = []
 	_bf2_hud.map_range = Bf2Hud.MAP_RANGE
 	var file := str(_map_meta.get("minimap", ""))
 	if _bf2_hud.minimap.get("file", "") != file and file != "":
@@ -1099,11 +1148,42 @@ func _post_models() -> Dictionary:
 	var data: Variant = JSON.parse_string(FileAccess.get_file_as_string(path))
 	if not data is Dictionary:
 		return out
+	var insignia := {}
 	for object: Dictionary in data.get("objects", []):
 		if object.has("hologram"):
 			var at: Array = object["position"]
-			out[str(object["name"]).to_lower()] = {"position": Vector3(at[0], at[1], at[2]), "hologram": object["hologram"]}
+			var hologram: Dictionary = object["hologram"]
+			# A space map's posts show com_icon_swap for every side: one model
+			# Battlefront retextures for the side holding it. Drawn as it is,
+			# it's no side's insignia; each side's own, from a map that has them.
+			var images: Dictionary = hologram.get("images", {})
+			if images.values().any(func(f: Variant) -> bool: return str(f).contains("com_icon_swap")):
+				if insignia.is_empty():
+					insignia = _insignia_elsewhere()
+				if not insignia.is_empty():
+					hologram = hologram.duplicate()
+					hologram["images"] = insignia
+			out[str(object["name"]).to_lower()] = {"position": Vector3(at[0], at[1], at[2]), "hologram": hologram}
 	return out
+
+
+# Each side's insignia model from an exported map that has all four (as a
+# post hologram's images: relative to this map's folder).
+func _insignia_elsewhere() -> Dictionary:
+	var files := {"alliance": "com_icon_alliance", "empire": "com_icon_imperial", "republic": "com_icon_republic",
+			"cis": "com_icon_cis"}
+	var maps := DirAccess.open("res://imported_assets/maps")
+	if maps == null:
+		return {}
+	for map_name: String in maps.get_directories():
+		var found := {}
+		for side: String in files:
+			var rel := "%s/models/%s.gltf" % [map_name, files[side]]
+			if FileAccess.file_exists("res://imported_assets/maps/" + rel):
+				found[side] = "../" + rel
+		if found.size() == files.size():
+			return found
+	return {}
 
 
 func _add_hologram(model: Dictionary) -> Dictionary:

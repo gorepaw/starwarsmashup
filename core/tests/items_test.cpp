@@ -110,15 +110,18 @@ int main() {
     {
         std::ofstream out(worn_ini);
         out << "[item]\nId = armor_stormtrooper_chest\nKind = armor\nSlot = chest\nModel = armor/stormtrooper/chest_{g}.gltf\n"
-            << "[item]\nId = cloth_jacket_rebel\nKind = clothing\nSlot = jacket\nModel = clothing/jacket_rebel_{g}.gltf\n";
+            << "[item]\nId = cloth_jacket_rebel\nKind = clothing\nSlot = jacket\nModel = clothing/jacket_rebel_{g}.gltf\n"
+            << "[item]\nId = speeder_test\nKind = vehicle\nVehicle = swg_speeder_bike\nSlot = mount\nModel = swg_vehicles/speeder/speeder.gltf\n";
     }
     ItemCatalog worn_cat;
     worn_cat.load(worn_ini);
     std::filesystem::remove(worn_ini);
     std::vector<ItemInstance> winv{{1, 1, "armor_stormtrooper_chest", 0.5, "", "{}"},
-                                   {2, 1, "cloth_jacket_rebel", 0.5, "", "{}"}};
+                                   {2, 1, "cloth_jacket_rebel", 0.5, "", "{}"},
+                                   {3, 1, "speeder_test", 0.5, "", "{}"}};
     CharacterLoadout wcl;
     wcl.gear_ids["chest"] = 1;
+    wcl.gear_ids["mount"] = 3;  // a mount isn't worn: it's summoned
     CHECK(resolve_worn_models(worn_cat, wcl, winv, Species::human, Gender::female) == "armor/stormtrooper/chest_f.gltf");
     CHECK(resolve_worn_models(worn_cat, wcl, winv, Species::wookiee, Gender::male).empty());
     wcl.appearance_ids["jacket"] = 2;

@@ -303,8 +303,15 @@ void GameServer::update_vehicles(double dt) {
         v.team = holder;
         v.health = cls.max_health;
         v.state.position = spawn.position;
-        v.state.position.y = world_.ground_at(spawn.position.x, spawn.position.z, spawn.position.y + 2, 3).height +
-                             (cls.kind == VehicleKind::hover ? cls.altitude : 0);
+        // On the floor under it (a hover vehicle at its altitude, a flyer on
+        // its lowest point); a turret just where the map has it: a hangar's
+        // hang from its ceiling, and dropped to the floor they hung in the air.
+        if (cls.kind != VehicleKind::turret) {
+            v.state.position.y = world_.ground_at(spawn.position.x, spawn.position.z, spawn.position.y + 2, 3).height +
+                                 (cls.kind == VehicleKind::hover   ? cls.altitude
+                                  : cls.kind == VehicleKind::flyer ? cls.landed_height
+                                                                   : 0);
+        }
         v.state.yaw = float(spawn.yaw);
         v.state.vehicle = int8_t(wanted);
         v.state.grounded = true;

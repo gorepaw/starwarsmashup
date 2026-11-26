@@ -23,7 +23,6 @@ var starts_in := 0.0     # seconds
 var in_queue := 0
 var keys := {}           # {leave, close}: key names for the hints
 
-const TRAVEL_DESTS := ["Naboo (Theed)", "Corellia (Coronet)", "Dantooine", "Lok", "Endor", "Yavin 4"]
 const ERAS := ["Galactic Civil War", "Clone Wars"]
 # Battlefront II's ground modes, by id (core::game_mode_id), and "any".
 const GROUND_MODES := [
@@ -35,7 +34,6 @@ const GROUND_MODES := [
 	["any", "Any Mode", "Whatever the next battlefield offers."],
 ]
 
-var _space_tab := "battles"
 var _era := 0
 var _mode := "conquest"
 
@@ -73,14 +71,7 @@ func _paint() -> void:
 	text("gamefont_large", title, Vector2(size.x * 0.5, box.position.y - 44 * u), "Center", ACCENT)
 	frame(box)
 	var y := box.position.y + 12 * u
-	if is_space:
-		button(Rect2(box.position.x + 24 * u, y, 160 * u, 26 * u), "Space Battles", "stab:battles", _space_tab == "battles")
-		button(Rect2(box.position.x + 192 * u, y, 196 * u, 26 * u), "Interplanetary Travel", "stab:travel",
-				_space_tab == "travel")
-		if _space_tab == "travel":
-			_paint_travel(box)
-			return
-		y += 36 * u
+	# (Travel to other planets is the starports': their travel terminals.)
 	# The era: Galactic Civil War or Clone Wars.
 	if sides.size() > 2:
 		var era_w := 240.0 * u
@@ -92,9 +83,7 @@ func _paint() -> void:
 		y += 38 * u
 	var heading := "Choose a side" if queued < 0 else "Queued for the %s" % _side_name(queued)
 	text("gamefont_medium", heading, Vector2(box.get_center().x, y + 6 * u), "Center", TEXT)
-	text("gamefont_tiny", "Gear-Matters Rules: equipped loadouts, +15% rewards, Hard bots",
-			Vector2(box.get_center().x, y + 30 * u), "Center", DIM)
-	y += 48 * u
+	y += 34 * u
 	# The mode (ground): Battlefront II's.
 	if not is_space:
 		var mode_w := 100.0 * u
@@ -138,22 +127,6 @@ func _paint() -> void:
 	text("gamefont_tiny", hint, Vector2(size.x * 0.5, box.end.y + 14 * u), "Center", DIM)
 
 
-func _paint_travel(box: Rect2) -> void:
-	text("gamefont_medium", "Interplanetary Shuttle & Starfighter Travel",
-			Vector2(box.get_center().x, box.position.y + 54 * u), "Center", TEXT)
-	text("gamefont_tiny", "Select a sector destination (cross-planet travel opens with more planets):",
-			Vector2(box.get_center().x, box.position.y + 82 * u), "Center", DIM)
-	for di in TRAVEL_DESTS.size():
-		var col := di % 2
-		var row := di / 2
-		var br := Rect2(box.position.x + (56 + col * 284) * u, box.position.y + (116 + row * 48) * u, 266 * u, 38 * u)
-		button(br, "%s  [Offline]" % TRAVEL_DESTS[di], "travel:%d" % di, false, false, false)
-	text("gamefont_tiny", "Ticket counters & hyperdrive routes will activate once additional planets are linked.",
-			Vector2(box.get_center().x, box.end.y - 84 * u), "Center", ACCENT)
-	button(Rect2(Vector2(box.get_center().x - 80 * u, box.end.y - 50 * u), Vector2(160, 32) * u), "Back", "close")
-	text("gamefont_tiny", "%s  close" % keys.get("close", "Esc"), Vector2(size.x * 0.5, box.end.y + 14 * u), "Center", DIM)
-
-
 func _mode_blurb() -> String:
 	for m: Array in GROUND_MODES:
 		if m[0] == _mode:
@@ -184,9 +157,7 @@ func _side_name(i: int) -> String:
 
 
 func _on_click(id: String, _at: Vector2) -> void:
-	if id.begins_with("stab:"):
-		_space_tab = id.substr(5)
-	elif id.begins_with("era:") and queued < 0:
+	if id.begins_with("era:") and queued < 0:
 		_era = int(id.substr(4))
 	elif id.begins_with("mode:") and queued < 0:
 		_mode = id.substr(5)

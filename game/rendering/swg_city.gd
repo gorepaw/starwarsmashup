@@ -20,8 +20,11 @@ static func has_city(prefix: String) -> bool:
 
 # Places every object; returns how many. With `camera_collision`, buildings
 # get physics collision for a camera to keep inside their rooms
-# (SwgBuilding.add_camera_collision), shared by their copies.
-static func add_objects(parent: Node, prefix: String, camera_collision := false) -> int:
+# (SwgBuilding.add_camera_collision), shared by their copies. With a
+# `radius`, only those within it of `center` (game x z), and with
+# `outdoors_only` none of what's inside buildings (a backdrop's).
+static func add_objects(parent: Node, prefix: String, camera_collision := false, center := Vector2.ZERO,
+		radius := -1.0, outdoors_only := false) -> int:
 	var path := prefix + ".objects.json"
 	var parsed: Variant = JSON.parse_string(FileAccess.get_file_as_string(path))
 	if not parsed is Dictionary:
@@ -32,8 +35,16 @@ static func add_objects(parent: Node, prefix: String, camera_collision := false)
 	var cells := {}   # a building's file -> its cells (from its sidecar), for furniture's lights
 	var placed: Array[Node3D] = []  # by the objects' index; null where one wasn't
 	var count := 0
+	var bounds := {}  # model -> its meshes' bounds (for footprints)
+	var footprints: Array = parent.get_meta(FOOTPRINTS, [])
 	for object: Dictionary in parsed["objects"]:
 		placed.append(null)
+		if radius > 0.0:
+			var at: Array = object["position"]
+			if Vector2(float(at[0]), float(at[2])).distance_to(center) > radius:
+				continue
+		if outdoors_only and int(object.get("inside", -1)) >= 0:
+			continue
 		var model: String = object.get("model", "")
 		if not models.has(model):
 			var file := dir.path_join(model)
@@ -68,12 +79,19 @@ static func add_objects(parent: Node, prefix: String, camera_collision := false)
 		parent.add_child(node)
 		placed[placed.size() - 1] = node
 		count += 1
+		if int(object.get("inside", -1)) < 0 and not object.get("particles", false) and not object.get("creature", false):
+			if not bounds.has(model):
+				bounds[model] = _bounds(models[model] as Node3D)
+			var footprint := _footprint(node, bounds[model])
+			if not footprint.is_empty():
+				footprints.append(footprint)
 		if object.get("creature", false):
 			_breathe(node, placed.size())
 		var inside := int(object.get("inside", -1))
 		if inside >= 0 and inside < placed.size() and placed[inside] != null:
 			_light_furniture(node, placed[inside], dir.path_join(str(parsed["objects"][inside]["model"])),
 					int(object.get("cell", 0)), cells)
+	parent.set_meta(FOOTPRINTS, footprints)
 	for template: Variant in models.values():
 		if template != null:
 			(template as Node).free()
@@ -82,6 +100,43 @@ static func add_objects(parent: Node, prefix: String, camera_collision := false)
 
 
 const DOORS_GROUP := &"swg_doors"  # the sliding doors' nodes (a mark on one goes with it)
+# The structures' footprints (on the parent: their outlines, game x z, for
+# the radar): a building's, a wall's, a tent's; not a prop's (smaller than
+# FOOTPRINT_AREA m^2 or lower than FOOTPRINT_HEIGHT m).
+const FOOTPRINTS := "swg_footprints"
+const FOOTPRINT_AREA := 10.0
+const FOOTPRINT_HEIGHT := 2.2
+
+
+# A model's meshes' bounds, in its own space (an empty AABB if it has none).
+static func _bounds(model: Node3D) -> AABB:
+	var out := AABB()
+	var first := true
+	for node in model.find_children("*", "MeshInstance3D", true, false):
+		var mi := node as MeshInstance3D
+		if mi.mesh == null or not mi.visible:
+			continue
+		var xf := Transform3D.IDENTITY
+		var at: Node = mi
+		while at != null and at != model:
+			if at is Node3D:
+				xf = (at as Node3D).transform * xf
+			at = at.get_parent()
+		var box := xf * mi.get_aabb()
+		out = box if first else out.merge(box)
+		first = false
+	return out
+
+
+# Its outline on the ground (game x z, as placed), or empty for a prop.
+static func _footprint(node: Node3D, box: AABB) -> PackedVector2Array:
+	if box.size.x * box.size.z < FOOTPRINT_AREA or box.size.y < FOOTPRINT_HEIGHT:
+		return PackedVector2Array()
+	var out := PackedVector2Array()
+	for corner: Vector2 in [Vector2(0, 0), Vector2(1, 0), Vector2(1, 1), Vector2(0, 1)]:
+		var p := node.transform * (box.position + Vector3(box.size.x * corner.x, 0.0, box.size.z * corner.y))
+		out.append(Vector2(p.x, p.z))
+	return out
 
 
 # The doors among a parent's children (add_objects' doors).

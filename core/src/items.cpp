@@ -655,7 +655,9 @@ std::string resolve_worn_models(const ItemCatalog& catalog, const CharacterLoado
             continue;
         }
         if (const ItemInstance* inst = find_inst(item_id)) {
-            if (const ItemDef* def = catalog.find(inst->def_id); def && !def->model_path.empty()) {
+            // A mount's model is the vehicle it summons, not something worn.
+            if (const ItemDef* def = catalog.find(inst->def_id);
+                def && !def->model_path.empty() && def->kind != ItemKind::vehicle) {
                 visual_by_slot[slot] = substitute_gender(def->model_path, gender);
             }
         }

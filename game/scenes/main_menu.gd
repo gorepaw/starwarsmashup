@@ -15,6 +15,15 @@ const TATOOINE_SKY = preload("res://rendering/tatooine_sky.gdshader")
 const Bf2Audio = preload("res://audio/bf2_audio.gd")
 const GameSession = preload("res://scenes/game_session.gd")
 const LoadingScreen = preload("res://ui/loading_screen.gd")
+const SwgCity = preload("res://rendering/swg_city.gd")
+# The backdrop: Mos Eisley itself (its buildings, round its middle), with
+# starfighters crossing its sky now and then.
+const BACKDROP_CENTER := Vector3(3550.0, -5.0, 4780.0)  # Galaxies (3550, -4780), Mos Eisley's middle, at the origin
+const BACKDROP_RADIUS := 260.0
+const FLYBY_EVERY := 14.0    # s between starfighter passes
+const FLYBY_SPEED := 90.0    # m/s
+const FLYERS := ["res://imported_assets/vehicles/all_fly_xwing_sc/all_fly_xwing.gltf",
+		"res://imported_assets/vehicles/imp_fly_tiefighter_sc/imp_fly_tiefighter.gltf"]
 
 const HUD_DIR := "res://imported_assets/hud"
 const AUDIO_DIR := "res://imported_assets/audio"
@@ -36,6 +45,10 @@ var _creator_screen: Control
 var _loading_screen: LoadingScreen
 var _mode := "main"
 var _orbit_time := 0.0
+var _flyers: Array[Node3D] = []   # an X-wing, chased by TIEs
+var _flyby_time := 4.0           # s into a pass (the first soon after the menu opens)
+var _flyby_from := Vector3.ZERO
+var _flyby_dir := Vector3.FORWARD
 var _status_msg := ""
 
 
@@ -73,9 +86,52 @@ func _process(delta: float) -> void:
 		_camera.global_position = _camera.global_position.lerp(wanted, minf(1.0, 8.0 * delta))
 		_camera.look_at(target, Vector3.UP)
 	else:
-		var angle := _orbit_time * 0.04
-		_camera.global_position = Vector3(sin(angle) * 45.0, 22.0, cos(angle) * 45.0)
-		_camera.look_at(Vector3(0.0, 6.0, 0.0), Vector3.UP)
+		# Slowly round the city, high over its rooftops, now nearer, now further.
+		var angle := _orbit_time * 0.025
+		var reach := 150.0 + 30.0 * sin(_orbit_time * 0.05)
+		_camera.global_position = Vector3(sin(angle) * reach, 46.0 + 8.0 * sin(_orbit_time * 0.07), cos(angle) * reach)
+		_camera.look_at(Vector3(0.0, 10.0, 0.0), Vector3.UP)
+		_update_flyby(delta)
+
+
+# An X-wing and two TIE fighters on its tail, from the starfighters'
+# Battlefront models: they cross the sky over the city every FLYBY_EVERY.
+func _add_flyers() -> void:
+	for i in 3:
+		var path: String = FLYERS[0 if i == 0 else 1]
+		if not FileAccess.file_exists(path):
+			return
+		var document := GLTFDocument.new()
+		var state := GLTFState.new()
+		if document.append_from_file(ProjectSettings.globalize_path(path), state) != OK:
+			return
+		var ship := document.generate_scene(state) as Node3D
+		ship.visible = false
+		_backdrop.add_child(ship)
+		_flyers.append(ship)
+
+
+func _update_flyby(delta: float) -> void:
+	if _flyers.size() < 3:
+		return
+	_flyby_time += delta
+	if _flyby_time >= FLYBY_EVERY:
+		_flyby_time = 0.0
+		# Across the camera's view: from one side of the city to the other.
+		var across := _camera.global_basis.x.slide(Vector3.UP).normalized()
+		var side := 1.0 if randf() < 0.5 else -1.0
+		_flyby_dir = (across * side + Vector3(randf_range(-0.3, 0.3), 0.0, randf_range(-0.3, 0.3))).normalized()
+		_flyby_from = Vector3(0.0, randf_range(55.0, 85.0), 0.0) - _flyby_dir * 700.0
+	var lead := _flyby_from + _flyby_dir * FLYBY_SPEED * _flyby_time
+	var offsets := [Vector3.ZERO, Vector3(-14.0, 3.0, 0.0), Vector3(12.0, -4.0, 0.0)]
+	var trail := [0.0, 55.0, 70.0]  # m behind the X-wing
+	var basis := Basis.looking_at(-_flyby_dir, Vector3.UP)  # (their models' +z is ahead)
+	for i in _flyers.size():
+		var ship := _flyers[i]
+		var weave := Vector3(0.0, sin(_flyby_time * 1.7 + i) * 3.0, 0.0) + basis * Vector3(sin(_flyby_time * 1.3 + i) * 6.0, 0, 0)
+		ship.global_position = lead - _flyby_dir * float(trail[i]) + basis * (offsets[i] as Vector3) + weave
+		ship.global_basis = basis.rotated(_flyby_dir, sin(_flyby_time * 1.3 + i) * 0.35)
+		ship.visible = _flyby_time * FLYBY_SPEED < 1500.0
 
 
 func _exit_tree() -> void:
@@ -133,8 +189,16 @@ func _setup_3d() -> void:
 				mesh.mesh = TerrainTool.build_mesh(heights, int(meta["samples"]), float(meta["spacing"]),
 						Vector2(float(meta["origin_x"]), float(meta["origin_z"])), 4)
 			mesh.material_override = TerrainTool.build_material(bake, meta)
-			mesh.position = Vector3(3550.0, -5.0, 4780.0)
+			mesh.position = BACKDROP_CENTER
 			_backdrop.add_child(mesh)
+		# Its buildings, streets and stalls round the middle (not what's indoors).
+		if SwgCity.has_city(bake):
+			var city := Node3D.new()
+			city.position = BACKDROP_CENTER
+			_backdrop.add_child(city)
+			SwgCity.add_objects(city, bake, false, Vector2(-BACKDROP_CENTER.x, -BACKDROP_CENTER.z), BACKDROP_RADIUS,
+					true)
+	_add_flyers()
 
 	_stage = CharacterStage.new()
 	_stage.visible = false

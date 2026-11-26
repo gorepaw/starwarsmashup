@@ -137,11 +137,15 @@ var _start_bake := ""
 var _buildings: Array = []
 var _terrain3d := false
 var _doors: Array[Node3D] = []
+var _buildings_with_rooms: Array[Node3D] = []  # (their outsides hidden while the camera's in a room)
 var _people := {}
 var _people_colors := {}
 var _shot_delay := 0
 var _loading_screen: LoadingScreen
-var _loading_phase := 0  # 0 idle, 1 waiting frame to load transfer world, 2 hiding after first rendered frame
+var _first_load_wait := 0.0          # s waited for the first spawn under the loading screen
+const FIRST_LOAD_HOLD := 2.0         # s the loading screen stays up once spawned (the world streaming in)
+const FIRST_LOAD_LIMIT := 45.0       # s it waits for a spawn at most
+var _loading_phase := 0  # 0 idle, 1 waiting frame to load transfer world, 2 hiding after first rendered frame, 3 the first load (until spawned)
 var _travel_hold := 0.0  # Stage 13: seconds the loading screen stays up after a long jump (a shuttle)
 var _last_own_position := Vector3.INF
 
@@ -172,7 +176,11 @@ func _start_interactive(cfg: Dictionary) -> void:
 		await get_tree().process_frame
 	start_session(cfg)
 	if _loading_screen != null:
-		_loading_phase = 2
+		# Up until we're in the world and it's streamed in round us (as a
+		# shuttle's arrival is held): hidden at once, the first frames showed
+		# its terrain and textures still loading.
+		_loading_phase = 3
+		_first_load_wait = 0.0
 
 
 func start_session(config: Dictionary) -> bool:
@@ -347,6 +355,12 @@ func step_frame(delta: float) -> void:
 		_loading_phase = 0
 		if _loading_screen != null:
 			_loading_screen.visible = false
+	elif _loading_phase == 3:
+		# The first load: once spawned, a moment more for the world round us.
+		_first_load_wait += delta
+		if (_client != null and _client.is_spawned()) or _first_load_wait > FIRST_LOAD_LIMIT:
+			_loading_phase = 0
+			_travel_hold = FIRST_LOAD_HOLD
 	if _travel_hold > 0.0:
 		_travel_hold -= delta
 		if _travel_hold <= 0.0 and _loading_screen != null and _loading_phase == 0:
@@ -380,7 +394,9 @@ func step_frame(delta: float) -> void:
 		# A shuttle (or a clone in another town) moves us kilometers at once:
 		# the loading screen covers the world streaming in there.
 		var own_position: Vector3 = own["position"]
-		if _last_own_position != Vector3.INF and own_position.distance_to(_last_own_position) > 300.0 				and _loading_screen != null and _bot == "" and _client.get_match().is_empty() 				and not DisplayServer.get_name().to_lower().contains("headless"):
+		if _last_own_position != Vector3.INF and own_position.distance_to(_last_own_position) > 300.0 \
+				and _loading_screen != null and _bot == "" and _client.get_match().is_empty() \
+				and not DisplayServer.get_name().to_lower().contains("headless"):
 			_loading_screen.show_loading(_map_title().to_upper(), "Arriving...", "hud_flag_icon")
 			_travel_hold = 1.5
 		_last_own_position = own_position
@@ -444,6 +460,8 @@ func step_frame(delta: float) -> void:
 				if bool(remote["alive"]):
 					people.append(remote["position"])
 			SwgCity.update_doors(_doors, people, delta)
+		if not _buildings_with_rooms.is_empty():
+			SwgBuilding.update_exteriors(_buildings_with_rooms, _camera.global_position)
 
 	_battle_ui.hub_markers = _hub_ui.radar_markers(_client) if _hub_ui != null else []
 	_battle_ui.hub_ui_ref = _hub_ui
@@ -460,6 +478,8 @@ func step_frame(delta: float) -> void:
 		for line: String in _hub_ui.take_notice_lines():
 			_battle_ui.add_feed_line(line)
 	if _specialist_ui != null:
+		_specialist_ui.covered = (_hub_ui != null and _hub_ui.is_any_screen_open()) \
+				or (_pause_menu != null and _pause_menu.visible)
 		_specialist_ui.update(_client, _camera, _catalog, delta)
 
 	if _audio != null:
@@ -555,6 +575,10 @@ func _map_title() -> String:
 
 func _input(event: InputEvent) -> void:
 	if not _started or _exiting or _bot != "":
+		return
+	# Typing into a text box (a loadout's name, a search): its keys are its own.
+	var typing_in := get_viewport().gui_get_focus_owner()
+	if event is InputEventKey and typing_in is LineEdit and typing_in.is_visible_in_tree():
 		return
 	var escape: bool = event is InputEventKey and event.pressed and not event.echo \
 			and (event as InputEventKey).physical_keycode == KEY_ESCAPE
@@ -829,7 +853,19 @@ func _show_vehicle_prompt() -> void:
 		return
 	var own: Dictionary = _client.get_presented()
 	var label := _battle_ui.center_label()
-	if int(own.get("vehicle", -1)) >= 0 or not bool(own["alive"]) or label == null or label.text != "":
+	if label == null or label.text != "" or not bool(own["alive"]):
+		return
+	if int(own.get("vehicle", -1)) >= 0:
+		# Piloting a starfighter: how to take off (landed) and land (low).
+		var cls := _vehicles.class_of(int(own["vehicle"]))
+		if str(cls.get("kind", "")) == "flyer" and int(own.get("seat", 0)) == 0:
+			var jump := Settings.binding_name(_settings.bindings["jump"]) if _settings.bindings.has("jump") else "Space"
+			var crouch := Settings.binding_name(_settings.bindings["crouch"]) if _settings.bindings.has("crouch") else "C"
+			if bool(own.get("grounded", false)):
+				label.text = "Press %s to take off" % jump
+			elif _client.get_ground_height(own["position"].x, own["position"].z, own["position"].y) \
+					> float(own["position"].y) - 14.0:
+				label.text = "Hold %s to land" % crouch
 		return
 	var found := _vehicles.enterable(_client.get_vehicles(), own["position"], int(own["team"]),
 			_client.get_entity_id(), bool(_battlefield.get("is_space", false)))
@@ -1243,20 +1279,44 @@ func _update_camera(target: Vector3, delta: float) -> void:
 		# Behind and over it, from its TrackCenter, turning with the look.
 		if soldier != null:
 			PlayerAppearance.set_first_person(_own, false)
-		var track: Vector3 = _vehicles.class_of(driving).get("track_center", Vector3(0, 2.5, -6))
-		var offset: Vector3 = _vehicles.class_of(driving).get("track_offset", Vector3.ZERO)
+		var cls := _vehicles.class_of(driving)
+		var track: Vector3 = cls.get("track_center", Vector3(0, 2.5, -6))
+		var offset: Vector3 = cls.get("track_offset", Vector3.ZERO)
 		_camera_yaw = _yaw
 		var look := _camera_basis()
-		# At TrackCenter's height; ASSUMPTION: a little nearer than its and
-		# TrackOffset's distance, which frame it small.
+		var seat := int(_client.get_presented().get("seat", 0))
+		var riding := _vehicles.riding(_client.get_entity_id())
 		# A gunner's view follows the vehicle as it's drawn (its own state
 		# lags: the server carries it).
-		if int(_client.get_presented().get("seat", 0)) > 0:
-			var at := _vehicles.riding(_client.get_entity_id())
-			if not at.is_empty():
-				target = at["position"]
-		var pivot := target + Vector3.UP * track.y
-		var at := pivot + look * Vector3(0, 0.3, maxf(3.5, (offset.z - track.z) * 0.75))
+		if seat > 0 and not riding.is_empty():
+			target = riding["position"]
+		# First person (the view key): from its eye point (the seat's, a
+		# gunner's), its pilot looking where it flies, a driver or gunner
+		# where they look.
+		if _first_person and riding.get("node") is Node3D:
+			var node: Node3D = riding["node"]
+			var seats: Array = cls.get("seats", [])
+			var eye: Vector3 = cls.get("eye", Vector3(0, 1.5, 0))
+			if seat > 0 and seat - 1 < seats.size():
+				eye = (seats[seat - 1] as Dictionary).get("eye", eye)
+			_camera.global_position = node.global_transform * eye
+			if str(cls.get("kind", "")) == "flyer" and seat == 0:
+				_camera.global_basis = node.global_basis * Basis(Vector3.UP, PI)  # (its model's +z is ahead)
+			else:
+				_camera.global_basis = look
+			return
+		# Its distance by its size (its model's bounds): TrackCenter and
+		# TrackOffset put the camera inside most starfighters (a Y-wing's
+		# 3.5 m back, a gunship's), as only an X-wing's framed it. At least
+		# as far as they say (ASSUMPTION: a little nearer than both, as for an
+		# X-wing), and over it by its height.
+		var bmin: Vector3 = cls.get("bounds_min", Vector3(-1, 0, -2))
+		var bmax: Vector3 = cls.get("bounds_max", Vector3(1, 2, 2))
+		var radius := maxf(1.5, (bmax - bmin).length() * 0.5)
+		var distance := maxf(maxf(3.5, (offset.z - track.z) * 0.75), radius * 1.25 + 1.5)
+		var height := maxf(track.y, (bmin.y + bmax.y) * 0.5 + (bmax.y - bmin.y) * 0.6)
+		var pivot := target + Vector3.UP * height
+		var at := pivot + look * Vector3(0, 0.3, distance)
 		if not bool(_battlefield.get("is_space", false)):
 			at.y = maxf(at.y, _client.get_ground_height(at.x, at.z, pivot.y) + 0.5)
 		_camera.global_position = at
@@ -1414,6 +1474,8 @@ func _update_events() -> void:
 					_hurt_vo_cd[vid] = _elapsed
 					_audio.play_3d(vside + "_inf_com_chatter_wound", victim.model.global_position,
 							_camera.global_position)
+		if event["kind"] == "shielded" and mine:
+			_battle_ui.note_shielded()
 		if event["kind"] == "hit" and mine:
 			_hits += 1
 			_battle_ui.note_hit()
@@ -1465,10 +1527,12 @@ func _who(id: int) -> String:
 func _update_bolts(delta: float) -> void:
 	var own_soldier := _soldier_of(_client.get_entity_id())
 	for shot: Dictionary in _client.take_shots():
-		var weapon: Dictionary = _weapons[mini(int(shot["weapon"]), _weapons.size() - 1)]
 		var origin: Vector3 = shot["origin"]
 		var offset := Vector3.ZERO
-		if own_soldier != null:
+		# Riding, the vehicle's guns fire (from where the shot says): not the
+		# soldier's, hidden in its seat.
+		var riding := bool(shot.get("riding", false))
+		if own_soldier != null and not riding:
 			if int(shot["weapon"]) >= 2:
 				own_soldier.throw()
 			else:
@@ -1485,15 +1549,16 @@ func _update_bolts(delta: float) -> void:
 				_audio.play_2d(str(shot.get("fire_sound", "")))
 		for direction: Vector3 in dirs:
 			var node := _effects.make_projectile(shot)
-			var velocity: Vector3 = direction * float(weapon["bolt_speed"])
-			var bolt := {"node": node, "position": origin, "velocity": velocity, "life": float(weapon["bolt_life"]),
+			var velocity: Vector3 = direction * float(shot.get("bolt_speed", 300.0))
+			var bolt := {"node": node, "position": origin, "velocity": velocity, "life": float(shot.get("bolt_life", 0.8)),
+					"gravity": float(shot.get("bolt_gravity", 1.0)),
 					"origin": origin, "offset": offset}
 			_place_drawn_bolt(node, bolt, delta)
 			_own_bolts.append(bolt)
 	for i in range(_own_bolts.size() - 1, -1, -1):
 		var bolt: Dictionary = _own_bolts[i]
 		bolt["life"] = float(bolt["life"]) - delta
-		bolt["velocity"] = bolt["velocity"] + Vector3.DOWN * 9.8 * delta
+		bolt["velocity"] = bolt["velocity"] + Vector3.DOWN * 9.8 * float(bolt.get("gravity", 1.0)) * delta
 		var node: Node3D = bolt["node"]
 		var prev_pos: Vector3 = bolt["position"]
 		var next_pos: Vector3 = prev_pos + (bolt["velocity"] as Vector3) * delta
@@ -1674,6 +1739,9 @@ func _build_world(bake: String) -> bool:
 		for building: Array in _buildings:
 			if not _add_building(building[0], building[1], building[2]):
 				return false
+	_buildings_with_rooms = SwgBuilding.with_rooms(_world)
+	if _battle_ui != null:  # (the first world's are passed on when it's made)
+		_battle_ui.set_structures(_world.get_meta(SwgCity.FOOTPRINTS, []))
 
 	var environment := Environment.new()
 	environment.background_mode = Environment.BG_COLOR
@@ -1750,6 +1818,8 @@ func _setup_scene() -> void:
 	add_child(layer)
 
 	_battle_ui = BattleUI.new()
+	if _world != null:
+		_battle_ui.set_structures(_world.get_meta(SwgCity.FOOTPRINTS, []))
 	add_child(_battle_ui)
 	_battle_ui.setup(layer, self, _audio, HUD_DIR)
 	Bf2Art.apply_cursor(_battle_ui.art())

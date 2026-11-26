@@ -1641,7 +1641,10 @@ godot::Array SwmClient::get_bolts() const {
 godot::Array SwmClient::take_shots() {
     godot::Array out;
     if (client()) {
-        const core::Loadout& own = loadout();
+        // Its own guns, or its vehicle's (or seat's) while it rides: a
+        // starfighter's lasers aren't the pilot's rifle.
+        const core::Loadout& own = weapons_of(uint32_t(client()->entity_id()));
+        const bool riding = client()->predicted().vehicle >= 0;
         for (const core::Shot& shot : client()->take_shots()) {
             const core::WeaponDef* weapon = core::weapon_in_slot(own, shot.weapon);
             if (weapon == nullptr ||
@@ -1656,6 +1659,10 @@ godot::Array SwmClient::take_shots() {
             }
             entry["directions"] = directions;
             entry["weapon"] = int64_t(shot.weapon);
+            entry["riding"] = riding;
+            entry["bolt_speed"] = weapon->bolt_speed;
+            entry["bolt_life"] = weapon->bolt_life;
+            entry["bolt_gravity"] = weapon->bolt_gravity;
             entry["projectile"] = weapon->projectile == core::Projectile::melee ? "melee" : "bolt";
             entry["melee_range"] = weapon->melee_range;
             entry["melee_lunge"] = weapon->melee_lunge;
@@ -1675,6 +1682,9 @@ godot::Array SwmClient::take_events() {
             switch (event.kind) {
             case core::net::CombatEvent::hit:
                 entry["kind"] = "hit";
+                break;
+            case core::net::CombatEvent::shielded:
+                entry["kind"] = "shielded";
                 break;
             case core::net::CombatEvent::kill:
                 entry["kind"] = "kill";

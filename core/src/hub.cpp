@@ -439,11 +439,33 @@ Hub::Hub(GameServer& server, uint16_t port, const World& world, HubConfig config
         snap_floor(v.position);
     }
     server_.set_vendors(config_.vendors);
+    // A terminal or crafting station is a Galaxies object with its own
+    // collision: the floor under its middle is its own top (a crafting
+    // station's 2.1-2.9 m up), so its symbol floated a station's height too
+    // high. It stands on the floor around it: where, a little way off on
+    // most sides, the floor is lower, that (the highest of those).
+    const auto snap_object = [&](Vec3& p) {
+        snap_floor(p);
+        constexpr double off = 1.8;  // m: past a station's or terminal's footprint
+        int lower = 0;
+        double base = -1e9;
+        for (const auto& [dx, dz] : {std::pair{off, 0.0}, {-off, 0.0}, {0.0, off}, {0.0, -off}}) {
+            const World::Ground g = world_.ground_at(p.x + dx, p.z + dz, p.y + 0.1, 0.5);
+            const double floor = g.on_floor ? g.height : world_.terrain().height_at(p.x + dx, p.z + dz);
+            if (floor < p.y - 0.4) {
+                ++lower;
+                base = std::max(base, floor);
+            }
+        }
+        if (lower >= 3) {
+            p.y = base;
+        }
+    };
     for (net::MissionTerminal& t : config_.mission_terminals) {
-        snap_floor(t.position);
+        snap_object(t.position);
     }
     for (net::Workbench& wb : config_.workbenches) {
-        snap_floor(wb.position);
+        snap_object(wb.position);
     }
     server_.set_crafting(&config_.crafting, config_.workbenches);
     if (config_.spawns) {

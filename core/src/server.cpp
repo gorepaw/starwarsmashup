@@ -2403,13 +2403,29 @@ void GameServer::advance_bolts() {
         Vehicle* hit_vehicle = nullptr;
         if (!bounces && !harmless) {
             const auto classes = vehicle_classes();
+            // A turret set into a hull (a capital ship's, guarding its bay)
+            // sits just behind the hull's own surface: it's hit by what
+            // strikes the hull this near it, else hardly ever at all.
+            const double length = std::max(1e-6, (to - from).length());
+            const double sunk = 2.5 / length;  // (a share of this step)
             for (Vehicle& v : vehicles_) {
                 if (v.dead_for >= 0 || (v.driver != 0 && v.driver == bolt.owner) ||
                     (allied(bolt.team, v.team) && !config_.friendly_fire)) {
                     continue;
                 }
-                const auto t = segment_hits_vehicle(from, to, v.state.position, v.state.yaw, classes[size_t(v.cls)]);
-                if (t && (!nearest || *t < *nearest)) {
+                const VehicleClass& cls = classes[size_t(v.cls)];
+                const bool behind_hull = cls.kind == VehicleKind::turret && world_hit && nearest && world_hit->t == *nearest;
+                std::optional<double> t;
+                if (behind_hull) {
+                    // Looked for a little past the step's end, too.
+                    const Vec3 further = to + (to - from) * sunk;
+                    if (const auto beyond = segment_hits_vehicle(from, further, v.state.position, v.state.yaw, cls)) {
+                        t = *beyond * (1 + sunk);
+                    }
+                } else {
+                    t = segment_hits_vehicle(from, to, v.state.position, v.state.yaw, cls);
+                }
+                if (t && (!nearest || *t < *nearest + (behind_hull ? sunk : 0.0))) {
                     nearest = t;
                     victim = nullptr;
                     hit_npc = nullptr;
@@ -2563,6 +2579,10 @@ void GameServer::damage_destructible(size_t index, double amount, uint32_t attac
         }
     }
     if (conquest_->destructible_shielded(index)) {
+        if (attacker != 0 && amount < 1e11) {
+            // Its shield took it: the shooter's told (else nothing showed it).
+            events_.push_back({net::CombatEvent::shielded, attacker, uint32_t(index), float(amount)});
+        }
         return;
     }
     if (attacker != 0 && amount < 1e11) {

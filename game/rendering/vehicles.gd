@@ -497,7 +497,8 @@ func riding(entity: int) -> Dictionary:
 				seat = gunners.find(entity) + 1
 		if seat >= 0:
 			var node: Node3D = entry["node"]
-			return {"position": node.position, "yaw": node.rotation.y - PI, "seat": seat, "class": entry["class"]}
+			return {"position": node.position, "yaw": node.rotation.y - PI, "seat": seat, "class": entry["class"],
+					"node": node}
 	return {}
 
 

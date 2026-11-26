@@ -463,9 +463,10 @@ PersonScale = 1
     std::filesystem::remove_all(dir);
 }
 
-// A flyer: landed, it lifts off with the throttle, flies at its speeds where
-// it's pointed, climbs with its nose up, stays off the ground, and lands
-// low, slow and level with the throttle back.
+// A flyer: landed, it lifts off with the jump button (not the throttle),
+// flies at its speeds where it's pointed, climbs with its nose up, stays off
+// the ground, and lands low, slow and level with the throttle back, or with
+// the landing (crouch) button.
 void test_flyer() {
     VehicleClass v;
     v.kind = VehicleKind::flyer;
@@ -486,9 +487,12 @@ void test_flyer() {
     MoveInput idle;
     simulate_vehicle(state, idle, world, v, dt);
     CHECK(state.grounded && near(state.position.y, 0.5) && state.velocity.length() == 0);
-    // Throttle: up and away, speeding to its top.
+    // Throttle alone: it stays down. Taking off: up and away, speeding to its top.
     MoveInput throttle;
     throttle.forward = 127;
+    for (int i = 0; i < 60; ++i) simulate_vehicle(state, throttle, world, v, dt);
+    CHECK(state.grounded && near(state.position.y, 0.5));
+    throttle.buttons = MoveInput::jump;
     for (int i = 0; i < 4 * 60; ++i) simulate_vehicle(state, throttle, world, v, dt);
     CHECK(!state.grounded && near(state.velocity.length(), 55, 1e-3) && state.position.z < -100);
     CHECK(state.position.y >= 2.5 - 1e-6);
@@ -506,6 +510,14 @@ void test_flyer() {
         if (state.position.y < 4) down.pitch = 0;
         simulate_vehicle(state, down, world, v, dt);
     }
+    CHECK(state.grounded && near(state.position.y, 0.5) && state.velocity.length() == 0);
+    // Up again; then the landing button, at speed a little over the ground.
+    for (int i = 0; i < 3 * 60; ++i) simulate_vehicle(state, throttle, world, v, dt);
+    CHECK(!state.grounded);
+    MoveInput land;
+    land.forward = 127;
+    land.buttons = MoveInput::crouch;
+    for (int i = 0; i < 10 * 60 && !state.grounded; ++i) simulate_vehicle(state, land, world, v, dt);
     CHECK(state.grounded && near(state.position.y, 0.5) && state.velocity.length() == 0);
 }
 
@@ -603,7 +615,7 @@ void test_tow_cable() {
         const net::VehicleState* v = find_vehicle(a, 0);
         const Vec3 from = v ? v->position : Vec3{};
         const Vec3 d = to - from;
-        return GameClient::Controls{.forward = throttle, .yaw = std::atan2(-d.x, -d.z)};
+        return GameClient::Controls{.forward = throttle, .yaw = std::atan2(-d.x, -d.z), .jump = throttle > 0};
     };
     f.run(3, [&] { a.set_input(fly_toward({0, 0, 0}, 1)); });
     const net::VehicleState* flying = find_vehicle(a, 0);
