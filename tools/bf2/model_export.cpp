@@ -173,6 +173,7 @@ CollisionUse collision_use(const OdfClass& resolved) {
     };
     collect("SoldierCollision", use.soldiers);
     collect("OrdnanceCollision", use.ordnance);
+    collect("VehicleCollision", use.vehicles);
     return use;
 }
 
@@ -188,13 +189,14 @@ std::vector<CollisionTriangle> model_collision(const AssetLibrary& library, std:
     }
     const bool mesh_soldiers = !use.soldiers || listed(use.soldiers, "collisionmesh");
     const bool mesh_ordnance = !use.ordnance || listed(use.ordnance, "collisionmesh");
+    const bool mesh_vehicles = !use.vehicles || listed(use.vehicles, "collisionmesh");
     const UcfbNode* coll = library.collision_mesh(model);
-    if (coll != nullptr && (mesh_soldiers || mesh_ordnance)) {
+    if (coll != nullptr && (mesh_soldiers || mesh_ordnance || mesh_vehicles)) {
         const CollisionMesh mesh = read_collision_mesh(*coll);
         const Transform bone = skeleton.model_transform(mesh.bone);
         for (const auto& t : mesh.triangles) {
             out.push_back({bone.apply(mesh.vertices[t[0]]), bone.apply(mesh.vertices[t[1]]),
-                           bone.apply(mesh.vertices[t[2]]), mesh_soldiers, mesh_ordnance});
+                           bone.apply(mesh.vertices[t[2]]), mesh_soldiers, mesh_ordnance, mesh_vehicles});
         }
     }
     if (const UcfbNode* prim = library.collision_primitives(model)) {
@@ -202,12 +204,13 @@ std::vector<CollisionTriangle> model_collision(const AssetLibrary& library, std:
             const std::string name = lowercase(primitive.name);
             const bool soldiers = use.soldiers ? listed(use.soldiers, name) : primitive.stops('s');
             const bool ordnance = use.ordnance ? listed(use.ordnance, name) : primitive.stops('o');
-            if (!soldiers && !ordnance) {
+            const bool vehicles = use.vehicles ? listed(use.vehicles, name) : primitive.stops('v');
+            if (!soldiers && !ordnance && !vehicles) {
                 continue;
             }
             const Transform place = primitive.transform.then(skeleton.model_transform(primitive.parent));
             for (const auto& t : tessellate(primitive)) {
-                out.push_back({place.apply(t[0]), place.apply(t[1]), place.apply(t[2]), soldiers, ordnance});
+                out.push_back({place.apply(t[0]), place.apply(t[1]), place.apply(t[2]), soldiers, ordnance, vehicles});
             }
         }
     }

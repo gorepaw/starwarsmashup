@@ -17,7 +17,7 @@ namespace {
 constexpr uint32_t collision_magic = 0x4C434D53;  // "SMCL"
 constexpr uint32_t collision_version = 1;
 constexpr uint32_t map_collision_magic = 0x434D4D53;  // "SMMC"
-constexpr uint32_t map_collision_version = 2;  // 1: without parts
+constexpr uint32_t map_collision_version = 3;  // 1: without parts; 2: without blocks_vehicles
 // Map triangles at most this steep (55 degrees, as MoveParams') are ground.
 // (Felucia's ramp up to its cliff top has a stretch of 50.2.)
 const double walkable_normal_y = std::cos(55 * std::numbers::pi / 180);
@@ -261,6 +261,9 @@ MapCollision load_map_collision(const std::filesystem::path& path) {
             triangle.b = get_point(in);
             triangle.c = get_point(in);
             triangle.blocks = in.get<uint8_t>();
+            if (version < 3 && (triangle.blocks & blocks_characters)) {
+                triangle.blocks |= blocks_vehicles;  // vehicles met what characters did
+            }
             if (version >= 2) {
                 triangle.part = in.get<int16_t>();
             }
@@ -574,7 +577,9 @@ World::Ground World::support_at(double x, double z, double y, double step_up, do
     return best;
 }
 
-std::optional<World::RayHit> World::raycast_hit(Vec3 a, Vec3 b) const { return cast(a, b, blocks_shots, false); }
+std::optional<World::RayHit> World::raycast_hit(Vec3 a, Vec3 b, uint8_t blocks) const {
+    return cast(a, b, blocks, false);
+}
 
 std::optional<double> World::raycast(Vec3 a, Vec3 b) const {
     if (const auto hit = cast(a, b, blocks_shots, false)) {
@@ -728,9 +733,9 @@ std::optional<World::RayHit> World::cast(Vec3 a, Vec3 b, uint8_t blocks, bool fr
     return best;
 }
 
-Vec3 World::resolve_walls(Vec3 from, Vec3 position, double radius, double height, double step_up,
-                          Vec3& velocity) const {
-    return push_out(from, position, radius, height, step_up, velocity, true);
+Vec3 World::resolve_walls(Vec3 from, Vec3 position, double radius, double height, double step_up, Vec3& velocity,
+                          uint8_t blocks) const {
+    return push_out(from, position, radius, height, step_up, velocity, true, blocks);
 }
 
 bool World::overlaps_walls(Vec3 feet, double radius, double height, double step_up) const {
@@ -740,7 +745,7 @@ bool World::overlaps_walls(Vec3 feet, double radius, double height, double step_
 }
 
 Vec3 World::push_out(Vec3 from, Vec3 position, double radius, double height, double step_up, Vec3& velocity,
-                     bool let_out) const {
+                     bool let_out, uint8_t blocks) const {
     // A few passes settle corners where two walls push at once.
     for (int pass = 0; pass < 3; ++pass) {
         bool moved = false;
@@ -812,7 +817,7 @@ Vec3 World::push_out(Vec3 from, Vec3 position, double radius, double height, dou
         const Vec3 start{from.x, 0, from.z};
         for_solids(position.x - radius, position.x + radius, position.z - radius, position.z + radius,
                    [&](const Solid& s) {
-            if (s.floor || s.ceiling || !(s.blocks & blocks_characters) || s.max_y <= lo || s.min_y >= hi ||
+            if (s.floor || s.ceiling || !(s.blocks & blocks) || s.max_y <= lo || s.min_y >= hi ||
                 position.x + radius < s.min_x || position.x - radius > s.max_x || position.z + radius < s.min_z ||
                 position.z - radius > s.max_z) {
                 return;

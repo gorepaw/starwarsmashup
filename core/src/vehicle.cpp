@@ -332,7 +332,8 @@ void simulate_flyer(MoveState& state, const MoveState& before, const MoveInput& 
     if (space) {
         const Vec3 delta = position - before.position;
         if (delta.length() > 1e-4) {
-            if (const auto hit = world.raycast_hit(before.position + Vec3{0, 0.5, 0}, position + Vec3{0, 0.5, 0})) {
+            if (const auto hit = world.raycast_hit(before.position + Vec3{0, 0.5, 0}, position + Vec3{0, 0.5, 0},
+                                                   blocks_vehicles)) {
                 const double approach = velocity.x * hit->normal.x + velocity.y * hit->normal.y +
                                         velocity.z * hit->normal.z;
                 position = before.position + delta * std::max(0.0, hit->t - 0.05) + hit->normal * 0.5;
@@ -345,7 +346,7 @@ void simulate_flyer(MoveState& state, const MoveState& before, const MoveInput& 
         }
     }
     const Vec3 moved = world.resolve_walls(before.position, position, vehicle.radius(), vehicle.height(),
-                                           vehicle.step_up, velocity);
+                                           vehicle.step_up, velocity, blocks_vehicles);
     if ((moved - position).length() > 0.05) {
         velocity = {};  // ran into something: stopped (the server reckons the damage)
         next = 0;
@@ -414,7 +415,7 @@ void simulate_vehicle(MoveState& state, const MoveInput& input, const World& wor
         params.headroom = vehicle.height();
         Vec3 position = world.clamp(before.position + Vec3{velocity.x, 0, velocity.z} * dt);
         position = world.resolve_walls(before.position, position, params.radius, params.height, params.step_up,
-                                       velocity);
+                                       velocity, blocks_vehicles);
         const World::Ground ground = world.support_at(position.x, position.z, before.position.y, params.step_up);
         if (state.grounded && position.y - ground.height <= params.snap_down) {
             position.y = ground.height;
@@ -438,7 +439,7 @@ void simulate_vehicle(MoveState& state, const MoveInput& input, const World& wor
     // ledge, it falls (GravityScale times gravity) until it's back over it.
     Vec3 position = world.clamp(before.position + Vec3{velocity.x, 0, velocity.z} * dt);
     position = world.resolve_walls(before.position, position, vehicle.radius(), vehicle.height(), vehicle.step_up,
-                                   velocity);
+                                   velocity, blocks_vehicles);
     const double feet = before.position.y - vehicle.altitude;
     World::Ground ground = world.support_at(position.x, position.z, feet, vehicle.step_up);
     // Ground too steep to climb (ASSUMPTION: as a soldier's, 55 degrees):

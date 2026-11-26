@@ -1278,7 +1278,7 @@ void Bot::ride(GameClient& client, const World& world, double now) {
         }
         Vec3 aim_target = *goal;
         const Vec3 fwd = aim_direction(me.yaw, me.pitch);
-        const auto ahead = world.raycast_hit(eye, eye + fwd * 85.0);
+        const auto ahead = world.raycast_hit(eye, eye + fwd * 85.0, blocks_vehicles);  // what its hull meets
         if (ahead && ahead->t < 0.75) {
             aim_target = me.position + (ahead->normal + Vec3{0, 0.5, 0}) * 150.0;
         }

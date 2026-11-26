@@ -87,21 +87,24 @@ ModelExport export_model(const AssetLibrary& library, std::string_view name, con
 
 // A model's collision, in its model space (Battlefront coordinates): its
 // collision mesh, and its primitives as triangles (boxes, 12-sided
-// cylinders, spheres). ASSUMPTION: the mesh stops soldiers and ordnance;
-// a primitive stops what its name says (CollisionPrimitive::stops), and one
-// stopping neither is left out.
+// cylinders, spheres). ASSUMPTION: the mesh stops soldiers, ordnance and
+// vehicles; a primitive stops what its name says (CollisionPrimitive::stops),
+// and one stopping none of them is left out.
 struct CollisionTriangle {
     std::array<float, 3> a, b, c;
     bool soldiers = true;
     bool ordnance = true;
+    bool vehicles = true;
 };
-// What soldiers and ordnance meet, as a class lists it (SoldierCollision,
-// OrdnanceCollision: "collisionmesh" or primitives' names, lowercase); a
-// kind its class doesn't list meets the mesh and the primitives whose flags
-// stop it. Naboo's buildings list their boxes for vehicles only, and the
-// mesh for soldiers and ordnance: floors inside the boxes are walked on.
+// What soldiers, ordnance and vehicles meet, as a class lists it
+// (SoldierCollision, OrdnanceCollision, VehicleCollision: "collisionmesh" or
+// primitives' names, lowercase; "CLEAR" names nothing); a kind its class
+// doesn't list meets the mesh and the primitives whose flags stop it.
+// Naboo's buildings list their boxes for vehicles only, and the mesh for
+// soldiers and ordnance: floors inside the boxes are walked on. A capital
+// ship's hangar shield is VehicleCollision CLEAR: starfighters fly through.
 struct CollisionUse {
-    std::optional<std::vector<std::string>> soldiers, ordnance;
+    std::optional<std::vector<std::string>> soldiers, ordnance, vehicles;
 };
 CollisionUse collision_use(const OdfClass& resolved);
 std::vector<CollisionTriangle> model_collision(const AssetLibrary& library, std::string_view model,

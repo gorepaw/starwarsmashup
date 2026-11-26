@@ -4,7 +4,9 @@
 // space battlefields / Mos Eisley hub integration.
 
 #include <cmath>
+#include <cstdio>
 #include <filesystem>
+#include <fstream>
 #include <memory>
 #include <vector>
 
@@ -403,7 +405,69 @@ void test_exported_space_assets() {
         CHECK(!f.turret_chairs.empty());
         CHECK(!f.space_systems.empty());
         CHECK(!f.vehicles.empty());
+
+        // Every starfighter flies out of its hangar at full throttle: the
+        // hangar shield (VehicleCollision CLEAR) stops soldiers, not ships.
+        const auto world = load_world(f.terrain);
+        for (const VehicleSpawn& s : f.vehicle_spawns) {
+            for (const int index : s.vehicle) {
+                if (index < 0 || f.vehicles[size_t(index)].kind != VehicleKind::flyer) {
+                    continue;
+                }
+                MoveState state;
+                state.position = s.position;
+                state.yaw = float(s.yaw);
+                state.grounded = true;
+                MoveInput input;
+                input.forward = 127;
+                input.yaw = float(s.yaw);
+                for (int i = 0; i < 12 * 60; ++i) {
+                    simulate_vehicle(state, input, *world, f.vehicles[size_t(index)], 1.0 / 60.0, &f);
+                }
+                const bool out = (state.position - s.position).length() > 300 && !f.in_landing_region(state.position);
+                if (!out) {
+                    std::fprintf(stderr, "%s: %s from %s stays in its hangar\n", name,
+                                 f.vehicles[size_t(index)].name.c_str(), s.name.c_str());
+                }
+                CHECK(out);
+            }
+        }
     }
+}
+
+// A map triangle that stops characters but not vehicles (a hangar shield):
+// a soldier walks into it, a starfighter flies through. A version 2 file
+// (no vehicle bit) has vehicles meet what characters do.
+void test_vehicle_collision_bit() {
+    const Heightfield floor = flat_ground(-2000.0f);
+    MapCollision collision;
+    // A wall across z = -20, x -50..50, y -50..50, facing +z.
+    collision.triangles.push_back({{-50, -50, -20}, {50, -50, -20}, {50, 50, -20}, blocks_characters | blocks_shots, 0});
+    collision.triangles.push_back({{-50, -50, -20}, {50, 50, -20}, {-50, 50, -20}, blocks_characters | blocks_shots, 0});
+    World world(floor);
+    world.add_map_collision(collision);
+    Vec3 velocity{0, 0, -10};
+    const Vec3 walked = world.resolve_walls({0, 0, -19.0}, {0, 0, -19.8}, 0.5, 1.8, 0.3, velocity);
+    CHECK(walked.z > -19.55);  // the soldier is held off it
+    velocity = {0, 0, -10};
+    const Vec3 flown = world.resolve_walls({0, 0, -19.0}, {0, 0, -19.8}, 0.5, 1.8, 0.3, velocity, blocks_vehicles);
+    CHECK(std::abs(flown.z + 19.8) < 1e-9);  // the ship goes on
+    CHECK(world.raycast_hit({0, 0, 0}, {0, 0, -40}).has_value());                    // shots stop
+    CHECK(!world.raycast_hit({0, 0, 0}, {0, 0, -40}, blocks_vehicles).has_value());  // hulls don't
+
+    // Saved and loaded (version 3), the bits stay; a version 2 file's
+    // character-stopping triangles stop vehicles too.
+    const auto path = std::filesystem::temp_directory_path() / "swm_space_test.collision";
+    save_map_collision(collision, path);
+    CHECK(load_map_collision(path).triangles[0].blocks == (blocks_characters | blocks_shots));
+    {
+        std::fstream file(path, std::ios::in | std::ios::out | std::ios::binary);
+        file.seekp(4);
+        const uint32_t version = 2;
+        file.write(reinterpret_cast<const char*>(&version), 4);
+    }
+    CHECK(load_map_collision(path).triangles[0].blocks == (blocks_characters | blocks_shots | blocks_vehicles));
+    std::filesystem::remove(path);
 }
 
 } // namespace
@@ -413,6 +477,7 @@ int main() {
     swm::core::test_space_flight_and_hangar_landing();
     swm::core::test_space_systems_and_scoring();
     swm::core::test_turret_chair_and_mobile_transport();
+    swm::core::test_vehicle_collision_bit();
     swm::core::test_exported_space_assets();
     return swm::test::finish("space_test");
 }

@@ -45,6 +45,15 @@ Skeleton load_appearance_skeleton(TreLibrary& library, const std::string& sat_pa
 // A garment's bare skin (an owner proxy shader, "body") is drawn with the
 // body's own material.
 //
+// What's worn hides what it covers (Galaxies' occlusion zones): exported
+// together, a mesh's covered triangles are left out. For the client to do the
+// same with things it puts on later, <name>.occlusion.json (if its meshes
+// have zones): {"meshes": [{"node" (the mesh's node name), "layer",
+// "occludes" (the zones it covers), "fully" (all covered, it's hidden whole),
+// "combinations" (lists of zones), "surfaces" (per primitive, each triangle's
+// combination, -1 for none)}]}. A triangle whose combination's zones are all
+// covered by meshes of a higher layer isn't drawn.
+//
 // Returns the bounds of its meshes in their bind pose (glTF space).
 struct CharacterBounds {
     Vec3 min{1e30f, 1e30f, 1e30f}, max{-1e30f, -1e30f, -1e30f};

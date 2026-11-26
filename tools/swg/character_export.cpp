@@ -47,22 +47,40 @@ public:
             }
         }
 
+        // The body's meshes and what it wears, all read first: what each
+        // shows depends on what's worn over it (occlusion zones).
+        struct Piece {
+            std::string path;
+            bool body;
+            SkinnedMesh mesh;
+        };
+        std::vector<Piece> pieces;
         if (request.export_appearance_meshes) {
             for (size_t a = 0; a < appearances.size(); ++a) {
                 for (const std::string& generator : appearances[a].mesh_generators) {
                     const std::string mgn_path = highest_detail_mgn(generator);
                     log_ << "  " << request.appearances[a] << " -> " << mgn_path << "\n";
-                    const int mesh_node = add_skinned_mesh(mgn_path, true);
-                    gltf_.nodes[size_t(root)].children.push_back(mesh_node);
+                    pieces.push_back({mgn_path, true, parse_skinned_mesh(library_.read(mgn_path))});
                 }
             }
         }
-
         for (const std::string& mesh : request.meshes) {
             const std::string mgn_path = highest_detail_mgn(mesh);
             log_ << "  worn: " << mgn_path << "\n";
-            const int mesh_node = add_skinned_mesh(mgn_path);  // first: it may move the nodes
-            gltf_.nodes[size_t(root)].children.push_back(mesh_node);
+            pieces.push_back({mgn_path, false, parse_skinned_mesh(library_.read(mgn_path))});
+        }
+        for (const Piece& piece : pieces) {
+            // The zones covered over it: those of the meshes of higher layers.
+            std::set<std::string> covered;
+            for (const Piece& other : pieces) {
+                if (other.mesh.occlusion_layer > piece.mesh.occlusion_layer) {
+                    covered.insert(other.mesh.occludes.begin(), other.mesh.occludes.end());
+                }
+            }
+            const int mesh_node = add_skinned_mesh(piece.path, piece.mesh, covered, piece.body);
+            if (mesh_node >= 0) {  // (first: it may move the nodes)
+                gltf_.nodes[size_t(root)].children.push_back(mesh_node);
+            }
         }
 
         if (!request.weapon_lod.empty()) {
@@ -75,6 +93,7 @@ public:
         gltf_.scene_nodes = {root};
         gltf_.write(out_dir_ / (request.name + ".gltf"));
         write_colors(out_dir_ / (request.name + ".colors.json"));
+        write_occlusion(out_dir_ / (request.name + ".occlusion.json"));
     }
 
 private:
@@ -112,9 +131,19 @@ private:
         return generator;
     }
 
-    // `body`: one of the body's own meshes (not something worn).
-    int add_skinned_mesh(const std::string& path, bool body = false) {
-        const SkinnedMesh mesh = parse_skinned_mesh(library_.read(path));
+    // `body`: one of the body's own meshes (not something worn). `covered`:
+    // the zones worn over it, whose triangles aren't drawn (and none of it,
+    // once all its fully occluded zones are covered: -1, no node).
+    int add_skinned_mesh(const std::string& path, const SkinnedMesh& mesh, const std::set<std::string>& covered,
+                         bool body) {
+        const auto all_covered = [&](const std::vector<std::string>& zones) {
+            return !zones.empty() && std::all_of(zones.begin(), zones.end(),
+                                                 [&](const std::string& z) { return covered.contains(z); });
+        };
+        if (all_covered(mesh.fully_occluded)) {
+            log_ << "  " << path << ": covered\n";
+            return -1;
+        }
         if (body) {
             // A garment's bare skin (an owner proxy shader, "body") is drawn
             // with the body's shader, which Galaxies names <species>_body.
@@ -169,6 +198,8 @@ private:
         }
 
         Gltf::Mesh gltf_mesh{.name = std::filesystem::path(path).stem().string()};
+        size_t hidden_triangles = 0;
+        std::string surfaces_json;  // each written primitive's triangles' combinations
         for (const auto* bt : active_targets) {
             gltf_mesh.target_names.push_back(bt->name);
         }
@@ -190,9 +221,26 @@ private:
                 weights.push_back(vertex_weights);
             }
             std::vector<uint32_t> indices;
-            for (const auto& triangle : part.triangles) {
+            std::string combinations_json;
+            for (size_t t = 0; t < part.triangles.size(); ++t) {
+                int combination = -1;
+                if (t < part.triangle_occlusion.size()) {
+                    combination = part.triangle_occlusion[t];
+                    if (combination < 0 || size_t(combination) >= mesh.zone_combinations.size()) {
+                        combination = -1;
+                    } else if (all_covered(mesh.zone_combinations[size_t(combination)])) {
+                        ++hidden_triangles;
+                        continue;
+                    }
+                }
+                const auto& triangle = part.triangles[t];
                 append_triangle(indices, triangle[0], triangle[1], triangle[2]);
+                combinations_json += std::format("{}{}", combinations_json.empty() ? "" : ",", combination);
             }
+            if (indices.empty()) {
+                continue;  // all of this part is covered
+            }
+            surfaces_json += std::format("{}[{}]", surfaces_json.empty() ? "" : ",", combinations_json);
 
             Gltf::Primitive primitive;
             primitive.attributes["POSITION"] = gltf_.add_vec3(positions, true);
@@ -217,6 +265,22 @@ private:
             primitive.indices = gltf_.add_indices(indices);
             primitive.material = assets_.material_for(part.shader);
             gltf_mesh.primitives.push_back(std::move(primitive));
+        }
+        if (hidden_triangles > 0) {
+            log_ << std::format("  {}: {} triangle(s) covered\n", path, hidden_triangles);
+        }
+        if (gltf_mesh.primitives.empty()) {
+            return -1;
+        }
+        if (!mesh.occlusion_zones.empty()) {
+            std::string combinations;
+            for (const auto& zones : mesh.zone_combinations) {
+                combinations += std::format("{}{}", combinations.empty() ? "" : ",", names_json(zones));
+            }
+            occlusion_.push_back(std::format(
+                R"({{"node":"{}","layer":{},"occludes":{},"fully":{},"combinations":[{}],"surfaces":[{}]}})",
+                gltf_mesh.name, mesh.occlusion_layer, names_json(mesh.occludes), names_json(mesh.fully_occluded),
+                combinations, surfaces_json));
         }
         gltf_.meshes.push_back(std::move(gltf_mesh));
         return add_node({.name = gltf_.meshes.back().name, .mesh = int(gltf_.meshes.size() - 1), .skin = 0});
@@ -387,6 +451,32 @@ private:
         return 0;
     }
 
+    static std::string names_json(const std::vector<std::string>& names) {
+        std::string out;
+        for (const std::string& name : names) {
+            out += std::format(R"({}"{}")", out.empty() ? "" : ",", name);
+        }
+        return "[" + out + "]";
+    }
+
+    // <name>.occlusion.json: its meshes' occlusion zones (see
+    // CharacterExport), for the client to hide what's worn over them.
+    void write_occlusion(const std::filesystem::path& path) {
+        if (occlusion_.empty()) {
+            std::filesystem::remove(path);
+            return;
+        }
+        std::ofstream out(path, std::ios::binary);
+        out << "{\"meshes\": [";
+        for (size_t i = 0; i < occlusion_.size(); ++i) {
+            out << (i ? ",\n  " : "\n  ") << occlusion_[i];
+        }
+        out << "\n]}\n";
+        if (!out) {
+            throw std::runtime_error("can't write " + path.string());
+        }
+    }
+
     static std::string hex(std::array<uint8_t, 3> color) {
         return std::format("{:02x}{:02x}{:02x}", color[0], color[1], color[2]);
     }
@@ -404,6 +494,7 @@ private:
     Skeleton skeleton_;
     CharacterBounds bounds_;
     std::map<std::string, std::string> renderers_;  // material -> its main texture's renderer (.trt)
+    std::vector<std::string> occlusion_;            // each written mesh's occlusion (JSON)
 };
 
 } // namespace

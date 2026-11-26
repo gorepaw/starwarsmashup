@@ -5,9 +5,7 @@ class_name CharacterStage
 extends Node3D
 
 const SPECIES_DIR := "res://imported_assets/species"
-const CLOTHING_GROW := 0.015
-const ARMOR_GROW := 0.018
-const WOOKIEE_CLOTHING_GROW := 0.025
+const SwgOcclusion = preload("res://rendering/swg_occlusion.gd")
 
 var model: Node3D
 var hair_node: Node3D
@@ -17,6 +15,7 @@ var colors_data: Dictionary = {}
 var hair_colors_data: Dictionary = {}
 var species_meta: Dictionary = {}
 var yaw := 0.0
+var _has_helmet := false
 var _skeleton: Skeleton3D
 var _meshes: Array[MeshInstance3D] = []
 var _blend_indices: Dictionary = {}  # blend_name -> Array[{mesh: MeshInstance3D, idx: int}]
@@ -41,6 +40,7 @@ func load_species(species_id: String, gender: String) -> Dictionary:
 	model = doc.generate_scene(state) as Node3D
 	if model == null:
 		return species_meta
+	SwgOcclusion.tag(model, gltf_path)
 	model.rotation.y = yaw
 	add_child(model)
 	colors_data = SwgColors.load_colors(ProjectSettings.globalize_path(gltf_path))
@@ -62,6 +62,7 @@ func load_override(rel_gltf: String) -> void:
 	model = doc.generate_scene(state) as Node3D
 	if model == null:
 		return
+	SwgOcclusion.tag(model, gltf_path)
 	model.rotation.y = yaw
 	add_child(model)
 	colors_data = SwgColors.load_colors(ProjectSettings.globalize_path(gltf_path))
@@ -78,6 +79,7 @@ func set_hair(hair_rel_gltf: String, color_overrides: Dictionary) -> void:
 	if hair_rel_gltf == "" or model == null:
 		if model != null:
 			PlayerAppearance.hide_replaced_head_parts(model, "")
+			_apply_occlusion()
 		return
 	var sg := "%s_%s" % [str(species_meta.get("species", "human")), str(species_meta.get("gender", "male"))]
 	var gltf_path := SPECIES_DIR.path_join(sg).path_join(hair_rel_gltf)
@@ -91,6 +93,7 @@ func set_hair(hair_rel_gltf: String, color_overrides: Dictionary) -> void:
 	var scene := doc.generate_scene(state) as Node3D
 	if scene == null:
 		return
+	SwgOcclusion.tag(scene, gltf_path)
 	# Attach hair MeshInstance3D nodes onto the main character's Skeleton3D so
 	# they animate and scale with the head.
 	var hair_meshes := scene.find_children("*", "MeshInstance3D", true, false)
@@ -113,6 +116,14 @@ func set_hair(hair_rel_gltf: String, color_overrides: Dictionary) -> void:
 	hair_colors_data = SwgColors.load_colors(ProjectSettings.globalize_path(gltf_path))
 	if hair_node != null and not hair_colors_data.is_empty():
 		SwgColors.apply_custom(hair_node, hair_colors_data, color_overrides)
+	_apply_occlusion()
+
+
+# What's worn hides what it covers (SwgOcclusion); a hair style under a
+# helmet, nothing.
+func _apply_occlusion() -> void:
+	if model != null:
+		SwgOcclusion.apply(model, [hair_node] if _has_helmet and hair_node != null else [])
 
 
 func apply_appearance(appearance: Dictionary, scale_min: float, scale_max: float, body_height: float = 1.78) -> void:
@@ -211,6 +222,7 @@ func set_worn_models(worn_paths: Array, weapon_model: String) -> void:
 			var cdata := SwgColors.load_colors(ProjectSettings.globalize_path(gltf_path))
 			if not cdata.is_empty():
 				SwgColors.apply(scene, cdata, 0)
+			SwgOcclusion.tag(scene, gltf_path)
 			if rel.contains("helmet"):
 				has_helmet = true
 			for m: Node in scene.find_children("*", "MeshInstance3D", true, false):
@@ -219,16 +231,6 @@ func set_worn_models(worn_paths: Array, weapon_model: String) -> void:
 				mi.owner = null
 				holder.add_child(mi)
 				mi.skeleton = NodePath("../..")
-				var grow := 0.0
-				if rel.begins_with("armor/"):
-					grow = ARMOR_GROW
-				elif rel.begins_with("clothing/"):
-					grow = WOOKIEE_CLOTHING_GROW if sp_id == "wookiee" else CLOTHING_GROW
-				if grow > 0.0:
-					for surface in mi.get_surface_override_material_count():
-						var material := mi.get_surface_override_material(surface) as ShaderMaterial
-						if material != null:
-							material.set_shader_parameter("grow", grow)
 				if mi.mesh != null and not body_blends.is_empty():
 					for i in mi.mesh.get_blend_shape_count():
 						var bname := String(mi.mesh.get_blend_shape_name(i))
@@ -238,6 +240,8 @@ func set_worn_models(worn_paths: Array, weapon_model: String) -> void:
 
 	if hair_node != null and is_instance_valid(hair_node):
 		hair_node.visible = not has_helmet
+	_has_helmet = has_helmet
+	_apply_occlusion()
 
 	if weapon_model != "":
 		var wpath := "res://imported_assets/" + weapon_model

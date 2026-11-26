@@ -58,7 +58,9 @@ Fix immediate visual, collision, HUD, and gameplay bugs, polish the open-world l
   - Teska Vo
   - Bolo Dreel
   - Rebel Quartermaster
+  - *Revisited (after Stage 13):* hub people's worn things were grown along their normals off the skin (`grow`), which split hard-edged armor at its seams (a stormtrooper's helmet came apart). Now `swgtool` leaves out what worn things cover, by Galaxies' occlusion zones (`OZN`/`OZC`/`OITL`/`ZTO`/`FOZC`, see `tools/README.md`), and hub people aren't grown. Nor are players' worn items: the export also writes each model's zones (`<name>.occlusion.json`: species, hair styles, armor, clothing), and the game (`rendering/swg_occlusion.gd`) leaves out the triangles what's put on covers, again whenever it changes (`tests/occlusion_test.gd`).
 - [x] **Fix female Twi'lek lekku:** Male lekku replacement was fixed (`PlayerAppearance.hide_replaced_head_parts`), but female Twi'lek heads still render overlapping/double lekku. Fix female head-part swapping in both character creator and in-world rendering.
+  - *Revisited (after Stage 13):* hub people (Mos Eisley's Teska Vo) still had both: their looks are exported whole, and a female Twi'lek's hair names its lekku as her head does. The occlusion zones above fix it at export: her hair covers her head's lekku and skull cap.
 - [x] **Stagger NPC idle animations:** Offset/randomize idle animation start phases on hub NPCs and `[crowd]` walkers so nearby characters do not animate in lockstep.
 - [x] **Fix turret character model disappearance:** Prevent the player's character model from vanishing when occupying a turret in BF2 matches.
 
@@ -382,3 +384,4 @@ See [Professions](PROFESSIONS.md) for the complete 31-profession roster and SWG 
 - [x] All 6 base space maps imported (`spa1` Yavin, `spa3` Kashyyyk, `spa6` Mygeeto, `spa7` Felucia, `spa8` Hoth, `spa9` Tatooine, plus `spa_sky.lvl` sky domes).
 - [x] 16 starfighters/bombers/transports, 27 defense/roof turrets, mobile transport spawns, shield-linked & chain-linked capital ship systems, automated defense turrets, turret control chairs, and ScoreLimit scoring.
 - [x] Hangar landing (`LandingRegion`) and on-foot boarding/sabotage combat inside capital ships.
+  - *Fixed (after Stage 13):* starfighters couldn't leave their hangars: the hangar shield (`imp_cap_stardestroyer_shield` and the like, `VehicleCollision = CLEAR`) stopped them as it stops soldiers. Map collision now has a vehicles bit (`core::blocks_vehicles`, collision file version 3) from the classes' `VehicleCollision` and primitives' `v` flags, and vehicles meet only that; the six space maps' collision was re-exported (same triangles). `space_test` flies every starfighter out of its hangar on all six.

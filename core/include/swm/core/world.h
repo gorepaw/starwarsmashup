@@ -34,11 +34,14 @@ void save_building_collision(const BuildingCollision& collision, const std::file
 // Throws std::runtime_error on a missing or malformed file.
 BuildingCollision load_building_collision(const std::filesystem::path& path);
 
-// What a map triangle stops (bits).
-enum Blocks : uint8_t { blocks_characters = 1, blocks_shots = 2 };
+// What a map triangle stops (bits). Vehicles are their own (Battlefront's
+// VehicleCollision and 'v' flags): a capital ship's hangar shield stops
+// soldiers but lets starfighters through.
+enum Blocks : uint8_t { blocks_characters = 1, blocks_shots = 2, blocks_vehicles = 4 };
 
 // The collision of a map's props, in game space: triangles, each stopping
-// characters, shots or both. bf2tool export-map writes it next to the
+// characters, shots and/or vehicles (files before version 3 have no vehicle
+// bit: there, vehicles meet what characters do). bf2tool export-map writes it next to the
 // terrain bake (map_collision_path).
 // A triangle may belong to a destructible object (Battlefield::destructibles):
 // `part` n > 0 while destructible n - 1 stands, -n once it's destroyed (its
@@ -49,7 +52,7 @@ inline constexpr int16_t moved_part = 16384;
 struct MapCollision {
     struct Triangle {
         Vec3 a, b, c;
-        uint8_t blocks = blocks_characters | blocks_shots;
+        uint8_t blocks = blocks_characters | blocks_shots | blocks_vehicles;
         int16_t part = 0;
     };
     std::vector<Triangle> triangles;
@@ -123,21 +126,23 @@ public:
     // Pushes a character's body (an upright cylinder of `radius` and
     // `height`, feet at position.y) out of the walls it overlaps after moving
     // from `from`, and removes the velocity going into them, so it slides.
-    // Only x and z change.
-    Vec3 resolve_walls(Vec3 from, Vec3 position, double radius, double height, double step_up,
-                       Vec3& velocity) const;
+    // Only x and z change. `blocks`: the map triangles that count
+    // (blocks_vehicles for a vehicle's hull).
+    Vec3 resolve_walls(Vec3 from, Vec3 position, double radius, double height, double step_up, Vec3& velocity,
+                       uint8_t blocks = blocks_characters) const;
     // Whether any wall overlaps a body standing at `feet` (including props it
     // would be inside of, which resolve_walls lets it walk out of).
     bool overlaps_walls(Vec3 feet, double radius, double height, double step_up) const;
 
     // Where along the segment a..b (0..1) it first hits the terrain, a
-    // building floor, or a wall, if it does. For shots.
+    // building floor, or a wall, if it does. For shots (or, with
+    // blocks_vehicles, a flyer's path).
     struct RayHit {
         double t = 0;
         Vec3 normal{0, 1, 0};  // unit, facing the incoming ray
         int destructible = -1;  // the standing destructible it hit (index), or -1
     };
-    std::optional<RayHit> raycast_hit(Vec3 a, Vec3 b) const;
+    std::optional<RayHit> raycast_hit(Vec3 a, Vec3 b, uint8_t blocks = blocks_shots) const;
     std::optional<double> raycast(Vec3 a, Vec3 b) const;
     // Whether something stops a character going straight from a to b: the
     // terrain, a building, or a map triangle that stops characters, met
@@ -201,7 +206,7 @@ private:
     }
     // resolve_walls; with let_out false, props the body started inside push too.
     Vec3 push_out(Vec3 from, Vec3 position, double radius, double height, double step_up, Vec3& velocity,
-                  bool let_out) const;
+                  bool let_out, uint8_t blocks = blocks_characters) const;
 
     // Calls visit(solid) for the solids in grid cells overlapping the XZ box
     // (a solid in several cells comes up once per cell).

@@ -98,12 +98,47 @@ SkinnedMesh parse_skinned_mesh(std::span<const uint8_t> bytes) {
     for (int i = 0; i < 9; ++i) {
         info.i32();  // counts, re-derived from the tables below
     }
-    info.u16();  // occlusion zone name count
-    info.u16();  // occlusion zone combination count
-    info.u16();  // zones-this-occludes count
+    info.u16();  // occlusion zone name count (OZN's)
+    const uint16_t combination_count = info.u16();
+    const uint16_t occludes_count = info.u16();
 
     SkinnedMesh mesh;
     mesh.occlusion_layer = static_cast<int16_t>(info.u16());
+    // OZN: the zones' names; FOZC: a count, then zone indices; OZC: per
+    // combination a count, then zone indices; ZTO: zone indices (INFO's
+    // count of them).
+    if (const IffNode* ozn = version.child("OZN ")) {
+        mesh.occlusion_zones = iff_strings(ozn->data);
+    }
+    const auto zone = [&](uint16_t index) {
+        if (index >= mesh.occlusion_zones.size()) {
+            throw std::runtime_error("SKMG: occlusion zone index out of range");
+        }
+        return mesh.occlusion_zones[index];
+    };
+    if (const IffNode* fozc = version.child("FOZC")) {
+        IffReader r(fozc->data);
+        const uint16_t count = r.u16();
+        for (uint16_t i = 0; i < count; ++i) {
+            mesh.fully_occluded.push_back(zone(r.u16()));
+        }
+    }
+    if (const IffNode* ozc = version.child("OZC ")) {
+        IffReader r(ozc->data);
+        for (uint16_t c = 0; c < combination_count; ++c) {
+            std::vector<std::string>& combination = mesh.zone_combinations.emplace_back();
+            const uint16_t count = r.u16();
+            for (uint16_t i = 0; i < count; ++i) {
+                combination.push_back(zone(r.u16()));
+            }
+        }
+    }
+    if (const IffNode* zto = version.child("ZTO ")) {
+        IffReader r(zto->data);
+        for (uint16_t i = 0; i < occludes_count; ++i) {
+            mesh.occludes.push_back(zone(r.u16()));
+        }
+    }
     mesh.skeletons = iff_strings(version.expect("SKTM").data);
     mesh.bones = iff_strings(version.expect("XFNM").data);
     mesh.positions = read_vec3s(version.expect("POSN").data);

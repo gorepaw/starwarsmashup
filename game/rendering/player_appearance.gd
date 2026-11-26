@@ -6,11 +6,11 @@ class_name PlayerAppearance
 extends RefCounted
 
 const Soldier = preload("res://rendering/soldier.gd")
+const SwgOcclusion = preload("res://rendering/swg_occlusion.gd")
 const SPECIES_DIR := "res://imported_assets/species"
 const DEFAULT_FALLBACK := "res://imported_assets/characters/stormtrooper/stormtrooper.gltf"
-const CLOTHING_GROW := 0.015  # m: worn clothes stand this far off the skin (no z-fighting with it)
-const ARMOR_GROW := 0.018
-const WOOKIEE_CLOTHING_GROW := 0.025
+# (Worn things aren't stood off the skin: what they cover isn't drawn, by
+# Galaxies' occlusion zones, SwgOcclusion.)
 
 static var _species_by_id: Dictionary = {}
 static var _meta_cache: Dictionary = {}
@@ -91,6 +91,7 @@ static func load_character(species_id: String, gender: String, appearance_json: 
 	var model: Node3D = doc.generate_scene(state) as Node3D
 	if model == null:
 		return {}
+	SwgOcclusion.tag(model, gltf_path)
 
 	var sp_info := species_info(sp)
 	var base_height := float(sp_info.get("female_height" if gen == "female" else "male_height", 1.78))
@@ -163,6 +164,7 @@ static func load_character(species_id: String, gender: String, appearance_json: 
 			var hair_gltf := SPECIES_DIR.path_join(sg).path_join("hairs").path_join(hair_id + ".gltf")
 			if FileAccess.file_exists(hair_gltf):
 				hair_node = _attach_hair(model, hair_gltf, color_overrides)
+		SwgOcclusion.apply(model)
 	else:
 		var colors_data := _load_gltf_colors(gltf_path)
 		if not colors_data.is_empty():
@@ -239,6 +241,7 @@ static func _attach_hair(model: Node3D, hair_gltf: String, color_overrides: Dict
 	var scene := doc.generate_scene(state) as Node3D
 	if scene == null:
 		return null
+	SwgOcclusion.tag(scene, hair_gltf)
 	var skeleton := model.find_child("Skeleton3D", true, false) as Skeleton3D
 	var hair_meshes := scene.find_children("*", "MeshInstance3D", true, false)
 	var hair_node: Node3D
@@ -300,6 +303,7 @@ static func set_worn_models(character: Dictionary, worn_csv: String) -> void:
 		var fp := character.has("soldier") and character["soldier"] != null and (character["soldier"] as Soldier).first_person
 		if hair is Node3D and is_instance_valid(hair):
 			(hair as Node3D).visible = not fp
+		SwgOcclusion.apply(model as Node3D)
 		return
 
 	# Read body blend weights (muscle, fat, skinny) so armor/clothing fits the body.
@@ -337,6 +341,7 @@ static func set_worn_models(character: Dictionary, worn_csv: String) -> void:
 		var colors := _load_gltf_colors(gltf_path)
 		if not colors.is_empty():
 			SwgColors.apply(scene, colors, 0)
+		SwgOcclusion.tag(scene, gltf_path)
 		var is_helmet := rel.contains("helmet")
 		for m: Node in scene.find_children("*", "MeshInstance3D", true, false):
 			var mi := m as MeshInstance3D
@@ -344,17 +349,6 @@ static func set_worn_models(character: Dictionary, worn_csv: String) -> void:
 			mi.owner = null
 			holder.add_child(mi)
 			mi.skeleton = NodePath("../..")
-			var grow := 0.0
-			if rel.begins_with("armor/"):
-				grow = ARMOR_GROW
-			elif rel.begins_with("clothing/"):
-				grow = WOOKIEE_CLOTHING_GROW if sp_id == "wookiee" else CLOTHING_GROW
-			if grow > 0.0:
-				# Stood off the skin so the two don't fight over the same pixels.
-				for surface in mi.get_surface_override_material_count():
-					var material := mi.get_surface_override_material(surface) as ShaderMaterial
-					if material != null:
-						material.set_shader_parameter("grow", grow)
 			if mi.mesh != null and not body_blends.is_empty():
 				for i in mi.mesh.get_blend_shape_count():
 					var bname := String(mi.mesh.get_blend_shape_name(i))
@@ -369,6 +363,8 @@ static func set_worn_models(character: Dictionary, worn_csv: String) -> void:
 	var hair: Variant = character.get("hair", null)
 	if hair is Node3D and is_instance_valid(hair):
 		(hair as Node3D).visible = not fp and helmets.is_empty()
+	# What's worn hides what it covers (a hair style under a helmet, nothing).
+	SwgOcclusion.apply(model as Node3D, [hair] if not helmets.is_empty() else [])
 
 
 static func _set_wookiee_fur_hidden(model: Node3D, hidden: bool) -> void:

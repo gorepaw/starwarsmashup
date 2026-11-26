@@ -29,7 +29,17 @@ struct SkinnedMesh {
     std::vector<Vec3> normals;
     std::vector<std::vector<std::pair<uint32_t, float>>> weights;  // per position: (bone, weight)
     std::vector<Part> parts;
+    // Occlusion (OZN, FOZC, OZC, ZTO): what worn things hide of what's under
+    // them. A mesh's zones by name (its own table: "chest", "l_arm"...);
+    // each triangle's OITL entry is a combination (a list of zones, indices
+    // into zone_combinations). Worn over it (a mesh of a higher layer
+    // occluding them), a triangle whose zones are all covered isn't drawn,
+    // nor the whole mesh once all its fully_occluded zones are.
     int16_t occlusion_layer = 0;
+    std::vector<std::string> occlusion_zones;
+    std::vector<std::string> fully_occluded;               // FOZC, by name
+    std::vector<std::vector<std::string>> zone_combinations;  // OZC, by name
+    std::vector<std::string> occludes;                     // ZTO, by name
 
     // Textures composited at runtime (TRTS): a texture renderer (.trt) whose
     // result replaces a part's shader's texture (by tag, e.g. MAIN). Faces:

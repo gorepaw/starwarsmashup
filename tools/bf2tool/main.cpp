@@ -1901,11 +1901,11 @@ int cmd_export_map(const std::vector<std::string>& args) {
                 }
                 if (const auto geometry = resolved.get("GeometryName")) {
                     model = model_file(*geometry, clips);
-                    // By model and what the class says its soldiers and
-                    // ordnance meet.
+                    // By model and what the class says its soldiers,
+                    // ordnance and vehicles meet.
                     const CollisionUse use = collision_use(resolved);
                     std::string key = lowercase(*geometry);
-                    for (const auto& names : {use.soldiers, use.ordnance}) {
+                    for (const auto& names : {use.soldiers, use.ordnance, use.vehicles}) {
                         key += '|';
                         for (const std::string& name : names.value_or(std::vector<std::string>{"*"})) {
                             key += name + ',';
@@ -2033,7 +2033,8 @@ int cmd_export_map(const std::vector<std::string>& args) {
                             core::MapCollision::Triangle placed{
                                 posed(t.a, pose), posed(t.b, pose), posed(t.c, pose),
                                 uint8_t((t.soldiers ? core::blocks_characters : 0) |
-                                        (t.ordnance ? core::blocks_shots : 0)),
+                                        (t.ordnance ? core::blocks_shots : 0) |
+                                        (t.vehicles ? core::blocks_vehicles : 0)),
                                 as};
                             if (as > 0) {
                                 for (const core::Vec3& p : {placed.a, placed.b, placed.c}) {

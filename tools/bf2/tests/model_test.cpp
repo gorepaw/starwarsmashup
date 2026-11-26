@@ -218,7 +218,11 @@ void test_collision() {
     library.add(file);
     CHECK(library.collision_mesh("TEST_PROP") && library.collision_primitives("test_prop"));
     const std::vector<CollisionTriangle> triangles = model_collision(library, "test_prop");
-    CHECK(triangles.size() == 3 + 12 + 48);  // mesh, crate, 12-sided cylinder (sides and caps)
+    // Mesh, crate, 12-sided cylinder (sides and caps), and the vehicles-only wall.
+    CHECK(triangles.size() == 3 + 12 + 48 + 12);
+    for (size_t i = 63; i < triangles.size(); ++i) {
+        CHECK(!triangles[i].soldiers && !triangles[i].ordnance && triangles[i].vehicles);
+    }
     // A class listing what its soldiers and ordnance meet (Naboo's
     // buildings: the mesh; their boxes are for vehicles).
     OdfClass building;
@@ -230,23 +234,31 @@ void test_collision() {
     CHECK(use.soldiers == std::vector<std::string>{"collisionmesh"});
     CHECK(use.ordnance == (std::vector<std::string>{"collisionmesh", "p_-so-trunk"}));
     const std::vector<CollisionTriangle> listed = model_collision(library, "test_prop", use);
-    CHECK(listed.size() == 3 + 48);  // the mesh and the trunk; not the crate
-    CHECK(listed[0].soldiers && listed[0].ordnance && !listed[3].soldiers && listed[3].ordnance);
-    // Without a mesh, the crate stops everything: 1 m up from the root.
+    // The mesh and the trunk; the crate for vehicles only; not the wall.
+    CHECK(listed.size() == 3 + 12 + 48);
+    CHECK(listed[0].soldiers && listed[0].ordnance && !listed[0].vehicles);
+    CHECK(!listed[3].soldiers && !listed[3].ordnance && listed[3].vehicles);
+    CHECK(!listed[15].soldiers && listed[15].ordnance && !listed[15].vehicles);
+    // Without a mesh, the crate stops everything: 1 m up from the root; the
+    // ramp ("p_v-": Geonosis's hangar's kind of name) stops vehicles only.
     const std::vector<CollisionTriangle> alone = model_collision(library, "test_crate");
-    CHECK(alone.size() == 12);
+    CHECK(alone.size() == 12 + 12);
     float low = 1e9f, high = -1e9f;
-    for (const auto& t : alone) {
+    for (size_t i = 0; i < 12; ++i) {
+        const CollisionTriangle& t = alone[i];
         for (const auto& p : {t.a, t.b, t.c}) {
             low = std::min(low, p[1]);
             high = std::max(high, p[1]);
         }
-        CHECK(t.soldiers && t.ordnance);
+        CHECK(t.soldiers && t.ordnance && t.vehicles);
+    }
+    for (size_t i = 12; i < alone.size(); ++i) {
+        CHECK(!alone[i].soldiers && !alone[i].ordnance && alone[i].vehicles);
     }
     CHECK(low == 0.5f && high == 1.5f);
     // The trunk is 4 m tall, centered 1 m up: -1..3.
     low = 1e9f;
-    for (size_t i = 15; i < triangles.size(); ++i) {
+    for (size_t i = 15; i < 63; ++i) {
         low = std::min({low, triangles[i].a[1], triangles[i].b[1], triangles[i].c[1]});
         CHECK(triangles[i].soldiers && triangles[i].ordnance);
     }
