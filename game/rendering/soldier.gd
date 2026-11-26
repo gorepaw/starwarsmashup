@@ -8,6 +8,7 @@
 #   var soldier := Soldier.new(model)     # the glTF scene, already in the tree
 #   soldier.pose(state, delta)            # each frame; state from SwmClient
 #   soldier.fire() / throw() / flinch()   # on its shots and hits
+#   soldier.throw("placed") / throw("utility", model)  # a mine set down low; a tactical pistol drawn and fired
 #   soldier.muzzle()                      # where its bolts leave the barrel
 #   soldier.first_person = true           # own soldier seen from its eyes: no head, rifle up
 #   soldier.eye()                         # where a first-person camera sits
@@ -97,6 +98,11 @@ const DIP_TURN := Vector2(deg_to_rad(16), deg_to_rad(10))  # its muzzle down, an
 const DIP_DROP := 0.05           # m it drops
 const DIP_PIVOT := Vector3(-0.12, -0.2, 0.35)  # about where the hands are, from the eyes (+X left, +Z forward)
 const THROW_DIP := 0.45         # s the gun stays dipped for a first-person throw
+const SWING_TIME := 0.28        # s a one-handed melee swing takes
+const SWING_TIME_2H := 0.42     # s a two-handed one: a heavier, slower chop (ASSUMPTION, by eye)
+const PLACE_TIME := 0.7         # s bending low to set a mine down
+const QUICK_SHOT := 0.6         # s a tactical pistol (flare, tangle) is out, drawn and fired
+const GRIP_2H := 0.3            # m up the haft the left hand holds a two-handed melee weapon
 
 var model: Node3D
 var first_person := false:
@@ -138,6 +144,10 @@ var _ride_clip := &""         # riding: the pose it holds (its first frame)
 var _dip := 0.0              # first person: 0 .. 1 the gun dipped to reload or throw
 var _throwing := 0.0         # s left of a first-person throw's dip
 var _swing := 0.0            # s left of a melee swing
+var _placing := 0.0          # s left of bending to set a mine down
+var _quick := 0.0            # s left of a tactical pistol out in hand (its model shown, held as a pistol)
+var _wanted_weapon := "<baked>"  # what set_weapon / set_anim_set last asked for (shown again after a quick shot)
+var _wanted_set := "rifle"
 
 
 # Bends the spine with the aim pitch and turns the legs, after the animation.
@@ -164,6 +174,8 @@ class Aimer extends SkeletonModifier3D:
 	var grip: Variant = null
 	var melee_swing := 0.0
 	var melee_block := false
+	var two_handed := false  # a two-handed melee weapon: the chest swings it, both hands on it
+	var place := 0.0         # 0..1 bent low, setting a mine down
 	var _spine: Array[int] = []
 	var _left_arm := -1
 	var _left_forearm := -1
@@ -236,12 +248,22 @@ class Aimer extends SkeletonModifier3D:
 			var move := about * Transform3D(Basis(Vector3.RIGHT, bend - pitch)) * arms * about.affine_inverse()
 			for bone in _clavicles:
 				_set_global(skeleton, bone, move * skeleton.get_bone_global_pose(bone))
+		# A two-handed swing turns the chest (both arms and the weapon with it),
+		# before the left hand goes back onto the haft; setting a mine down
+		# bends it forward.
+		if two_handed and melee_swing > 0.0 and not melee_block:
+			var chop := sin(melee_swing * PI)
+			_rotate_global(skeleton, _spine[_spine.size() - 1], Basis(Vector3.UP, 0.8 * chop) * Basis(Vector3.RIGHT, 0.5 * chop))
+		if place > 0.0:
+			var bow := sin(place * PI) * 0.55
+			for bone in _spine:
+				_rotate_global(skeleton, bone, Basis(Vector3.RIGHT, bow / _spine.size()))
 		_grip(skeleton)
 		if melee_block and _right_arm >= 0:
 			_rotate_global(skeleton, _right_arm, Basis(Vector3.UP, 0.7) * Basis(Vector3.RIGHT, -0.55))
 			if _right_forearm >= 0:
 				_rotate_global(skeleton, _right_forearm, Basis(Vector3.UP, 0.45))
-		elif melee_swing > 0.0 and _right_arm >= 0:
+		elif melee_swing > 0.0 and _right_arm >= 0 and not two_handed:
 			var arc := sin(melee_swing * PI)
 			_rotate_global(skeleton, _right_arm, Basis(Vector3.RIGHT, -0.9 * arc) * Basis(Vector3.UP, 0.85 * arc))
 		# Shrinks the head and whatever is worn on it (helmet, hair).
@@ -436,9 +458,17 @@ func _clip(animation: StringName, fallback: StringName = IDLE) -> AnimationNodeA
 # export has them, the rifle's otherwise. A pistol is held raised (its set
 # has no idle of its own).
 func set_anim_set(anim_set: String) -> void:
+	_wanted_set = anim_set
+	if _quick <= 0.0:
+		_show_anim_set(anim_set)
+
+
+func _show_anim_set(anim_set: String) -> void:
 	if anim_set == _anim_set or _tree == null:
 		return
 	_anim_set = anim_set
+	if _aimer != null:
+		_aimer.two_handed = anim_set == "melee_2h"
 	_set_grip()
 	var clips: Dictionary = ANIM_SETS.get("pistol" if anim_set == "melee" else anim_set, {})
 	for entry: Dictionary in _clip_nodes:
@@ -551,7 +581,13 @@ func pose(state: Dictionary, delta: float) -> void:
 	if first_person:
 		_tree.set("parameters/shoot_seek/seek_request", 0.0)  # the raised pose, without the recoil clip
 		_first_person_motion(state, speed, delta)
-	var target := 1.0 if _since_shot < AIM_HOLD or first_person or _anim_set in ["pistol", "melee"] else 0.0
+	_placing = maxf(0.0, _placing - delta)
+	if _quick > 0.0:
+		_quick -= delta
+		if _quick <= 0.0:
+			_show_weapon(_wanted_weapon)
+			_show_anim_set(_wanted_set)
+	var target := 1.0 if _since_shot < AIM_HOLD or first_person or _anim_set in ["pistol", "melee", "melee_2h"] else 0.0
 	_aim = move_toward(_aim, target, AIM_BLEND * delta)
 	_tree.set("parameters/aim/blend_amount", _aim)
 
@@ -565,7 +601,8 @@ func pose(state: Dictionary, delta: float) -> void:
 		_aimer.pitch = float(state.get("pitch", 0.0)) * lerpf(0.5, 1.0, _aim)
 		_aimer.leg_yaw = _leg_yaw
 		_aimer.melee_block = bool(state.get("blocking", false))
-		_aimer.melee_swing = clampf(_swing / 0.28, 0.0, 1.0) if _anim_set == "melee" else 0.0
+		_aimer.melee_swing = clampf(_swing / _swing_time(), 0.0, 1.0) if _anim_set in ["melee", "melee_2h"] else 0.0
+		_aimer.place = 1.0 - _placing / PLACE_TIME if _placing > 0.0 and not first_person else 0.0
 
 
 # First person: the arms kick on a shot, bob with the stride and lag behind a
@@ -617,6 +654,7 @@ func _set_ride(clip: StringName) -> void:
 			_aimer.leg_yaw = 0.0
 			_aimer.melee_block = false
 			_aimer.melee_swing = 0.0
+			_aimer.place = 0.0
 		return
 	if _ride_clip != &"":
 		_player.stop()
@@ -656,13 +694,29 @@ func _pose_simple(state: Dictionary) -> void:
 func fire() -> void:
 	_since_shot = 0.0
 	_kick = 1.0
-	if _anim_set == "melee":
-		_swing = 0.28
+	if _anim_set in ["melee", "melee_2h"]:
+		_swing = _swing_time()
 	if _tree != null:
 		_tree.set("parameters/shoot_seek/seek_request", 0.0)
 
 
-func throw() -> void:
+func _swing_time() -> float:
+	return SWING_TIME_2H if _anim_set == "melee_2h" else SWING_TIME
+
+
+# A throw from the tactical slot, as its kind (an item's archetype) is: a
+# grenade thrown; a mine or trap ("placed") set down low, bending to it; a
+# tactical pistol ("utility": the flare, the tangle) drawn and fired, its
+# model (`held_model`) in hand a moment instead of the held weapon.
+func throw(kind: String = "", held_model: String = "") -> void:
+	if kind == "utility":
+		_quick = QUICK_SHOT
+		_show_weapon(held_model)
+		_show_anim_set("pistol")
+		fire()
+		return
+	if kind == "placed":
+		_placing = PLACE_TIME
 	_since_shot = AIM_HOLD  # lowers the rifle
 	if first_person:
 		_throwing = THROW_DIP  # the gun dips instead: the clip swings the arm behind the camera
@@ -711,6 +765,12 @@ var _weapon: Node3D              # the weapon it holds in place of that, if any
 # E-11 every character was exported holding) was, hidden for it. "" (or a
 # model not exported): that one.
 func set_weapon(path: String) -> void:
+	_wanted_weapon = path
+	if _quick <= 0.0:
+		_show_weapon(path)
+
+
+func _show_weapon(path: String) -> void:
 	if path == _weapon_path:
 		return
 	_weapon_path = path
@@ -748,6 +808,9 @@ func set_weapon(path: String) -> void:
 # launcher's set.
 func _set_grip() -> void:
 	if _aimer == null:
+		return
+	if _anim_set == "melee_2h":
+		_aimer.grip = Vector3(0.0, 0.0, GRIP_2H)  # up the haft (melee models lie along +Z from the hand)
 		return
 	if _anim_set != "rifle" or _muzzle == null:
 		_aimer.grip = null

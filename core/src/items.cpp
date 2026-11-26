@@ -26,7 +26,7 @@ const std::array<WeaponArchetypeInfo, 15> archetype_table{{
     {WeaponArchetype::beam_cannon, "beam_cannon", "rep_weap_inf_chaingun", "rifle", "primary"},
     {WeaponArchetype::flamer, "flamer", "", "rifle", "primary"},
     {WeaponArchetype::scatter_pistol, "scatter_pistol", "", "pistol", "sidearm"},
-    {WeaponArchetype::melee_2h, "melee_2h", "", "melee", "primary"},
+    {WeaponArchetype::melee_2h, "melee_2h", "", "melee_2h", "primary"},
     // Tactical: Battlefront II's landmine (com_weap_inf_landmine) has no
     // exported definition, and our numbers are our own (see below).
     {WeaponArchetype::placed, "placed", "", "grenade", "secondary"},
@@ -250,7 +250,7 @@ WeaponDef default_archetype_weapon(WeaponArchetype a) {
         w.name = a == WeaponArchetype::melee ? "swg_melee" : "swg_melee_2h";
         w.projectile = Projectile::melee;
         w.damage_type = DamageType::melee;
-        w.anim_set = "melee";
+        w.anim_set = a == WeaponArchetype::melee ? "melee" : "melee_2h";
         w.rounds_per_clip = 0;
         w.fire_sound = "com_weap_throw";
         w.impact_effect = "com_sfx_ord_exp";

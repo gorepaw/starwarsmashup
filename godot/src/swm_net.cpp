@@ -115,6 +115,10 @@ void add_bolt_look(godot::Dictionary& entry, const core::WeaponDef& w) {
     entry["fire_sound"] = godot::String::utf8(w.fire_sound.c_str());
     entry["ordnance_sound"] = godot::String::utf8(w.ordnance_sound.c_str());
     entry["bounce_sound"] = godot::String::utf8(w.bounce_sound.c_str());
+    // What fired it, for how its soldier moves (a throw, a placing, a shot)
+    // and what's in hand meanwhile.
+    entry["archetype"] = godot::String::utf8(w.archetype.c_str());
+    entry["held_model"] = godot::String::utf8(w.model.c_str());
 }
 
 godot::Error load_battlefield_file(std::optional<core::Battlefield>& battlefield, const godot::String& path) {
@@ -1616,7 +1620,10 @@ godot::Array SwmClient::get_bolts() const {
             godot::Dictionary entry;
             entry["id"] = int64_t(bolt.id);
             entry["owner"] = int64_t(bolt.owner);
-            entry["weapon"] = int64_t(bolt.weapon);
+            // A placed trap's shot: drawn from the trap, not its owner's gun.
+            const uint8_t slot = uint8_t(bolt.weapon & ~core::net::trap_shot_flag);
+            entry["trap"] = (bolt.weapon & core::net::trap_shot_flag) != 0;
+            entry["weapon"] = int64_t(slot);
             entry["position"] = to_godot(bolt.position);
             entry["velocity"] = to_godot(bolt.velocity);
             int team = -1, loadout_index = 0;
@@ -1634,7 +1641,7 @@ godot::Array SwmClient::get_bolts() const {
             entry["kind"] = bolt.kind == core::Projectile::bolt      ? "bolt"
                             : bolt.kind == core::Projectile::missile ? "missile"
                                                                      : "grenade";
-            const core::WeaponDef* weapon = core::weapon_in_slot(*owner_def, bolt.weapon);
+            const core::WeaponDef* weapon = core::weapon_in_slot(*owner_def, slot);
             add_bolt_look(entry, weapon != nullptr ? *weapon : core::WeaponDef{});
             out.push_back(entry);
         }
@@ -1805,7 +1812,8 @@ godot::Array SwmClient::take_impacts() {
                 owner_def = &loadout_of(team, loadout_index);
             }
             owner_def = &weapons_of(imp.owner);
-            const core::WeaponDef* weapon = core::weapon_in_slot(*owner_def, imp.weapon);
+            const core::WeaponDef* weapon =
+                core::weapon_in_slot(*owner_def, uint8_t(imp.weapon & ~core::net::trap_shot_flag));
             godot::Dictionary entry;
             entry["position"] = to_godot(imp.position);
             entry["normal"] = to_godot(imp.normal);

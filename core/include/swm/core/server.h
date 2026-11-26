@@ -174,6 +174,7 @@ public:
     std::optional<PlayerProfile> profile_of(uint32_t entity) const;
     void set_player_profile(uint32_t entity, const PlayerProfile& profile);
     size_t bolt_count() const { return bolts_.size(); }
+    size_t mine_count() const { return mines_.size(); }
     size_t pickup_count() const { return pickups_.size(); }
     // Drops a health, ammo, dual or energy canister on the ground at `position`.
     void spawn_pickup(PickupKind kind, Vec3 position);
@@ -538,6 +539,7 @@ private:
         // trap's next shot), and the shots its trap has left.
         double wait = 0;
         int shots_left = 0;
+        double health = 0;  // a mine at rest: shot or blasted to nothing, it's destroyed (harmlessly)
     };
 
     struct Pickup {
@@ -725,6 +727,13 @@ private:
     double perf_since_ = -1;
     std::vector<std::string> looks_;
     std::vector<Bolt> bolts_;
+    // Placed mines and traps at rest (bolts that settled): Battlefront's
+    // landmine has 200 health, as ours do; an enemy can disarm one with the
+    // use button, standing within 3 m (outside its trigger).
+    std::vector<Bolt> mines_;
+    static constexpr double mine_health = 200;
+    static constexpr double disarm_reach = 3.0;  // m: just outside a mine's trigger, if you spot it
+    bool disarm_mine(const Client& client);
     std::vector<Pickup> pickups_;
     std::vector<net::CombatEvent> events_;  // this tick's
     std::vector<net::Explosion> explosions_;  // this tick's

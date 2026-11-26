@@ -257,5 +257,9 @@ As planned in itemsideas: primaries, then sidearms, then tactical.
 4. ~~**Two-handed melee** (25).~~ Done: 25 items (24 new) on the new `melee_2h` archetype, every one within budget. The Vibrolance moved to it and was retuned (longer reach, a wider arc). Quest and recolor variants (the Grooved sword, the Gamorrean battleaxe, the Nightsister and Janta versions) aren't separate items. The Cryo Lance chills and the Shock Lance ionizes; the Executioner's Hack bleeds. The Trandoshan pike and Wookiee polearm are species weapons.
 5. ~~**Tactical:** grenades (6), mines and the laser trap (4) with `placed`, and scout traps (6).~~ Done, but for the scout traps (they wait for the scout rework): the Thermal Detonator, Imperial Detonator, Proton Grenade and CryoBan Grenade (chilled); the DRX, XG and Anti-Vehicle mines and the Auto Laser Trap; and the Flare and Tangle pistols. 14 tactical items (10 new), every one within budget.
 
-Still to come for tactical: mines can't yet be shot or disarmed (Battlefront's have health), traps don't turn to face their target, and bots throw a mine the way they throw a grenade, at an enemy more than 8 m off.
+Mines and traps at rest can be dealt with: each has 200 health, as Battlefront's landmine does, so shots or a blast destroy it (a small, harmless burst). An enemy standing within 3 m (just outside a mine's 2 m trigger, if they spot it) disarms it with the use button. A trap turns to face whoever it fires at. Bots put a mine down in front of themselves when an enemy is 10 to 30 m off, in their way, and fire a tactical shot straight at them; they don't throw from mid-roll any more (that's why a bot's grenade was sometimes lost).
+
+How they're held: two-handed melee has its own animation set (`melee_2h`): the rifle's stance, the left hand on the haft, and the swing a slower chop from the chest. A tactical pistol (flare, tangle) is drawn and fired, held a moment in place of the weapon in hand; setting a mine down bends low, with the throw.
+
+The scout traps still wait for the scout rework.
 

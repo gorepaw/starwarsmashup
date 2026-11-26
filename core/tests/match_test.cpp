@@ -981,6 +981,55 @@ void test_bots_play_a_match() {
 } // namespace
 
 // Bots come to a drop slowly, to land near its foot (off a narrow ledge).
+// A bot carrying a mine (docs/WEAPONS.md, placed) puts it down in front of
+// itself when an enemy is coming, 10 to 30 m off: in their way, not lobbed at
+// them (it'd fall short anyway).
+void test_bot_places_mines() {
+    Battlefield battlefield = three_posts();
+    battlefield.warmup = 60;
+    WeaponDef mine;
+    mine.name = "mine";
+    mine.projectile = Projectile::grenade;
+    mine.explode_on_impact = false;
+    mine.fuse = 60;
+    mine.trigger_radius = 2;
+    mine.arm_time = 1.5;
+    mine.friction = 1;
+    mine.bolt_speed = 6;
+    mine.rounds_per_clip = 1;
+    mine.ammo = 2;
+    mine.shot_delay = 1;
+    mine.explosion_damage = 400;
+    mine.explosion_inner = 2;
+    mine.explosion_outer = 5;
+    battlefield.teams[0].loadouts[0].weapons[primary_slot] = WeaponDef{};
+    battlefield.teams[0].loadouts[0].weapons[secondary_slot] = mine;
+    Field field(battlefield);
+    GameClient& bot_client = field.join("bot");
+    GameClient& enemy = field.join("enemy");
+    Bot bot(3);
+    field.run(0.3);
+    bot_client.request_spawn(0, 0);
+    enemy.request_spawn(0, 2);  // (the second to join: team 1, at East)
+    field.run(0.3);
+    CHECK(bot_client.alive() && enemy.alive());
+    MoveState e_state = *field.server->state_of(enemy.entity_id());
+    e_state.position = bot_client.predicted().position + Vec3{20, 0, 0};
+    field.server->set_state(enemy.entity_id(), e_state);
+    const Vec3 bot_at = bot_client.predicted().position;
+    field.run(8.0, [&] { bot.update(bot_client, field.world, field.now); }, 1.0 / 30);
+    double from_bot = 1e9, from_enemy = 1e9;
+    for (const net::BoltState& bolt : enemy.bolts(field.now)) {
+        if (bolt.kind == Projectile::grenade && bolt.velocity.length() < 0.1) {
+            from_bot = std::min(from_bot, (bolt.position - bot_at).length());
+            from_enemy = std::min(from_enemy, (bolt.position - e_state.position).length());
+        }
+    }
+    std::printf("bot's mine: %zu placed, %.1f m from where it stood, %.1f m from the enemy\n",
+                field.server->mine_count(), from_bot, from_enemy);
+    CHECK(field.server->mine_count() >= 1 && from_enemy > 8);
+}
+
 void test_drop_pace() {
     const std::vector<Vec3> path{{0, 10, 0}, {3, 10, 0}, {3.5, 7, 0}, {10, 7, 0}};
     CHECK(std::abs(drop_pace({-5, 10, 0}, path, 0) - 1.0) < 1e-9);   // far from it
@@ -1006,5 +1055,6 @@ int main() {
     test_spawn_under_floor();
     test_bots_play_a_match();
     test_bots_play_ctf();
+    test_bot_places_mines();
     return swm::test::finish("match_test");
 }

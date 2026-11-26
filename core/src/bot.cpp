@@ -977,16 +977,42 @@ void Bot::update(GameClient& client, const World& world, double now) {
         controls.yaw = aim_yaw;
         controls.pitch = aim_pitch;
         controls.fire = has_arc && now - target_since_ >= skill_.reaction;
-        // Now and then a grenade at someone close.
+        // Now and then its tactical item: a grenade at someone close; a mine
+        // or trap down in front of it, in the way of someone coming (not at
+        // them: it would fall short anyway); a tactical shot (a tangle, a
+        // flare) straight at them.
         const WeaponDef* thrown = weapon_in_slot(loadout, secondary_slot);
-        if (thrown != nullptr && me.combat.weapons[secondary_slot].rounds > 0 && target_distance > 8 &&
-            target_distance < 25 && now >= next_grenade_ && now - target_since_ >= skill_.reaction) {
-            const Vec3 feet = target->state.position - eye;
-            if (const auto lob = ballistic_pitch(thrown->bolt_speed, thrown->bolt_gravity * gravity,
-                                                 std::hypot(feet.x, feet.z), feet.y)) {
-                throw_until_ = now + 0.15;
-                next_grenade_ = now + 6 + random() * 8;
-                grenade_pitch_ = *lob - thrown->shot_elevate;
+        // Held long enough to outlast the held gun's cooldown (a rifle's 0.166 s
+        // between shots), once: the throw's own cooldown is longer.
+        constexpr double throw_window = 0.35;
+        // (Not mid-roll, staggered or blocking: it couldn't throw then.)
+        const bool can_throw = !me.rolling() && me.stagger <= 0 && !me.blocking;
+        if (thrown != nullptr && me.combat.weapons[secondary_slot].rounds > 0 && now >= next_grenade_ &&
+            now - target_since_ >= skill_.reaction && can_throw) {
+            if (thrown->trigger_radius > 0) {
+                if (target_distance > 10 && target_distance < 30) {
+                    throw_until_ = now + throw_window;
+                    next_grenade_ = now + 10 + random() * 10;
+                    grenade_pitch_ = -1.0 - thrown->shot_elevate;
+                }
+            } else if (thrown->projectile == Projectile::grenade) {
+                const Vec3 feet = target->state.position - eye;
+                if (target_distance > 8 && target_distance < 25) {
+                    if (const auto lob = ballistic_pitch(thrown->bolt_speed, thrown->bolt_gravity * gravity,
+                                                         std::hypot(feet.x, feet.z), feet.y)) {
+                        throw_until_ = now + throw_window;
+                        next_grenade_ = now + 6 + random() * 8;
+                        grenade_pitch_ = *lob - thrown->shot_elevate;
+                    }
+                }
+            } else if (target_distance > 5 && target_distance < thrown->bolt_speed * thrown->bolt_life * 0.8) {
+                const Vec3 chest = target->state.position + Vec3{0, 1.2, 0} - eye;
+                if (const auto arc = ballistic_pitch(thrown->bolt_speed, thrown->bolt_gravity * gravity,
+                                                     std::hypot(chest.x, chest.z), chest.y)) {
+                    throw_until_ = now + throw_window;
+                    next_grenade_ = now + 6 + random() * 8;
+                    grenade_pitch_ = *arc - thrown->shot_elevate;
+                }
             }
         }
         if (now < throw_until_) {

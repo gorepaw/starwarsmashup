@@ -326,7 +326,7 @@ int main() {
         const WeaponDef w1 = real.resolve_weapon(one), w2 = real.resolve_weapon(two);
         CHECK(w2.damage / w2.shot_delay > 1.15 * (w1.damage / w1.shot_delay));
         CHECK(w2.melee_range > w1.melee_range && w2.melee_stagger > w1.melee_stagger);
-        CHECK(w2.projectile == Projectile::melee && lance && lance->anim_set == "melee");
+        CHECK(w2.projectile == Projectile::melee && lance && lance->anim_set == "melee_2h");
     }
 
     return swm::test::finish("items_test");

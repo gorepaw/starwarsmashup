@@ -1550,7 +1550,7 @@ func _update_bolts(delta: float) -> void:
 		var riding := bool(shot.get("riding", false))
 		if own_soldier != null and not riding:
 			if int(shot["weapon"]) >= 2:
-				own_soldier.throw()
+				own_soldier.throw(str(shot.get("archetype", "")), str(shot.get("held_model", "")))
 			else:
 				own_soldier.fire()
 				_kick(int(shot["weapon"]))
@@ -1611,7 +1611,7 @@ func _update_bolts(delta: float) -> void:
 			var trail_name := str(bolt.get("trail_effect", ""))
 			var trail := _effects.attach_trail(node, trail_name) if trail_name != "" else null
 			_remote_bolts[id] = {"node": node, "trail": trail, "origin": start["origin"], "offset": start["offset"],
-					"prev_vel": bolt["velocity"], "bounce_cd": 0.0}
+					"prev_vel": bolt["velocity"], "bounce_cd": 0.0, "owner": int(bolt["owner"])}
 		var entry: Dictionary = _remote_bolts[id]
 		entry["bounce_cd"] = maxf(0.0, float(entry["bounce_cd"]) - delta)
 		if _audio != null and str(bolt.get("kind", "")) == "grenade":
@@ -1639,14 +1639,16 @@ func _update_bolts(delta: float) -> void:
 
 
 func _bolt_start(bolt: Dictionary) -> Dictionary:
+	if bool(bolt.get("trap", false)):
+		return _trap_shot(bolt)
 	var owner_id := int(bolt["owner"])
 	var soldier := _soldier_of(owner_id)
 	if soldier == null or not soldier.model.visible:
 		return {"origin": bolt["position"], "offset": Vector3.ZERO}
 	_battle_ui.note_fired(owner_id)
 	if owner_id != _client.get_entity_id():
-		if bolt["kind"] == "grenade":
-			soldier.throw()
+		if bolt["kind"] == "grenade" or int(bolt["weapon"]) >= 2:
+			soldier.throw(str(bolt.get("archetype", "")), str(bolt.get("held_model", "")))
 		else:
 			soldier.fire()
 	if _audio != null:
@@ -1662,6 +1664,30 @@ func _bolt_start(bolt: Dictionary) -> Dictionary:
 	if bolt["kind"] != "grenade":
 		_effects.spawn_muzzle_flash(muzzle, bolt["velocity"], bolt)
 	return {"origin": origin, "offset": muzzle - origin}
+
+
+# A placed trap's shot: from the trap (just above it), which turns to face
+# whom it fires at; its owner doesn't move.
+func _trap_shot(bolt: Dictionary) -> Dictionary:
+	var at: Vector3 = bolt["position"]
+	var velocity: Vector3 = bolt["velocity"]
+	var nearest: Node3D = null
+	var best := 1.2
+	for entry: Dictionary in _remote_bolts.values():
+		var node: Node3D = entry["node"]
+		if int(entry.get("owner", -1)) != int(bolt["owner"]) or not is_instance_valid(node) \
+				or not node.has_meta("placed"):
+			continue
+		var d := node.position.distance_to(at - Vector3.UP * 0.4)
+		if d < best:
+			best = d
+			nearest = node
+	if nearest != null and Vector2(velocity.x, velocity.z).length() > 0.01:
+		nearest.set_meta("yaw", atan2(velocity.x, velocity.z))  # its model faces +Z
+	_effects.spawn_muzzle_flash(at, velocity, bolt)
+	if _audio != null and str(bolt.get("fire_sound", "")) != "":
+		_audio.play_3d(str(bolt["fire_sound"]), at, _camera.global_position)
+	return {"origin": at, "offset": Vector3.ZERO}
 
 
 func _place_drawn_bolt(node: Node3D, bolt: Dictionary, delta: float) -> void:

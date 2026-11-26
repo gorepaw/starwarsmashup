@@ -1375,7 +1375,8 @@ void GameServer::step() {
             }
             // The use button (a press): into a vehicle or out of it.
             const bool use = input.held(MoveInput::use);
-            if (use && !client.use_held && client.life == Life::alive && !vehicle_classes().empty()) {
+            if (use && !client.use_held && client.life == Life::alive && !disarm_mine(client) &&
+                !vehicle_classes().empty()) {
                 use_vehicle(client);
             }
             client.use_held = use;
@@ -1598,8 +1599,11 @@ void GameServer::step() {
             npc_entities.push_back(described(make_npc_entity(npc)));
         }
     }
-    for (const Bolt& bolt : bolts_) {
-        base_snapshot.bolts.push_back({bolt.id, bolt.owner, bolt.weapon, bolt.def.projectile, bolt.position, bolt.velocity});
+    for (const std::vector<Bolt>* list : {&bolts_, &mines_}) {
+        for (const Bolt& bolt : *list) {
+            base_snapshot.bolts.push_back(
+                {bolt.id, bolt.owner, bolt.weapon, bolt.def.projectile, bolt.position, bolt.velocity});
+        }
     }
     base_snapshot.events = std::move(events_);
     events_.clear();
@@ -1865,6 +1869,7 @@ void GameServer::run_match() {
         case MatchEvent::went_live:
             say("the match is live");
             bolts_.clear();
+            mines_.clear();
             pickups_.clear();
             match_live_time_ = 0;
             match_captures_ = 0;
@@ -2347,13 +2352,14 @@ void GameServer::advance_bolts() {
         }
         return std::nullopt;
     };
-    std::erase_if(bolts_, [&](Bolt& bolt) {
+    std::vector<Bolt> settled;  // placed mines that came to rest this tick
+    std::erase_if(mines_, [&](Bolt& bolt) {
         const WeaponDef& def = bolt.def;
         bolt.life -= dt;
-        if (bolt.resting && def.trigger_radius > 0) {
+        {
             // A placed mine or trap: armed after a moment, it waits for an
-            // enemy, and is gone when it's lain its time.
-            if (bolt.life <= 0) {
+            // enemy, and is gone when it's lain its time (or destroyed).
+            if (bolt.life <= 0 || bolt.health <= 0) {
                 return true;
             }
             bolt.wait -= dt;
@@ -2371,6 +2377,7 @@ void GameServer::advance_bolts() {
             // A trap's shot: a fast bolt from just above it, at them.
             Bolt shot = bolt;
             shot.id = next_bolt_++;
+            shot.weapon = uint8_t(bolt.weapon | net::trap_shot_flag);
             shot.position = bolt.position + Vec3{0, 0.4, 0};
             Vec3 aim = *target - shot.position;
             aim = aim.length() > 1e-6 ? aim * (1 / aim.length()) : Vec3{0, 1, 0};
@@ -2389,6 +2396,10 @@ void GameServer::advance_bolts() {
             bolt.wait = def.trap_interval;
             return --bolt.shots_left <= 0;
         }
+    });
+    std::erase_if(bolts_, [&](Bolt& bolt) {
+        const WeaponDef& def = bolt.def;
+        bolt.life -= dt;
         if (bolt.resting) {
             if (bolt.life <= 0) {
                 blasts.push_back({bolt, bolt.position, {0, 1, 0}, false});
@@ -2501,6 +2512,23 @@ void GameServer::advance_bolts() {
                 }
             }
         }
+        Bolt* hit_mine = nullptr;
+        if (!bounces && !harmless) {
+            for (Bolt& mine : mines_) {
+                if (mine.owner == bolt.owner || (allied(bolt.team, mine.team) && !config_.friendly_fire)) continue;
+                const auto t = segment_hits_cylinder(from, to, mine.position - Vec3{0, 0.05, 0}, 0.3, 0.35);
+                if (t && (!nearest || *t < *nearest)) {
+                    nearest = t;
+                    victim = nullptr;
+                    hit_npc = nullptr;
+                    hit_target = nullptr;
+                    hit_powerup = -1;
+                    hit_mine = &mine;
+                    const double speed = bolt.velocity.length();
+                    normal = speed > 1e-6 ? bolt.velocity * (-1.0 / speed) : Vec3{0, 1, 0};
+                }
+            }
+        }
         Vehicle* hit_vehicle = nullptr;
         if (!bounces && !harmless) {
             const auto classes = vehicle_classes();
@@ -2532,11 +2560,22 @@ void GameServer::advance_bolts() {
                     hit_npc = nullptr;
                     hit_target = nullptr;
                     hit_powerup = -1;
+                    hit_mine = nullptr;
                     hit_vehicle = &v;
                     const double speed = bolt.velocity.length();
                     normal = speed > 1e-6 ? bolt.velocity * (-1.0 / speed) : Vec3{0, 1, 0};
                 }
             }
+        }
+        if (hit_mine != nullptr) {
+            const Vec3 at = from + (to - from) * *nearest;
+            hit_mine->health -= bolt_damage(def, def.bolt_life - bolt.life);
+            if (def.explosion_damage > 0 && def.explosion_outer > 0) {
+                blasts.push_back({bolt, at, normal, false});
+            } else {
+                impacts_.push_back({bolt.owner, bolt.weapon, at, normal, false});
+            }
+            return true;
         }
         if (hit_vehicle != nullptr) {
             const Vec3 at = from + (to - from) * *nearest;
@@ -2631,6 +2670,11 @@ void GameServer::advance_bolts() {
                 bolt.resting = true;
                 bolt.velocity = {};
                 bolt.wait = def.arm_time;  // a mine arms a moment after it settles
+                if (def.trigger_radius > 0) {
+                    bolt.health = mine_health;
+                    settled.push_back(bolt);
+                    return true;
+                }
             }
         } else {
             bolt.position = to;
@@ -2644,12 +2688,35 @@ void GameServer::advance_bolts() {
         return false;
     });
     bolts_.insert(bolts_.end(), fired.begin(), fired.end());
+    mines_.insert(mines_.end(), settled.begin(), settled.end());
     if (!harmless) {
         for (size_t i = 0; i < blasts.size(); ++i) {
             const Blast blast = blasts[i];
             explode(blast, blasts);
         }
     }
+    std::erase_if(mines_, [&](const Bolt& mine) {
+        if (mine.health > 0) return false;
+        explosions_.push_back({mine.owner, mine.weapon, mine.position, {0, 1, 0}, 1.0f});
+        return true;
+    });
+}
+
+bool GameServer::disarm_mine(const Client& client) {
+    if (client.state.vehicle >= 0) {
+        return false;
+    }
+    const auto it = std::find_if(mines_.begin(), mines_.end(), [&](const Bolt& mine) {
+        const Vec3 d = mine.position - client.state.position;
+        return mine.owner != client.entity && !(allied(mine.team, client.team) && !config_.friendly_fire) &&
+               d.x * d.x + d.z * d.z <= disarm_reach * disarm_reach && std::abs(d.y) < 1.5;
+    });
+    if (it == mines_.end()) {
+        return false;
+    }
+    impacts_.push_back({client.entity, 0, it->position, {0, 1, 0}, false});
+    mines_.erase(it);
+    return true;
 }
 
 void GameServer::damage_powerup(size_t index, double amount, uint32_t attacker, std::vector<Blast>& blasts) {
@@ -2780,6 +2847,11 @@ void GameServer::explode(const Blast& blast, std::vector<Blast>& blasts) {
         return;
     }
     explosions_.push_back({bolt.owner, bolt.weapon, blast.at, blast.normal, float(def.explosion_outer)});
+    for (Bolt& mine : mines_) {
+        if (mine.id != bolt.id) {
+            mine.health -= explosion_damage(def, blast.at, mine.position - Vec3{0, 1.0, 0});
+        }
+    }
     // From a little off the surface it went off at: walls shelter whoever
     // it can't see (chest or head).
     const Vec3 center = blast.at + blast.normal * 0.1;

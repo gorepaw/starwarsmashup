@@ -436,7 +436,7 @@ void GameClient::handle(const net::Datagram& datagram, double now) {
     bolts_.clear();
     for (const net::BoltState& bolt : snapshot->bolts) {
         // Own bolts were drawn when fired; own missiles and grenades come from here.
-        if (bolt.owner != entity_ || bolt.kind != Projectile::bolt) {
+        if (bolt.owner != entity_ || bolt.kind != Projectile::bolt || (bolt.weapon & net::trap_shot_flag) != 0) {
             bolts_.push_back(bolt);
         }
     }

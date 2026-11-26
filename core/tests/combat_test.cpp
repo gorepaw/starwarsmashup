@@ -779,13 +779,11 @@ void test_hit_effects() {
     }
 }
 
-// The beam and flamer archetypes (docs/WEAPONS.md), as the catalog makes
-// them without Battlefront's files: a beam is near-instant and runs on heat;
-// a flamer's cone dies out short of 12 m, and burns what it reaches.
 // Placed mines and traps (docs/WEAPONS.md): A tosses one down in front of
 // itself; it arms, and waits. B, walking up from 12 m, sets a mine off (and
 // the blast takes B); a trap fires its bolts at B instead. A mine that's lain
-// its time is gone, harmlessly.
+// its time is gone, harmlessly. Shot to nothing, or disarmed by B (the use
+// button, from just outside its trigger), a mine is gone without a blast.
 void test_placed_mines_and_traps() {
     const std::filesystem::path ini = "swm_placed_test_catalog.ini";
     {
@@ -801,9 +799,10 @@ void test_placed_mines_and_traps() {
     CHECK(mine.projectile == Projectile::grenade && mine.trigger_radius > 0 && mine.trap_shots == 0);
     CHECK(trap.trap_shots == 6 && trap.trigger_radius > mine.trigger_radius && mine.ammo_class == AmmoClass::none);
 
-    enum class Run { mine, trap, expired };
-    for (const Run run : {Run::mine, Run::trap, Run::expired}) {
+    enum class Run { mine, trap, expired, shot, disarmed };
+    for (const Run run : {Run::mine, Run::trap, Run::expired, Run::shot, Run::disarmed}) {
         Loadout carried;
+        carried.weapons[primary_slot] = WeaponDef{};  // B's rifle, to shoot it
         WeaponDef placed = run == Run::trap ? trap : mine;
         if (run == Run::expired) placed.fuse = 2;
         carried.weapons[secondary_slot] = placed;
@@ -827,19 +826,52 @@ void test_placed_mines_and_traps() {
             watch();
         });
         CHECK(explosions.empty() && arena.server.health_of(b) == 400);
+        CHECK(arena.server.mine_count() == (run == Run::expired ? 0u : 1u));
+        Vec3 lies;
+        for (const net::BoltState& bolt : arena.b.bolts(arena.now)) {
+            if (bolt.kind == Projectile::grenade) lies = bolt.position;
+        }
+        if (run == Run::shot) {
+            // B shoots it from where B stands.
+            arena.run(2.0, [&] {
+                const Vec3 to = lies - (arena.b.predicted().position + Vec3{0, eye_height, 0});
+                arena.b.set_input({.yaw = std::atan2(-to.x, -to.z), .pitch = std::atan2(to.y, std::hypot(to.x, to.z)),
+                                   .fire = true});
+                watch();
+            });
+            CHECK(arena.server.mine_count() == 0);
+        } else if (run == Run::disarmed) {
+            // B walks up to 2.6 m from it, and disarms it.
+            int held = 0;  // frames at it: a press, held a moment
+            double stood = 0;
+            arena.run(3.0, [&] {
+                const Vec3 d = lies - arena.b.predicted().position;
+                const bool there = held > 0 || std::hypot(d.x, d.z) < 2.6;
+                if (there && held == 0) stood = std::hypot(d.x, d.z);
+                held += there ? 1 : 0;
+                arena.b.set_input({.forward = there ? 0.0 : 1.0, .yaw = std::numbers::pi / 2,
+                                   .use = held > 0 && held < 20});
+                watch();
+            });
+            std::printf("  disarmed from %.1f m\n", stood);
+            CHECK(arena.server.mine_count() == 0);
+        }
         // B walks toward A (facing -X), past where it lies.
         arena.run(2.5, [&] {
             arena.b.set_input({.forward = 1, .yaw = std::numbers::pi / 2});
             watch();
         });
         const double lost = 400 - arena.server.health_of(b);
-        std::printf("placed (%s): %zu explosions, B lost %.0f\n",
-                    run == Run::mine ? "mine" : run == Run::trap ? "trap" : "expired", explosions.size(), lost);
+        const char* names[] = {"mine", "trap", "expired", "shot", "disarmed"};
+        std::printf("placed (%s): %zu explosions, B lost %.0f\n", names[int(run)], explosions.size(), lost);
         if (run == Run::mine) {
             // Heavy, not certain death: B is at the trigger's edge.
             CHECK(explosions.size() == 1 && lost > 250);
         } else if (run == Run::trap) {
             CHECK(explosions.empty() && arena.server.alive(b) && lost >= 40 && lost <= 6 * 40 + 1e-6);
+        } else if (run == Run::shot) {
+            // Destroyed: a small, harmless burst.
+            CHECK(explosions.size() == 1 && explosions[0].radius < 1.5f && lost == 0);
         } else {
             CHECK(explosions.empty() && lost == 0);
         }
@@ -847,6 +879,9 @@ void test_placed_mines_and_traps() {
     }
 }
 
+// The beam and flamer archetypes (docs/WEAPONS.md), as the catalog makes
+// them without Battlefront's files: a beam is near-instant and runs on heat;
+// a flamer's cone dies out short of 12 m, and burns what it reaches.
 void test_beam_and_flamer() {
     const std::filesystem::path ini = "swm_beam_test_catalog.ini";
     {

@@ -135,6 +135,9 @@ func make_projectile(look: Dictionary) -> Node3D:
 			pivot.set_meta("is_model", true)
 			pivot.set_meta("kind", kind)
 			pivot.set_meta("model_name", model_name)
+			if str(look.get("archetype", "")) == "placed":
+				pivot.set_meta("placed", true)  # a mine or trap: lies upright once it lands
+				pivot.set_meta("yaw", 0.0)
 			var light_radius := float(look.get("light_radius", 0.0))
 			if light_radius > 0.0:
 				var light := OmniLight3D.new()
@@ -197,6 +200,13 @@ func place_projectile(pivot: Node3D, position: Vector3, velocity: Vector3, delta
 			if speed2 > 0.25:
 				pivot.rotate_x(7.5 * delta)
 				pivot.rotate_z(5.0 * delta)
+			elif pivot.has_meta("placed"):
+				# A mine or trap at rest: upright, turning (a trap, at whom it
+				# fires) to its yaw.
+				var shown := float(pivot.get_meta("shown_yaw", pivot.get_meta("yaw", 0.0)))
+				shown = lerp_angle(shown, float(pivot.get_meta("yaw", 0.0)), minf(1.0, 12.0 * delta))
+				pivot.set_meta("shown_yaw", shown)
+				pivot.basis = Basis(Vector3.UP, shown)
 		elif speed2 > 0.001:
 			var forward := velocity.normalized()
 			var up := Vector3.UP if absf(forward.y) < 0.99 else Vector3.RIGHT
