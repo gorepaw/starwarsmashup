@@ -54,7 +54,11 @@ enum class WeaponArchetype : uint8_t {
     beam_cannon,  // a heavy weapon's (the particle and lightning beam cannons)
     flamer,       // a short cone of fire or acid: heat only, sets its effect (flamethrower, acid launcher)
     scatter_pistol,  // a spread of bolts at sidearm size, on heat (the scatter pistol)
+    melee_2h,        // a two-handed sword, axe, hammer or polearm: a primary, heavier than `melee`
 };
+
+// A melee archetype: one-handed (`melee`, a sidearm) or two-handed (`melee_2h`).
+bool is_melee_archetype(WeaponArchetype a);
 
 struct WeaponArchetypeInfo {
     WeaponArchetype archetype = WeaponArchetype::rifle_auto;

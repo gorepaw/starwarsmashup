@@ -12,7 +12,7 @@
 namespace swm::core {
 namespace {
 
-const std::array<WeaponArchetypeInfo, 12> archetype_table{{
+const std::array<WeaponArchetypeInfo, 13> archetype_table{{
     {WeaponArchetype::rifle_auto, "rifle_auto", "imp_weap_inf_rifle", "rifle", "primary"},
     {WeaponArchetype::carbine_burst, "carbine_burst", "all_weap_inf_rifle", "rifle", "primary"},
     {WeaponArchetype::sniper, "sniper", "imp_weap_inf_sniper_rifle", "rifle", "primary"},
@@ -20,12 +20,13 @@ const std::array<WeaponArchetypeInfo, 12> archetype_table{{
     {WeaponArchetype::pistol, "pistol", "imp_weap_inf_pistol", "pistol", "sidearm"},
     {WeaponArchetype::heavy_launcher, "heavy_launcher", "imp_weap_inf_rocket_launcher", "bazooka", "primary"},
     {WeaponArchetype::grenade, "grenade", "imp_weap_inf_thermaldetonator", "grenade", "secondary"},
-    {WeaponArchetype::melee, "melee", "", "melee", "primary"},
+    {WeaponArchetype::melee, "melee", "", "melee", "sidearm"},
     // Beams: Battlefront II's chaingun, the closest thing it has to a stream.
     {WeaponArchetype::beam, "beam", "rep_weap_inf_chaingun", "rifle", "primary"},
     {WeaponArchetype::beam_cannon, "beam_cannon", "rep_weap_inf_chaingun", "rifle", "primary"},
     {WeaponArchetype::flamer, "flamer", "", "rifle", "primary"},
     {WeaponArchetype::scatter_pistol, "scatter_pistol", "", "pistol", "sidearm"},
+    {WeaponArchetype::melee_2h, "melee_2h", "", "melee", "primary"},
 }};
 
 WeaponDef default_archetype_weapon(WeaponArchetype a) {
@@ -187,21 +188,36 @@ WeaponDef default_archetype_weapon(WeaponArchetype a) {
         w.pitch_spread = 5;
         break;
     case WeaponArchetype::melee:
-        w.name = "swg_melee";
+    case WeaponArchetype::melee_2h:
+        // One-handed: a sidearm. Two-handed is a primary, so it outweighs
+        // it: slower swings that hit harder, about a fifth more damage a
+        // second, with more reach, a wider arc and more stagger, and a
+        // shorter lunge.
+        w.name = a == WeaponArchetype::melee ? "swg_melee" : "swg_melee_2h";
         w.projectile = Projectile::melee;
         w.damage_type = DamageType::melee;
         w.anim_set = "melee";
-        w.shot_delay = 0.55;
         w.rounds_per_clip = 0;
-        w.damage = 115;
-        w.melee_range = 2.6;
-        w.melee_arc = 70.0;
-        w.melee_lunge = 5.0;
-        w.melee_stagger = 0.35;
-        w.shield_disrupt = 2.5;
         w.fire_sound = "com_weap_throw";
         w.impact_effect = "com_sfx_ord_exp";
         w.muzzle_flash.clear();
+        if (a == WeaponArchetype::melee) {
+            w.shot_delay = 0.55;
+            w.damage = 115;
+            w.melee_range = 2.6;
+            w.melee_arc = 70.0;
+            w.melee_lunge = 5.0;
+            w.melee_stagger = 0.35;
+            w.shield_disrupt = 2.5;
+        } else {
+            w.shot_delay = 0.65;
+            w.damage = 165;
+            w.melee_range = 3.2;
+            w.melee_arc = 90.0;
+            w.melee_lunge = 4.5;
+            w.melee_stagger = 0.5;
+            w.shield_disrupt = 3.0;
+        }
         break;
     }
     return w;
@@ -607,6 +623,8 @@ double defense_mark_weight(std::string_view slot) {
     return 0.0;
 }
 
+bool is_melee_archetype(WeaponArchetype a) { return a == WeaponArchetype::melee || a == WeaponArchetype::melee_2h; }
+
 bool species_can_use(const ItemDef& def, Species species) {
     return def.species.empty() || std::find(def.species.begin(), def.species.end(), species) != def.species.end();
 }
@@ -621,7 +639,7 @@ double sidegrade_score(const ItemDef& d) {
     s *= pw(d.swap_mult, -0.05) * pw(d.aim_speed_mult, 0.05);
     if (d.recoil > 0) s /= 1 + 0.1 * d.recoil;
     if (!d.hit_effect.empty()) s *= 1.1;
-    if (d.archetype == WeaponArchetype::melee) {  // its overrides, against the archetype's
+    if (is_melee_archetype(d.archetype)) {  // its overrides, against the archetype's
         const WeaponDef base = default_archetype_weapon(d.archetype);
         const auto vs = [](double v, double b) { return v > 0 && b > 0 ? v / b : 1.0; };
         s *= pw(vs(d.melee_range, base.melee_range), 0.5) * pw(vs(d.melee_arc, base.melee_arc), 0.15);

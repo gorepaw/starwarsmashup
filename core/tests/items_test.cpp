@@ -314,6 +314,19 @@ int main() {
             const ItemDef* m = real.find(id);
             CHECK(m && m->archetype == WeaponArchetype::melee && m->slot == "sidearm");
         }
+
+        // Two-handed melee is a primary, and outweighs one-handed: more
+        // damage a second, more reach, more stagger.
+        const ItemDef* lance = real.find("wp_melee_vibrolance");
+        CHECK(lance && lance->archetype == WeaponArchetype::melee_2h && lance->slot == "primary");
+        CHECK(is_melee_archetype(WeaponArchetype::melee_2h) && !is_melee_archetype(WeaponArchetype::pistol));
+        ItemDef one, two;
+        one.archetype = WeaponArchetype::melee;
+        two.archetype = WeaponArchetype::melee_2h;
+        const WeaponDef w1 = real.resolve_weapon(one), w2 = real.resolve_weapon(two);
+        CHECK(w2.damage / w2.shot_delay > 1.15 * (w1.damage / w1.shot_delay));
+        CHECK(w2.melee_range > w1.melee_range && w2.melee_stagger > w1.melee_stagger);
+        CHECK(w2.projectile == Projectile::melee && lance && lance->anim_set == "melee");
     }
 
     return swm::test::finish("items_test");

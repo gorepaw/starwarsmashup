@@ -11,7 +11,7 @@ Every weapon model in Galaxies, sorted into our seven categories, and how we tur
 | Carbine / shotgun | Primary | Carbines | `carbine_burst`, `scatter` |
 | Heavy | Primary | Heavy Weapons | `heavy_launcher`, `beam_cannon`, `flamer` |
 | Sidearm | Sidearm | Pistols | `pistol`, `scatter_pistol` |
-| Melee | Sidearm if one-handed, primary if two-handed | Melee | `melee` |
+| Melee | Sidearm if one-handed, primary if two-handed | Melee | `melee` (one-handed), `melee_2h` (two-handed) |
 | Tactical | Secondary | Heavy Weapons | `grenade` (new: `placed` for mines and traps) |
 
 Melee goes by size, the same way shotguns do: knives, batons, one-handed swords and knucklers are sidearms; two-handed swords, axes and polearms are primaries.
@@ -237,6 +237,7 @@ Most weapons fit the archetypes we had. These handling styles didn't:
 - **`beam`** (Rifles) and **`beam_cannon`** (Heavy Weapons): a near-instant stream that runs on heat, built on Battlefront II's chaingun (`rep_weap_inf_chaingun`: 20,000 m/s, 20 shots a second). The cannons hit harder and slow their carrier. Done.
 - **`flamer`** (Heavy Weapons): a cone of slow pellets that drop and die out at about 11 m, on heat, setting its effect (the flamethrower burns, the acid launcher poisons). Battlefront II has no flamethrower, so the numbers are our own. Done.
 - **`scatter_pistol`** (Pistols): a shotgun's spread at sidearm size, on the pistol's heat instead of a clip. About a pistol's damage a second up close; five pellets that spread 5° and die out at 24 m. Battlefront II has none, so the numbers are our own. Done.
+- **`melee_2h`** (Melee): two-handed swords, axes, hammers and polearms, a primary. A primary should outweigh a sidearm, so its swings are slower but hit harder: about a fifth more damage a second than one-handed `melee` (165 every 0.65 s against 115 every 0.55 s), 3.2 m of reach against 2.6, a 90° arc against 70, more stagger (0.5 against 0.35) and shield disruption (3 against 2.5), and a shorter lunge (4.5 m against 5). Done.
 - **`placed`:** a mine or trap set on the ground that triggers on proximity. Battlefront II has landmines and detpacks; we'd import their definitions, since only 37 Battlefront II weapon definitions are imported today. Comes with tactical.
 
 The rest is the sidegrade multipliers we already have, plus effects through `OnHit`, the same way ammo carries burning, chilled and ionized. The primaries added **poisoned** (bio, 8 a second for 4 s, 35% of hits) and **snared** (60% run speed for 2 s, 30% of hits). The sidearms added **bleeding** (ballistic, 6 a second for 5 s, 30% of hits: the flechette pistol, the skinner blade, the razor knuckler) and **dazed** (70% run and sprint speed and no energy regained for 1.5 s, 25% of hits: the Trandoshan suppressor).
@@ -250,6 +251,6 @@ As planned in itemsideas: primaries, then sidearms, then tactical.
 1. ~~**Exporter and catalog plumbing** (steps 1 and 2), fixing the existing weapons.~~ Done.
 2. ~~**Primaries:** snipers (6), rifles (14), carbines and shotguns (20), heavy (6), and the `beam`, `beam_cannon` and `flamer` archetypes.~~ Done: 45 items (35 new), every one within budget. The black DH-17 (a recolor) and the DXR-6 carbine (the disruptor's model) aren't separate items. The laser carbine moved to carbine handling.
 3. ~~**Sidearms:** pistols (30) and one-handed melee (22).~~ Done: 28 pistols (23 new) and 22 one-handed melee (19 new), every one within budget, and the `scatter_pistol` archetype. One-handed melee is balanced against the melee archetype as it is; two-handed melee may get its own, stronger archetype with step 4, since a primary should outweigh a sidearm.
-4. **Two-handed melee** (25).
+4. ~~**Two-handed melee** (25).~~ Done: 25 items (24 new) on the new `melee_2h` archetype, every one within budget. The Vibrolance moved to it and was retuned (longer reach, a wider arc). Quest and recolor variants (the Grooved sword, the Gamorrean battleaxe, the Nightsister and Janta versions) aren't separate items. The Cryo Lance chills and the Shock Lance ionizes; the Executioner's Hack bleeds. The Trandoshan pike and Wookiee polearm are species weapons.
 5. **Tactical:** grenades (6), mines and the laser trap (4) with `placed`, and scout traps (6).
 
