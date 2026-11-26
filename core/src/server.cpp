@@ -889,6 +889,12 @@ void GameServer::handle(const net::Endpoint& from, const net::Datagram& datagram
                                              [id](const ItemInstance& inst) { return inst.id == id; });
                 if (it == client->items.end()) return false;
                 const ItemDef* def = config_.catalog->find(it->def_id);
+                if (def != nullptr && !species_can_use(*def, client->species)) {
+                    notify(client->entity, std::format("Only a {} can use {}.",
+                                                       species_def(def->species.front()).display_name,
+                                                       def->display_name));
+                    return false;
+                }
                 if (def == nullptr || config_.professions == nullptr ||
                     can_use_mark(*config_.professions, *def, it->mark, client->professions)) {
                     return true;
@@ -912,7 +918,7 @@ void GameServer::handle(const net::Endpoint& from, const net::Datagram& datagram
             if (!owns(clean.sidearm_id)) clean.sidearm_id = 0;
             if (!owns(clean.secondary_id)) clean.secondary_id = 0;
             for (auto it = clean.gear_ids.begin(); it != clean.gear_ids.end();) {
-                if (!owns(it->second) || !species_can_wear_slot(client->species, it->first)) {
+                if (!owns(it->second)) {
                     it = clean.gear_ids.erase(it);
                 } else {
                     ++it;

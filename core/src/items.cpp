@@ -441,7 +441,17 @@ void ItemCatalog::load(const std::filesystem::path& catalog_ini, const std::file
                 throw std::runtime_error(where + " (" + def.id + "): ArmorClass is light, medium or heavy");
             }
         }
-        def.model_path = s.get("Model").value_or("");
+        def.swg_template = s.get("Template").value_or("");
+        def.model_path = s.get("Model").value_or(def.swg_template.empty() ? "" : "weapons/" + def.id + "/" + def.id + ".gltf");
+        if (const auto f = s.get("ModelForward")) {
+            if (*f == "+y") def.model_forward = 1;
+            else if (*f == "-y") def.model_forward = -1;
+            else throw std::runtime_error(where + " (" + def.id + "): ModelForward is +y or -y");
+        }
+        if (const auto m = s.get("ModelMuzzle")) {
+            if (*m != "front") throw std::runtime_error(where + " (" + def.id + "): ModelMuzzle is front");
+            def.model_add_muzzle = true;
+        }
         def.damage_mult = s.number("DamageMult", 1.0);
         def.rate_mult = s.number("RateMult", 1.0);
         def.heat_mult = s.number("HeatMult", 1.0);
@@ -464,6 +474,18 @@ void ItemCatalog::load(const std::filesystem::path& catalog_ini, const std::file
         def.recoil = s.number("Recoil", -1.0);
         def.aim_speed_mult = s.number("AimSpeedMult", 1.0);
         def.hit_effect = s.get("OnHit").value_or("");
+        if (const auto sp = s.get("Species")) {
+            std::stringstream names(*sp);
+            std::string name;
+            while (std::getline(names, name, ',')) {
+                name.erase(0, name.find_first_not_of(" \t"));
+                name.erase(name.find_last_not_of(" \t") + 1);
+                if (name.empty()) continue;
+                const auto found = species_from_name(name);
+                if (!found) throw std::runtime_error(where + " (" + def.id + "): unknown Species " + name);
+                def.species.push_back(*found);
+            }
+        }
         if (const auto dt = s.get("DamageType")) {
             def.damage_type = damage_type_from_name(*dt);
         }
@@ -520,6 +542,35 @@ double defense_mark_weight(std::string_view slot) {
     if (slot == "gloves" || slot == "biceps" || slot == "bracers" || slot == "belt") return 0.05;
     return 0.0;
 }
+
+bool species_can_use(const ItemDef& def, Species species) {
+    return def.species.empty() || std::find(def.species.begin(), def.species.end(), species) != def.species.end();
+}
+
+double sidegrade_score(const ItemDef& d) {
+    const auto pw = [](double v, double e) { return std::pow(std::max(v, 0.01), e); };
+    const double crit_mult = d.crit_mult > 0 ? d.crit_mult : WeaponDef{}.crit_multiplier;
+    double s = d.damage_mult * (1 + d.crit_chance * (crit_mult - 1)) * d.rate_mult;
+    s *= pw(d.spread_mult, -0.35) * pw(d.range_mult, 0.35) * pw(d.heat_mult, -0.3);
+    s *= pw(d.clip_mult, 0.15) * pw(d.reload_mult, -0.15) * pw(d.velocity_mult, 0.1);
+    s *= pw(d.headshot_mult, 0.25) * pw(d.vehicle_mult, 0.1) * pw(d.shield_mult, 0.15);
+    s *= pw(d.swap_mult, -0.05) * pw(d.aim_speed_mult, 0.05);
+    if (d.recoil > 0) s /= 1 + 0.1 * d.recoil;
+    if (!d.hit_effect.empty()) s *= 1.1;
+    if (d.archetype == WeaponArchetype::melee) {  // its overrides, against the archetype's
+        const WeaponDef base = default_archetype_weapon(d.archetype);
+        const auto vs = [](double v, double b) { return v > 0 && b > 0 ? v / b : 1.0; };
+        s *= pw(vs(d.melee_range, base.melee_range), 0.5) * pw(vs(d.melee_arc, base.melee_arc), 0.15);
+        s *= pw(vs(d.melee_lunge, base.melee_lunge), 0.15) * pw(vs(d.melee_stagger, base.melee_stagger), 0.25);
+        s *= pw(vs(d.shield_disrupt, base.shield_disrupt), 0.15);
+    }
+    for (const StatModifier& m : d.modifiers) {  // a carry penalty (or a boon)
+        if (m.stat == Stat::run_speed || m.stat == Stat::sprint_factor) s *= pw(m.multiply, 1.5);
+    }
+    return s;
+}
+
+double sidegrade_budget(const ItemDef& def) { return def.species.empty() ? 1.0 : 1.0 + species_weapon_bonus; }
 
 const HitEffect* ItemCatalog::hit_effect(std::string_view id) const {
     for (const HitEffect& e : hit_effects_) {
@@ -629,7 +680,7 @@ Loadout ItemCatalog::build_loadout(const CharacterLoadout& cl, std::span<const I
     const std::array<uint64_t, weapon_slots> w_ids{cl.primary_id, cl.sidearm_id, cl.secondary_id};
     for (size_t s = 0; s < weapon_slots; ++s) {
         if (const ItemInstance* inst = find_inst(w_ids[s])) {
-            if (const ItemDef* def = find(inst->def_id)) {
+            if (const ItemDef* def = find(inst->def_id); def && species_can_use(*def, species)) {
                 out.weapons[s] = resolve_weapon(*def, inst->quality, apply_quality, inst->mark);
             }
         }
@@ -638,9 +689,6 @@ Loadout ItemCatalog::build_loadout(const CharacterLoadout& cl, std::span<const I
     std::vector<std::string> armor_classes;
     double marked_weight = 0;  // the slots' weights times their pieces' marks
     for (const auto& [slot, item_id] : cl.gear_ids) {
-        if (!species_can_wear_slot(species, slot)) {
-            continue;
-        }
         if (const ItemInstance* inst = find_inst(item_id)) {
             if (const ItemDef* def = find(inst->def_id)) {
                 if (def->kind == ItemKind::armor || def->kind == ItemKind::deflector_shield) {
@@ -655,16 +703,10 @@ Loadout ItemCatalog::build_loadout(const CharacterLoadout& cl, std::span<const I
     }
     out.armor_class = loadout_armor_class(armor_classes);
 
-    // Health along the level curve: the weighted mark of what's worn, over
-    // the slots this species can wear.
+    // Health along the level curve: the weighted mark of what's worn (the
+    // weights sum to 1 over every slot).
     if (marked_weight > 0) {
-        double wearable = 0;
-        for (const std::string_view slot : {"deflector_shield", "helmet", "chest", "biceps", "bracers", "gloves", "belt",
-                                            "leggings", "boots"}) {
-            if (species_can_wear_slot(species, slot)) wearable += defense_mark_weight(slot);
-        }
-        const double mark = wearable > 0 ? marked_weight / wearable : 0;
-        out.gear.push_back(Gear{"marks", "", {{Stat::max_health, 0, 1.0 + 0.1 * mark}}});
+        out.gear.push_back(Gear{"marks", "", {{Stat::max_health, 0, 1.0 + 0.1 * marked_weight}}});
     }
 
     if (!out.weapons[primary_slot] && !out.weapons[sidearm_slot]) {
@@ -771,7 +813,7 @@ std::string resolve_worn_models(const ItemCatalog& catalog, const CharacterLoado
     // Appearance slots visually override their matching armor slots.
     std::map<std::string, std::string> visual_by_slot;
     for (const auto& [slot, item_id] : cl.gear_ids) {
-        if (!species_can_wear_slot(species, slot)) {
+        if (!species_shows_slot(species, slot)) {
             continue;
         }
         if (const ItemInstance* inst = find_inst(item_id)) {

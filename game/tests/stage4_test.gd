@@ -88,7 +88,7 @@ func _initialize() -> void:
 	assert(chars2.size() == 1 and int(chars2[0]["faction_points"]) == 250 and int(chars2[0]["credits"]) == 300)
 	assert(store2.list_items(cid).size() == items.size() + 2)
 	var computed: Dictionary = store.compute_loadout_stats("wookiee", loadouts[0], items, true)
-	assert(float(computed.get("max_health", 0.0)) > 450.0, "expected Wookiee trait health bonus")
+	assert(float(computed.get("max_health", 0.0)) > 400.0, "expected Wookiee trait health bonus")
 	store2.close()
 	for suffix in ["", "-wal", "-shm"]:
 		if FileAccess.file_exists(db_path + suffix):
@@ -134,6 +134,14 @@ func _initialize() -> void:
 	var dmg0 := float(store.resolve_item_stats("wp_rifle_e11", 0.5, true)["damage"])
 	var dmg4 := float(store.resolve_item_stats("wp_rifle_e11", 0.5, true, 4)["damage"])
 	assert(absf(dmg4 - dmg0 * 1.4) < 0.01, "Mk IV doesn't hit 1.4x as hard")
+	# The bowcaster is a Wookiee's: its tooltip says so.
+	var bow_def: Dictionary = {}
+	for d: Dictionary in catalog:
+		if str(d.get("id", "")) == "wp_rifle_bowcaster":
+			bow_def = d
+	assert((bow_def["species"] as PackedStringArray).has("wookiee"), "the bowcaster isn't a Wookiee's")
+	var bow_tip := ItemTooltip.build_lines(bow_def, {}, store)
+	assert(bow_tip.any(func(l: Dictionary) -> bool: return str(l["text"]) == "Wookiee only"), "no species line")
 	var chest_req: Dictionary = store.mark_requirement("armor_stormtrooper_chest", 10)
 	assert(absf(float(chest_req["health"]) - 0.2) < 1e-6, "a Mk X chest isn't a fifth of the health curve")
 	inv_scr.close_screen()

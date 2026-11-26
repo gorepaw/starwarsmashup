@@ -25,10 +25,10 @@ func _initialize() -> void:
 	var by_id := {}
 	for sp: Dictionary in species_list:
 		by_id[str(sp["id"])] = sp
-	assert((by_id["wookiee"]["blocked_slots"] as PackedStringArray).has("chest"))
-	assert((by_id["ithorian"]["blocked_slots"] as PackedStringArray).has("boots"))
-	assert((by_id["trandoshan"]["blocked_slots"] as PackedStringArray).has("gloves"))
-	assert((by_id["human"]["blocked_slots"] as PackedStringArray).is_empty())
+	assert((by_id["wookiee"]["hidden_slots"] as PackedStringArray).has("chest"))
+	assert((by_id["ithorian"]["hidden_slots"] as PackedStringArray).has("boots"))
+	assert((by_id["trandoshan"]["hidden_slots"] as PackedStringArray).has("gloves"))
+	assert((by_id["human"]["hidden_slots"] as PackedStringArray).is_empty())
 
 	var db_path := ProjectSettings.globalize_path("res://stage3_test_temp.sqlite")
 	for suffix in ["", "-wal", "-shm"]:

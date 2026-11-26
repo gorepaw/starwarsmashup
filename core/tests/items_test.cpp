@@ -61,7 +61,8 @@ int main() {
     CHECK(near(std_w.damage, base_w.damage));
     CHECK(high_w.damage > base_w.damage && near(high_w.damage, base_w.damage * 1.08));
 
-    // Build loadout for Human vs Wookiee: Wookiee skips chest armor, keeps deflector shield.
+    // Build loadout for Human vs Wookiee: every species wears every slot (a
+    // Wookiee's chest armor only doesn't show).
     const std::vector<ItemInstance> inv{
         {1, 10, "wp_rifle_e11", 0.5, "", "{}"},
         {2, 10, "wp_pistol_dl44", 0.5, "", "{}"},
@@ -79,11 +80,12 @@ int main() {
     CHECK(hum_lo.gear.size() == 2);
 
     const Loadout wke_lo = catalog.build_loadout(cl, inv, Species::wookiee, true);
-    CHECK(wke_lo.gear.size() == 1 && wke_lo.gear[0].slot == "deflector_shield");
+    CHECK(wke_lo.gear.size() == 2);
 
     const CharacterStats hum_stats = stats_for(hum_lo, Species::human);
     const CharacterStats wke_stats = stats_for(wke_lo, Species::wookiee);
     CHECK(near(hum_stats.max_health, 450.0));
+    CHECK(near(wke_stats.max_health, 490.0));  // the chest's 50 and the Wookiee's own 40
     CHECK(near(hum_stats.mitigation_by_type[size_t(DamageType::laser)], 0.12));
     CHECK(near(wke_stats.mitigation_by_type[size_t(DamageType::laser)], 0.12));
 
@@ -111,10 +113,10 @@ int main() {
         CHECK(near(hum10.max_health, 450.0 * 1.5));
         CHECK(near(hum10.mitigation_by_type[size_t(DamageType::laser)], 0.12));  // marks don't touch mitigation
         CHECK(near(hum10_lo.weapons[primary_slot]->damage, hum_lo.weapons[primary_slot]->damage * 2));
-        // A Wookiee wears only the Deflector Shield: its Mk X is the whole curve.
+        // A Wookiee's marks count the same as anyone's.
         const CharacterStats wke10 =
             stats_for(catalog.build_loadout(cl, marked, Species::wookiee, true), Species::wookiee);
-        CHECK(near(wke10.max_health, wke_stats.max_health * 2));
+        CHECK(near(wke10.max_health, wke_stats.max_health * 1.5));
         // Unmarked: no change.
         CHECK(catalog.build_loadout(cl, inv, Species::human, true).gear.size() == 2);
 
@@ -127,7 +129,7 @@ int main() {
         CHECK(near(g.modifiers[0].add, 200) && near(g.modifiers[1].add, 40) && near(g.modifiers[2].add, 0.1));
     }
 
-    // Starter kit + resolve_worn_models (appearance overrides & Wookiee slot blocking)
+    // Starter kit + resolve_worn_models (appearance overrides & slots a Wookiee doesn't show)
     MemoryCharacterStore store;
     const auto bob = store.create_character({0, "Bob", {0, 0, 0}, 0, "human", "male"});
     ensure_starter_kit(store, bob.id);
@@ -145,7 +147,7 @@ int main() {
     CHECK(gear_win.xp == 470 && gear_win.faction_points == 218 && gear_win.credits == 391);
     static_assert(max_character_loadouts == 5);
 
-    // Worn models: appearance overrides armor visually; Wookiee skips armor chest
+    // Worn models: appearance overrides armor visually; a Wookiee's chest armor doesn't show
     const std::filesystem::path worn_ini = "swm_worn_test_catalog.ini";
     {
         std::ofstream out(worn_ini);
@@ -250,6 +252,55 @@ int main() {
     const Loadout hvy_lo = ammo_cat.build_loadout(hcl, ainv, Species::human, false);
     CHECK(hvy_lo.unified_heavy_ammo == max_heavy_ammo);
     CHECK(hvy_lo.weapons[primary_slot] && hvy_lo.weapons[primary_slot]->ammo_class == AmmoClass::heavy);
+
+    // The sidegrade budget: the archetype scores 1; trading damage for rate
+    // of fire breaks even; every weapon and ammo in the real catalog is within
+    // tolerance of its budget (a species weapon's is bigger).
+    {
+        ItemDef plain;
+        CHECK(near(sidegrade_score(plain), 1.0));
+        ItemDef trade;
+        trade.damage_mult = 1.25;
+        trade.rate_mult = 0.8;
+        CHECK(near(sidegrade_score(trade), 1.0));
+        trade.modifiers = {{Stat::run_speed, 0, 0.9}};
+        CHECK(sidegrade_score(trade) < 0.9);
+        trade.species = {Species::wookiee};
+        CHECK(near(sidegrade_budget(trade), 1.0 + species_weapon_bonus));
+        CHECK(species_can_use(trade, Species::wookiee) && !species_can_use(trade, Species::human) &&
+              species_can_use(plain, Species::human));
+
+        std::filesystem::path root = std::filesystem::current_path();
+        while (!root.empty() && !std::filesystem::exists(root / "game" / "items" / "swg_catalog.ini") &&
+               root.parent_path() != root) {
+            root = root.parent_path();
+        }
+        ItemCatalog real;
+        real.load(root / "game" / "items" / "swg_catalog.ini");
+        for (const ItemDef& def : real.all()) {
+            if (def.kind != ItemKind::weapon && def.kind != ItemKind::ammo) continue;
+            const double score = sidegrade_score(def);
+            const bool ok = std::abs(score - sidegrade_budget(def)) <= sidegrade_tolerance;
+            std::printf("%-28s %-15s %.3f / %.2f%s\n", def.id.c_str(), weapon_archetype_info(def.archetype).id.c_str(),
+                        score, sidegrade_budget(def), ok ? "" : "  OVER/UNDER");
+            CHECK(ok);
+        }
+
+        // A species weapon works only in its species' hands.
+        ItemCatalog sp_cat;
+        {
+            std::ofstream out(ini_path);
+            out << "[item]\nId = bow\nKind = weapon\nArchetype = rifle_auto\nSpecies = wookiee\n";
+        }
+        sp_cat.load(ini_path);
+        std::filesystem::remove(ini_path);
+        CHECK(sp_cat.find("bow")->species == std::vector<Species>{Species::wookiee});
+        const std::vector<ItemInstance> bow_inv{{1, 1, "bow", 0.5, "", "{}"}};
+        CharacterLoadout bow_lo;
+        bow_lo.primary_id = 1;
+        CHECK(sp_cat.build_loadout(bow_lo, bow_inv, Species::wookiee).weapons[primary_slot]->name == "bow");
+        CHECK(sp_cat.build_loadout(bow_lo, bow_inv, Species::human).weapons[primary_slot]->name != "bow");
+    }
 
     return swm::test::finish("items_test");
 }

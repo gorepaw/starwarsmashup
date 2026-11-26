@@ -91,6 +91,16 @@ struct ItemDef {
     std::string armor_class;  // armor: light, medium or heavy (its armor profession's)
     std::string vehicle;      // a vehicle: its class (a world vehicle class file's Name), called by using it
     std::string model_path;  // relative to game/imported_assets/, may contain {g} for m/f; worn pieces may list several, comma-separated
+    // A weapon's Galaxies object (Template = object/weapon/.../shared_*.iff):
+    // `swgtool export-items` exports its model, as Galaxies shows it, to
+    // weapons/<id>/<id>.gltf, which is its Model unless it names another.
+    std::string swg_template;
+    // How the exporter turns the model to lie along +Z with the guns
+    // (ModelForward = +y or -y: a melee weapon modeled standing along Y; 0
+    // as modeled), and whether it makes a muzzle at the model's front
+    // (ModelMuzzle = front: for a model with no muzzle hardpoint).
+    int model_forward = 0;
+    bool model_add_muzzle = false;
     std::string bf2_base;    // overrides archetype's default BF2 weapon .ini if non-empty
 
     // Weapon sidegrade multipliers over the BF2 archetype base.
@@ -116,6 +126,9 @@ struct ItemDef {
     double recoil = -1;          // degrees of kick a shot (-1: the archetype's)
     double aim_speed_mult = 1.0; // >1 faster to aim down
     std::string hit_effect;      // a [hit_effect]'s Id ("" none): ammo's, mostly
+    // The species that may use it ("Species = wookiee", comma-separated; empty:
+    // anyone). A species weapon has a bigger sidegrade budget in return.
+    std::vector<Species> species;
     std::optional<DamageType> damage_type;
     std::string bolt_color_name;  // optional red/blue/green/yellow
 
@@ -155,10 +168,24 @@ std::string mark_name(int mark);
 std::string item_display_name(const ItemDef& def, int mark);
 // A worn slot's share of the health a loadout's marks give: the Deflector
 // Shield's 0.3, the chest's 0.2 and so on, summing to 1 over every slot. A
-// character's health is times mark_scale of the weighted mark over the slots
-// their species can wear (an empty slot is Mk 0), so a Wookiee's comes from
-// the Deflector Shield alone; 0 for any other slot.
+// character's health is times mark_scale of the weighted mark (an empty slot
+// is Mk 0); 0 for any other slot.
 double defense_mark_weight(std::string_view slot);
+
+// Whether a species may use an item: a species weapon only its own.
+bool species_can_use(const ItemDef& def, Species species);
+
+// The sidegrade budget (docs/WEAPONS.md, Balance): what a weapon's or ammo's
+// multipliers over its archetype add up to, as one number. Damage and rate
+// of fire count in full; accuracy, range, heat, clip, reload and the rest by
+// weights; crits by their expected damage; an on-hit effect by its chance; a
+// carry penalty (slower running) gives budget back. The archetype itself
+// scores 1. Every weapon in the catalog scores within sidegrade_tolerance of
+// its budget: 1, or 1 + species_weapon_bonus for a species weapon.
+double sidegrade_score(const ItemDef& def);
+double sidegrade_budget(const ItemDef& def);
+inline constexpr double sidegrade_tolerance = 0.06;
+inline constexpr double species_weapon_bonus = 0.10;
 
 // One of a character's up to 5 saved loadouts.
 struct CharacterLoadout {

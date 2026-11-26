@@ -212,7 +212,7 @@ std::string default_weapon_model(std::string_view name) {
         return model("wp_rifle_t21");
     }
     if (has("rifle") || has("carbine") || has("blaster") || has("chaingun") || has("bulldog")) {
-        return model(imp ? "wp_carbine_e11" : all ? "wp_carbine_dh17" : rep ? "wp_carbine_ee3" : "wp_carbine_laser");
+        return model(imp ? "wp_rifle_e11" : all ? "wp_carbine_dh17" : rep ? "wp_carbine_ee3" : "wp_carbine_laser");
     }
     return "";
 }

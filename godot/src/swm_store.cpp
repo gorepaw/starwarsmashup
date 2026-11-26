@@ -191,6 +191,9 @@ godot::Dictionary to_dict(const core::ItemDef& d, const core::ItemCatalog& catal
         out["damage_type"] = godot::String::utf8(dt.data(), int(dt.size()));
     }
     out["model"] = godot::String::utf8(d.model_path.c_str());
+    godot::PackedStringArray species;  // a species weapon's species (their ids)
+    for (const core::Species sp : d.species) species.push_back(godot::String::utf8(core::species_def(sp).id.c_str()));
+    out["species"] = species;
     if (const core::HitEffect* e = d.hit_effect.empty() ? nullptr : catalog.hit_effect(d.hit_effect)) {
         out["hit_effect"] = hit_effect_dict(*e);
     }
@@ -878,11 +881,11 @@ godot::Array SwmCharacterStore::get_species_list() {
         d["female_eye_height"] = sp.female_body.eye_height;
         d["scale_min"] = sp.male_body.scale_min;
         d["scale_max"] = sp.male_body.scale_max;
-        godot::PackedStringArray blocked;
-        for (const std::string& slot : sp.blocked_slots) {
-            blocked.push_back(godot::String::utf8(slot.c_str()));
+        godot::PackedStringArray hidden;
+        for (const std::string& slot : sp.hidden_slots) {
+            hidden.push_back(godot::String::utf8(slot.c_str()));
         }
-        d["blocked_slots"] = blocked;
+        d["hidden_slots"] = hidden;
         d["traits"] = godot::String::utf8(sp.traits_summary.c_str());
         out.push_back(d);
     }

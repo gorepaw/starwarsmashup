@@ -77,7 +77,7 @@ var _hover_inst: Dictionary = {}
 var _slot_rects: Array = []    # [{rect, slot, is_app}]
 var _filtered: Array = []
 var _def_by_id: Dictionary = {}
-var _blocked_slots: PackedStringArray = []
+var _hidden_slots: PackedStringArray = []  # worn, but not shown on this species
 
 var _viewport: SubViewport
 var _stage: CharacterStage
@@ -198,11 +198,11 @@ func _rebuild_lookup() -> void:
 	_def_by_id.clear()
 	for def: Dictionary in catalog:
 		_def_by_id[str(def.get("id", ""))] = def
-	_blocked_slots = PackedStringArray()
+	_hidden_slots = PackedStringArray()
 	if ClassDB.class_exists("SwmCharacterStore"):
 		for sp: Dictionary in SwmCharacterStore.get_species_list():
 			if str(sp.get("id", "")) == species:
-				_blocked_slots = sp.get("blocked_slots", PackedStringArray())
+				_hidden_slots = sp.get("hidden_slots", PackedStringArray())
 				break
 
 
@@ -275,7 +275,7 @@ func _resolve_stage_worn(lo: Dictionary) -> Array:
 	var gen_code := "f" if gender == "female" else "m"
 	var gear_ids: Dictionary = lo.get("gear_ids", {})
 	for slot: String in gear_ids:
-		if _blocked_slots.has(slot):
+		if _hidden_slots.has(slot):
 			continue
 		var inst := _inst_by_id(int(gear_ids[slot]))
 		if inst.is_empty():
@@ -439,24 +439,24 @@ func _paint_paperdoll(box: Rect2) -> void:
 		var sx := x if left_col else box.end.x - col_w - 10 * u
 		var sy := slots_y + row * step
 		var r := Rect2(sx, sy, col_w, slot_h)
-		var blocked := not is_app and _blocked_slots.has(s_id)
-		var valid_drop := _drag_active and not blocked and _is_compatible(drag_def, s_id, is_app)
-		var tint := Color(0.45, 0.45, 0.5, 0.6) if blocked else (Color(0.65, 1.0, 0.7) if valid_drop else Color.WHITE)
+		var hidden := not is_app and _hidden_slots.has(s_id)
+		var valid_drop := _drag_active and _is_compatible(drag_def, s_id, is_app)
+		var tint := Color(0.65, 1.0, 0.7) if valid_drop else Color.WHITE
 		frame(r, "border_3_pieces", tint)
 		_slot_rects.append({"rect": r, "slot": s_id, "is_app": is_app})
 
 		var eq_id := _equipped_id_in_slot(lo, s_id, is_app)
 		var eq_inst := _inst_by_id(eq_id)
-		var eq_name := "Blocked" if blocked else "(Empty)"
-		if not blocked and not eq_inst.is_empty():
+		var eq_name := "(Empty)"
+		if not eq_inst.is_empty():
 			var edef: Dictionary = _def_by_id.get(str(eq_inst.get("def_id", "")), {})
 			eq_name = ItemTooltip.item_name(edef, eq_inst)
 		# Its two rows centred in the slot (slots shrink when there are many).
 		var pad := maxf(2.0 * u, (slot_h - 30.0 * u) * 0.5)
-		text("gamefont_tiny", s_lbl, Vector2(sx + 6 * u, sy + pad), "Left", DIM)
+		text("gamefont_tiny", s_lbl + (" (not shown)" if hidden else ""), Vector2(sx + 6 * u, sy + pad), "Left", DIM)
 		text("gamefont_tiny", eq_name, Vector2(sx + 6 * u, sy + pad + 15 * u), "Left",
-				Color(0.5, 0.5, 0.55) if blocked else (TEXT if eq_id > 0 else DIM))
-		if not blocked and eq_id > 0:
+				TEXT if eq_id > 0 else DIM)
+		if eq_id > 0:
 			var clear_r := Rect2(r.end.x - 20 * u, sy + pad, 16 * u, 16 * u)
 			button(clear_r, "x", "unequip:%s:%s" % ["app" if is_app else "gear", s_id])
 
@@ -613,7 +613,9 @@ func _is_compatible(def: Dictionary, slot: String, is_app: bool) -> bool:
 					or (dslot == "leggings" and slot == "pants") or (dslot == "boots" and slot == "boots_cosmetic")
 		return false
 	if kind == "weapon":
-		return dslot == slot
+		# A species weapon: only its species' hands.
+		var only: PackedStringArray = def.get("species", PackedStringArray())
+		return dslot == slot and (only.is_empty() or only.has(species))
 	if kind == "armor" or kind == "deflector_shield" or kind == "ammo":
 		return dslot == slot
 	if kind == "vehicle":
@@ -624,8 +626,6 @@ func _is_compatible(def: Dictionary, slot: String, is_app: bool) -> bool:
 func _try_equip_into(inst: Dictionary, slot: String, is_app: bool) -> void:
 	var def: Dictionary = _def_by_id.get(str(inst.get("def_id", "")), {})
 	if not _is_compatible(def, slot, is_app):
-		return
-	if not is_app and _blocked_slots.has(slot):
 		return
 	var lo := _current_loadout().duplicate(true)
 	var iid := int(inst.get("id", 0))

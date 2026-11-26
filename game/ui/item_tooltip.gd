@@ -77,6 +77,12 @@ static func build_lines(def: Dictionary, inst: Dictionary, store: Object, equipp
 			"color": Bf2Screen.DIM})
 	if not inst.is_empty() and kind != "junk" and kind != "supply" and kind != "quest" and kind != "ammo":
 		lines.append({"text": "Quality: %d%%" % roundi(quality * 100.0), "color": Bf2Screen.ACCENT})
+	var only: PackedStringArray = def.get("species", PackedStringArray())
+	if not only.is_empty():
+		var names: PackedStringArray = []
+		for s: String in only:
+			names.append(s.capitalize())
+		lines.append({"text": "%s only" % " / ".join(names), "color": Bf2Screen.ACCENT})
 	var mark := clampi(int(inst.get("mark", 0)), 0, 10)
 	if mark > 0:
 		var req: Dictionary = store.mark_requirement(def_id, mark) if store != null else {}

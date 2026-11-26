@@ -165,31 +165,66 @@ The Cryo Lance and Shock Lance are natural homes for chilled and ionized effects
 | `wp_mine_xg` | XG Mine | `placed` |
 | `eqp_weapon_auto_laser_trap` | Auto Laser Trap | `placed`: a small turret |
 
-Galaxies' scout traps have their own models too: `wp_grenade_flash_bomb`, `wp_grenade_noise_maker`, `wp_grenade_sonic_pulse`, `wp_grenade_tranquilizing_dart`, `wp_grenade_webber` and `wp_grenade_enraging_spur`. They're thrown utility items (blind, lure, stun, sleep, snare, enrage) and fit tactical well. `wp_sp_ppack_bomb` has no template; it may make a detpack.
+Galaxies' scout traps have their own models too: `wp_grenade_flash_bomb`, `wp_grenade_noise_maker`, `wp_grenade_sonic_pulse`, `wp_grenade_tranquilizing_dart`, `wp_grenade_webber` and `wp_grenade_enraging_spur`. They wait for the scout rework. Other utility items, such as the Flare and Tangle pistols, are tactical for now. `wp_sp_ppack_bomb` has no template; it may make a detpack.
 
 ### Left out
 
 - **Lightsabers:** 13 hilts as one-handed, two-handed and double-bladed (about 40 `.lsb` models). They wait on the Jedi decision (DESIGN's open questions).
 - Creature attacks, turrets, droid and vehicle weapons: those belong to NPCs and vehicles, not items.
 
+## Rules
+
+- **Era:** Clone Wars weapons (DC-15, E-5) are in, available like any other. They're left over from the war.
+- **Species weapons** (bowcasters, Wookiee pistols, the Trandoshan hunting rifle and pike) are locked to their species: `Species = wookiee` in the catalog. Only that species can equip one or fire it. In return a species weapon gets a bigger sidegrade budget (see Balance), so it's a little stronger than a common weapon of its archetype. NPCs aren't bound by this; a looted bowcaster can still be traded to a Wookiee.
+- **Armor fits every species.** Every species wears every armor slot for its statistics. A Wookiee's or Ithorian's body doesn't show armor, and a Trandoshan's doesn't show gloves or boots; that's the cosmetic layer only. Their species traits are now small, like everyone else's.
+- **Utility items** are tactical for now. Anything that was a scout's (traps, perhaps the flare) waits for the scout rework.
+
+## Balance: the sidegrade budget
+
+Within an archetype, weapons are different but not better. `sidegrade_score` (`core/include/swm/core/items.h`) turns a weapon's multipliers over its archetype into one number. The archetype itself scores 1.
+
+| Term | Weight |
+|---|---|
+| Damage, rate of fire | in full (damage × rate) |
+| Crits | their expected damage: 1 + chance × (multiplier − 1) |
+| Spread, range | power −0.35 and 0.35 |
+| Heat per shot | power −0.3 |
+| Clip, reload time | power 0.15 and −0.15 |
+| Headshot, Deflector Shield, vehicle damage | power 0.25, 0.15, 0.1 |
+| Bolt velocity, swap time, aim speed | power 0.1, −0.05, 0.05 |
+| Recoil | ÷ (1 + 0.1 × degrees) |
+| An on-hit effect | × 1.1 |
+| A carry penalty (run or sprint speed) | that speed to the power 1.5, so a slower weapon gets budget back |
+| Melee reach, stagger | power 0.5 and 0.25, against the melee base |
+| Melee arc, lunge, shield disruption | power 0.15 each, against the melee base |
+
+Every weapon and ammo in the catalog must score within ±6% of its budget: 1, or 1.1 for a species weapon. `items_test` checks the whole catalog and prints each score. For example, the T-21 hits 1.42x as hard but fires at 0.78x, builds 1.15x the heat and slows its carrier to 0.94x run speed: 0.97.
+
 ## How we build them
 
-### 1. One source of truth: the catalog names the Galaxies template
+### 1. One source of truth: the catalog names the Galaxies template (done)
 
-The exporter's weapon list is hard-coded in `tools/swgtool/main.cpp` today, separate from the catalog. Instead, each catalog weapon names its Galaxies template:
+Each catalog weapon names its Galaxies object:
 
 ```ini
 [item]
-Id = wp_rifle_t21
-Template = object/weapon/ranged/rifle/shared_rifle_t21.iff
-ModelForward = +y   ; only where the model faces the other way
+Id = wp_melee_vibrolance
+Template = object/weapon/melee/polearm/shared_lance_vibrolance.iff
+ModelForward = -y   ; a melee model standing along Y, laid along +Z with the guns
+ModelMuzzle = front ; a model with no muzzle point: one is made at its front
 ```
 
-`swgtool export-items` reads the catalog. For each item it follows the template to its model (as Galaxies does, picking up `_combined` models), exports it to `weapons/<id>/<id>.gltf`, and fills in `Model` itself. Adding a weapon then means one catalog entry. This also fixes the six guns now exported without their scopes and stocks (T-21, EE-3, laser carbine, DL-44, D-18, scout blaster) and the three stand-ins (DH-17 pistol and ion pistol on the D-18 model).
+`swgtool export-items <tre_dir> game/imported_assets` reads the catalog (`--catalog` to name another, `--only <id>` for one item). For each weapon it follows the template to the model Galaxies shows, the `_combined` one with scope and stock where there is one, and exports it to `weapons/<id>/<id>.gltf`. That path is the item's `Model` unless it names another. Adding a weapon is one catalog entry.
 
-### 2. A contact sheet to check every model
+This fixed the six guns that were exported without their scopes and stocks (T-21, EE-3, laser carbine, DL-44, D-18, scout blaster), and the DH-17 and ion pistols, which had been borrowing the D-18's model. The DLT-20A now uses the model Galaxies uses for it, `wp_rifle_dlt20`. Galaxies has no ion grenade, so ours shows as a glop grenade.
 
-As with the melee fixes, every exported model goes through the render script: held in the soldier's hand, muzzle marked. One sheet per category catches backwards and sideways models before they reach the game. The script already exists; it needs to read the catalog.
+### 2. A contact sheet to check every model (done)
+
+```
+godot --path game --script res://tools/weapon_sheet.gd -- <output_prefix> [category | item id]...
+```
+
+It renders every catalog weapon in a soldier's hands, one image per category, six to a page, with a red ball on each gun's muzzle and the id underneath. Run it after adding weapons. (The first soldier on a page can be caught mid-pose; that's the sheet, not the weapon.)
 
 ### 3. One item per model, with variants as tiers
 
@@ -209,15 +244,9 @@ The rest is the sidegrade multipliers we already have, plus effects: ion (droids
 
 As planned in itemsideas: primaries, then sidearms, then tactical.
 
-1. **Exporter and catalog plumbing** (steps 1 and 2), fixing the existing 26.
+1. ~~**Exporter and catalog plumbing** (steps 1 and 2), fixing the existing weapons.~~ Done.
 2. **Primaries:** snipers (6), rifles (14), carbines and shotguns (20), heavy (6). That's 46 items and the `beam` and `flamer` archetypes.
 3. **Sidearms:** pistols (30) and one-handed melee (22).
 4. **Two-handed melee** (25).
 5. **Tactical:** grenades (6), mines and the laser trap (4) with `placed`, and scout traps (6).
 
-## Open questions
-
-1. **A sidegrade budget formula.** Within an archetype, how do we keep weapons different but not better? One option: a score per weapon (damage × rate × accuracy × range, each weighted) that must land within a few percent of 1.0. Every weapon spends the same budget differently.
-2. **Era:** Clone Wars models (DC-15, E-5) sit next to Galactic Civil War ones. Are they all available everywhere, or tied to faction quartermasters and eras?
-3. **Tactical profession:** grenades sit under Heavy Weapons now. Should scout traps and utility pistols (flare, tangle) go there too, or to Smuggler or a scout line?
-4. **Species weapons** (bowcasters, Wookiee pistols, the Trandoshan hunting rifle): can anyone use them, or are they species-locked with a bonus for their species?

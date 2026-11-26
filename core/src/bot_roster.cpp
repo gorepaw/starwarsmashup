@@ -228,7 +228,6 @@ BotProfileEntry build_entry(std::string name, std::string faction, Species speci
             cl.gear_ids["deflector_shield"] = sh;
         }
         for (size_t k = 0; k < armor_slot_keys.size(); ++k) {
-            if (!species_can_wear_slot(species, armor_slot_keys[k])) continue;
             if (const uint64_t id = add_item(r.armor[k])) {
                 cl.gear_ids[armor_slot_keys[k]] = id;
             }

@@ -90,11 +90,11 @@ func _load_clothes() -> void:
 
 # The plain clothes this species can wear (none in a slot it can't).
 func _wearable_clothes() -> Array:
-	var blocked: PackedStringArray = _current_species().get("blocked_slots", PackedStringArray())
+	var hidden: PackedStringArray = _current_species().get("hidden_slots", PackedStringArray())
 	var g := "f" if _gender == "female" else "m"
 	var out: Array = []
 	for slot: String in _clothes:
-		if not blocked.has(slot):
+		if not hidden.has(slot):
 			out.append(str(_clothes[slot]).replace("{g}", g))
 	return out
 
@@ -415,11 +415,11 @@ func _paint_traits(x: float, y: float, w: float, sp: Dictionary) -> void:
 			float(sp.get("male_height", 1.78)) * float(sp.get("scale_min", 0.88)),
 			float(sp.get("male_height", 1.78)) * float(sp.get("scale_max", 1.12))],
 			Vector2(x, y + 32 * u), "Left", TEXT)
-	var blocked: PackedStringArray = sp.get("blocked_slots", PackedStringArray())
-	var gear_text := "All standard armor allowed" if blocked.is_empty() \
-			else "Restricted slots: " + ", ".join(blocked)
+	var hidden: PackedStringArray = sp.get("hidden_slots", PackedStringArray())
+	var gear_text := "Wears all armor" if hidden.is_empty() \
+			else "Wears all armor; not shown: " + ", ".join(hidden)
 	text("gamefont_small", gear_text, Vector2(x, y + 60 * u), "Left",
-			ACCENT if not blocked.is_empty() else DIM)
+			ACCENT if not hidden.is_empty() else DIM)
 	var summary := str(sp.get("traits", ""))
 	var parts := summary.split("; ")
 	for i in parts.size():

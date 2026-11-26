@@ -36,6 +36,7 @@
 #include "swg/static_mesh.h"
 #include "swg/tre_archive.h"
 #include "swg/tre_scan.h"
+#include "swm/core/items.h"
 #include "swm/core/species.h"
 
 namespace {
@@ -56,7 +57,7 @@ constexpr const char* usage = R"(usage:
                            [--weapon <path.lod>]
                            [--bf2-lvl <ingame.lvl> --bf2-bank <bank>... --anim <name>...] [--swg-anim <path.ans>...]
   swgtool export-species <dir> <out_dir> [--bf2-lvl <ingame.lvl>] [--species <id>] [--max-hairs <n>]
-  swgtool export-items <dir> <out_dir>
+  swgtool export-items <dir> <out_dir> [--catalog <swg_catalog.ini>] [--only <item id>]...
   swgtool export-vehicles <dir> <out_dir>
   swgtool bake-terrain <dir> <out_prefix> --trn <path.trn> --center <x> <z> --samples <n> --spacing <m>
                        [--snapshot <path.ws>]
@@ -1513,55 +1514,40 @@ int cmd_export_vehicles(const std::vector<std::string>& args) {
 
 int cmd_export_items(const std::vector<std::string>& args) {
     if (args.size() < 2) {
-        std::cerr << "usage: swgtool export-items <dir> <out_dir>\n";
+        std::cerr << usage;
         return 2;
     }
-    const TreLibrary library(args[0]);
     const std::filesystem::path out_root(args[1]);
     TreLibrary lib(args[0]);
 
-    struct WeaponEntry {
-        const char* id;
-        const char* lod;
-        // Melee weapons stand along Y in Galaxies; the guns, and the hold point, lie forward along +Z.
-        // 1 or -1: a quarter turn lays its +Y or -Y end forward (0: held as modeled).
-        float forward_y = 0;
-        bool add_muzzle = false; // names no muzzle hardpoint: one is made at its front
-    };
-    const WeaponEntry weapons[] = {
-        {"wp_carbine_e11", "appearance/lod/wp_carbine_e11.lod"},
-        {"wp_carbine_dh17", "appearance/lod/wp_carbine_dh17.lod"},
-        {"wp_carbine_ee3", "appearance/lod/wp_carbine_ee3.lod"},
-        {"wp_carbine_laser", "appearance/lod/wp_carbine_laser.lod"},
-        {"wp_rifle_dlt20a", "appearance/lod/wp_rifle_dlt20a.lod"},
-        {"wp_rifle_t21", "appearance/lod/wp_rifle_t21.lod"},
-        {"wp_rifle_laser", "appearance/lod/wp_rifle_laser.lod"},
-        {"wp_rifle_bowcaster", "appearance/lod/wp_sp_bowcaster.lod"},
-        {"wp_rifle_sg82", "appearance/lod/wp_rifle_sg82.lod"},
-        {"wp_pistol_dl44", "appearance/lod/wp_pistol_dl44.lod"},
-        {"wp_pistol_d18", "appearance/lod/wp_pistol_d18.lod"},
-        {"wp_pistol_scout_blaster", "appearance/lod/wp_pistol_scout.lod"},
-        {"wp_heavy_rocket_launcher", "appearance/lod/wp_hvy_launcher.lod", 0, true},
-        {"wp_grenade_c22", "appearance/lod/wp_grenade_c22.lod"},
-        {"wp_grenade_glop", "appearance/lod/wp_grenade_glop.lod"},
-        {"wp_melee_vibroblade", "appearance/lod/wp_mle_knife_vibroblade.lod", 1},
-        {"wp_melee_stun_baton", "appearance/lod/wp_mle_baton_stun.lod", 1},
-        {"wp_melee_vibrolance", "appearance/lod/wp_mle_lance_vibrolance.lod", -1},  // its long blade is at -Y
-        {"wp_melee_vibroknuckler", "appearance/lod/wp_sp_vibroknuckler.lod"},  // across the fist, as modeled
-    };
+    // The weapons: every catalog weapon naming its Galaxies object
+    // (Template), exported from the model that object shows, the way
+    // Galaxies picks it (a "_combined" gun with its scope and stock).
+    std::string catalog_path = option(args, "--catalog");
+    if (catalog_path.empty()) catalog_path = "game/items/swg_catalog.ini";
+    const std::vector<std::string> only = options(args, "--only");
+    swm::core::ItemCatalog catalog;
+    catalog.load(catalog_path);
+    ObjectTemplates templates(lib);
 
     size_t weapon_count = 0;
-    for (const auto& w : weapons) {
-        if (!lib.contains(w.lod)) {
-            std::cerr << "skipping weapon " << w.id << ": no " << w.lod << "\n";
+    for (const swm::core::ItemDef& w : catalog.all()) {
+        if (w.swg_template.empty()) continue;
+        if (!only.empty() && std::find(only.begin(), only.end(), w.id) == only.end()) continue;
+        if (!lib.contains(w.swg_template)) {
+            std::cerr << "skipping weapon " << w.id << ": no " << w.swg_template << "\n";
             continue;
         }
         try {
-            const std::string mesh_path = "appearance/" + lod_highest_detail(lib.read(w.lod));
-            StaticMesh sm = parse_static_mesh(lib.read(mesh_path));
-            if (w.forward_y != 0) {
-                // A quarter turn about X.
-                const float s = w.forward_y;
+            const std::string appearance = templates.shared(w.swg_template).appearance;
+            if (appearance.empty()) throw std::runtime_error(w.swg_template + " names no appearance");
+            StaticMesh sm = load_static_appearance(lib, appearance);
+            std::cout << std::format("{:28} {}\n", w.id, appearance);
+            if (w.model_forward != 0) {
+                // Melee weapons stand along Y in Galaxies; the guns, and the
+                // hold point, lie forward along +Z. A quarter turn about X
+                // lays the +Y (or -Y) end forward.
+                const float s = float(w.model_forward);
                 const auto lay_forward = [s](Vec3& v) { v = Vec3{v.x, -s * v.z, s * v.y}; };
                 for (StaticMesh::Part& part : sm.parts) {
                     for (Vec3& p : part.positions) lay_forward(p);
@@ -1574,7 +1560,7 @@ int cmd_export_items(const std::vector<std::string>& args) {
                     hp.transform.at(2, 3) = at.z;
                 }
             }
-            const std::filesystem::path dir = out_root / "weapons" / w.id;
+            const std::filesystem::path dir = out_root / std::filesystem::path(w.model_path).parent_path();
             std::filesystem::create_directories(dir);
             Gltf gltf;
             std::ostringstream log;
@@ -1588,7 +1574,7 @@ int cmd_export_items(const std::vector<std::string>& args) {
                                       .translation = Vec3{m.at(0, 3), m.at(1, 3), m.at(2, 3)}});
                 root_node.children.push_back(hp_node);
             }
-            if (w.add_muzzle) {
+            if (w.model_add_muzzle) {
                 // The middle of its frontmost 2 cm.
                 std::vector<Vec3> points;
                 for (const StaticMesh::Part& part : sm.parts) {
@@ -1613,7 +1599,7 @@ int cmd_export_items(const std::vector<std::string>& args) {
             const int root_idx = int(gltf.nodes.size());
             gltf.nodes.push_back(std::move(root_node));
             gltf.scene_nodes = {root_idx};
-            gltf.write(dir / (std::string(w.id) + ".gltf"));
+            gltf.write(out_root / w.model_path);
             ++weapon_count;
         } catch (const std::exception& e) {
             std::cerr << "skipping weapon " << w.id << ": " << e.what() << "\n";

@@ -116,12 +116,9 @@ const std::array<SpeciesDef, species_count> species_table = [] {
         d.display_name = "Trandoshan";
         d.male_body = {0.45, 1.96, 1.78, 1.22, 0.90, 1.12};
         d.female_body = scaled_female(d.male_body, 0.95);
-        d.blocked_slots = {"gloves", "boots"};
-        d.modifiers = {{Stat::max_health, 60, 1},
-                       {Stat::mitigation, 0.10, 1},
-                       {Stat::mitigation_melee, 0.10, 1},
-                       {Stat::energy_restore, 0, 1.05}};
-        d.traits_summary = "+60 Health, +10% Armor, +10% Melee Resist; cannot wear gloves or boots";
+        d.hidden_slots = {"gloves", "boots"};
+        d.modifiers = {{Stat::max_health, 30, 1}, {Stat::mitigation_melee, 0.08, 1}};
+        d.traits_summary = "+30 Health, +8% Melee Resist; gloves and boots don't show";
     }
     {
         SpeciesDef& d = table[size_t(Species::wookiee)];
@@ -131,11 +128,9 @@ const std::array<SpeciesDef, species_count> species_table = [] {
         d.display_name = "Wookiee";
         d.male_body = {0.50, 2.20, 1.98, 1.36, 0.92, 1.12};
         d.female_body = scaled_female(d.male_body, 0.95);
-        d.blocked_slots = no_standard_armor;
-        d.modifiers = {{Stat::max_health, 120, 1},
-                       {Stat::mitigation, 0.20, 1},
-                       {Stat::mitigation_melee, 0.15, 1}};
-        d.traits_summary = "+120 Health, +20% Armor, +15% Melee Resist; no standard armor or footwear";
+        d.hidden_slots = no_standard_armor;
+        d.modifiers = {{Stat::max_health, 40, 1}, {Stat::mitigation_melee, 0.05, 1}};
+        d.traits_summary = "+40 Health, +5% Melee Resist; armor protects but doesn't show";
     }
     {
         SpeciesDef& d = table[size_t(Species::ithorian)];
@@ -145,12 +140,9 @@ const std::array<SpeciesDef, species_count> species_table = [] {
         d.display_name = "Ithorian";
         d.male_body = {0.46, 2.08, 1.88, 1.28, 0.90, 1.12};
         d.female_body = scaled_female(d.male_body, 0.95);
-        d.blocked_slots = no_standard_armor;
-        d.modifiers = {{Stat::max_health, 100, 1},
-                       {Stat::mitigation, 0.18, 1},
-                       {Stat::mitigation_bio, 0.15, 1},
-                       {Stat::mitigation_electro, 0.10, 1}};
-        d.traits_summary = "+100 Health, +18% Armor, +15% Bio, +10% Electro; no standard armor";
+        d.hidden_slots = no_standard_armor;
+        d.modifiers = {{Stat::max_health, 15, 1}, {Stat::mitigation_electro, 0.10, 1}};
+        d.traits_summary = "+15 Health, +10% Electro Resist; armor protects but doesn't show";
     }
 
     return table;
@@ -188,10 +180,10 @@ std::optional<Gender> gender_from_name(std::string_view name) {
     return std::nullopt;
 }
 
-bool species_can_wear_slot(Species s, std::string_view slot) {
+bool species_shows_slot(Species s, std::string_view slot) {
     const std::string key = lower_ascii(slot);
-    const auto& blocked = species_def(s).blocked_slots;
-    return std::find(blocked.begin(), blocked.end(), key) == blocked.end();
+    const auto& hidden = species_def(s).hidden_slots;
+    return std::find(hidden.begin(), hidden.end(), key) == hidden.end();
 }
 
 SpeciesBody species_body(Species s, Gender g, double height_slider) {
@@ -206,14 +198,7 @@ SpeciesBody species_body(Species s, Gender g, double height_slider) {
 }
 
 CharacterStats stats_for(const Loadout& loadout, Species species, const CharacterStats& base) {
-    Loadout filtered;
-    filtered.name = loadout.name;
-    filtered.weapons = loadout.weapons;
-    for (const Gear& g : loadout.gear) {
-        if (g.slot.empty() || species_can_wear_slot(species, g.slot)) {
-            filtered.gear.push_back(g);
-        }
-    }
+    Loadout filtered = loadout;  // every species wears every slot
     const auto& mods = species_def(species).modifiers;
     if (!mods.empty()) {
         filtered.gear.push_back(Gear{.name = species_def(species).id, .slot = "", .modifiers = mods});

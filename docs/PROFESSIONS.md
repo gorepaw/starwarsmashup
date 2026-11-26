@@ -47,7 +47,7 @@ Armor proficiency is completely decoupled from weapon and advanced professions. 
 
 | Profession | Role & Stat Profile | Baseline SWG Sets | Key 1–100 Unlocks |
 |---|---|---|---|
-| **Unarmored** | Clothing only; fastest movement, roll/stamina efficiency, natural synergy with Wookiee/Ithorian innate traits | Civilian clothing + innate species traits | Roll distance/recovery, sprint efficiency, clothing-weave utility, evasion timing |
+| **Unarmored** | Clothing only; fastest movement, roll/stamina efficiency | Civilian clothing | Roll distance/recovery, sprint efficiency, clothing-weave utility, evasion timing |
 | **Light / Recon Armor** | High mobility, fast stamina regen, strong `electro` / `bio` mitigation, low general mitigation | `ubese`, `tantel`, `scout_trooper`, `chitin`, `bone`, `zam`, `nightsister`, `singing_mountain_clan`, `kashyyykian_hunting`, `ithorian_sentinel` | Reduced scanner/minimap signature, sprint/roll efficiency, mantle/mobility perks, extra utility pouches |
 | **Medium / Battle Armor** | Balanced general + `laser` / `ballistic` mitigation, standard soldier movement | `padded`, `marine`, `rebel_battle`, `stormtrooper`, `clone_trooper`, `bounty_hunter`, `marauder`, `kashyyykian_ceremonial`, `ithorian_guardian` | Negates medium movement/acceleration drag, balanced resistance tuning, extra secondary/grenade bandolier capacity |
 | **Heavy / Assault Armor** | High general + `explosive` / `melee` / `ballistic` mitigation, slower sprint | `composite`, `rebel_assault`, `assault_trooper`, `ris`, `mandalorian`, `kashyyykian_black_mtn`, `ithorian_defender` | Reduces speed/stamina penalties, **explosion knockback (`explosion_push`) resistance**, braced firing stability |
