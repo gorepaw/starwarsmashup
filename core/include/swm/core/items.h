@@ -55,6 +55,8 @@ enum class WeaponArchetype : uint8_t {
     flamer,       // a short cone of fire or acid: heat only, sets its effect (flamethrower, acid launcher)
     scatter_pistol,  // a spread of bolts at sidearm size, on heat (the scatter pistol)
     melee_2h,        // a two-handed sword, axe, hammer or polearm: a primary, heavier than `melee`
+    placed,          // a mine or trap: tossed down, it goes off when an enemy comes near (tactical)
+    utility,         // a tactical one-shot: a bolt that leaves its effect (the flare, tangle pistols)
 };
 
 // A melee archetype: one-handed (`melee`, a sidearm) or two-handed (`melee_2h`).
@@ -124,6 +126,9 @@ struct ItemDef {
     double melee_lunge = 0.0;
     double melee_stagger = 0.0;
     double shield_disrupt = 0.0;
+    // A placed trap (the auto laser trap): bolts it fires at an enemy who
+    // comes near, instead of exploding. 0: a mine.
+    int trap_shots = 0;
     double velocity_mult = 1.0;  // >1 faster bolts (over the same reach)
     double headshot_mult = 1.0;  // times the base headshot multiplier
     double crit_chance = 0.0;    // added to the weapon's (0: none)

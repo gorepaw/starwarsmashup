@@ -12,7 +12,7 @@ Every weapon model in Galaxies, sorted into our seven categories, and how we tur
 | Heavy | Primary | Heavy Weapons | `heavy_launcher`, `beam_cannon`, `flamer` |
 | Sidearm | Sidearm | Pistols | `pistol`, `scatter_pistol` |
 | Melee | Sidearm if one-handed, primary if two-handed | Melee | `melee` (one-handed), `melee_2h` (two-handed) |
-| Tactical | Secondary | Heavy Weapons | `grenade` (new: `placed` for mines and traps) |
+| Tactical | Secondary | Heavy Weapons | `grenade`, `placed` (mines and traps), `utility` (flare and tangle pistols) |
 
 Melee goes by size, the same way shotguns do: knives, batons, one-handed swords and knucklers are sidearms; two-handed swords, axes and polearms are primaries.
 
@@ -238,7 +238,10 @@ Most weapons fit the archetypes we had. These handling styles didn't:
 - **`flamer`** (Heavy Weapons): a cone of slow pellets that drop and die out at about 11 m, on heat, setting its effect (the flamethrower burns, the acid launcher poisons). Battlefront II has no flamethrower, so the numbers are our own. Done.
 - **`scatter_pistol`** (Pistols): a shotgun's spread at sidearm size, on the pistol's heat instead of a clip. About a pistol's damage a second up close; five pellets that spread 5° and die out at 24 m. Battlefront II has none, so the numbers are our own. Done.
 - **`melee_2h`** (Melee): two-handed swords, axes, hammers and polearms, a primary. A primary should outweigh a sidearm, so its swings are slower but hit harder: about a fifth more damage a second than one-handed `melee` (165 every 0.65 s against 115 every 0.55 s), 3.2 m of reach against 2.6, a 90° arc against 70, more stagger (0.5 against 0.35) and shield disruption (3 against 2.5), and a shorter lunge (4.5 m against 5). Done.
-- **`placed`:** a mine or trap set on the ground that triggers on proximity. Battlefront II has landmines and detpacks; we'd import their definitions, since only 37 Battlefront II weapon definitions are imported today. Comes with tactical.
+- **`placed`** (Heavy Weapons): a mine or trap, tossed a few meters from the tactical slot. It arms 1.5 s after it comes to rest, then goes off when an enemy (a soldier, creature or vehicle) comes within 2 m, and is gone, harmlessly, after 60 s. Battlefront II's landmine (`com_weap_inf_landmine`) also lies 60 s, but kills outright (8000 damage); ours does about a thermal detonator's (400, full within 2 m, none past 5 m), so a mine is a warning, not a sentence. A trap (`TrapShots`, the Auto Laser Trap) covers 8 m and fires that many bolts at whoever comes near, 0.3 s apart, instead of exploding. Done.
+- **`utility`** (Heavy Weapons): a tactical one-shot, three carried: a slow, lobbed bolt whose effect is the point. The Flare Pistol sets its target burning; the Tangle Pistol leaves it **tangled** (45% run speed and 60% sprint for 2.5 s, every hit). Done.
+
+A grenade's or mine's `RangeMult` sizes its blast (its fuse or trigger, not its flight, decides where it goes off), and thrown or placed, it's drawn as its own Galaxies model. The Heavy Fragmentation Grenade now has the wider blast its description promised (`RangeMult` 1.15, `DamageMult` 0.95).
 
 The rest is the sidegrade multipliers we already have, plus effects through `OnHit`, the same way ammo carries burning, chilled and ionized. The primaries added **poisoned** (bio, 8 a second for 4 s, 35% of hits) and **snared** (60% run speed for 2 s, 30% of hits). The sidearms added **bleeding** (ballistic, 6 a second for 5 s, 30% of hits: the flechette pistol, the skinner blade, the razor knuckler) and **dazed** (70% run and sprint speed and no energy regained for 1.5 s, 25% of hits: the Trandoshan suppressor).
 
@@ -252,5 +255,7 @@ As planned in itemsideas: primaries, then sidearms, then tactical.
 2. ~~**Primaries:** snipers (6), rifles (14), carbines and shotguns (20), heavy (6), and the `beam`, `beam_cannon` and `flamer` archetypes.~~ Done: 45 items (35 new), every one within budget. The black DH-17 (a recolor) and the DXR-6 carbine (the disruptor's model) aren't separate items. The laser carbine moved to carbine handling.
 3. ~~**Sidearms:** pistols (30) and one-handed melee (22).~~ Done: 28 pistols (23 new) and 22 one-handed melee (19 new), every one within budget, and the `scatter_pistol` archetype. One-handed melee is balanced against the melee archetype as it is; two-handed melee may get its own, stronger archetype with step 4, since a primary should outweigh a sidearm.
 4. ~~**Two-handed melee** (25).~~ Done: 25 items (24 new) on the new `melee_2h` archetype, every one within budget. The Vibrolance moved to it and was retuned (longer reach, a wider arc). Quest and recolor variants (the Grooved sword, the Gamorrean battleaxe, the Nightsister and Janta versions) aren't separate items. The Cryo Lance chills and the Shock Lance ionizes; the Executioner's Hack bleeds. The Trandoshan pike and Wookiee polearm are species weapons.
-5. **Tactical:** grenades (6), mines and the laser trap (4) with `placed`, and scout traps (6).
+5. ~~**Tactical:** grenades (6), mines and the laser trap (4) with `placed`, and scout traps (6).~~ Done, but for the scout traps (they wait for the scout rework): the Thermal Detonator, Imperial Detonator, Proton Grenade and CryoBan Grenade (chilled); the DRX, XG and Anti-Vehicle mines and the Auto Laser Trap; and the Flare and Tangle pistols. 14 tactical items (10 new), every one within budget.
+
+Still to come for tactical: mines can't yet be shot or disarmed (Battlefront's have health), traps don't turn to face their target, and bots throw a mine the way they throw a grenade, at an enemy more than 8 m off.
 

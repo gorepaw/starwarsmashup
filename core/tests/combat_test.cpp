@@ -782,6 +782,71 @@ void test_hit_effects() {
 // The beam and flamer archetypes (docs/WEAPONS.md), as the catalog makes
 // them without Battlefront's files: a beam is near-instant and runs on heat;
 // a flamer's cone dies out short of 12 m, and burns what it reaches.
+// Placed mines and traps (docs/WEAPONS.md): A tosses one down in front of
+// itself; it arms, and waits. B, walking up from 12 m, sets a mine off (and
+// the blast takes B); a trap fires its bolts at B instead. A mine that's lain
+// its time is gone, harmlessly.
+void test_placed_mines_and_traps() {
+    const std::filesystem::path ini = "swm_placed_test_catalog.ini";
+    {
+        std::ofstream out(ini);
+        out << "[item]\nId = mine\nKind = weapon\nArchetype = placed\n"
+            << "[item]\nId = trap\nKind = weapon\nArchetype = placed\nTrapShots = 6\nDamageType = laser\n";
+    }
+    ItemCatalog catalog;
+    catalog.load(ini);
+    std::filesystem::remove(ini);
+    const WeaponDef mine = catalog.resolve_weapon(*catalog.find("mine"));
+    const WeaponDef trap = catalog.resolve_weapon(*catalog.find("trap"));
+    CHECK(mine.projectile == Projectile::grenade && mine.trigger_radius > 0 && mine.trap_shots == 0);
+    CHECK(trap.trap_shots == 6 && trap.trigger_radius > mine.trigger_radius && mine.ammo_class == AmmoClass::none);
+
+    enum class Run { mine, trap, expired };
+    for (const Run run : {Run::mine, Run::trap, Run::expired}) {
+        Loadout carried;
+        WeaponDef placed = run == Run::trap ? trap : mine;
+        if (run == Run::expired) placed.fuse = 2;
+        carried.weapons[secondary_slot] = placed;
+        Arena arena(0, 0.5, {}, carried);
+        arena.run(0.5, [] {});
+        const uint32_t b = arena.b.entity_id();
+        std::vector<net::Explosion> explosions;
+        const auto watch = [&] {
+            for (const auto& e : arena.a.take_explosions()) explosions.push_back(e);
+        };
+        // Down in front of A (facing +X, toward B), A backing off out of its
+        // blast; 3 s for it to settle, arm, and (the short-lived one) run
+        // out. Nobody near: nothing.
+        bool tossed = false;
+        int ticks = 0;
+        arena.run(3.0, [&] {
+            const bool back = ++ticks > 60 && ticks < 300;
+            arena.a.set_input({.forward = back ? -1.0 : 0.0, .yaw = -std::numbers::pi / 2, .pitch = -0.6,
+                               .secondary = !tossed});
+            tossed = true;
+            watch();
+        });
+        CHECK(explosions.empty() && arena.server.health_of(b) == 400);
+        // B walks toward A (facing -X), past where it lies.
+        arena.run(2.5, [&] {
+            arena.b.set_input({.forward = 1, .yaw = std::numbers::pi / 2});
+            watch();
+        });
+        const double lost = 400 - arena.server.health_of(b);
+        std::printf("placed (%s): %zu explosions, B lost %.0f\n",
+                    run == Run::mine ? "mine" : run == Run::trap ? "trap" : "expired", explosions.size(), lost);
+        if (run == Run::mine) {
+            // Heavy, not certain death: B is at the trigger's edge.
+            CHECK(explosions.size() == 1 && lost > 250);
+        } else if (run == Run::trap) {
+            CHECK(explosions.empty() && arena.server.alive(b) && lost >= 40 && lost <= 6 * 40 + 1e-6);
+        } else {
+            CHECK(explosions.empty() && lost == 0);
+        }
+        CHECK(arena.server.health_of(arena.a.entity_id()) == 400);
+    }
+}
+
 void test_beam_and_flamer() {
     const std::filesystem::path ini = "swm_beam_test_catalog.ini";
     {
@@ -988,6 +1053,7 @@ void test_unified_ammo() {
 } // namespace
 
 int main() {
+    test_placed_mines_and_traps();
     test_beam_and_flamer();
     test_hit_damage_and_shield_factor();
     test_hit_effects();

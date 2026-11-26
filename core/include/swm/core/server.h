@@ -534,6 +534,10 @@ private:
         double rewind = 0;   // ticks: targets are tested this far in the past
         bool resting = false;  // a grenade that stopped bouncing
         bool touched = false;  // a grenade that's hit something (its timer may start then)
+        // A placed mine or trap at rest: seconds until it's armed (or a
+        // trap's next shot), and the shots its trap has left.
+        double wait = 0;
+        int shots_left = 0;
     };
 
     struct Pickup {

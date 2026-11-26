@@ -2246,6 +2246,7 @@ void GameServer::fire(Client& shooter, const Shot& shot, double view_tick) {
         bolt.life = !timed ? weapon.bolt_life : weapon.timer_on_contact ? longest_flight : weapon.fuse;
         bolt.gravity = weapon.bolt_gravity * shooter.stats.move.gravity;
         bolt.rewind = rewind;
+        bolt.shots_left = weapon.trap_shots;
         bolts_.push_back(bolt);
     }
 }
@@ -2270,6 +2271,7 @@ void GameServer::fire_npc(const Npc& shooter, const Shot& shot) {
         bolt.life = !timed ? weapon.bolt_life : weapon.timer_on_contact ? longest_flight : weapon.fuse;
         bolt.gravity = weapon.bolt_gravity * config_.base_stats.move.gravity;
         bolt.rewind = 0;
+        bolt.shots_left = weapon.trap_shots;
         bolts_.push_back(bolt);
     }
 }
@@ -2315,9 +2317,78 @@ void GameServer::advance_bolts() {
     const bool harmless = conquest_ && conquest_->state().phase == Phase::ended;
     // Explosions damage the bolt list's owners, so collect them first.
     std::vector<Blast> blasts;
+    std::vector<Bolt> fired;  // a trap's shots, added after
+    // Where an enemy of a placed mine's is, near enough to set it off: their
+    // chest (a vehicle's middle).
+    const auto mine_target = [&](const Bolt& bolt) -> std::optional<Vec3> {
+        const double r = bolt.def.trigger_radius;
+        const auto near = [&](Vec3 at, double reach) {
+            const Vec3 d = at - bolt.position;
+            return d.x * d.x + d.z * d.z <= reach * reach && d.y > -1.0 && d.y < 2.5;
+        };
+        const bool pvp_blocked = !conquest_ && !config_.pvp_enabled && bolt.team != hostile_npc_team;
+        for (const Client& target : clients_) {
+            if (target.life != Life::alive || target.state.vehicle >= 0 || target.entity == bolt.owner ||
+                (allied(bolt.team, target.team) && !config_.friendly_fire) ||
+                (pvp_blocked && !bounty_pvp_allowed(bolt.owner, target.entity))) {
+                continue;
+            }
+            if (near(target.state.position, r)) return target.state.position + Vec3{0, 1.2, 0};
+        }
+        if (bolt.team != hostile_npc_team) {
+            for (const Npc& npc : npcs_) {
+                if (npc.hidden || npc.actor_kind < 2 || npc.life != Life::alive) continue;
+                if (near(npc.state.position, r + npc.hit_radius)) return npc.state.position + Vec3{0, 1.0, 0};
+            }
+        }
+        for (const Vehicle& v : vehicles_) {
+            if (v.dead_for >= 0 || (allied(bolt.team, v.team) && !config_.friendly_fire)) continue;
+            if (near(v.state.position, r + 2.5)) return v.state.position + Vec3{0, 1.0, 0};
+        }
+        return std::nullopt;
+    };
     std::erase_if(bolts_, [&](Bolt& bolt) {
         const WeaponDef& def = bolt.def;
         bolt.life -= dt;
+        if (bolt.resting && def.trigger_radius > 0) {
+            // A placed mine or trap: armed after a moment, it waits for an
+            // enemy, and is gone when it's lain its time.
+            if (bolt.life <= 0) {
+                return true;
+            }
+            bolt.wait -= dt;
+            if (harmless || bolt.wait > 0) {
+                return false;
+            }
+            const std::optional<Vec3> target = mine_target(bolt);
+            if (!target) {
+                return false;
+            }
+            if (def.trap_shots <= 0) {
+                blasts.push_back({bolt, bolt.position, {0, 1, 0}, false});
+                return true;
+            }
+            // A trap's shot: a fast bolt from just above it, at them.
+            Bolt shot = bolt;
+            shot.id = next_bolt_++;
+            shot.position = bolt.position + Vec3{0, 0.4, 0};
+            Vec3 aim = *target - shot.position;
+            aim = aim.length() > 1e-6 ? aim * (1 / aim.length()) : Vec3{0, 1, 0};
+            shot.def.projectile = Projectile::bolt;
+            shot.def.trigger_radius = 0;
+            shot.def.explosion_damage = 0;
+            shot.def.explosion_outer = 0;
+            shot.def.bolt_life = 0.5;
+            shot.velocity = aim * 200.0;
+            shot.life = 0.5;
+            shot.gravity = 0;
+            shot.rewind = 0;
+            shot.resting = false;
+            shot.touched = false;
+            fired.push_back(shot);
+            bolt.wait = def.trap_interval;
+            return --bolt.shots_left <= 0;
+        }
         if (bolt.resting) {
             if (bolt.life <= 0) {
                 blasts.push_back({bolt, bolt.position, {0, 1, 0}, false});
@@ -2559,18 +2630,20 @@ void GameServer::advance_bolts() {
             if (normal.y > 0.7 && bolt.velocity.length() < 1.5) {
                 bolt.resting = true;
                 bolt.velocity = {};
+                bolt.wait = def.arm_time;  // a mine arms a moment after it settles
             }
         } else {
             bolt.position = to;
         }
         if (bolt.life <= 0) {
-            if (bounces) {
+            if (bounces && def.trigger_radius <= 0) {
                 blasts.push_back({bolt, bolt.position, {0, 1, 0}, false});  // the fuse ran out
             }
             return true;
         }
         return false;
     });
+    bolts_.insert(bolts_.end(), fired.begin(), fired.end());
     if (!harmless) {
         for (size_t i = 0; i < blasts.size(); ++i) {
             const Blast blast = blasts[i];

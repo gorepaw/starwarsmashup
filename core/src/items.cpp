@@ -12,7 +12,7 @@
 namespace swm::core {
 namespace {
 
-const std::array<WeaponArchetypeInfo, 13> archetype_table{{
+const std::array<WeaponArchetypeInfo, 15> archetype_table{{
     {WeaponArchetype::rifle_auto, "rifle_auto", "imp_weap_inf_rifle", "rifle", "primary"},
     {WeaponArchetype::carbine_burst, "carbine_burst", "all_weap_inf_rifle", "rifle", "primary"},
     {WeaponArchetype::sniper, "sniper", "imp_weap_inf_sniper_rifle", "rifle", "primary"},
@@ -27,6 +27,10 @@ const std::array<WeaponArchetypeInfo, 13> archetype_table{{
     {WeaponArchetype::flamer, "flamer", "", "rifle", "primary"},
     {WeaponArchetype::scatter_pistol, "scatter_pistol", "", "pistol", "sidearm"},
     {WeaponArchetype::melee_2h, "melee_2h", "", "melee", "primary"},
+    // Tactical: Battlefront II's landmine (com_weap_inf_landmine) has no
+    // exported definition, and our numbers are our own (see below).
+    {WeaponArchetype::placed, "placed", "", "grenade", "secondary"},
+    {WeaponArchetype::utility, "utility", "", "grenade", "secondary"},
 }};
 
 WeaponDef default_archetype_weapon(WeaponArchetype a) {
@@ -186,6 +190,56 @@ WeaponDef default_archetype_weapon(WeaponArchetype a) {
         w.bolt_life = 0.1;
         w.yaw_spread = 5;
         w.pitch_spread = 5;
+        break;
+    case WeaponArchetype::placed:
+        // Battlefront II's landmine lies 60 s and kills outright (8000
+        // damage); ours lies as long but does about a thermal detonator's
+        // damage, so a mine is a warning, not a sentence. Tossed a few meters,
+        // it arms 1.5 s after it comes to rest, and goes off at 2 m.
+        w.name = "swg_placed";
+        w.projectile = Projectile::grenade;
+        w.damage_type = DamageType::explosive;
+        w.shot_delay = 1.0;
+        w.rounds_per_clip = 1;
+        w.ammo = 2;
+        w.reload_time = 0;
+        w.yaw_spread = 0;
+        w.pitch_spread = 0;
+        w.spread_per_shot = 0;
+        w.explode_on_impact = false;
+        w.fuse = 60;
+        w.trigger_radius = 2.0;
+        w.arm_time = 1.5;
+        w.rebound = 0;
+        w.friction = 1.0;
+        w.bolt_speed = 6;
+        w.bolt_gravity = 1.0;
+        w.bolt_life = 60;
+        w.damage = 40;  // a trap's bolt
+        w.explosion_damage = 400;
+        w.explosion_inner = 2.0;
+        w.explosion_outer = 5.0;
+        w.explosion_push = 8.0;
+        w.push_inner = 2.0;
+        w.push_outer = 5.0;
+        w.fire_sound = "com_weap_throw";
+        w.muzzle_flash.clear();
+        break;
+    case WeaponArchetype::utility:
+        // A shot from the tactical slot, a few carried: a slow, lobbed bolt
+        // whose effect is the point (a tangle's snare, a flare's fire).
+        w.name = "swg_utility";
+        w.shot_delay = 0.8;
+        w.rounds_per_clip = 1;
+        w.ammo = 3;
+        w.reload_time = 0;
+        w.yaw_spread = 0;
+        w.pitch_spread = 0;
+        w.spread_per_shot = 0;
+        w.damage = 20;
+        w.bolt_speed = 60;
+        w.bolt_gravity = 0.3;
+        w.bolt_life = 0.8;
         break;
     case WeaponArchetype::melee:
     case WeaponArchetype::melee_2h:
@@ -544,6 +598,7 @@ void ItemCatalog::load(const std::filesystem::path& catalog_ini, const std::file
         def.melee_lunge = s.number("MeleeLunge", 0.0);
         def.melee_stagger = s.number("MeleeStagger", 0.0);
         def.shield_disrupt = s.number("ShieldDisrupt", 0.0);
+        def.trap_shots = std::max(0, int(s.number("TrapShots", 0)));
         def.velocity_mult = s.number("VelocityMult", 1.0);
         def.headshot_mult = s.number("HeadshotMult", 1.0);
         def.crit_chance = s.number("CritChance", 0.0);
@@ -692,7 +747,16 @@ WeaponDef ItemCatalog::resolve_weapon(const ItemDef& def, double quality, bool a
     w.yaw_spread *= def.spread_mult;
     w.pitch_spread *= def.spread_mult;
     w.spread_per_shot *= def.spread_mult;
-    w.bolt_life *= def.range_mult;
+    if (w.projectile == Projectile::grenade) {
+        // A thrown or placed explosive goes off by its fuse or trigger: its
+        // range is its blast's.
+        w.explosion_inner *= def.range_mult;
+        w.explosion_outer *= def.range_mult;
+        w.push_inner *= def.range_mult;
+        w.push_outer *= def.range_mult;
+    } else {
+        w.bolt_life *= def.range_mult;
+    }
     w.damage_transition_delay *= def.range_mult;
     if (w.rounds_per_clip > 0) {
         w.rounds_per_clip = std::max(1, int(std::lround(w.rounds_per_clip * def.clip_mult)));
@@ -703,6 +767,13 @@ WeaponDef ItemCatalog::resolve_weapon(const ItemDef& def, double quality, bool a
     if (def.melee_lunge > 0.0) w.melee_lunge = def.melee_lunge;
     if (def.melee_stagger > 0.0) w.melee_stagger = def.melee_stagger;
     if (def.shield_disrupt > 0.0) w.shield_disrupt = def.shield_disrupt;
+    if (def.trap_shots > 0 && w.trigger_radius > 0) {
+        // A trap: it covers more ground than a mine (some 8 m), firing a
+        // bolt every 0.3 s instead of exploding.
+        w.trap_shots = def.trap_shots;
+        w.trap_interval = 0.3;
+        w.trigger_radius = 8.0 * def.range_mult;
+    }
     if (w.projectile == Projectile::melee) {
         w.melee_range *= def.range_mult;
     }
@@ -710,13 +781,17 @@ WeaponDef ItemCatalog::resolve_weapon(const ItemDef& def, double quality, bool a
         w.ammo_class = def.ammo_class;
     } else if (def.archetype == WeaponArchetype::heavy_launcher) {
         w.ammo_class = AmmoClass::heavy;
-    } else if (w.projectile == Projectile::melee || def.archetype == WeaponArchetype::grenade) {
+    } else if (w.projectile == Projectile::melee || def.archetype == WeaponArchetype::grenade ||
+               def.archetype == WeaponArchetype::placed || def.archetype == WeaponArchetype::utility) {
         w.ammo_class = AmmoClass::none;
     } else {
         w.ammo_class = AmmoClass::standard;
     }
     if (def.damage_type) {
         w.damage_type = *def.damage_type;
+    }
+    if (w.projectile == Projectile::grenade && !def.model_path.empty()) {
+        w.ordnance_model = def.model_path;  // thrown or placed, it's drawn as its own model
     }
     apply_bolt_color(w, def.bolt_color_name);
     apply_item_extras(w, def, def.hit_effect.empty() ? nullptr : hit_effect(def.hit_effect));

@@ -454,6 +454,10 @@ void put_weapon_def(ByteWriter& out, const WeaponDef& w) {
     out.put(uint8_t(w.explode_on_impact));
     out.put(float(w.fuse));
     out.put(uint8_t(w.timer_on_contact));
+    out.put(float(w.trigger_radius));
+    out.put(float(w.arm_time));
+    out.put(uint8_t(std::clamp(w.trap_shots, 0, 255)));
+    out.put(float(w.trap_interval));
     out.put(float(w.shot_elevate));
     out.put(float(w.explosion_damage));
     out.put(float(w.explosion_inner));
@@ -557,6 +561,10 @@ WeaponDef get_weapon_def(ByteReader& in) {
     w.explode_on_impact = in.get<uint8_t>() != 0;
     w.fuse = in.get<float>();
     w.timer_on_contact = in.get<uint8_t>() != 0;
+    w.trigger_radius = in.get<float>();
+    w.arm_time = in.get<float>();
+    w.trap_shots = in.get<uint8_t>();
+    w.trap_interval = in.get<float>();
     w.shot_elevate = in.get<float>();
     w.explosion_damage = in.get<float>();
     w.explosion_inner = in.get<float>();

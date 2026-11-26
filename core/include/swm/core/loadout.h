@@ -204,6 +204,16 @@ struct WeaponDef {
     // LifeSpan, 0.6 s after it lands), else from the throw.
     double fuse = 0;
     bool timer_on_contact = false;
+    // A placed mine or trap (the `placed` archetype; Battlefront's landmine):
+    // once it comes to rest and `arm_time` has passed, it goes off when an
+    // enemy comes within `trigger_radius` (its explosion), or, a trap with
+    // `trap_shots`, fires that many bolts of `damage` at them,
+    // `trap_interval` apart. `fuse` is how long it lies there; then it's
+    // gone, harmlessly. 0: not placed.
+    double trigger_radius = 0;
+    double arm_time = 0;
+    int trap_shots = 0;
+    double trap_interval = 0;
     double shot_elevate = 0;         // ShotElevate: radians a throw is aimed above the crosshair
     double explosion_damage = 0;     // explosion Damage: full within the inner radius...
     double explosion_inner = 0;      // DamageRadiusInner, m

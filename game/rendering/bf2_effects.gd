@@ -129,8 +129,8 @@ func make_projectile(look: Dictionary) -> Node3D:
 			# Battlefront's missile points along +Z; Godot's looking_at faces -Z.
 			if kind == "missile":
 				mesh_root.rotation.y = PI
-			elif kind == "grenade":
-				mesh_root.scale = Vector3.ONE * 1.4
+			elif kind == "grenade" and not model_name.ends_with(".gltf"):
+				mesh_root.scale = Vector3.ONE * 1.4  # (Battlefront's; an item's own is life-size)
 			pivot.add_child(mesh_root)
 			pivot.set_meta("is_model", true)
 			pivot.set_meta("kind", kind)
@@ -584,7 +584,11 @@ func _model(name: String) -> Node3D:
 	if _models.has(key):
 		return _models[key]
 	_models[key] = null
+	# Battlefront's ordnance by name, or an item's own model (a grenade or
+	# mine from Galaxies), by its path under imported_assets.
 	var path := ProjectSettings.globalize_path(_dir.path_join("models").path_join(key + ".gltf"))
+	if key.ends_with(".gltf"):
+		path = ProjectSettings.globalize_path(_dir.get_base_dir().path_join(name))
 	if not FileAccess.file_exists(path):
 		return null
 	var document := GLTFDocument.new()
