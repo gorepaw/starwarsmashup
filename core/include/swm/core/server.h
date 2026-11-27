@@ -295,6 +295,11 @@ public:
     void set_corpse_loot(uint32_t npc_entity, uint32_t owner_entity, const std::string& name, Vec3 position,
                          std::vector<net::LootItemEntry> items);
     void clear_corpse_loot(uint32_t npc_entity);
+    // A corpse's loot outlasts its body: when the body goes (hidden, or the
+    // creature back alive), what's left stays where it fell, under an id of
+    // its own, until corpse_loot_seconds after the kill.
+    void detach_corpse_loot(uint32_t npc_entity);
+    static constexpr double corpse_loot_seconds = 300.0;
     size_t corpse_loot_count() const { return corpse_loots_.size(); }
     void set_pvp_enabled(bool enabled) { config_.pvp_enabled = enabled; }
     void set_cloning_facility(Vec3 position) { cloning_facility_ = position; }
@@ -368,6 +373,10 @@ public:
     // A player in this match asked to go back to the hub that sent them (the
     // pause menu's Leave Match). Unset: a match no hub runs; nothing happens.
     std::function<void(uint32_t entity)> on_leave_match;
+    // A player leaving a match before it ends (Leave Match, quitting, timing
+    // out), with the ammo they had left (-1: none of that class): what the
+    // hub keeps of it, as it does for those there at the end (MatchResult).
+    std::function<void(const std::string& name, int remaining_std_ammo, int remaining_hvy_ammo)> on_left_match;
 
 private:
     // What a character's triggered perks remember (server_perks.cpp).
@@ -479,6 +488,11 @@ private:
         SpecialistState spec;  // Stage 12: kit, effects, datapad, contracts (server_specialists.cpp)
         PerkState perks;       // triggered perks' memory (server_perks.cpp)
     };
+
+    void report_left_match(const Client& client);
+    // A soldier's own weapons' state: aboard a vehicle, what's stashed with
+    // it (their state there is the vehicle's guns').
+    CombatState soldier_combat(const Client& client);
     // A vehicle in a match. Empty, it keeps its own state; driven, its
     // driver's state is its state (MoveState::vehicle), and the driver's
     // own weapons wait here.
@@ -593,6 +607,7 @@ private:
         Vec3 position;
         std::vector<net::LootItemEntry> items;
         bool harvested = false;
+        double expires = 0;  // the clock (now_) it goes at
     };
 
     void receive(double now);
@@ -829,8 +844,8 @@ private:
     std::vector<net::QuestNpc> quest_npcs_;
     std::vector<net::MissionTerminal> mission_terminals_;
     std::vector<net::Workbench> workbenches_;
-    std::set<uint32_t> harvested_corpses_;
     std::vector<CorpseLoot> corpse_loots_;
+    uint32_t next_loot_id_ = 0xF0000000u;  // detached loot's ids, clear of entities'
     std::vector<Vehicle> vehicles_;
     std::vector<double> spawn_wait_;    // per vehicle spawn: seconds until it gives another
     std::vector<uint32_t> spawned_;     // per vehicle spawn: its vehicle (0: none)

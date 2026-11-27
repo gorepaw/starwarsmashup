@@ -134,20 +134,19 @@ void GameServer::handle_gather_request(Client& client, const net::GatherRequest&
 
     if (req.action == net::GatherRequest::harvest_corpse) {
         const uint32_t corpse_id = uint32_t(req.target_id);
-        if (harvested_corpses_.contains(corpse_id)) {
-            notify(client.entity, "Already harvested.");
-            return;
-        }
         const auto it = std::find_if(corpse_loots_.begin(), corpse_loots_.end(),
                                      [&](const CorpseLoot& c) { return c.npc_entity == corpse_id; });
         if (it == corpse_loots_.end()) return;
+        if (it->harvested) {
+            notify(client.entity, "Already harvested.");
+            return;
+        }
         const Vec3 d = client.state.position - it->position;
         if (d.x * d.x + d.z * d.z > 64.0) {
             notify(client.entity, "Move closer to harvest.");
             return;
         }
         if (!require_licence(client, is_bandit_name(it->name) ? "salvaging" : "foraging")) return;
-        harvested_corpses_.insert(corpse_id);
         it->harvested = true;
 
         const bool salvage = is_bandit_name(it->name);

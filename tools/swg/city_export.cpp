@@ -176,17 +176,46 @@ std::string export_person(TreLibrary& library, ObjectTemplates& templates, const
         {"sit", clip_prefix + "_idl_sitting_chair_idle.ans"},
     };
     if (kind != "all_b") {  // a creature
+        // Where a skeleton names its clips its own way (a droideka's
+        // cbt_attack_ranged, a mouse droid's loc_move_fast), the first of its
+        // clips with every one of `words` in its name after the prefix.
+        static std::vector<std::string> animations;  // every .ans in the archives, once
+        if (animations.empty()) {
+            for (const std::string& p : library.paths()) {
+                if (p.starts_with("appearance/animation/") && p.ends_with(".ans")) animations.push_back(p);
+            }
+            std::sort(animations.begin(), animations.end());
+        }
+        const auto named = [&](std::initializer_list<std::string_view> words) -> std::string {
+            const std::string start = clip_prefix + "_";
+            for (auto it = std::lower_bound(animations.begin(), animations.end(), start);
+                 it != animations.end() && it->starts_with(start); ++it) {
+                const std::string_view rest = std::string_view(*it).substr(start.size());
+                if (std::all_of(words.begin(), words.end(), [&](std::string_view w) { return rest.find(w) != rest.npos; })) {
+                    return *it;
+                }
+            }
+            return {};
+        };
+        const auto either = [](std::string a, const std::string& b) { return a.empty() ? b : a; };
         clips = {
-            {"walk", clip_prefix + "_loc_walk.ans"},
-            {"run", clip_prefix + "_loc_run.ans"},
-            {"idle", clip_prefix + "_idl_stand_breathe.ans"},
+            {"walk", either(first_existing({clip_prefix + "_loc_walk.ans"}), named({"loc_move_slow"}))},
+            {"run", either(first_existing({clip_prefix + "_loc_run.ans"}), named({"loc_move_fast"}))},
+            {"idle", either(first_existing({clip_prefix + "_idl_stand_breathe.ans"}), named({"idl_stand"}))},
             {"sit", first_existing({clip_prefix + "_idl_kneel_breathe.ans", clip_prefix + "_idl_lie_breathe.ans"})},
-            {"attack", first_existing({clip_prefix + "_cbt_stand_combat_attack_light.ans",
-                                       clip_prefix + "_cbt_stand_combat_attack_heavy.ans",
-                                       clip_prefix + "_cbt_attack_add.ans"})},
-            {"die", first_existing({clip_prefix + "_idl_incapacitated.ans",
-                                    clip_prefix + "_incapacitated_idle.ans",
-                                    clip_prefix + "_idl_lie_breathe.ans"})},
+            {"attack", either(either(first_existing({clip_prefix + "_cbt_stand_combat_attack_light.ans",
+                                                     clip_prefix + "_cbt_stand_combat_attack_heavy.ans",
+                                                     clip_prefix + "_cbt_attack_add.ans"}),
+                                     named({"cbt_", "attack"})),
+                              named({"cbt_", "fire"}))},
+            {"die", either(first_existing({clip_prefix + "_idl_incapacitated.ans",
+                                           clip_prefix + "_incapacitated_idle.ans"}),
+                           either(named({"incapacitated"}), first_existing({clip_prefix + "_idl_lie_breathe.ans"})))},
+            // Flinching from a hit (the client plays it as damage lands).
+            {"hit", either(first_existing({clip_prefix + "_rea_stand_combat_get_hit_light.ans",
+                                           clip_prefix + "_rea_stand_get_hit_light.ans",
+                                           clip_prefix + "_rea_std_get_hit_light.ans"}),
+                           named({"get_hit"}))},
         };
     }
     for (const auto& [name, path] : clips) {
@@ -379,6 +408,34 @@ void export_city(TreLibrary& library, const CityExport& city, std::ostream& log)
         const std::vector<SnapshotNode> terminals = recruiters(one);
         nodes.insert(nodes.end(), terminals.begin(), terminals.end());
         log << std::format("{} placed terminal(s) from {}\n", terminals.size(), one.hub.string());
+    }
+    // A hub file's [ground]s: snapshot objects that float over our bake's
+    // terrain (Anchorhead's wind generators, 80 m up at the foot of its
+    // plateau), put on it, or at its Height. Each names its object's
+    // Template and Position (x z, within 3 m).
+    for (const CityExport& one : per_hub) {
+        const core::Ini hub = core::Ini::load(one.hub);
+        std::optional<core::Heightfield> terrain;
+        for (const core::Ini::Section& section : hub.sections()) {
+            if (section.name != "ground") continue;
+            const std::string wanted = normalize_path(section.get("Template").value_or(""));
+            std::istringstream fields(section.get("Position").value_or(""));
+            double x = 0, z = 0;
+            if (wanted.empty() || !(fields >> x >> z)) {
+                throw std::runtime_error(one.hub.string() + ": a [ground] needs Template and Position = x z");
+            }
+            if (!terrain) terrain = core::load_bake(city.bake);
+            size_t moved = 0;
+            for (SnapshotNode& node : nodes) {
+                if (node.parent_id != 0 || normalize_path(node.template_name) != wanted ||
+                    std::hypot(node.position.x - x, node.position.z - z) > 3.0) {
+                    continue;
+                }
+                node.position.y = float(section.number("Height", terrain->height_at(-node.position.x, node.position.z)));
+                ++moved;
+            }
+            log << std::format("[ground] {} at {} {}: {} put on the ground\n", wanted, x, z, moved);
+        }
     }
     std::vector<CityArea> areas = city.areas;
     if (areas.empty()) {

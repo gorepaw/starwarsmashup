@@ -128,11 +128,14 @@ func _paint() -> void:
 				text("gamefont_medium", "%s   Level %d" % [row["name"], int(row["level"])], Vector2(x, ry + 6 * u),
 						"Left", ACCENT)
 			"pair":
-				var half := (width - 8 * u) * 0.5
+				# The two side by side with an OR between: one or the other.
+				var gap := OR_GAP * u
+				var half := (width - gap) * 0.5
 				var a: Dictionary = row["a"]
 				var b: Dictionary = row["b"]
 				_paint_perk(Rect2(x, ry, half, h), str(row["profession"]), a, b, int(row["level"]))
-				_paint_perk(Rect2(x + half + 8 * u, ry, half, h), str(row["profession"]), b, a, int(row["level"]))
+				_paint_perk(Rect2(x + half + gap, ry, half, h), str(row["profession"]), b, a, int(row["level"]))
+				_paint_or(Vector2(x + half + gap * 0.5, ry + h * 0.5))
 			_:
 				_paint_milestone(Rect2(x, ry, width, h), row)
 		ry += h + 3 * u
@@ -141,6 +144,18 @@ func _paint() -> void:
 				Vector2(box.get_center().x, box.end.y - 22 * u), "Center", DIM)
 	if feedback != "":
 		text("gamefont_small", feedback, Vector2(box.get_center().x, box.end.y - 44 * u), "Center", ACCENT)
+
+
+const OR_GAP := 44.0  # units between a level's two perks, for the OR
+
+
+# "OR" in a small dark disc, joined to both perks by a line: they exclude each other.
+func _paint_or(center: Vector2) -> void:
+	var reach := OR_GAP * 0.5 * u
+	draw_line(center - Vector2(reach, 0), center + Vector2(reach, 0), ACCENT, maxf(1.0, 1.5 * u))
+	draw_circle(center, 15 * u, Color(0.04, 0.05, 0.07))
+	draw_arc(center, 15 * u, 0, TAU, 24, ACCENT, maxf(1.0, 1.5 * u))
+	text("gamefont_tiny", "OR", center - Vector2(0, 7 * u), "Center", ACCENT)
 
 
 func _paint_perk(rect: Rect2, profession: String, perk: Dictionary, other: Dictionary, level: int) -> void:
@@ -154,7 +169,7 @@ func _paint_perk(rect: Rect2, profession: String, perk: Dictionary, other: Dicti
 	var waits := str(perk.get("needs", "")) != ""
 	frame(rect, "border_3_pieces", DONE if learned else Color(0.85, 0.85, 0.9))
 	var color := DONE if learned else (TEXT if at <= level else DIM)
-	text("gamefont_small", "Lv %d %s  %s" % [at, str(perk.get("choice", "")), str(perk.get("name", ""))],
+	text("gamefont_small", "Lv %d  %s" % [at, str(perk.get("name", ""))],
 			Vector2(rect.position.x + 10 * u, rect.position.y + 5 * u), "Left", color)
 	var desc := str(perk.get("description", ""))
 	if waits:
@@ -170,7 +185,7 @@ func _paint_perk(rect: Rect2, profession: String, perk: Dictionary, other: Dicti
 	elif at > level:
 		text("gamefont_tiny", "Needs level %d" % at, label_at, "Center", DIM)
 	elif other_learned:
-		text("gamefont_tiny", "Give up %s" % str(other.get("choice", "")), label_at, "Center", DIM)
+		text("gamefont_tiny", "Give up %s" % str(other.get("name", "")), label_at, "Center", DIM)
 	elif known_count >= cap:
 		text("gamefont_tiny", "Give one up first", label_at, "Center", DIM)
 	else:

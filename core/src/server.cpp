@@ -467,7 +467,7 @@ void GameServer::remove_npc(uint32_t entity) {
     if (it == npc_index_.end()) {
         return;
     }
-    clear_corpse_loot(entity);
+    detach_corpse_loot(entity);
     const size_t index = it->second;
     npc_index_.erase(it);
     if (index + 1 != npcs_.size()) {
@@ -526,7 +526,7 @@ void GameServer::heal_npc(uint32_t entity, double amount) {
 }
 
 void GameServer::respawn_npc(uint32_t entity, Vec3 position, double yaw) {
-    clear_corpse_loot(entity);
+    detach_corpse_loot(entity);
     Npc* npc = find_npc(entity);
     if (!npc) return;
     constexpr double lift = 1.0;
@@ -555,7 +555,7 @@ void GameServer::respawn_npc(uint32_t entity, Vec3 position, double yaw) {
 
 void GameServer::set_npc_hidden(uint32_t entity, bool hidden) {
     if (hidden) {
-        clear_corpse_loot(entity);
+        detach_corpse_loot(entity);
     }
     if (Npc* npc = find_npc(entity)) npc->hidden = hidden;
 }
@@ -584,10 +584,23 @@ void GameServer::set_corpse_loot(uint32_t npc_entity, uint32_t owner_entity, con
     clear_corpse_loot(npc_entity);
     if (items.empty()) return;
     corpse_loots_.push_back({npc_entity, owner_entity, name, position, std::move(items)});
+    corpse_loots_.back().expires = now_ + corpse_loot_seconds;
 }
 
 void GameServer::clear_corpse_loot(uint32_t npc_entity) {
     std::erase_if(corpse_loots_, [npc_entity](const CorpseLoot& c) { return c.npc_entity == npc_entity; });
+}
+
+void GameServer::detach_corpse_loot(uint32_t npc_entity) {
+    std::erase_if(corpse_loots_, [npc_entity](const CorpseLoot& c) {
+        return c.npc_entity == npc_entity && c.items.empty();
+    });
+    for (CorpseLoot& c : corpse_loots_) {
+        if (c.npc_entity != npc_entity) continue;
+        c.npc_entity = next_loot_id_++;
+        if (next_loot_id_ == 0) next_loot_id_ = 0xF0000000u;
+        c.harvested = true;  // the body's gone: nothing left to harvest
+    }
 }
 
 void GameServer::npc_melee(uint32_t attacker_entity, uint32_t victim_entity, double raw_damage, DamageType type) {
@@ -787,6 +800,7 @@ void GameServer::update(double now) {
         next_save_time_ = now + config_.save_interval;
     }
     now_ = now;
+    std::erase_if(corpse_loots_, [now](const CorpseLoot& c) { return c.expires > 0 && now >= c.expires; });
     receive(now);
     const double dt = 1 / config_.tick_rate;
     if (now - next_tick_time_ > 0.25) {
@@ -1189,6 +1203,7 @@ void GameServer::handle(const net::Endpoint& from, const net::Datagram& datagram
         }
     } else if (std::holds_alternative<net::Goodbye>(message)) {
         say(std::format("{} (entity {}) left", client->name, client->entity));
+        report_left_match(*client);
         save({client, 1});
         clients_.erase(clients_.begin() + (client - clients_.data()));
     }
@@ -1817,6 +1832,7 @@ void GameServer::step() {
         const bool gone = client.transfer && tick_ >= client.transfer_tick;
         if (gone) {
             say(std::format("{} (entity {}) transferred", client.name, client.entity));
+            report_left_match(client);
             save({&client, 1});
         }
         return gone;
@@ -1946,10 +1962,11 @@ void GameServer::run_match() {
                 say(std::format("  {:<16} {:<12} {} kills, {} deaths, {} captures", client.name,
                                 field.team(client.team).name, client.kills, client.deaths, client.captures));
                 const Loadout& lo = loadout_of(client);
+                const CombatState own = soldier_combat(client);  // (not a vehicle's guns)
                 result.players.push_back({client.name, client.team, client.kills, client.deaths, client.captures,
                                           client.battle_profession_xp,
-                                          remaining_unified_ammo(client.state.combat, lo, AmmoClass::standard),
-                                          remaining_unified_ammo(client.state.combat, lo, AmmoClass::heavy)});
+                                          remaining_unified_ammo(own, lo, AmmoClass::standard),
+                                          remaining_unified_ammo(own, lo, AmmoClass::heavy)});
                 if (const WeaponDef* primary = weapon_in_slot(lo, 0)) {
                     result.players.back().primary_weapon = primary->name;
                 }
@@ -3440,6 +3457,28 @@ void GameServer::respawn(Client& client) {
     say(std::format("{} respawned", client.name));
 }
 
+void GameServer::report_left_match(const Client& client) {
+    if (!conquest_ || !on_left_match || conquest_->state().phase == Phase::ended) {
+        return;  // (at the end, MatchResult carries it)
+    }
+    const Loadout& lo = loadout_of(client);
+    const CombatState own = soldier_combat(client);
+    on_left_match(client.name, remaining_unified_ammo(own, lo, AmmoClass::standard),
+                  remaining_unified_ammo(own, lo, AmmoClass::heavy));
+}
+
+CombatState GameServer::soldier_combat(const Client& client) {
+    if (client.state.vehicle < 0) return client.state.combat;
+    if (client.state.seat > 0) {
+        if (const Vehicle* v = vehicle_gunned_by(client.entity); v && size_t(client.state.seat - 1) < v->gunner_combat.size()) {
+            return v->gunner_combat[size_t(client.state.seat - 1)];
+        }
+    } else if (const Vehicle* v = vehicle_of(client.entity)) {
+        return v->driver_combat;
+    }
+    return client.state.combat;
+}
+
 void GameServer::drop_silent(double now) {
     for (Client& client : clients_) {
         if (now - client.last_heard > config_.client_timeout) {
@@ -3450,6 +3489,7 @@ void GameServer::drop_silent(double now) {
         const bool silent = now - client.last_heard > config_.client_timeout;
         if (silent) {
             say(std::format("{} (entity {}) timed out", client.name, client.entity));
+            report_left_match(client);
             save({&client, 1});
         }
         return silent;

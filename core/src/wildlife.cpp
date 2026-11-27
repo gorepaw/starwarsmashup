@@ -410,6 +410,18 @@ void WorldPopulation::update_activity(double now) {
     }
 }
 
+double WorldPopulation::respawn_scale(Vec3 center, double radius) const {
+    if (activity_.respawn_players <= 0) return 1.0;
+    const double reach = radius + (activity_.wake_radius > 0 ? activity_.wake_radius : 300.0);
+    int near = 0;
+    for (const PlayerPos& p : players_) {
+        const double dx = p.pos.x - center.x;
+        const double dz = p.pos.z - center.z;
+        near += dx * dx + dz * dz <= reach * reach ? 1 : 0;
+    }
+    return std::clamp(activity_.respawn_players / std::max(1, near), 1.0, std::max(1.0, activity_.respawn_max_scale));
+}
+
 size_t WorldPopulation::awake_groups() const {
     size_t n = 0;
     for (const LairState& l : lair_states_) n += l.awake ? 1 : 0;
@@ -479,7 +491,8 @@ void WorldPopulation::update_creatures(double now) {
                 server_.set_npc_hidden(mob.entity, true);
                 mob.corpse_hidden = true;
             }
-            if (awake && now - mob.dead_since >= arch.respawn_time) {
+            if (awake && now - mob.dead_since >= arch.respawn_time * respawn_scale(lair_states_[mob.lair].center,
+                                                                                  lair_states_[mob.lair].radius)) {
                 const Vec3 spawn_pos = random_point_around(lair_states_[mob.lair].center, lair_states_[mob.lair].radius * 0.5);
                 mob.home = spawn_pos;
                 mob.goal = spawn_pos;
@@ -651,7 +664,8 @@ void WorldPopulation::update_bandits(double now) {
                 server_.set_npc_hidden(mob.entity, true);
                 mob.corpse_hidden = true;
             }
-            if (awake && now - mob.dead_since >= arch.respawn_time) {
+            if (awake && now - mob.dead_since >= arch.respawn_time * respawn_scale(camp_states_[mob.camp].center,
+                                                                                  camp_states_[mob.camp].radius)) {
                 const Vec3 spawn_pos = random_point_around(camp_states_[mob.camp].center, camp_states_[mob.camp].radius * 0.65);
                 mob.home = spawn_pos;
                 mob.patrol_goal = spawn_pos;

@@ -65,5 +65,34 @@ func _run() -> void:
 	_check(door.position.is_equal_approx(Vector3(2.0, 0.0, 0.0)), "the door is open")
 	_check(on_door.global_position.is_equal_approx(before + Vector3(2.0, 0.0, 0.0)), "the mark went with it")
 	_check(on_wall.global_position.is_equal_approx(Vector3(5.0, 1.4, 0.06) + Vector3(0, 0, 0.018)), "the wall's mark stayed")
+
+	# A Battlefront door: a frame round two panels, each its own node, which its clip moves.
+	var bf2 := Node3D.new()
+	bf2.position = Vector3(20, 0, 0)
+	var frame := MeshInstance3D.new()
+	var frame_box := BoxMesh.new()
+	frame_box.size = Vector3(5.0, 4.0, 0.4)
+	frame.mesh = frame_box
+	frame.position = Vector3(0, 2.0, 0)
+	bf2.add_child(frame)
+	var panel := MeshInstance3D.new()
+	panel.name = "bone_door1"
+	var panel_box := BoxMesh.new()
+	panel_box.size = Vector3(2.0, 3.0, 0.1)
+	panel.mesh = panel_box
+	panel.position = Vector3(-1.0, 1.5, 0.0)
+	frame.add_child(panel)
+	bf2.add_to_group(&"bf2_doors")
+	world.add_child(bf2)
+	effects.spawn_scorch(bf2.position + frame.position + panel.position + Vector3(0.2, 0.0, 0.06), Vector3(0, 0, 1), 0.28)
+	var on_panel: Node3D = null
+	for node: Node in panel.get_children():
+		if node.has_meta("scorch"):
+			on_panel = node
+	_check(on_panel != null, "the mark on a Battlefront door's panel is the panel's")
+	if on_panel != null:
+		var at := on_panel.global_position
+		panel.position += Vector3(-1.8, 0, 0)  # the clip slides it open
+		_check(on_panel.global_position.is_equal_approx(at + Vector3(-1.8, 0, 0)), "the mark went with the panel")
 	print("door_scorch_test: ", "ok" if _failures == 0 else "%d failed" % _failures)
 	quit(0 if _failures == 0 else 1)

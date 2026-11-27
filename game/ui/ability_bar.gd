@@ -29,7 +29,7 @@ func _init(shared_art: RefCounted = null) -> void:
 
 
 func _paint() -> void:
-	var bottom := size.y - 18 * u
+	var bottom := size.y - 5 * u  # (it was 18: low enough to clear the prompts and popups over it)
 	var width := slots.size() * (SLOT + GAP) * u - GAP * u
 	var x0 := (size.x - width) * 0.5
 	var top := bottom - SLOT * u

@@ -11,6 +11,7 @@
 #   map.places = [{position, name, kind: "battle" | "quest" | "shop" | "craft" | "service" | "terminal", color}]
 #   map.player_position = ...; map.player_yaw = ...; map.waypoint = {position, name}
 #   map.planet = {texture, left_x, top_z, right_x, bottom_z}   # the radar's minimap
+#   map.towns = [{name, position}]   # the planet's towns, named on the map zoomed out
 #   map.open_map()
 extends "res://ui/bf2_screen.gd"
 
@@ -35,6 +36,7 @@ var player_position := Vector3.ZERO
 var player_yaw := 0.0
 var waypoint := {}
 var planet := {}
+var towns: Array = []
 
 var _zoom := 0
 var _list_scroll := 0      # the list's first line shown (it scrolls with the wheel)
@@ -160,6 +162,13 @@ func _paint() -> void:
 		text("gamefont_small", "Surveying...", map_rect.get_center() - Vector2(0, 8) * u, "Center", DIM)
 	draw_rect(map_rect, Color(0.55, 0.62, 0.75, 0.6), false, maxf(1.0, u))
 
+	# The towns' names, zoomed out (the planet, or 1.6 km across), under the markers.
+	if planet_view or _zoom >= ZOOMS.size() - 1:
+		for town: Dictionary in towns:
+			var at := _to_map(town["position"], view, map_rect)
+			if map_rect.grow(-12 * u).has_point(at):
+				_town_label(at, str(town.get("name", "")), planet_view)
+
 	# Its places, then your waypoint and you.
 	var hovered := int(_hover.trim_prefix("place:")) if _hover.begins_with("place:") else -1
 	for i in places.size():
@@ -263,6 +272,18 @@ func _paint() -> void:
 				kind_label = str(kind[1])
 		_tooltip(str(place.get("name", "")), "%s  -  %s" % [kind_label,
 				"%d m" % roundi(meters) if meters < 1000 else "%.1f km" % (meters / 1000.0)], place.get("color", TEXT))
+
+
+# A town's name, in white over a dark shadow; on the planet a dot marks it.
+func _town_label(at: Vector2, name: String, with_dot: bool) -> void:
+	var font := "gamefont_small"
+	if with_dot:
+		draw_circle(at, 3.5 * u, Color(0, 0, 0, 0.85))
+		draw_circle(at, 2.5 * u, Color(1, 1, 1))
+	var y := at.y - (20.0 if with_dot else 9.0) * u
+	for offset: Vector2 in [Vector2(-1, 0), Vector2(1, 0), Vector2(0, -1), Vector2(0, 1)]:
+		text(font, name, Vector2(at.x, y) + offset * maxf(1.0, u), "Center", Color(0, 0, 0, 0.85))
+	text(font, name, Vector2(at.x, y), "Center", Color(1, 1, 1))
 
 
 # A place's marker: a dot in its kind's color, outlined; a quest giver's is

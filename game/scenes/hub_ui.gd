@@ -49,6 +49,7 @@ const CHEVRON_OVER_PROP := 0.55
 const BARE_TERMINAL_HOLO_HEIGHT := 1.9  # a battle terminal with nothing drawn: about a terminal's height
 const PLACE_HOLO_SCALE := 2.5  # a place's hologram, as big as a soldier's this many times (ASSUMPTION, by eye)
 const CLONING_HOLO_SCALE := 3.6  # a cloning facility's, larger: it has no terminal of its own to see
+const CLONING_INDOOR_REACH := 22.0  # m: under a roof this near a cloning facility, you're in it
 const TARGET_HOLO_ID := 1 << 40  # practice targets' hologram ids, past any entity's
 
 # Stage 11: `mode` is the game mode id wanted ("conquest", "ctf", "1flag",
@@ -485,6 +486,7 @@ func toggle_map(client: Object) -> bool:
 	_map_screen.player_position = own["position"]
 	_map_screen.player_yaw = float(own.get("yaw", 0.0))
 	_map_screen.places = map_places(client)
+	_map_screen.towns = map_towns(client)
 	var quest := tracked_quest(client)
 	_map_screen.waypoint = {"position": quest["waypoint"], "name": str(quest.get("title", ""))} \
 			if quest.has("waypoint") else {}
@@ -519,6 +521,25 @@ func map_places(client: Object) -> Array:
 		out.append({"position": r["position"], "name": str(r["name"]), "kind": "battle", "color": WorldMapScreen.BATTLE})
 	for t: Dictionary in client.get_mission_terminals():
 		out.append({"position": t["position"], "name": str(t["name"]), "kind": "terminal", "color": _mission_terminal_color(str(t.get("kind", "general")))})
+	return out
+
+
+# The planet's towns for the map: each named by its travel points (a
+# shuttleport's or starport's Detail is its town), at their middle.
+func map_towns(client: Object) -> Array:
+	var sums := {}  # name -> [position sum, count]
+	for v: Dictionary in client.get_vendors():
+		var kind := str(v.get("kind", ""))
+		var name := str(v.get("detail", ""))
+		if (kind != "travel" and kind != "starport") or name == "":
+			continue
+		if not sums.has(name):
+			sums[name] = [Vector3.ZERO, 0]
+		sums[name][0] += v["position"]
+		sums[name][1] += 1
+	var out: Array = []
+	for name: String in sums:
+		out.append({"name": name, "position": sums[name][0] / float(sums[name][1])})
 	return out
 
 
@@ -1053,6 +1074,10 @@ func _update_place_holograms(client: Object, delta: float) -> void:
 			by_name[str(r["name"])] = looks[look - 1]
 			by_entity[int(r["id"])] = looks[look - 1]
 	var seen := {}
+	# Whether the camera is under a roof (a cloning facility's hologram comes inside).
+	var eye_camera := _world_root.get_viewport().get_camera_3d()
+	var eye: Vector3 = eye_camera.global_position if eye_camera != null else Vector3.ZERO
+	var indoors := eye_camera != null and float(client.raycast(eye, eye + Vector3.UP * 30.0)) >= 0.0
 	var vendors: Array = client.get_vendors()
 	for vi in vendors.size():
 		var v: Dictionary = vendors[vi]
@@ -1070,14 +1095,20 @@ func _update_place_holograms(client: Object, delta: float) -> void:
 			if kind != "cloning" and kind != "trainer":
 				# a terminal (only a trainer is someone): over its top
 				height = _height_over_prop(key, v["position"], HOLO_OVER_PROP, HOLO_HEIGHT)
-			elif kind == "cloning":
+			var scale := PLACE_HOLO_SCALE
+			if kind == "cloning":
 				# A cloning facility is the building itself (its middle): its
-				# hologram stands over its roof, to be seen from the street.
+				# hologram stands over its roof, to be seen from the street;
+				# from inside (the camera under a roof, near), in its room,
+				# where the roof doesn't hide it.
 				if not _over_roofs.has(key):
 					_over_roofs[key] = _height_over_roof(client, v["position"])
 				height = _over_roofs[key]
-			_place_hologram(key, v["position"], symbol, TERMINAL_COLOR, seen, height,
-					CLONING_HOLO_SCALE if kind == "cloning" else PLACE_HOLO_SCALE)
+				scale = CLONING_HOLO_SCALE
+				if indoors and Vector2(eye.x - v["position"].x, eye.z - v["position"].z).length() < CLONING_INDOOR_REACH:
+					height = HOLO_HEIGHT
+					scale = PLACE_HOLO_SCALE
+			_place_hologram(key, v["position"], symbol, TERMINAL_COLOR, seen, height, scale)
 			continue
 		var side := side_of_template(str(by_name.get(str(v["name"]), "")))
 		var plain := "coins" if kind == "junk_dealer" else "chest"

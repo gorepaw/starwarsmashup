@@ -85,6 +85,8 @@ var _camera_yaw := 0.0
 var _camera_distance := CAMERA_DISTANCE
 var _camera_sphere := SphereShape3D.new()
 var _first_person := false
+var _ride_vehicle := -1          # the vehicle we're on (-1: none), to see getting on and off
+var _view_after_ride := false    # first person again on getting off (getting on a Galaxies vehicle left it)
 var _route: Array[Vector2] = []
 var _look := Vector2.INF
 var _route_index := -1
@@ -271,6 +273,10 @@ func start_session(config: Dictionary) -> bool:
 			return false
 		server_addr = "127.0.0.1:%d" % _server.get_port()
 		print("hosting on port ", _server.get_port())
+		# The hosted worlds (every planet's) on a thread of their own: their
+		# 30 Hz ticks don't wait on our frames (a slow frame stalled them all).
+		if bool(_config.get("server_thread", true)) and _server.has_method("run_in_background"):
+			_server.run_in_background()
 
 	_client = ClassDB.instantiate("SwmClient")
 	_client.set_simulated_network(float(_config.get("lag", 0.0)), float(_config.get("jitter", 0.0)),
@@ -695,6 +701,7 @@ func _input(event: InputEvent) -> void:
 		_show_stats = not _show_stats
 	elif event.is_action_pressed("toggle_view") and not event.is_echo():
 		_first_person = not _first_person
+		_view_after_ride = false  # chosen while riding: kept after
 		_pitch = clampf(_pitch, -1.2, 0.6)
 	elif event.is_action_pressed("zoom") and not event.is_echo():
 		var steps := _zoom_steps()
@@ -1166,6 +1173,20 @@ func _update_person(id: int, state: Dictionary) -> void:
 			spd = clampf(speed / 1.8, 0.6, 1.6)
 		elif int(state.get("pose", 0)) == 1 and player.has_animation("sit"):
 			clip = "sit"
+		# Hurt (its health fell), it flinches (Galaxies' get_hit clip, where
+		# exported) unless it's attacking or dead, then carries on.
+		var health := float(state.get("health", 0.0))
+		var now_s := Time.get_ticks_msec() / 1000.0
+		if alive and clip != "attack" and player.has_animation("hit") \
+				and health < float(person.get("last_health", health)) - 0.5:
+			person["hit_until"] = now_s + player.get_animation("hit").length
+			player.get_animation("hit").loop_mode = Animation.LOOP_NONE
+			player.play("hit", 0.08)
+			player.seek(0.0, true)
+		person["last_health"] = health
+		if alive and clip != "attack" and now_s < float(person.get("hit_until", 0.0)):
+			player.speed_scale = 1.0
+			return
 		if player.current_animation != clip and player.has_animation(clip):
 			var anim := player.get_animation(clip)
 			anim.loop_mode = loop
@@ -1285,9 +1306,26 @@ func _camera_pivot(target: Vector3) -> Vector3:
 	return target + Vector3.UP * (CAMERA_HEIGHT * 0.8 - CROUCH_CAMERA_DROP * _crouch_view)
 
 
+# Getting on a Galaxies vehicle or mount (a speeder bike, a dewback: "swg_"
+# classes, the open world's) from first person goes to third, to see it
+# ridden; getting off goes back. A view chosen while riding stays.
+func _update_ride_view(driving: int) -> void:
+	if driving == _ride_vehicle:
+		return
+	if driving >= 0 and _ride_vehicle < 0:
+		if _first_person and str(_vehicles.class_of(driving).get("name", "")).begins_with("swg_"):
+			_first_person = false
+			_view_after_ride = true
+	elif driving < 0 and _view_after_ride:
+		_first_person = true
+		_view_after_ride = false
+	_ride_vehicle = driving
+
+
 func _update_camera(target: Vector3, delta: float) -> void:
 	var soldier := _soldier_of(_client.get_entity_id())
 	var driving := int(_client.get_presented().get("vehicle", -1))
+	_update_ride_view(driving)
 	if driving >= 0:
 		# Behind and over it, from its TrackCenter, turning with the look.
 		if soldier != null:

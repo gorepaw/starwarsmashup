@@ -173,6 +173,10 @@ void test_creature_behaviors_leash_and_respawn() {
     away.position = {0, 0, 40};
     server.set_state(client.entity_id(), away);
     step_sim(2.6, [] {});
+    // Alone near its lair, it waits 3x its RespawnTime (2.2 s): a quiet server's pace.
+    const auto still_dead = server.npc_info(rat_id);
+    CHECK(still_dead && still_dead->life != Life::alive);
+    step_sim(4.6, [] {});
     const auto respawned_rat = server.npc_info(rat_id);
     CHECK(respawned_rat && respawned_rat->life == Life::alive && hdist(respawned_rat->state.position, {0, 0, -14}) < 8.0);
 

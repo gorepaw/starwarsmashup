@@ -334,14 +334,14 @@ void test_blueprints() {
     book.parse_schematics(Ini::parse("[schematic]\nId = sch_secret\nName = Secret\nOutput = wp_pistol_d18\n"
                                      "Blueprint = yes\nSlot = mineral 2\n"
                                      "[schematic]\nId = sch_open\nName = Open\nOutput = wp_pistol_d18\nSlot = mineral 2\n"
-                                     "[family]\nGroup = Rifles\nKind = weapon\nArchetype = rifle_auto\n"
+                                     "[family]\nGroup = Carbines\nKind = weapon\nArchetype = carbine_burst\n"
                                      "BlueprintMatch = wp_rifle_e11*\nSlot = mineral 4\n"),
                           "test", &catalog);
     CHECK(book.find_schematic("sch_secret") && book.find_schematic("sch_secret")->blueprint);
     CHECK(book.find_schematic("sch_open") && !book.find_schematic("sch_open")->blueprint);
     size_t hidden = 0, open = 0;
     for (const SchematicDef& s : book.schematics()) {
-        if (s.group != "Rifles") continue;
+        if (s.group != "Carbines") continue;  // (the E-11 is a carbine)
         CHECK(s.blueprint == s.output_item.starts_with("wp_rifle_e11"));
         (s.blueprint ? hidden : open) += 1;
     }

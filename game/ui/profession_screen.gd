@@ -213,12 +213,16 @@ func _paint_detail(p: Dictionary, rect: Rect2) -> void:
 		add.call("Milestones are learned in order. The first lets you do what it's about at all.", DIM)
 	add.call("", TEXT)
 	var mine: Array = known.get(id, [])
+	var last_level := -1
 	for perk: Dictionary in perks:
 		var at := int(perk.get("level", 0))
+		if at == last_level:
+			add.call("            - or -", DIM)  # a level's perks exclude each other
+		last_level = at
 		var reached := available and at <= level
 		var learned := str(perk.get("id", "")) in mine
 		var waits := str(perk.get("needs", "")) != ""
-		var head := "%s Lv %d %s  %s%s" % ["[x]" if learned else "[ ]", at, str(perk.get("choice", "")),
+		var head := "%s Lv %d  %s%s" % ["[x]" if learned else "[ ]", at,
 				str(perk.get("name", "")), "   (not working yet)" if waits else ""]
 		add.call(head, DONE_COLOR if learned else (TEXT if reached else (ACCENT if available else LOCKED_COLOR)))
 		for line in _wrap("gamefont_tiny", str(perk.get("description", "")), rect.size.x - 18 * u):

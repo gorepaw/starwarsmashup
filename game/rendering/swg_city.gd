@@ -38,6 +38,8 @@ static func add_objects(parent: Node, prefix: String, camera_collision := false,
 	var bounds := {}  # model -> its meshes' bounds (for footprints)
 	var footprints: Array = parent.get_meta(FOOTPRINTS, [])
 	var props: Dictionary = parent.get_meta(PROPS, {})
+	var pads: Array[Node3D] = []        # shuttleports and shuttle landing pads, as placed
+	var shuttles: Array[Vector3] = []  # where the snapshot already has a shuttle
 	for object: Dictionary in parsed["objects"]:
 		placed.append(null)
 		if radius > 0.0:
@@ -80,6 +82,11 @@ static func add_objects(parent: Node, prefix: String, camera_collision := false,
 		parent.add_child(node)
 		placed[placed.size() - 1] = node
 		count += 1
+		var template: String = object.get("template", "")
+		if int(object.get("inside", -1)) < 0 and (template.contains("shuttleport") or template.contains("landing_pad_shuttle")):
+			pads.append(node)
+		elif template.contains("player_shuttle") or template.contains("lambda_shuttle"):
+			shuttles.append(node.position)
 		if not object.get("particles", false) and not object.get("creature", false) and not object.get("building", false):
 			if not bounds.has(model):
 				bounds[model] = _bounds(models[model] as Node3D)
@@ -94,12 +101,64 @@ static func add_objects(parent: Node, prefix: String, camera_collision := false,
 		if inside >= 0 and inside < placed.size() and placed[inside] != null:
 			_light_furniture(node, placed[inside], dir.path_join(str(parsed["objects"][inside]["model"])),
 					int(object.get("cell", 0)), cells)
+	count += _land_shuttles(parent, dir, pads, shuttles)
 	parent.set_meta(FOOTPRINTS, footprints)
 	parent.set_meta(PROPS, props)
 	for template: Variant in models.values():
 		if template != null:
 			(template as Node).free()
 	print("placed ", count, " objects (", models.size(), " models) from ", path.get_file())
+	return count
+
+
+# Galaxies' shuttleports stood empty in its world snapshot: the shuttle was
+# a server's creature, landing and taking off. Ours wait on the pad: the
+# snapshot's static shuttle (shuttle.gltf, object/static/vehicle/
+# shared_player_shuttle.iff) in the middle of every shuttleport and shuttle
+# landing pad that hasn't one, turned with it. A planet's export without the
+# model borrows another planet's (Tatooine's has it).
+const SHUTTLE_MODEL := "shuttle.gltf"
+
+
+static func _land_shuttles(parent: Node, dir: String, pads: Array[Node3D], shuttles: Array[Vector3]) -> int:
+	if pads.is_empty():
+		return 0
+	var file := dir.path_join(SHUTTLE_MODEL)
+	if not FileAccess.file_exists(file):
+		file = ""
+		var terrain := dir.get_base_dir()
+		for sub: String in DirAccess.get_directories_at(terrain):
+			if sub.ends_with("_city") and FileAccess.file_exists(terrain.path_join(sub).path_join(SHUTTLE_MODEL)):
+				file = terrain.path_join(sub).path_join(SHUTTLE_MODEL)
+				break
+	if file.is_empty():
+		return 0
+	var model: Node3D = null
+	var box := AABB()
+	var count := 0
+	for pad: Node3D in pads:
+		var taken := false
+		for at: Vector3 in shuttles:
+			if Vector2(at.x - pad.position.x, at.z - pad.position.z).length() < 12.0:
+				taken = true
+		if taken:
+			continue
+		if model == null:
+			model = _load_model(file)
+			if model == null:
+				return count
+			_set_draw_distance(model, 1200.0)
+			box = _bounds(model)
+		var shuttle := model.duplicate() as Node3D
+		shuttle.basis = pad.basis.orthonormalized()
+		var middle := box.get_center()
+		shuttle.position = pad.position - shuttle.basis * Vector3(middle.x, 0.0, middle.z)
+		shuttle.name = "Shuttle"
+		parent.add_child(shuttle)
+		shuttles.append(shuttle.position)
+		count += 1
+	if model != null:
+		model.free()
 	return count
 
 

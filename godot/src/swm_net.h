@@ -1,7 +1,10 @@
 #pragma once
 
+#include <atomic>
 #include <chrono>
 #include <memory>
+#include <mutex>
+#include <thread>
 #include <optional>
 #include <utility>
 #include <vector>
@@ -310,6 +313,10 @@ public:
     // `spawn` is where new characters start, in Galaxies coordinates (x, z).
     godot::Error start(int64_t port, const godot::String& bake_prefix, const godot::Vector2& spawn);
     void update();
+    // After start(): runs update() on a thread of its own from now on, so the
+    // world servers keep their 30 Hz whatever the game's frame rate (update()
+    // then does nothing). stop() ends it.
+    void run_in_background();
     // Saves every connected character and shuts the server down.
     void stop();
     int64_t get_client_count() const;
@@ -319,7 +326,12 @@ protected:
     static void _bind_methods();
 
 private:
+    void update_now();
+
     std::chrono::steady_clock::time_point start_time_ = std::chrono::steady_clock::now();
+    std::thread worker_;                 // run_in_background()'s
+    std::atomic<bool> running_{false};
+    mutable std::mutex mutex_;           // the servers, between the worker and the game's calls
     std::string database_;
     core::Heightfield ground_;
     std::vector<std::pair<core::BuildingCollision, core::Placement>> buildings_;

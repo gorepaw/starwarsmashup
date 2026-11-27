@@ -1025,6 +1025,12 @@ void Hub::start_battle(const QueueKey& key) {
             say(std::format("{} left battle {}", name, b->id));
         }
     };
+    // Leaving before the end (Leave Match, quitting): the ammo spent is spent.
+    b->server->on_left_match = [this, b](const std::string& name, int std_ammo, int hvy_ammo) {
+        if (std::any_of(b->tickets.begin(), b->tickets.end(), [&](const auto& t) { return t.second.first == name; })) {
+            server_.apply_match_ammo_consumption(name, std_ammo, hvy_ammo);
+        }
+    };
     b->server->on_match_ended = [this, b](const MatchResult& result) {
         last_result_ = result;
         record_telemetry(*b, result);

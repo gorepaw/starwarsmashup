@@ -90,6 +90,11 @@ struct PopulationActivity {
     double sleep_margin = 100;
     double linger = 15;
     double check_interval = 0.5;  // seconds between looks at who's near
+    // A group's RespawnTime suits a busy server. With fewer players near
+    // (within wake_radius of its edge) it waits longer: times
+    // clamp(respawn_players / players near, 1, respawn_max_scale).
+    double respawn_players = 4;
+    double respawn_max_scale = 3;
 };
 
 class WorldPopulation {
@@ -192,6 +197,8 @@ private:
     void update_activity(double now);
     void sleep_creature(CreatureMob& mob);
     void sleep_bandit(BanditMob& mob);
+    // How many times its RespawnTime a group's dead wait (PopulationActivity).
+    double respawn_scale(Vec3 center, double radius) const;
 
     GameServer& server_;
     const World& world_;

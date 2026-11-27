@@ -2338,6 +2338,29 @@ godot::Error SwmServer::start(int64_t port, const godot::String& bake_prefix, co
 }
 
 void SwmServer::update() {
+    if (running_) {
+        return;  // (the worker updates it)
+    }
+    update_now();
+}
+
+void SwmServer::run_in_background() {
+    if (running_ || !server_) {
+        return;
+    }
+    running_ = true;
+    worker_ = std::thread([this] {
+        while (running_) {
+            {
+                const std::lock_guard<std::mutex> lock(mutex_);
+                update_now();
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(2));
+        }
+    });
+}
+
+void SwmServer::update_now() {
     if (server_) {
         const double now = seconds_since(start_time_);
         server_->update(now);
@@ -2354,6 +2377,12 @@ void SwmServer::update() {
 }
 
 void SwmServer::stop() {
+    if (running_) {
+        running_ = false;
+        if (worker_.joinable()) {
+            worker_.join();
+        }
+    }
     if (galaxy_ && galaxy_config_) {
         for (const auto& planet : galaxy_config_->planets) {
             if (core::GameServer* other = galaxy_->server(planet.name); other && other != server_.get()) {
@@ -2376,6 +2405,7 @@ void SwmServer::stop() {
 }
 
 int64_t SwmServer::get_client_count() const {
+    const std::lock_guard<std::mutex> lock(mutex_);
     return server_ ? int64_t(server_->client_count()) : 0;
 }
 
@@ -2400,6 +2430,7 @@ void SwmServer::_bind_methods() {
                          &SwmServer::add_building);
     ClassDB::bind_method(D_METHOD("start", "port", "bake_prefix", "spawn"), &SwmServer::start);
     ClassDB::bind_method(D_METHOD("update"), &SwmServer::update);
+    ClassDB::bind_method(D_METHOD("run_in_background"), &SwmServer::run_in_background);
     ClassDB::bind_method(D_METHOD("stop"), &SwmServer::stop);
     ClassDB::bind_method(D_METHOD("get_client_count"), &SwmServer::get_client_count);
     ClassDB::bind_method(D_METHOD("get_port"), &SwmServer::get_port);

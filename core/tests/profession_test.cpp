@@ -137,15 +137,15 @@ void test_training() {
     CHECK(r.ok && r.cost == milestone_cost(5) && r.cost == 500);
     CHECK(!learn_perk(book, me, "rifles_long_barrel", 1000).ok);         // known already
     // A or B: the other at its level must be given up first.
-    CHECK(!learn_perk(book, me, "rifles_quick_scope", 1000).ok);
+    CHECK(!learn_perk(book, me, "rifles_high_velocity", 1000).ok);
     r = forget(book, me, "rifles_long_barrel");
     CHECK(r.ok && r.cost == 0);
-    CHECK(learn_perk(book, me, "rifles_quick_scope", 1000).ok);
-    CHECK(forget(book, me, "rifles_quick_scope").ok);
+    CHECK(learn_perk(book, me, "rifles_high_velocity", 1000).ok);
+    CHECK(forget(book, me, "rifles_high_velocity").ok);
     // Paid for once: free again.
     r = learn_perk(book, me, "rifles_long_barrel", 0);
     CHECK(r.ok && r.cost == 0);
-    CHECK(!forget(book, me, "rifles_quick_scope").ok);  // not known
+    CHECK(!forget(book, me, "rifles_high_velocity").ok);  // not known
     CHECK(learn_perk(book, me, "rifles_braced", 10'000).ok);  // level 25, waits for triggers: learnable all the same
     CHECK(!learn_perk(book, me, "rifles_spotter", 10'000).ok);  // level 45
     CHECK(perks_learned(book, me) == 2);
@@ -1399,14 +1399,14 @@ void test_server_professions() {
         CHECK(client.status() == GameClient::Status::connected);
         const uint32_t me = client.entity_id();
 
-        // A creature killed with the starter E-11 in hand trains Rifles.
+        // A creature killed with the starter E-11 in hand trains Carbines.
         server.award_xp(me, 150);
         run(0.3);
         const auto* mine = server.professions_of(me);
-        CHECK(mine && profession_xp(*mine, "rifles") == 150);
+        CHECK(mine && profession_xp(*mine, "carbines") == 150);
         CHECK(client.professions().professions.size() == 1 &&
-              client.professions().professions[0].id == "rifles" && client.professions().professions[0].xp == 150);
-        CHECK(client.player_status().notice.find("Rifles reached level 2") != std::string::npos);
+              client.professions().professions[0].id == "carbines" && client.professions().professions[0].xp == 150);
+        CHECK(client.player_status().notice.find("Carbines reached level 2") != std::string::npos);
 
         // Hits taken in no armor train Unarmored: a point for each 10 damage.
         server.npc_melee(rat, me, 55, DamageType::melee);
@@ -1421,43 +1421,43 @@ void test_server_professions() {
         run(0.3);
         CHECK(client.char_loadouts().size() == 1 && client.char_loadouts()[0].companion.empty());
         const auto& resolved = client.custom_loadouts();
-        CHECK(!resolved.empty() && resolved[0].weapons[0] && resolved[0].weapons[0]->archetype == "rifle_auto");
+        CHECK(!resolved.empty() && resolved[0].weapons[0] && resolved[0].weapons[0]->archetype == "carbine_burst");
         const WeaponDef e11 = catalog.resolve_weapon(*catalog.find("wp_rifle_e11"));
-        const auto aim_now = [&] {
+        const auto bloom_now = [&] {
             return client.custom_loadouts().empty() || !client.custom_loadouts()[0].weapons[0]
-                       ? -1.0 : client.custom_loadouts()[0].weapons[0]->aim_speed;
+                       ? -1.0 : client.custom_loadouts()[0].weapons[0]->spread_per_shot;
         };
-        CHECK(near(aim_now(), e11.aim_speed, 1e-6));  // nothing learned yet
+        CHECK(e11.spread_per_shot > 0 && near(bloom_now(), e11.spread_per_shot, 1e-6));  // nothing learned yet
 
         // A trainer teaches a perk, for its level and credits; it counts from then.
-        server.set_vendors({{"Rifle Trainer", "trainer", {0, 0, 0}, 4, "rifles"}});
-        client.service(net::ServiceRequest::learn_perk, "rifles_quick_scope", 0, 0);  // Rifles 2: not yet
+        server.set_vendors({{"Carbine Trainer", "trainer", {0, 0, 0}, 4, "carbines"}});
+        client.service(net::ServiceRequest::learn_perk, "carbines_burst_control", 0, 0);  // Carbines 2: not yet
         run(0.3);
         CHECK(client.professions().professions[0].perks.empty());
-        server.award_xp(me, 400);  // Rifles 5
+        server.award_xp(me, 400);  // Carbines 5
         server.award_credits(me, 600);
         run(0.3);
         const int64_t credits = client.player_status().credits;
         CHECK(credits >= 500);
         client.service(net::ServiceRequest::learn_perk, "pistols_quick_draw", 0, 0);  // not this trainer's
-        client.service(net::ServiceRequest::learn_perk, "rifles_quick_scope", 0, 0);
+        client.service(net::ServiceRequest::learn_perk, "carbines_burst_control", 0, 0);
         run(0.4);
-        const auto rifles_progress = [&]() -> ProfessionProgress {
+        const auto carbines_progress = [&]() -> ProfessionProgress {
             for (const ProfessionProgress& p : client.professions().professions) {
-                if (p.id == "rifles") return p;
+                if (p.id == "carbines") return p;
             }
             return {};
         };
-        CHECK((rifles_progress().perks == std::vector<std::string>{"rifles_quick_scope"}));
+        CHECK((carbines_progress().perks == std::vector<std::string>{"carbines_burst_control"}));
         CHECK(client.player_status().credits == credits - 500);
-        CHECK(near(aim_now(), e11.aim_speed * 1.3, 1e-6));  // Quick Scope
+        CHECK(near(bloom_now(), e11.spread_per_shot * 0.65, 1e-6));  // Burst Control
         // Given up for free, and learned again for free.
-        client.service(net::ServiceRequest::forget, "rifles_quick_scope", 0, 0);
+        client.service(net::ServiceRequest::forget, "carbines_burst_control", 0, 0);
         run(0.4);
-        CHECK(rifles_progress().perks.empty() && near(aim_now(), e11.aim_speed, 1e-6));
-        client.service(net::ServiceRequest::learn_perk, "rifles_quick_scope", 0, 0);
+        CHECK(carbines_progress().perks.empty() && near(bloom_now(), e11.spread_per_shot, 1e-6));
+        client.service(net::ServiceRequest::learn_perk, "carbines_burst_control", 0, 0);
         run(0.4);
-        CHECK(rifles_progress().perks.size() == 1 && client.player_status().credits == credits - 500);
+        CHECK(carbines_progress().perks.size() == 1 && client.player_status().credits == credits - 500);
 
         // Not licensed: no gathering, and none of its experience.
         server.award_profession_xp("Trainee", {{"foraging", 50}}, 0);
@@ -1468,7 +1468,7 @@ void test_server_professions() {
         server.award_profession_xp("Trainee", {{"pistols", 40}}, 60);
         run(0.3);
         CHECK(mine && profession_xp(*mine, "pistols") == 40);
-        CHECK(mine && profession_xp(*mine, "rifles") == 580);
+        CHECK(mine && profession_xp(*mine, "carbines") == 580);
         CHECK(mine && profession_xp(*mine, "unarmored") == 41);
         client.disconnect();
         run(0.1);
@@ -1478,9 +1478,9 @@ void test_server_professions() {
         const auto saved = store.find_by_name("Trainee");
         CHECK(saved.has_value());
         const auto progress = saved ? store.list_professions(saved->id) : std::vector<ProfessionProgress>{};
-        CHECK(profession_xp(progress, "rifles") == 580);
-        CHECK(saved && store.get_extra(saved->id, "perks:rifles") == "rifles_quick_scope");
-        CHECK(saved && store.get_extra(saved->id, "paid_perks:rifles") == "rifles_quick_scope");
+        CHECK(profession_xp(progress, "carbines") == 580);
+        CHECK(saved && store.get_extra(saved->id, "perks:carbines") == "carbines_burst_control");
+        CHECK(saved && store.get_extra(saved->id, "paid_perks:carbines") == "carbines_burst_control");
         CHECK(profession_xp(progress, "unarmored") == 41);
         CHECK(profession_xp(progress, "pistols") == 40);
 
@@ -1493,9 +1493,9 @@ void test_server_professions() {
         GameServer server(srv_link, world, config, &store);
         server.award_profession_xp("Trainee", {{"carbines", 25}, {"bounty_hunter", 99}}, 30);
         const auto later = saved ? store.list_professions(saved->id) : std::vector<ProfessionProgress>{};
-        CHECK(profession_xp(later, "carbines") == 25);
+        CHECK(profession_xp(later, "carbines") == 620);
         CHECK(profession_xp(later, "bounty_hunter") == 99);  // in the game since Stage 12
-        CHECK(profession_xp(later, "rifles") == 595);
+        CHECK(profession_xp(later, "rifles") == 0);
         CHECK(profession_xp(later, "unarmored") == 56);
     }
     std::filesystem::remove(db_path);

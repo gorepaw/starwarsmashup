@@ -139,11 +139,19 @@ void GameServer::load_services_data(Client& client) {
             p.paid = paid.empty() ? p.trained : clamp_level(paid);
             p.perks.clear();
             p.paid_perks.clear();
+            // Perks since replaced (aim speed: 2026-11-27) are their replacements, learned and paid for.
+            const auto renamed = [](std::string id) {
+                if (id == "rifles_quick_scope") return std::string("rifles_high_velocity");
+                if (id == "carbines_sprint_ready") return std::string("carbines_burst_control");
+                return id;
+            };
             for (std::string& id : split_commas(perks)) {
+                id = renamed(std::move(id));
                 const ProfessionDef* owner = nullptr;
                 if (config_.professions->find_perk(id, &owner) && owner == &def) p.perks.push_back(std::move(id));
             }
             for (std::string& id : split_commas(paid_perks)) {
+                id = renamed(std::move(id));
                 const ProfessionDef* owner = nullptr;
                 if (config_.professions->find_perk(id, &owner) && owner == &def) p.paid_perks.push_back(std::move(id));
             }

@@ -47,7 +47,7 @@ Tags:
 
 | Level | A | B |
 |---|---|---|
-| 5 | **Sprint-Ready**: carbines come up to aim 40% faster (`aim`) | **Tight Choke**: scatter guns' spread 15% tighter (its own `Archetypes`) |
+| 5 | **Burst Control**: spread grows 35% slower as you keep firing (`bloom`) | **Tight Choke**: scatter guns' spread 15% tighter (its own `Archetypes`) |
 | 25 | **Combat Reload**: sprinting doesn't hold up a reload (N; without it, sprinting pauses one) | **Adrenaline**: a kill gives back 40 stamina (T) |
 | 45 | **Breacher**: 30% more damage to Deflector Shields (`shield`) | **Suppressing Burst**: hits slow the target's sprint 20% for 1 s (T) |
 | 65 | **Close Quarters**: a hit within 12 m makes spread settle 40% faster for 1.5 s (T) | **Flanker**: 15% more damage on hits from behind (N) |
@@ -57,7 +57,7 @@ Tags:
 
 | Level | A | B |
 |---|---|---|
-| 5 | **Long Barrel**: full damage carries 20% further (`range`) | **Quick Scope**: aim 30% faster (`aim`) |
+| 5 | **Long Barrel**: full damage carries 20% further (`range`) | **High Velocity**: bolts fly 40% faster, as far (`velocity`) |
 | 25 | **Braced**: crouching's accuracy bonus 1.8× instead of 1.4× (T) | **Suppression**: automatic-rifle hits stop the target's stamina coming back for 1.5 s (T) |
 | 45 | **Spotter**: hits while zoomed mark the target for your side for 4 s (T: `Aimed`, `Mark`) | **Rhythm**: each hit on the same target within 1.5 s of the last takes heat off (T) |
 | 65 | **Headhunter**: headshots ×1.25, body shots ×0.9 (N) | **Overwatch**: after 2 s crouched and still, 30% less heat and no bloom (T) |

@@ -371,6 +371,9 @@ func spawn_scorch(position: Vector3, normal: Vector3, radius: float) -> void:
 
 
 # A mark on a door (a sliding one's leaf, or a Battlefront door) goes where the door goes.
+# A Battlefront door's panels move on their own (its clip turns or slides
+# their nodes: bone_door, bone_leftdoors...), so a mark on one goes with
+# that panel: the smallest of its meshes it's on (a panel, not the frame).
 func _stick_to_door(node: Node3D) -> void:
 	if not node.is_inside_tree():
 		return
@@ -380,11 +383,28 @@ func _stick_to_door(node: Node3D) -> void:
 			var inverse := door.global_transform.affine_inverse()
 			var bounds := _door_bounds(door, inverse)
 			if bounds.size != Vector3.ZERO and bounds.grow(0.12).has_point(inverse * node.global_position):
+				var holder: Node3D = door
+				if group == &"bf2_doors":
+					holder = _door_part(door, node.global_position)
 				var keep := node.global_transform
 				node.get_parent().remove_child(node)
-				door.add_child(node)
+				holder.add_child(node)
 				node.global_transform = keep
 				return
+
+
+# The door's smallest mesh `at` is on (its own box, a little grown), or the door.
+func _door_part(door: Node3D, at: Vector3) -> Node3D:
+	var best: Node3D = door
+	var best_volume := INF
+	for mesh: MeshInstance3D in door.find_children("*", "MeshInstance3D", true, false):
+		if mesh.mesh == null or mesh.has_meta("scorch"):
+			continue
+		var box := mesh.get_aabb()
+		if box.grow(0.12).has_point(mesh.global_transform.affine_inverse() * at) and box.get_volume() < best_volume:
+			best = mesh
+			best_volume = box.get_volume()
+	return best
 
 
 # The door's meshes' box in the door's own space (as it stands now).

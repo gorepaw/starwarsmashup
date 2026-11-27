@@ -73,6 +73,10 @@ func show(id: int, model: Node3D, side: String, friend: bool, alive: bool, heigh
 	tag["alive"] = alive
 	tag["tint"] = tint
 	tag["scale"] = scale
+	var follow: RemoteTransform3D = tag.get("follow")
+	if follow != null and is_instance_valid(follow) and not is_equal_approx(follow.position.y, height):
+		follow.position = Vector3.UP * height  # (a cloning facility's comes down into its room)
+		tag["blocked"] = false
 
 
 func forget(id: int) -> void:
@@ -165,7 +169,7 @@ func _make(model: Node3D, side: String, height := HEIGHT) -> Dictionary:
 			mesh.set_surface_override_material(surface, glow)
 			materials.append(glow)
 	pivot.tree_exiting.connect(follow.queue_free)  # forgotten: its follower goes too
-	return {"pivot": pivot, "materials": materials, "side": side, "width": template.get_meta("width", 1.0)}
+	return {"pivot": pivot, "follow": follow, "materials": materials, "side": side, "width": template.get_meta("width", 1.0)}
 
 
 # The side's insignia, loaded once: glowing, seen through anything (whether
