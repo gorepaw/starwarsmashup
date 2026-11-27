@@ -337,7 +337,8 @@ void test_families() {
 }
 
 // docs/CRAFTING.md, Levels and Blueprints: weapons and armor aren't gated by
-// level; a schematic or some of a family can wait behind a blueprint.
+// level (medicine is, medpacks too); a schematic or some of a family can wait
+// behind a blueprint.
 void test_blueprints() {
     const auto root = repo_root();
     CraftingBook real;
@@ -347,8 +348,9 @@ void test_blueprints() {
     catalog.load(root / "game" / "items" / "swg_catalog.ini");
     for (const SchematicDef& s : real.schematics()) {
         const ItemDef* out = catalog.find(s.output_item);
-        if (out != nullptr && (out->kind == ItemKind::weapon || out->kind == ItemKind::armor ||
-                               out->kind == ItemKind::deflector_shield)) {
+        const bool medicine = out != nullptr && out->archetype == WeaponArchetype::medpack;
+        if (out != nullptr && !medicine && (out->kind == ItemKind::weapon || out->kind == ItemKind::armor ||
+                                            out->kind == ItemKind::deflector_shield)) {
             CHECK(s.required_level == 1);
         }
         CHECK(!s.blueprint);  // none yet: not until they drop somewhere (docs/CRAFTING.md)

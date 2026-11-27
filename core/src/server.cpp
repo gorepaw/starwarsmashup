@@ -1190,6 +1190,10 @@ void GameServer::handle(const net::Endpoint& from, const net::Datagram& datagram
                 } else if (def != nullptr && use_specialist_item(*client, *def, use->item_id)) {
                     // Stage 12: used.
                 } else if (def != nullptr && def->kind == ItemKind::supply && def->heal_amount > 0 &&
+                           client->health < client->stats.max_health && in_combat(*client)) {
+                    // Food heals out of combat; in a fight, a medpack does.
+                    notify(client->entity, "Not in a fight: food heals out of combat (use a medpack)");
+                } else if (def != nullptr && def->kind == ItemKind::supply && def->heal_amount > 0 &&
                     client->health < client->stats.max_health && store_->remove_item(use->item_id)) {
                     const double before = client->health;
                     heal(*client, def->heal_amount);
@@ -2196,6 +2200,21 @@ void GameServer::fire(Client& shooter, const Shot& shot, double view_tick) {
         return;
     }
     const WeaponDef& weapon = *def;
+    if (weapon.projectile == Projectile::heal) {
+        // A medpack: no shot, its user healed, at once or over its time.
+        if (weapon.heal_time > 0) {
+            TimedEffect e;
+            e.id = "medpack";
+            e.name = "Medpack";
+            e.source = shooter.entity;
+            e.remaining = e.duration = weapon.heal_time;
+            e.heal_per_second = weapon.heal / weapon.heal_time;
+            give_effect(shooter, std::move(e));
+        } else {
+            heal(shooter, weapon.heal);
+        }
+        return;
+    }
     // The tick being simulated is tick_ + 1; the shooter saw others at view_tick.
     const double rewind = std::clamp(double(tick_ + 1) - view_tick, 0.0, config_.max_rewind * config_.tick_rate);
     if (weapon.projectile == Projectile::melee) {

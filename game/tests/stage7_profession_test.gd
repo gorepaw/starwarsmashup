@@ -1,5 +1,5 @@
 # Headless checks for the professions (docs/PROFESSIONS.md, docs/PERKS.md):
-# 1. The roster loads through SwmCharacterStore (30 professions; weapon and
+# 1. The roster loads through SwmCharacterStore (29 professions; weapon and
 #    armor ones with their perks, the rest with milestones, in words; the
 #    level curve and the perk cap), and the planner draws what's known
 #    against the cap, and a trainer's screen its perks and their buttons.
@@ -32,7 +32,7 @@ func _initialize() -> void:
 	assert(store.load_professions(ProjectSettings.globalize_path("res://professions/professions.ini")) == OK,
 			"the roster didn't load")
 	var roster: Array = store.get_professions()
-	assert(roster.size() == 30, "expected 30 professions, got %d" % roster.size())
+	assert(roster.size() == 29, "expected 29 professions, got %d" % roster.size())
 	var rifles: Dictionary = roster.filter(func(p: Dictionary) -> bool: return p["id"] == "rifles")[0]
 	assert((rifles["milestones"] as Array).is_empty() and (rifles["perks"] as Array).size() == 10)
 	var first: Dictionary = rifles["perks"][0]

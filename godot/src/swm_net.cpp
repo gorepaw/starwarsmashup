@@ -765,6 +765,7 @@ godot::Dictionary contract_dictionary(const core::Contract& c) {
     d["progress"] = c.progress;
     d["needed"] = c.needed;
     d["profession"] = godot::String::utf8(c.profession.c_str());
+    d["item"] = godot::String::utf8(c.item.c_str());
     return d;
 }
 
@@ -1949,7 +1950,10 @@ godot::Array SwmClient::get_weapons() const {
         entry["projectile"] = w.projectile == core::Projectile::bolt      ? "bolt"
                               : w.projectile == core::Projectile::missile ? "missile"
                               : w.projectile == core::Projectile::grenade ? "grenade"
+                              : w.projectile == core::Projectile::heal    ? "heal"
                                                                           : "melee";
+        entry["heal"] = w.heal;            // a medpack's, at once or over heal_time seconds
+        entry["heal_time"] = w.heal_time;
         entry["melee_range"] = w.melee_range;
         entry["melee_lunge"] = w.melee_lunge;
         entry["melee_stagger"] = w.melee_stagger;

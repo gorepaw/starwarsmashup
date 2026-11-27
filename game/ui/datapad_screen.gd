@@ -341,7 +341,9 @@ func _paint_contracts(body: Rect2) -> void:
 		text("gamefont_tiny", str(c.get("title", "")), Vector2(rect.position.x + 8 * u, y + 3 * u), "Left", ACCENT)
 		var detail := "%d cr  ·  %s XP  ·  %d min left" % [int(c.get("reward", 0)), str(c.get("profession", "")).capitalize(),
 				ceili(float(c.get("expires_in", 0.0)) / 60.0)]
-		if float(c.get("needed", 0.0)) > 0:
+		if str(c.get("kind", "")) == "craft_order":
+			detail += "  ·  %d / %d made" % [int(c.get("progress", 0.0)), int(c.get("needed", 0.0))]
+		elif float(c.get("needed", 0.0)) > 0:
 			detail += "  ·  %d / %d s performed" % [int(c.get("progress", 0.0)), int(c.get("needed", 0.0))]
 		text("gamefont_tiny", detail, Vector2(rect.position.x + 8 * u, y + 21 * u), "Left", DIM, 0.85)
 		button(Rect2(rect.end.x - 100 * u, y + 7 * u, 92 * u, 26 * u), "Abandon", "abandon:%d" % int(c["id"]))

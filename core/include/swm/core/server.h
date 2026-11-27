@@ -129,6 +129,13 @@ struct MatchResult {
     uint16_t captures = 0;             // command posts taken or neutralized, and flags captured
 };
 
+// Whether a character's loadouts hold an item (carried, worn or shown):
+// what's in use can't be sold, delivered or used up.
+bool item_equipped_in_loadouts(const std::vector<CharacterLoadout>& loadouts, uint64_t item_id);
+// Seconds after being hurt or landing a hit that a character is still in a
+// fight: food (a supply that heals) waits for them to pass; a medpack doesn't.
+inline constexpr double out_of_combat_delay = 10.0;
+
 // Authoritative game server. Clients send inputs; the server simulates every
 // character from those inputs alone and sends each client a snapshot of the
 // world every tick. A character only moves when its inputs arrive, so the
@@ -739,6 +746,8 @@ private:
 
     // Triggered perks (server_perks.cpp, docs/PERKS.md).
     double perk_clock() const;
+    // In a fight: hurt, or landed a hit, in the last out_of_combat_delay s.
+    bool in_combat(const Client& client) const;
     // A character's statistics with its active perks' on top (and Adaptive
     // Plating's resistance), for what the server works out: damage, knockback.
     CharacterStats active_stats(const Client& client) const;

@@ -130,7 +130,7 @@ static func build_lines(def: Dictionary, inst: Dictionary, store: Object, equipp
 	if kind == "supply":
 		var heal := float(def.get("heal_amount", 0.0))
 		if heal > 0.0:
-			lines.append({"text": "Restores %d Health" % roundi(heal), "color": GOOD})
+			lines.append({"text": "Restores %d Health (out of combat)" % roundi(heal), "color": GOOD})
 	var sell_v := int(def.get("sell_value", 0))
 	if sell_v > 0:
 		lines.append({"text": "Sell Value: %d Credits" % sell_v, "color": Bf2Screen.ACCENT})
@@ -155,7 +155,15 @@ static func build_lines(def: Dictionary, inst: Dictionary, store: Object, equipp
 		var delay := maxf(0.01, float(stats.get("shot_delay", 0.2)))
 		var rof := 1.0 / delay
 		var dtype := str(stats.get("damage_type", "laser")).capitalize()
-		if str(stats.get("projectile", "")) == "melee":
+		if str(stats.get("projectile", "")) == "heal":
+			# A medpack: what it heals (at once or over time), how many a life.
+			var heal := float(stats.get("heal", 0.0))
+			var eq_heal := float(eq_stats.get("heal", heal)) if not eq_stats.is_empty() else heal
+			var over := float(stats.get("heal_time", 0.0))
+			var heal_text := "%.0f" % heal + (" over %.0f s" % over if over > 0.0 else " at once")
+			lines.append(_cmp_line("Heals", heal, eq_heal, heal_text, true, not eq_stats.is_empty()))
+			lines.append({"text": "Carried: %d a life" % int(stats.get("carried", 2)), "color": Bf2Screen.TEXT})
+		elif str(stats.get("projectile", "")) == "melee":
 			var eq_dmg := float(eq_stats.get("damage", dmg)) if not eq_stats.is_empty() else dmg
 			var eq_rof := 1.0 / maxf(0.01, float(eq_stats.get("shot_delay", delay))) if not eq_stats.is_empty() else rof
 			var reach := float(stats.get("melee_range", 2.6))

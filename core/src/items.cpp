@@ -13,7 +13,7 @@
 namespace swm::core {
 namespace {
 
-const std::array<WeaponArchetypeInfo, 15> archetype_table{{
+const std::array<WeaponArchetypeInfo, 16> archetype_table{{
     {WeaponArchetype::rifle_auto, "rifle_auto", "imp_weap_inf_rifle", "rifle", "primary"},
     {WeaponArchetype::carbine_burst, "carbine_burst", "all_weap_inf_rifle", "rifle", "primary"},
     {WeaponArchetype::sniper, "sniper", "imp_weap_inf_sniper_rifle", "rifle", "primary"},
@@ -32,6 +32,7 @@ const std::array<WeaponArchetypeInfo, 15> archetype_table{{
     // exported definition, and our numbers are our own (see below).
     {WeaponArchetype::placed, "placed", "", "grenade", "secondary"},
     {WeaponArchetype::utility, "utility", "", "grenade", "secondary"},
+    {WeaponArchetype::medpack, "medpack", "", "grenade", "secondary"},
 }};
 
 WeaponDef default_archetype_weapon(WeaponArchetype a) {
@@ -241,6 +242,22 @@ WeaponDef default_archetype_weapon(WeaponArchetype a) {
         w.bolt_speed = 60;
         w.bolt_gravity = 0.3;
         w.bolt_life = 0.8;
+        break;
+    case WeaponArchetype::medpack:
+        // No shot: a heal (its item's HealAmount, HealTime), two a life (`ammo`,
+        // in hand and in reserve), a second to use.
+        w.name = "swg_medpack";
+        w.projectile = Projectile::heal;
+        w.shot_delay = 1.0;
+        w.rounds_per_clip = 1;
+        w.ammo = 2;
+        w.reload_time = 0;
+        w.yaw_spread = 0;
+        w.pitch_spread = 0;
+        w.spread_per_shot = 0;
+        w.damage = 0;
+        w.fire_sound = "com_weap_throw";
+        w.muzzle_flash.clear();
         break;
     case WeaponArchetype::melee:
     case WeaponArchetype::melee_2h:
@@ -602,6 +619,8 @@ void ItemCatalog::load(const std::filesystem::path& catalog_ini, const std::file
             def.sell_value = def.cost_credits > 0 ? std::max<int64_t>(1, def.cost_credits / 4) : 0;
         }
         def.heal_amount = s.number("HealAmount", 0.0);
+        def.heal_time = std::max(0.0, s.number("HealTime", 0.0));
+        def.carried = std::max(0, int(s.number("Carried", 0)));
         def.teaches = s.get("Teaches").value_or("");
         def.vehicle = s.get("Vehicle").value_or("");
         if (def.kind == ItemKind::vehicle && def.vehicle.empty()) {
@@ -1086,6 +1105,12 @@ WeaponDef ItemCatalog::resolve_weapon(const ItemDef& def, ItemGrade grade, int m
         w.trap_interval = 0.3;
         w.trigger_radius = 8.0 * def.range_mult;
     }
+    if (w.projectile == Projectile::heal) {
+        // A medpack's heal moves with its grade and mark as a weapon's damage does.
+        w.heal = std::max(0.0, def.heal_amount) * g_mult * mark_scale(mark);
+        w.heal_time = def.heal_time;
+        if (def.carried > 0) w.ammo = def.carried;
+    }
     if (w.projectile == Projectile::melee) {
         w.melee_range *= def.range_mult;
     }
@@ -1093,8 +1118,9 @@ WeaponDef ItemCatalog::resolve_weapon(const ItemDef& def, ItemGrade grade, int m
         w.ammo_class = def.ammo_class;
     } else if (def.archetype == WeaponArchetype::heavy_launcher) {
         w.ammo_class = AmmoClass::heavy;
-    } else if (w.projectile == Projectile::melee || def.archetype == WeaponArchetype::grenade ||
-               def.archetype == WeaponArchetype::placed || def.archetype == WeaponArchetype::utility) {
+    } else if (w.projectile == Projectile::melee || w.projectile == Projectile::heal ||
+               def.archetype == WeaponArchetype::grenade || def.archetype == WeaponArchetype::placed ||
+               def.archetype == WeaponArchetype::utility) {
         w.ammo_class = AmmoClass::none;
     } else {
         w.ammo_class = AmmoClass::standard;

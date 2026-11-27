@@ -24,7 +24,7 @@ func _initialize() -> void:
 	var book: Dictionary = client.get_specialist_book(ProjectSettings.globalize_path("res://professions/specialists.ini"))
 	var abilities: Dictionary = book.get("abilities", {})
 	assert(abilities.size() >= 40, "abilities: %d" % abilities.size())
-	assert(str((abilities["cm_heal_dart"] as Dictionary)["profession"]) == "combat_medic")
+	assert(str((abilities["doc_heal_dart"] as Dictionary)["profession"]) == "doctor")
 	assert((book.get("companions", {}) as Dictionary).has("dewback"))
 	assert((book.get("modules", []) as Array).size() >= 8 and (book.get("slices", []) as Array).size() >= 7)
 	assert((client.get_specialist() as Dictionary).is_empty())  # not connected
@@ -36,7 +36,7 @@ func _initialize() -> void:
 	root.add_child(layer)
 	var spec := {
 		"revision": 3,
-		"abilities": [{"id": "cm_heal_dart", "cooldown": 2.5}, {"id": "ch_tame", "cooldown": 0.0}],
+		"abilities": [{"id": "doc_heal_dart", "cooldown": 2.5}, {"id": "ch_tame", "cooldown": 0.0}],
 		"effects": [{"id": "inspired", "name": "Inspired", "remaining": 12.0, "duration": 20.0, "flags": 8}],
 		"companions": [{"id": 1, "template": "womp_rat", "name": "Biter", "origin": "tamed", "quality": 0.6,
 				"health": 1.1, "damage": 1.0, "speed": 1.0, "modules": PackedStringArray(), "mount": false},

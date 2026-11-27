@@ -1087,6 +1087,59 @@ void test_unified_ammo() {
 
 } // namespace
 
+// Medpacks (docs/PROFESSIONS.md, Support Scopes): tactical gear used from
+// the secondary slot. Nothing is fired; its user is healed, at once or over
+// its HealTime, as many times a life as it's Carried. Its grade moves its heal.
+void test_medpacks() {
+    const std::filesystem::path ini = "swm_medpack_test_catalog.ini";
+    {
+        std::ofstream out(ini);
+        out << "[item]\nId = stim\nKind = weapon\nArchetype = medpack\nSlot = secondary\nHealAmount = 100\n"
+            << "[item]\nId = infusion\nKind = weapon\nArchetype = medpack\nSlot = secondary\nHealAmount = 240\n"
+            << "HealTime = 8\nCarried = 1\n";
+    }
+    ItemCatalog catalog;
+    catalog.load(ini);
+    std::filesystem::remove(ini);
+    const WeaponDef stim = catalog.resolve_weapon(*catalog.find("stim"));
+    const WeaponDef infusion = catalog.resolve_weapon(*catalog.find("infusion"));
+    CHECK(stim.projectile == Projectile::heal && near(stim.heal, 100) && stim.heal_time == 0 && stim.ammo == 2);
+    CHECK(infusion.projectile == Projectile::heal && near(infusion.heal, 240) && near(infusion.heal_time, 8) &&
+          infusion.ammo == 1 && infusion.ammo_class == AmmoClass::none);
+    CHECK(catalog.resolve_weapon(*catalog.find("stim"), ItemGrade::fine).heal > stim.heal);
+
+    for (const bool over_time : {false, true}) {
+        Loadout carried;
+        carried.weapons[primary_slot] = WeaponDef{};  // A's rifle, to wound B
+        carried.weapons[secondary_slot] = over_time ? infusion : stim;
+        Arena arena(0, 0.5, {}, carried);
+        arena.run(0.5, [] {});
+        const uint32_t b = arena.b.entity_id();
+        // Three bolts into B.
+        arena.run(0.4, [&] { arena.a.set_input(arena.a_aims_at_b(true)); });
+        arena.run(0.5, [&] { arena.a.set_input({}); });
+        const double wounded = arena.server.health_of(b);
+        CHECK(wounded < 300 && wounded > 0);
+        // B uses its medpack (a tap of the secondary).
+        // (Held a few client ticks; its second of use keeps it to one.)
+        int steps = 0;
+        arena.run(1.0, [&] {
+            arena.a.set_input({});
+            arena.b.set_input({.secondary = ++steps <= 6});
+        });
+        const double after = arena.server.health_of(b);
+        if (!over_time) {
+            CHECK(near(after, std::min(400.0, wounded + 100), 0.5));
+            CHECK(arena.b.predicted().combat.weapons[secondary_slot].rounds == 1);  // one left this life
+        } else {
+            CHECK(after > wounded + 15 && after < wounded + 60);  // about 30 a second so far
+            arena.run(8.0, [&] { arena.b.set_input({}); });
+            CHECK(near(arena.server.health_of(b), std::min(400.0, wounded + 240), 1.0));
+        }
+        std::printf("medpack (%s): %.0f -> %.0f\n", over_time ? "over time" : "at once", wounded, after);
+    }
+}
+
 int main() {
     test_placed_mines_and_traps();
     test_beam_and_flamer();
@@ -1112,5 +1165,6 @@ int main() {
     test_deflector_shield();
     test_melee_combat();
     test_unified_ammo();
+    test_medpacks();
     return swm::test::finish("combat_test");
 }

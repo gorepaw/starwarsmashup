@@ -544,6 +544,8 @@ void put_weapon_def(ByteWriter& out, const WeaponDef& w) {
     out.put(double(w.arm_time));
     out.put(uint8_t(std::clamp(w.trap_shots, 0, 255)));
     out.put(double(w.trap_interval));
+    out.put(double(w.heal));
+    out.put(double(w.heal_time));
     out.put(double(w.shot_elevate));
     out.put(double(w.explosion_damage));
     out.put(double(w.explosion_inner));
@@ -624,7 +626,7 @@ WeaponDef get_weapon_def(ByteReader& in) {
     if (dt >= damage_type_count) throw PacketError("bad damage type");
     w.damage_type = DamageType(dt);
     const uint8_t proj = in.get<uint8_t>();
-    if (proj > uint8_t(Projectile::melee)) throw PacketError("bad projectile");
+    if (proj > uint8_t(Projectile::heal)) throw PacketError("bad projectile");
     w.projectile = Projectile(proj);
     w.ammo = in.get<int16_t>();
     w.shot_delay = in.get<double>();
@@ -659,6 +661,8 @@ WeaponDef get_weapon_def(ByteReader& in) {
     w.arm_time = in.get<double>();
     w.trap_shots = in.get<uint8_t>();
     w.trap_interval = in.get<double>();
+    w.heal = in.get<double>();
+    w.heal_time = in.get<double>();
     w.shot_elevate = in.get<double>();
     w.explosion_damage = in.get<double>();
     w.explosion_inner = in.get<double>();
@@ -829,13 +833,14 @@ void put_contract(ByteWriter& out, const Contract& c) {
     out.put(float(c.progress));
     out.put(float(c.needed));
     out.put_string(c.profession);
+    out.put_string(c.item);
 }
 
 Contract get_contract(ByteReader& in) {
     Contract c;
     c.id = in.get<uint64_t>();
     const uint8_t kind = in.get<uint8_t>();
-    if (kind > uint8_t(ContractKind::gig)) throw PacketError("bad contract kind");
+    if (kind > uint8_t(ContractKind::craft_order)) throw PacketError("bad contract kind");
     c.kind = ContractKind(kind);
     c.title = in.get_string();
     c.target_name = in.get_string();
@@ -848,6 +853,7 @@ Contract get_contract(ByteReader& in) {
     c.progress = in.get<float>();
     c.needed = in.get<float>();
     c.profession = in.get_string();
+    c.item = in.get_string();
     return c;
 }
 

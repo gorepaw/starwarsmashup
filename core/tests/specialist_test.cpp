@@ -50,7 +50,7 @@ void test_shipped_data(const SpecialistBook& book, const ProfessionBook& profess
         CHECK(std::any_of(def->milestones.begin(), def->milestones.end(),
                           [&](const ProfessionMilestone& m) { return m.level == a.level; }));
     }
-    // All 13 Wave 7B/7C professions are live (Image Designer is gone); 30 in all.
+    // All 12 Wave 7B/7C professions are live (Image Designer and Combat Medic are gone); 29 in all.
     int live = 0;
     for (const ProfessionDef& def : professions.all()) {
         if (def.wave == "7B" || def.wave == "7C") {
@@ -58,8 +58,8 @@ void test_shipped_data(const SpecialistBook& book, const ProfessionBook& profess
             ++live;
         }
     }
-    CHECK(live == 13);
-    CHECK(professions.all().size() == 30);
+    CHECK(live == 12);
+    CHECK(professions.all().size() == 29);
     // Companions: creatures by their wildlife look, droids with bays; mounts with items in the catalog.
     const CompanionTemplate* dewback = book.companion_for_look("object/mobile/shared_dewback.iff");
     CHECK(dewback && dewback->id == "dewback" && dewback->mountable && !dewback->tactical());
@@ -84,7 +84,7 @@ void test_rules(const SpecialistBook& book, const ProfessionBook& professions) {
     auto world = unlocked_abilities(book, professions, progress, false);
     CHECK(has(world, "ent_perform") && has(world, "ent_flourish") && !has(world, "ent_holo_emitter"));
     CHECK(has(world, "bh_bolas") && has(world, "bh_seeker_probe") && !has(world, "bh_recon_probe"));
-    CHECK(!has(world, "doc_medpack"));  // not learned
+    CHECK(!has(world, "doc_heal_dart"));  // not learned
     auto match = unlocked_abilities(book, professions, progress, true);
     CHECK(has(match, "bh_recon_probe") && has(match, "bh_hvt") && !has(match, "bh_seeker_probe") && !has(match, "ent_perform"));
 
@@ -95,7 +95,7 @@ void test_rules(const SpecialistBook& book, const ProfessionBook& professions) {
     rally.remaining = 4;
     CHECK(!add_effect(effects, rally));
     CHECK(effects.size() == 1 && near(effects[0].remaining, 10));
-    TimedEffect toxin{"cm_poison_dart", "Toxin", 2, 3, 3, {}, 0, 14, DamageType::bio, effect_flag::debuff};
+    TimedEffect toxin{"bh_toxin_dart", "Toxin", 2, 3, 3, {}, 0, 14, DamageType::bio, effect_flag::debuff};
     CHECK(!add_effect(effects, toxin));
     CHECK(has_effect_flag(effects, effect_flag::debuff));
     const auto gear = effects_gear(effects);
@@ -187,13 +187,19 @@ void test_wire() {
     c.kind = ContractKind::track;
     c.title = "Track: a worrt";
     c.reward = 120;
-    sync.contracts = {c};
+    Contract order;
+    order.id = 6;
+    order.kind = ContractKind::craft_order;
+    order.item = "wp_medpack_stim";
+    order.needed = 3;
+    sync.contracts = {c, order};
     sync.prices = {{"wp_rifle_e11", PriceStats{2, 100, 300, 200, 300}}};
     sync.performing = true;
     const auto decoded = std::get<net::SpecialistSync>(net::decode(net::encode(sync)));
     CHECK(decoded.revision == 9 && decoded.abilities == sync.abilities && decoded.effects == sync.effects);
     CHECK(decoded.companions.size() == 1 && decoded.companions[0].name == "Biter");
-    CHECK(decoded.contracts.size() == 1 && decoded.contracts[0].kind == ContractKind::track && decoded.contracts[0].reward == 120);
+    CHECK(decoded.contracts.size() == 2 && decoded.contracts[0].kind == ContractKind::track && decoded.contracts[0].reward == 120);
+    CHECK(decoded.contracts.size() == 2 && decoded.contracts[1] == order);
     CHECK(decoded.prices.size() == 1 && decoded.prices[0].second.average == 200);
     CHECK(decoded.performing);
 
@@ -228,7 +234,7 @@ void test_server(const std::filesystem::path& root, const SpecialistBook& book, 
     const int64_t master = professions.xp_for_level(100);
     const CharacterRecord vet = store.create("Veteran", {0, 0, 0}, 0);
     std::vector<ProfessionProgress> progress;
-    for (const char* id : {"combat_medic", "creature_handler", "entertainer", "bio_engineer", "merchant", "smuggler"}) {
+    for (const char* id : {"bounty_hunter", "creature_handler", "entertainer", "bio_engineer", "merchant", "smuggler"}) {
         progress.push_back({id, master, 0});
         store.set_extra(vet.id, std::string("trained:") + id, "100");
     }
@@ -291,19 +297,18 @@ void test_server(const std::filesystem::path& root, const SpecialistBook& book, 
     const auto in_kit = [&](std::string_view id) {
         return std::any_of(kit.begin(), kit.end(), [&](const net::AbilityStatus& a) { return a.id == id; });
     };
-    CHECK(in_kit("ent_perform") && in_kit("bio_sample") && in_kit("cm_bio_grenade") && in_kit("ch_tame") &&
+    CHECK(in_kit("ent_perform") && in_kit("bio_sample") && in_kit("bh_toxin_dart") && in_kit("ch_tame") &&
           in_kit("ch_tranq_dart"));
-    CHECK(!in_kit("doc_medpack") && !in_kit("bh_bolas"));  // never learned
+    CHECK(!in_kit("doc_heal_dart") && !in_kit("doc_cleanse"));  // never learned
 
-    // A bio grenade: a cloud that hurts the creature, not us.
-    use("cm_bio_grenade", 0, {-12, 0, 0});
+    // A toxin dart: it poisons the creature, not us.
+    use("bh_toxin_dart", target, {-12, 0, 0});
     run(2.0);
-    CHECK(server.hazard_count() == 1);
     const auto hurt = server.npc_info(target);
     CHECK(hurt && hurt->health < 135 && hurt->health > 50);
     CHECK(server.health_of(me) >= 399);
     const auto* mine = server.professions_of(me);
-    CHECK(mine && profession_xp(*mine, "combat_medic") > master);
+    CHECK(mine && profession_xp(*mine, "bounty_hunter") > master);
 
     // A performance: we (and anyone near) are Inspired.
     use("ent_perform", 0, {});
@@ -410,6 +415,77 @@ void test_server(const std::filesystem::path& root, const SpecialistBook& book, 
     CHECK(saved && !store.get_extra(saved->id, "datapad").empty());
     const auto saved_buyer = store.find_by_name("Buyer");
     CHECK(saved_buyer && store.get_extra(saved_buyer->id, "bounty_flag") == "1");
+}
+
+// Crafting orders at an artisan terminal (docs/PROFESSIONS.md): a Doctor
+// takes one, and standing at the terminal with what it asks for (not in a
+// loadout), hands it in for credits and Doctor experience.
+void test_craft_orders(const std::filesystem::path& root, const SpecialistBook& book,
+                       const ProfessionBook& professions, const ItemCatalog& catalog) {
+    CraftingBook crafting;
+    crafting.load_resources(root / "game" / "crafting" / "resources.ini");
+    crafting.load_schematics(root / "game" / "crafting" / "schematics.ini");
+    Heightfield ground{101, 2.0, -100, -100, std::vector<float>(101 * 101, 0.0f)};
+    World world{ground};
+    MemoryCharacterStore store;
+    const CharacterRecord medic = store.create("Medic", {0, 0, 0}, 0);
+    const int64_t xp = professions.xp_for_level(60);
+    store.save_professions(medic.id, std::vector<ProfessionProgress>{{"doctor", xp, 0}});
+    store.set_extra(medic.id, "trained:doctor", "50");
+    // Three of everything a Doctor makes, whatever the order asks for.
+    for (const SchematicDef& s : crafting.schematics()) {
+        if (s.profession != "doctor") continue;
+        for (int i = 0; i < 3; ++i) store.grant_item(ItemInstance{0, medic.id, s.output_item});
+    }
+    const size_t held_before = store.list_items(medic.id).size();
+
+    net::LoopbackHub links;
+    net::Endpoint server_ep{1, 1};
+    net::LoopbackLink srv_link{links, server_ep};
+    net::LoopbackLink link{links, {2, 1}};
+    ServerConfig config;
+    config.catalog = &catalog;
+    config.professions = &professions;
+    config.specialists = &book;
+    config.crafting = &crafting;
+    config.spawn = {0, 0, 0};
+    GameServer server(srv_link, world, config, &store);
+    server.set_quests(nullptr, {}, {{"Artisan Terminal", {2, 0, 0}, 3, "artisan"}});
+    GameClient client(link, world, ClientConfig{.server = server_ep, .name = "Medic"});
+    double now = 0;
+    const auto run = [&](double seconds) {
+        for (const double end = now + seconds; now < end; now += 1.0 / 30.0) {
+            server.update(now);
+            client.update(now);
+        }
+    };
+    const auto act = [&](uint8_t action, int64_t amount, uint32_t target = 0) {
+        net::SpecialistRequest r;
+        r.action = action;
+        r.amount = amount;
+        r.target = target;
+        client.specialist_request(r);
+    };
+    run(1.0);
+    CHECK(client.status() == GameClient::Status::connected);
+    act(net::SpecialistRequest::contracts, 0, 0);
+    run(0.5);
+    const auto& offers = client.specialist().offers;
+    const auto order = std::find_if(offers.begin(), offers.end(),
+                                    [](const Contract& c) { return c.kind == ContractKind::craft_order; });
+    CHECK(order != offers.end());
+    if (order == offers.end()) return;
+    CHECK(order->profession == "doctor" && order->needed >= 1 && order->needed <= 3 && order->reward > 0);
+    const int needed = int(order->needed);
+    const int64_t credits = client.player_status().credits;
+    act(net::SpecialistRequest::contract_accept, int64_t(order->id));
+    run(1.0);
+    // At the terminal, holding them: handed in at once.
+    CHECK(client.specialist().contracts.empty());
+    CHECK(client.player_status().credits > credits);
+    CHECK(store.list_items(medic.id).size() == held_before - size_t(needed));
+    const auto* mine = server.professions_of(client.entity_id());
+    CHECK(mine && profession_xp(*mine, "doctor") > xp);
 }
 
 // In a match: a loadout from a hub brings its kit and Companion Slot; a
@@ -535,6 +611,7 @@ int main() {
     test_rules(book, professions);
     test_wire();
     test_server(root, book, professions, catalog);
+    test_craft_orders(root, book, professions, catalog);
     test_match(book, professions);
     return swm::test::finish("specialist_test");
 }

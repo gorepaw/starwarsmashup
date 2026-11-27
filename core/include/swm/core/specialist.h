@@ -1,5 +1,6 @@
 #pragma once
 
+#include <array>
 #include <cstdint>
 #include <filesystem>
 #include <map>
@@ -335,7 +336,7 @@ inline constexpr double companion_match_death_cooldown = 30;
 inline constexpr double companion_leash = 60;
 
 // ---------------------------------------------------------------------------
-// Contracts (mission terminals: bounty, general, scout, entertainer)
+// Contracts (mission terminals: bounty, general, scout, entertainer, artisan)
 
 enum class ContractKind : uint8_t {
     npc_mark,    // kill a named outlaw (Bounty Hunter)
@@ -343,6 +344,7 @@ enum class ContractKind : uint8_t {
     contraband,  // carry a package to a drop point in time (Smuggler)
     track,       // find a creature and get close (Ranger)
     gig,         // perform at a venue for a while (Entertainer)
+    craft_order, // bring crafted items back to the terminal (a crafting profession: Doctor so far)
 };
 std::string_view contract_kind_name(ContractKind kind);
 std::optional<ContractKind> contract_kind_from_name(std::string_view name);
@@ -361,11 +363,16 @@ struct Contract {
     double progress = 0;        // a gig's seconds performed so far
     double needed = 0;          // ... and needed
     std::string profession;     // whose experience it is
+    std::string item;           // a crafting order's item (its id); progress: how many are held
 
     friend bool operator==(const Contract&, const Contract&) = default;
 };
 
-// A mark's or a run's pay for its tier and how far it is.
+// A mark's or a run's pay for its tier and how far it is (a crafting
+// order's: each item's, its tier its schematic's level / 25 + 1).
+// The crafting professions artisan terminals take orders for (every one,
+// one day).
+inline constexpr std::array<std::string_view, 1> artisan_order_professions{"doctor"};
 int64_t contract_reward(ContractKind kind, int tier, double distance);
 // How many contracts a character may hold at once.
 inline constexpr size_t max_contracts = 3;

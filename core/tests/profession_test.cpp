@@ -53,13 +53,13 @@ double stat_after(const Loadout& lo, Stat stat) {
 void test_roster() {
     ProfessionBook book;
     book.load(repo_root() / "game" / "professions" / "professions.ini");
-    CHECK(book.all().size() == 30);  // Image Designer is gone (an NPC one day)
-    CHECK(book.find("image_designer") == nullptr);
+    CHECK(book.all().size() == 29);  // Image Designer is gone (an NPC one day), and Combat Medic (into Doctor)
+    CHECK(book.find("image_designer") == nullptr && book.find("combat_medic") == nullptr);
     const auto in_wave = [&](const char* wave) {
         return std::count_if(book.all().begin(), book.all().end(), [&](const ProfessionDef& d) { return d.wave == wave; });
     };
     CHECK(in_wave("7A") == 17);
-    CHECK(in_wave("7B") == 9);
+    CHECK(in_wave("7B") == 8);
     CHECK(in_wave("7C") == 4);
     int perks = 0, waiting = 0, triggered = 0;
     for (const ProfessionDef& def : book.all()) {

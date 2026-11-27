@@ -740,7 +740,11 @@ godot::Dictionary SwmCharacterStore::resolve_item_stats(const godot::String& def
         out["projectile"] = w.projectile == core::Projectile::bolt      ? "bolt"
                             : w.projectile == core::Projectile::missile ? "missile"
                             : w.projectile == core::Projectile::grenade ? "grenade"
+                            : w.projectile == core::Projectile::heal    ? "heal"
                                                                         : "melee";
+        out["heal"] = w.heal;  // a medpack's (its grade and mark in it), over heal_time s (0: at once)
+        out["heal_time"] = w.heal_time;
+        out["carried"] = int64_t(w.ammo);  // a tactical item's, a life (in hand and in reserve)
         out["melee_range"] = w.melee_range;
         out["melee_arc"] = w.melee_arc;
         out["melee_lunge"] = w.melee_lunge;

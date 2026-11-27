@@ -8,8 +8,6 @@
 
 namespace swm::core {
 
-namespace {
-
 bool item_equipped_in_loadouts(const std::vector<CharacterLoadout>& loadouts, uint64_t item_id) {
     for (const CharacterLoadout& cl : loadouts) {
         if (cl.primary_id == item_id || cl.sidearm_id == item_id || cl.secondary_id == item_id) {
@@ -24,6 +22,8 @@ bool item_equipped_in_loadouts(const std::vector<CharacterLoadout>& loadouts, ui
     }
     return false;
 }
+
+namespace {
 
 int profession_level(const ProfessionBook* book, const std::vector<ProfessionProgress>& progress, std::string_view id) {
     if (book == nullptr) return 1;

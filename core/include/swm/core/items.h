@@ -80,6 +80,7 @@ enum class WeaponArchetype : uint8_t {
     melee_2h,        // a two-handed sword, axe, hammer or polearm: a primary, heavier than `melee`
     placed,          // a mine or trap: tossed down, it goes off when an enemy comes near (tactical)
     utility,         // a tactical one-shot: a bolt that leaves its effect (the flare, tangle pistols)
+    medpack,         // a tactical heal: used, it heals its user, at once or over time (a Doctor's)
 };
 
 // A melee archetype: one-handed (`melee`, a sidearm) or two-handed (`melee_2h`).
@@ -119,6 +120,11 @@ struct ItemDef {
     int64_t cost_credits = 0;
     int64_t sell_value = 0;
     double heal_amount = 0.0;
+    // A medpack (weapon, Archetype = medpack): HealAmount is what it heals,
+    // over HealTime seconds (0: at once), and Carried how many a life (0:
+    // the archetype's 2).
+    double heal_time = 0.0;
+    int carried = 0;
     // A blueprint (a supply: `Teaches = <schematic id>`): used, its owner
     // learns that `Blueprint = yes` schematic (docs/CRAFTING.md).
     std::string teaches;

@@ -328,9 +328,16 @@ void test_corpse_loot_vendor_and_credit_persistence() {
             }
         }
         CHECK(stim_id != 0);
+        // Just hit: it waits for the fight to be over (food and stims heal out of combat).
         client.use_item(stim_id);
         step_both(0.25);
-        CHECK(client.health() > hurt_hp);
+        CHECK(client.items().size() == start_items + 1);
+        step_both(out_of_combat_delay + 0.5);
+        const double rested_hp = client.health();
+        client.use_item(stim_id);
+        step_both(0.25);
+        CHECK(client.health() > rested_hp || client.health() >= client.character_stats().max_health);
+        CHECK(rested_hp >= hurt_hp);
         CHECK(client.items().size() == start_items);
 
         client.disconnect();

@@ -129,7 +129,8 @@ constexpr std::array<std::string_view, 25> effect_names{
 constexpr std::array<std::string_view, 5> target_names{"self", "ally", "enemy", "ground", "creature"};
 constexpr std::array<std::string_view, 7> deploy_names{"none",         "heal_aura", "buff_aura", "sensor",
                                                        "trap",         "spawn_beacon", "camp"};
-constexpr std::array<std::string_view, 5> contract_names{"npc_mark", "pvp_mark", "contraband", "track", "gig"};
+constexpr std::array<std::string_view, 6> contract_names{"npc_mark", "pvp_mark", "contraband", "track", "gig",
+                                                         "craft_order"};
 
 template <typename E, size_t N>
 std::optional<E> from_names(const std::array<std::string_view, N>& names, std::string_view name) {
@@ -602,6 +603,7 @@ int64_t contract_reward(ContractKind kind, int tier, double distance) {
     case ContractKind::contraband: return int64_t(100 + d * 0.8);
     case ContractKind::track: return int64_t(80 + d * 0.4);
     case ContractKind::gig: return 120;
+    case ContractKind::craft_order: return int64_t(60 * std::max(1, tier));
     }
     return 0;
 }

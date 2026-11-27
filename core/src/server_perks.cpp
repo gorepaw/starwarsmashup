@@ -39,6 +39,11 @@ double GameServer::perk_clock() const {
     return double(tick_) / config_.tick_rate;
 }
 
+bool GameServer::in_combat(const Client& client) const {
+    const double now = perk_clock();
+    return now - client.perks.last_hurt < out_of_combat_delay || now - client.perks.last_hit < out_of_combat_delay;
+}
+
 CharacterStats GameServer::active_stats(const Client& client) const {
     const Loadout& lo = loadout_of(client);
     CharacterStats stats = perk_stats(client.stats, lo, client.state);

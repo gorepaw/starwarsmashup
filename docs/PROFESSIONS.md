@@ -36,7 +36,7 @@ SWG's resource-stat economy and experimentation stay intact, while the repetitiv
 
 ---
 
-## Complete Profession Roster (30 Professions, 1–100)
+## Complete Profession Roster (29 Professions, 1–100)
 
 Professions are grouped into three implementation waves. SWG's six starter professions (*Artisan, Marksman, Brawler, Scout, Medic, Entertainer*) dissolve into these 1–100 lines rather than acting as throwaway prerequisite gates.
 
@@ -68,20 +68,19 @@ Armor proficiency is completely decoupled from weapon and advanced professions. 
 - **Weaponsmith:** Ranged and melee weapons, weapon enhancement modules (barrels, scopes, cooling cores), ammo/ordnance packs, weapon repair kits.
 - **Armorsmith:** Light/Medium/Heavy armor pieces, universal **Deflector Shields (PSGs)**, armor plating modules, armor repair kits.
 - **Tailor:** Clothing (worn like armor, for the unarmored), armor-weave linings, bags/bandoliers, dye kits.
-- **Chef:** Rations, meals, and drinks providing clean, readable timed buffs (stamina regen, heat dissipation, crafting/gathering focus) without SWG's 50-item stacking clutter.
+- **Chef:** Food and drink: the open world's out-of-combat healing first, with clean, readable timed buffs on some dishes (stamina regen, heat dissipation, crafting/gathering focus) without SWG's 50-item stacking clutter.
 - **Architect:** Field camps, portable cover, and interior furniture/decor now; full player housing, shops, factories, and harvesters in Stage 10+.
 
-### Wave 7B — Specialist Combat, Support, Social & Economy (9 Professions)
+### Wave 7B — Specialist Combat, Support, Social & Economy (8 Professions)
 
 *Live since Stage 12: each ability, its milestone and its numbers are in [`game/professions/specialists.ini`](../game/professions/specialists.ini); what's done and what's still open is in the [Roadmap](ROADMAP.md#stage-12-remaining-professions-waves-7b--7c--creature-mounts).*
 
-- **Bounty Hunter:** Open-world bounty terminal contracts (NPC marks + opt-in PvP marks), seeker probe tracking, capture payouts; match recon probes, bolas/net/wrist-rocket/jump-pack gadgets, and HVT spotting.
+- **Bounty Hunter:** Open-world bounty terminal contracts (NPC marks + opt-in PvP marks), seeker probe tracking, capture payouts; match recon probes, bolas/net/toxin-dart/wrist-rocket/jump-pack gadgets, and HVT spotting.
 - **Smuggler:** Slicing loot containers, faction terminals, and contraband missions plus permanent **sidegrade weapon/armor slicing**; match faster objective/turret/door slicing, flashbangs, smoke, and EMP disruptors.
-- **Squad Leader:** Battlefront Officer role—team aura buffs (stamina/reload/morale), tactical ping/target marking, **squad spawn beacon**, and supply/strike call-ins.
-- **Doctor:** Pharmaceutical crafting (stims, medpacks, bio-antidotes) plus field bacta dispenser, revive/defib tool, and bio cleanse—removing SWG's tedious wound/battle-fatigue hospital lockout.
-- **Combat Medic:** Frontline ranged healing darts/grenades paired with **`DamageType::bio`** area-denial grenades and payloads.
+- **Squad Leader:** Battlefront Officer role—mostly **short in-combat buffs** for those around you (stamina/reload/morale), plus the captain's kit: tactical ping/target marking, **squad spawn beacon**, and supply/strike call-ins.
+- **Doctor:** Healing and removing debuffs, in combat and out: healing darts, bacta grenades, bio cleanse, a bacta dispenser, a defibrillator and field triage, plus pharmaceutical crafting (medpacks, antidotes, stims; bio ordnance planned)—removing SWG's tedious wound/battle-fatigue hospital lockout. Missions come from artisan terminals (crafting orders).
 - **Ranger:** Wilderness tracking, short-duration stealth cloak (broken on firing), motion sensors, trip-traps, and deployable **forward camps** for field healing and loadout swaps.
-- **Entertainer:** Unifies SWG *Musician* and *Dancer*—cantina and camp performances grant quick **15–30 s Inspiration/focus buffs** (not 10-minute AFK sitting), synced band/dance emotes, and an optional portable morale holo-emitter.
+- **Entertainer:** Unifies SWG *Musician* and *Dancer*—a **non-combat** profession: cantina and camp performances that, over a long sitting, grant **long-lasting buffs** carried out into the world and into matches; synced band/dance emotes and a portable holo-emitter. *(Today's 15–30 s Inspiration is to be reworked to this.)*
 - **Merchant:** Player vendors, shop slots, bazaar listing limits, trade analytics, market fee reductions, and faction supply contracts.
 - **Pilot:** Ground vehicle handling and field repair (Stage 6) plus starfighter maneuvers and reactor tuning in Space Battles (Stage 8).
 
@@ -96,6 +95,22 @@ Armor proficiency is completely decoupled from weapon and advanced professions. 
 - **Droid Engineer:** Modular droid assembly (chassis + plug-in Core, Primary Function, and Utility modules) and repair kits.
 - **Droid Operations:** Field deployment, remote repair, overcharge abilities, and combat chassis certification—mirroring Creature Handler so pure crafters sell combat droids to frontline operators.
 
+### Support Scopes
+
+Combat Medic is retired so the support professions don't step on each other. Each owns one job:
+
+| Profession | Owns | Doesn't |
+|---|---|---|
+| **Doctor** | Healing and removing debuffs, in combat and out (abilities), and the pharmaceuticals others carry | Buffs, damage |
+| **Chef** | Out-of-combat healing in the open world (food and drink); some dishes add a buff | In-combat healing |
+| **Squad Leader** | Short in-combat buffs, plus the captain's kit (marks, spawn beacon, supply drops, strikes) | Long buffs |
+| **Entertainer** | Long-lasting buffs that take a long sitting to apply; non-combat | Anything in a fight |
+
+- **Medpacks vs food:** a medpack is tactical gear (the secondary slot, kept like a grenade, `Archetype = medpack`) that heals its user in a fight, at once (Bacta Stimpack, Trauma Medpac) or over time (Bacta Infusion Pack), a few times a life; its grade and Mk move its heal. Food, and any other supply that heals, can't be used within 10 s of being hurt or landing a hit (`out_of_combat_delay`). A Doctor *can* heal out of combat, but food is what that's for, which keeps Doctor's scope narrower than it looks.
+- **Crafting orders:** artisan mission terminals offer orders for crafted items (a `craft_order` contract): take one, come back to the terminal holding the items (not in a loadout), and they're handed in for credits and the profession's experience. Doctor's schematics only for now (`artisan_order_professions`); every crafting profession's later.
+- **Bio damage** stays in players' hands: Bounty Hunter's toxin dart now, and Doctor-crafted bio ordnance for Heavy Weapons later (light armor's bio resistance depends on it).
+- **Tolerated overlaps for now:** Squad Leader's supply drop (health and ammo) and Ranger's forward camp (heals). Cut them if they prove too strong.
+
 ### SWG Profession Crosswalk
 
 | Classic SWG Profession | Destination in Stage 7 |
@@ -105,7 +120,7 @@ Armor proficiency is completely decoupled from weapon and advanced professions. 
 | Fencer, Swordsman, Pikeman, Teräs Käsi Artist | **Melee** (consolidated) |
 | Weaponsmith, Armorsmith, Tailor, Chef, Architect | **Weaponsmith**, **Armorsmith**, **Tailor**, **Chef**, **Architect** |
 | Bounty Hunter, Smuggler, Squad Leader, Ranger | **Bounty Hunter**, **Smuggler**, **Squad Leader**, **Ranger** |
-| Doctor, Combat Medic | **Doctor**, **Combat Medic** |
+| Doctor, Combat Medic | **Doctor** (Combat Medic retired: its healing to Doctor, its toxin dart to Bounty Hunter) |
 | Musician, Dancer | **Entertainer** (unified) |
 | Merchant | **Merchant** |
 | Image Designer | Not a profession: an NPC service one day |

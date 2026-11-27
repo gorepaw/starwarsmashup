@@ -1361,6 +1361,8 @@ void GameServer::update_effects(Client& client, double dt) {
     }
     for (const TimedEffect& e : spec.effects) {
         if (e.damage_per_second > 0) damage(client, e.damage_per_second * dt, e.damage_type, e.source);
+        // A heal over time (a medpack's; a vehicle guard's heal_per_second is its share of damage).
+        if (e.heal_per_second > 0 && (e.flags & effect_flag::vehicle_guard) == 0) heal(client, e.heal_per_second * dt);
     }
     if (client.life != Life::alive) return;
     const size_t before = spec.effects.size();
@@ -1768,6 +1770,34 @@ void GameServer::offer_contracts(Client& client, size_t terminal) {
             spec.offers.push_back(dressed(c));
             venues.erase(venues.begin() + std::ptrdiff_t(k));
         }
+    } else if (t.kind == "artisan" && config_.crafting != nullptr && config_.catalog != nullptr) {
+        // Crafting orders: a few of what the professions it takes orders for
+        // make, brought back here. Fewer of the harder ones, paid more each.
+        std::vector<const SchematicDef*> made;
+        for (const SchematicDef& s : config_.crafting->schematics()) {
+            const bool taken = std::find(artisan_order_professions.begin(), artisan_order_professions.end(),
+                                         s.profession) != artisan_order_professions.end();
+            if (taken && !s.blueprint && config_.catalog->find(s.output_item) != nullptr) made.push_back(&s);
+        }
+        for (size_t i = 0; i < 3 && !made.empty(); ++i) {
+            const size_t k = size_t(random_unit() * double(made.size())) % made.size();
+            const SchematicDef& s = *made[k];
+            const int tier = std::clamp(s.required_level / 25 + 1, 1, 5);
+            const int count = std::max(1, 4 - tier);
+            Contract c;
+            c.kind = ContractKind::craft_order;
+            c.profession = s.profession;
+            c.item = s.output_item;
+            c.target_name = t.name;
+            c.waypoint = t.position;
+            c.radius = t.radius + 2;
+            c.needed = count;
+            c.title = std::format("Crafting order: {} {} for {}", count, item_name(s.output_item), t.name);
+            c.reward = contract_reward(c.kind, tier, 0) * count;
+            c.xp = s.base_xp * count;
+            spec.offers.push_back(dressed(c));
+            made.erase(made.begin() + std::ptrdiff_t(k));
+        }
     }
     if (t.kind == "general" || t.kind == "bounty" || t.kind == "artisan") {
         for (int i = 0; i < 2; ++i) {
@@ -1808,6 +1838,21 @@ void GameServer::update_contracts(Client& client) {
             done = flat_distance(client.state.position, c.waypoint) <= c.radius && client.life == Life::alive;
         } else if (c.kind == ContractKind::gig) {
             done = c.progress >= c.needed;
+        } else if (c.kind == ContractKind::craft_order) {
+            // How many of its item are held (not in a loadout); handed in at the terminal.
+            int have = 0;
+            for (const ItemInstance& inst : client.items) {
+                if (inst.def_id == c.item && !item_equipped_in_loadouts(client.char_loadouts, inst.id)) {
+                    have += std::max(1, inst.quantity);
+                }
+            }
+            const double held = std::min(double(have), c.needed);
+            if (held != c.progress) {
+                c.progress = held;
+                changed = true;
+            }
+            done = have >= int(c.needed) && client.life == Life::alive &&
+                   flat_distance(client.state.position, c.waypoint) <= c.radius;
         } else if (c.kind == ContractKind::track) {
             const Npc* n = find_npc(c.target_entity);
             if (n == nullptr || n->hidden || n->life != Life::alive) {
@@ -1835,6 +1880,25 @@ void GameServer::update_contracts(Client& client) {
                 const ProfessionDef* def = professions->find(c.profession);
                 why = std::format("you aren't a trained {}", def ? def->name : c.profession);
             }
+        }
+        if (done && c.kind == ContractKind::craft_order && store_ != nullptr) {
+            // The order's items handed over (a stack only in part, if that's enough).
+            int left = int(c.needed);
+            for (const ItemInstance& inst : std::vector<ItemInstance>(client.items)) {
+                if (left <= 0) break;
+                if (inst.def_id != c.item || item_equipped_in_loadouts(client.char_loadouts, inst.id)) continue;
+                const int q = std::max(1, inst.quantity);
+                if (q > left) {
+                    store_->update_item_quantity(inst.id, q - left);
+                    left = 0;
+                } else {
+                    store_->remove_item(inst.id);
+                    left -= q;
+                }
+            }
+            client.items = store_->list_items(client.character);
+            ++client.inventory_rev;
+            client.last_sync_tick = 0;
         }
         if (done) {
             client.credits += c.reward;
@@ -2420,7 +2484,6 @@ bool GameServer::use_specialist_item(Client& client, const ItemDef& def, uint64_
         if (store_ == nullptr || !store_->remove_item(item_id)) return true;
         if (def.id == "doc_antidote") {
             if (remove_effects(client.spec.effects, effect_flag::debuff)) refresh_effect_gear(client);
-            heal(client, def.heal_amount);
         } else {
             TimedEffect e;
             e.id = "doc_stim";
