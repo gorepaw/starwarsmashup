@@ -166,7 +166,8 @@ void GameClient::salvage_item(uint64_t item_id) {
 }
 
 void GameClient::craft_item(const std::string& schematic_id, std::vector<std::string> resource_ids,
-                            std::vector<uint64_t> enhancement_item_ids, int exp_quality_pct, int batch_count) {
+                            std::vector<uint64_t> enhancement_item_ids, int exp_quality_pct, int batch_count,
+                            int mark) {
     if (status_ == Status::connected && !schematic_id.empty()) {
         net::CraftRequest req;
         req.action = net::CraftRequest::craft;
@@ -175,6 +176,17 @@ void GameClient::craft_item(const std::string& schematic_id, std::vector<std::st
         req.enhancement_item_ids = std::move(enhancement_item_ids);
         req.exp_quality_pct = uint8_t(std::clamp(exp_quality_pct, 0, 100));
         req.batch_count = uint8_t(std::clamp(batch_count, 1, 10));
+        req.mark = mark < 0 ? net::CraftRequest::top_mark : uint8_t(std::clamp(mark, 0, max_mark));
+        link_.send(config_.server, net::encode(req));
+    }
+}
+
+void GameClient::dye_item(uint64_t item_id, const std::string& dye) {
+    if (status_ == Status::connected && item_id != 0) {
+        net::CraftRequest req;
+        req.action = net::CraftRequest::dye;
+        req.item_id = item_id;
+        req.dye_values = dye;
         link_.send(config_.server, net::encode(req));
     }
 }

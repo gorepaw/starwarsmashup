@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <set>
 #include <sstream>
 #include <stdexcept>
 
@@ -470,6 +471,10 @@ void apply_item_extras(WeaponDef& w, const ItemDef& def, const HitEffect* effect
 
 } // namespace
 
+// A piece's modifiers: its perks, then its slot's share of its class's
+// budget, the typed part spread as its Resist says.
+void apply_armor_budget(ItemDef& def);
+
 void ItemCatalog::load(const std::filesystem::path& catalog_ini, const std::filesystem::path& bf2_items_dir) {
     items_.clear();
     index_.clear();
@@ -686,9 +691,27 @@ void ItemCatalog::load(const std::filesystem::path& catalog_ini, const std::file
             }
             def.paints[normalize_faction(scheme)] = query;  // a faction's, or "neutral"
         }
-        if (def.kind == ItemKind::armor) {
+        for (const auto& [k, v] : s.values) {
+            if (k != "Covers") continue;
+            std::stringstream names(v);
+            for (std::string name; std::getline(names, name, ',');) {
+                name.erase(0, name.find_first_not_of(" \t"));
+                name.erase(name.find_last_not_of(" \t") + 1);
+                if (!is_worn_slot(name)) {
+                    throw std::runtime_error(where + " (" + def.id + "): Covers names worn slots, got " + name);
+                }
+                def.covers.push_back(name);
+            }
+        }
+        def.module_for = s.get("ModuleFor").value_or("");
+        if (!def.module_for.empty() && def.module_for != "ranged" && def.module_for != "melee" &&
+            def.module_for != "armor" && def.module_for != "shield") {
+            throw std::runtime_error(where + " (" + def.id + "): ModuleFor is ranged, melee, armor or shield");
+        }
+        if (def.kind == ItemKind::armor || def.kind == ItemKind::enhancement) {
             // Its perk is what it lists; its slot's share of its class's
-            // budget comes on top, the typed part spread as Resist says.
+            // budget comes on top, the typed part spread as Resist says (an
+            // armor module's Resist: where it moves a piece's).
             def.perks = def.modifiers;
             if (const auto r = s.get("Resist")) {
                 std::stringstream parts(*r);
@@ -712,22 +735,7 @@ void ItemCatalog::load(const std::filesystem::path& catalog_ini, const std::file
                     throw std::runtime_error(where + " (" + def.id + "): Resist's shares add up to 1");
                 }
             }
-            const ArmorBudget& b = armor_budget(def.armor_class);
-            const double share = armor_slot_share(def.slot);
-            if (share > 0) {
-                def.modifiers.push_back({Stat::mitigation, b.mitigation * share});
-                for (const auto& [type, part] : def.resist) {
-                    const Stat stat = Stat(size_t(Stat::mitigation_ballistic) + size_t(type));
-                    def.modifiers.push_back({stat, b.typed * share * part});
-                }
-                def.modifiers.push_back({Stat::max_health, b.health * share});
-                const auto mult = [&](Stat stat, double full) {
-                    if (full != 1.0) def.modifiers.push_back({stat, 0, std::pow(full, share)});
-                };
-                mult(Stat::run_speed, b.run_speed);
-                mult(Stat::sprint_factor, b.sprint_factor);
-                mult(Stat::energy_restore, b.energy_restore);
-            }
+            if (def.kind == ItemKind::armor) apply_armor_budget(def);
         }
 
         if (def.kind == ItemKind::weapon && !def.bf2_base.empty() && !bf2_bases_.contains(def.bf2_base) &&
@@ -746,6 +754,25 @@ void ItemCatalog::load(const std::filesystem::path& catalog_ini, const std::file
             throw std::runtime_error(where + ": " + def.id + " has OnHit = " + def.hit_effect + ", no [hit_effect] of that Id");
         }
     }
+}
+
+void apply_armor_budget(ItemDef& def) {
+    def.modifiers = def.perks;
+    const ArmorBudget& b = armor_budget(def.armor_class);
+    const double share = armor_slot_share(def.slot);
+    if (share <= 0) return;
+    def.modifiers.push_back({Stat::mitigation, b.mitigation * share});
+    for (const auto& [type, part] : def.resist) {
+        const Stat stat = Stat(size_t(Stat::mitigation_ballistic) + size_t(type));
+        def.modifiers.push_back({stat, b.typed * share * part});
+    }
+    def.modifiers.push_back({Stat::max_health, b.health * share});
+    const auto mult = [&](Stat stat, double full) {
+        if (full != 1.0) def.modifiers.push_back({stat, 0, std::pow(full, share)});
+    };
+    mult(Stat::run_speed, b.run_speed);
+    mult(Stat::sprint_factor, b.sprint_factor);
+    mult(Stat::energy_restore, b.energy_restore);
 }
 
 int clamp_mark(int mark) { return std::clamp(mark, 0, max_mark); }
@@ -800,13 +827,98 @@ double armor_slot_share(std::string_view slot) {
     return defense_mark_weight(slot) / all;
 }
 
-std::string item_paint(const ItemInstance& inst) {
-    const std::string& json = inst.color_json;
-    const size_t key = json.find("\"paint\"");
-    if (key == std::string::npos) return {};
-    const size_t open = json.find('"', json.find(':', key + 7) + 1);
+std::string item_json_field(std::string_view json, std::string_view key) {
+    const std::string quoted = "\"" + std::string(key) + "\"";
+    const size_t at = json.find(quoted);
+    if (at == std::string::npos) return {};
+    const size_t colon = json.find(':', at + quoted.size());
+    const size_t open = colon == std::string::npos ? std::string::npos : json.find('"', colon + 1);
     const size_t close = open == std::string::npos ? std::string::npos : json.find('"', open + 1);
-    return close == std::string::npos ? std::string() : json.substr(open + 1, close - open - 1);
+    return close == std::string::npos ? std::string() : std::string(json.substr(open + 1, close - open - 1));
+}
+
+std::string with_item_json_field(std::string_view json, std::string_view key, std::string_view value) {
+    // The fields kept, in order, without this one; then it, if set.
+    std::vector<std::pair<std::string, std::string>> fields;
+    for (size_t at = json.find('"'); at != std::string::npos;) {
+        const size_t name_end = json.find('"', at + 1);
+        if (name_end == std::string::npos) break;
+        const std::string name(json.substr(at + 1, name_end - at - 1));
+        const size_t open = json.find('"', json.find(':', name_end) + 1);
+        const size_t close = open == std::string::npos ? std::string::npos : json.find('"', open + 1);
+        if (close == std::string::npos) break;
+        if (name != key) fields.emplace_back(name, std::string(json.substr(open + 1, close - open - 1)));
+        at = json.find('"', close + 1);
+    }
+    if (!value.empty()) fields.emplace_back(std::string(key), std::string(value));
+    std::string out = "{";
+    for (const auto& [name, v] : fields) {
+        if (out.size() > 1) out += ',';
+        out += "\"" + name + "\":\"" + v + "\"";
+    }
+    return out + "}";
+}
+
+std::string item_paint(const ItemInstance& inst) { return item_json_field(inst.color_json, "paint"); }
+
+std::vector<std::string> item_modules(const ItemInstance& inst) {
+    std::vector<std::string> out;
+    std::stringstream ids(item_json_field(inst.color_json, "mods"));
+    for (std::string id; std::getline(ids, id, ',');) {
+        if (!id.empty()) out.push_back(id);
+    }
+    return out;
+}
+
+bool module_fits(const ItemDef& module, const ItemDef& item) {
+    if (module.kind != ItemKind::enhancement) return false;
+    if (module.module_for == "armor") return item.kind == ItemKind::armor;
+    if (module.module_for == "shield") return item.kind == ItemKind::deflector_shield;
+    if (item.kind != ItemKind::weapon) return false;
+    const bool melee = is_melee_archetype(item.archetype);
+    return module.module_for == (melee ? "melee" : "ranged");
+}
+
+ItemDef ItemCatalog::tuned(const ItemDef& def, const ItemInstance& inst) const {
+    ItemDef out = def;
+    std::vector<const ItemDef*> mods;
+    for (const std::string& id : item_modules(inst)) {
+        if (const ItemDef* m = find(id); m && module_fits(*m, def)) mods.push_back(m);
+    }
+    if (mods.empty()) return out;
+    if (def.kind == ItemKind::weapon) {
+        for (const ItemDef* m : mods) {
+            out.damage_mult *= m->damage_mult;
+            out.rate_mult *= m->rate_mult;
+            out.heat_mult *= m->heat_mult;
+            out.spread_mult *= m->spread_mult;
+            out.range_mult *= m->range_mult;
+            out.clip_mult *= m->clip_mult;
+            out.reload_mult *= m->reload_mult;
+            out.velocity_mult *= m->velocity_mult;
+            out.headshot_mult *= m->headshot_mult;
+            out.vehicle_mult *= m->vehicle_mult;
+            out.shield_mult *= m->shield_mult;
+            out.swap_mult *= m->swap_mult;
+            out.aim_speed_mult *= m->aim_speed_mult;
+        }
+    } else if (def.kind == ItemKind::armor) {
+        // Each module moves a share of the piece's typed resistance to its
+        // own spread: the class budget stays whole.
+        std::map<DamageType, double> spread;
+        const double kept = std::max(0.0, 1.0 - module_resist_share * double(mods.size()));
+        for (const auto& [type, part] : def.resist) spread[type] += part * kept;
+        for (const ItemDef* m : mods) {
+            for (const auto& [type, part] : m->resist) spread[type] += part * module_resist_share;
+        }
+        out.resist.assign(spread.begin(), spread.end());
+        apply_armor_budget(out);
+    } else if (def.kind == ItemKind::deflector_shield) {
+        for (const ItemDef* m : mods) {
+            out.modifiers.insert(out.modifiers.end(), m->modifiers.begin(), m->modifiers.end());
+        }
+    }
+    return out;
 }
 
 std::string painted_color_json(const ItemDef& def, std::string_view faction) {
@@ -987,7 +1099,7 @@ Loadout ItemCatalog::build_loadout(const CharacterLoadout& cl, std::span<const I
     for (size_t s = 0; s < weapon_slots; ++s) {
         if (const ItemInstance* inst = find_inst(w_ids[s])) {
             if (const ItemDef* def = find(inst->def_id); def && species_can_use(*def, species)) {
-                out.weapons[s] = resolve_weapon(*def, inst->quality, apply_quality, inst->mark);
+                out.weapons[s] = resolve_weapon(tuned(*def, *inst), inst->quality, apply_quality, inst->mark);
             }
         }
     }
@@ -998,7 +1110,7 @@ Loadout ItemCatalog::build_loadout(const CharacterLoadout& cl, std::span<const I
         if (const ItemInstance* inst = find_inst(item_id)) {
             if (const ItemDef* def = find(inst->def_id); def && item_fits_slot(*def, slot, false)) {
                 if (def->kind == ItemKind::armor || def->kind == ItemKind::deflector_shield) {
-                    out.gear.push_back(resolve_gear(*def, inst->quality, apply_quality, inst->mark));
+                    out.gear.push_back(resolve_gear(tuned(*def, *inst), inst->quality, apply_quality, inst->mark));
                     marked_weight += defense_mark_weight(slot) * clamp_mark(inst->mark);
                 }
                 // Clothing is worn too: it counts toward being unarmored.
@@ -1127,8 +1239,13 @@ std::string resolve_worn_models(const ItemCatalog& catalog, const CharacterLoado
 
     std::map<std::string, Worn> shown = gear;
     for (const auto& [slot, worn] : look) shown[slot] = worn;
+    std::set<std::string> covered;  // under a robe or a dress
+    for (const auto& [slot, worn] : shown) {
+        if (species_shows_slot(species, slot)) covered.insert(worn.def->covers.begin(), worn.def->covers.end());
+    }
     std::string out;
     for (const auto& [slot, worn] : shown) {
+        if (covered.contains(slot)) continue;
         const ItemDef* def = worn.def;
         std::string path = def->model_path;
         // Its paint: its own scheme, else its neutral one, on each model.
@@ -1137,6 +1254,9 @@ std::string resolve_worn_models(const ItemCatalog& catalog, const CharacterLoado
             paint = own->second;
         } else if (const auto neutral = def->paints.find("neutral"); neutral != def->paints.end()) {
             paint = neutral->second;
+        }
+        if (const std::string dye = item_json_field(worn.inst->color_json, "dye"); !dye.empty()) {
+            paint += (paint.empty() ? "" : "&") + dye;  // (its values after the paint's: they win)
         }
         // A body that doesn't show the piece: its species' own of its class.
         if (!species_shows_slot(species, slot)) {

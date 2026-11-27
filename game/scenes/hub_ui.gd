@@ -66,7 +66,8 @@ signal terminal_closed
 signal quest_accepted(id: String)
 signal quest_abandoned(id: String)
 signal corpse_harvested(corpse_entity: int)
-signal craft_requested(schematic_id: String, resource_ids: PackedStringArray, enhancement_ids: PackedInt64Array, exp_quality_pct: int, batch_count: int)
+signal craft_requested(schematic_id: String, resource_ids: PackedStringArray, enhancement_ids: PackedInt64Array, exp_quality_pct: int, batch_count: int, mark: int)
+signal dye_requested(item_id: int, dye: String)
 signal preset_saved(name: String, schematic_id: String, resource_ids: PackedStringArray, enhancement_defs: PackedStringArray, exp_quality_pct: int)
 signal preset_deleted(name: String)
 signal work_order_fulfilled(order_id: String)
@@ -190,8 +191,9 @@ func setup(layer: CanvasLayer, world_root: Node3D, art: RefCounted, settings: Se
 
 	_workbench_screen = WorkbenchScreen.new(art)
 	_workbench_screen.visible = false
-	_workbench_screen.craft_requested.connect(func(sid: String, rids: PackedStringArray, eids: PackedInt64Array, qpct: int, cnt: int) -> void:
-		craft_requested.emit(sid, rids, eids, qpct, cnt))
+	_workbench_screen.craft_requested.connect(func(sid: String, rids: PackedStringArray, eids: PackedInt64Array, qpct: int, cnt: int, mark: int) -> void:
+		craft_requested.emit(sid, rids, eids, qpct, cnt, mark))
+	_workbench_screen.dye_requested.connect(func(iid: int, dye: String) -> void: dye_requested.emit(iid, dye))
 	_workbench_screen.preset_saved.connect(func(pname: String, sid: String, rids: PackedStringArray, edefs: PackedStringArray, qpct: int) -> void:
 		preset_saved.emit(pname, sid, rids, edefs, qpct))
 	_workbench_screen.preset_deleted.connect(func(pname: String) -> void: preset_deleted.emit(pname))

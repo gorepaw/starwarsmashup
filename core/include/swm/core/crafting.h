@@ -66,6 +66,7 @@ struct StatWeight {
 struct SchematicDef {
     std::string id;
     std::string name;
+    std::string group;  // what the workbench files it under ("Pistols", "Light Armor")
     std::string profession = "weaponsmith";
     int required_level = 1;
     std::string output_item;
@@ -74,7 +75,24 @@ struct SchematicDef {
     int enhancement_slots = 1;  // 0..2 optional enhancement modules
     std::vector<SchematicSlot> slots;
     std::vector<StatWeight> weights;
+    bool marks = false;  // its output takes Mk tiers (item_takes_marks)
 };
+
+// Mk tiers from crafting (docs/CRAFTING.md): a weapon, armor or a Deflector
+// Shield is made at any mark up to its crafter's level's (Mk I at 10 ... Mk X
+// at 100), costing more materials and giving more XP the higher it is.
+bool item_takes_marks(const ItemDef& def);
+int craft_max_mark(int crafter_level);
+int mark_material_amount(int amount, int mark);    // amount x (1 + 0.25 a mark), rounded up
+int64_t mark_craft_xp(int64_t base_xp, int mark);  // x (1 + 0.15 a mark)
+
+// Dyes (docs/CRAFTING.md): an owned piece's colors, its model's customization
+// values as a query string, "index_color_1=5&index_color_2=12": at most
+// max_dye_values, names of [a-z0-9_/], indices 0..255 ("" is no dye). A dye
+// costs dye_cost units of one chemical.
+inline constexpr size_t max_dye_values = 6;
+inline constexpr int64_t dye_cost = 2;
+bool dye_values_ok(std::string_view dye);
 
 struct RecipePreset {
     std::string name;
@@ -127,9 +145,13 @@ enum class AutoFillMode : uint8_t { best_quality, best_stat, cheapest };
 class CraftingBook {
 public:
     void load_resources(const std::filesystem::path& path);
+    // Its [schematic]s and [work_order]s, and its [family]s' (docs/CRAFTING.md,
+    // Schematics): one schematic for every catalog item a family matches (by
+    // kind, archetype, armor class, slot, id), unless a [schematic] makes it.
+    // The catalog is its [catalog] Path, relative to the file.
     void load_schematics(const std::filesystem::path& path);
     void parse_resources(const Ini& ini, const std::string& where);
-    void parse_schematics(const Ini& ini, const std::string& where);
+    void parse_schematics(const Ini& ini, const std::string& where, const ItemCatalog* catalog = nullptr);
 
     const std::vector<ResourceDef>& resources() const { return resources_; }
     const ResourceDef* find_resource(std::string_view id) const;
@@ -145,9 +167,10 @@ public:
     // Samples a centered grid_n x grid_n patch of radius `radius` around (x, z).
     ScanResult scan_terrain(ResourceCategory category, double x, double z, double radius = 60.0, int grid_n = 17) const;
 
-    // Picks resource_ids from `vault` for each slot of `schematic` (empty string if missing).
+    // Picks resource_ids from `vault` for each slot of `schematic` (empty
+    // string if missing), enough for its mark (mark_material_amount).
     std::vector<std::string> auto_fill(const SchematicDef& schematic, std::span<const MaterialStack> vault,
-                                       AutoFillMode mode) const;
+                                       AutoFillMode mode, int mark = 0) const;
 
     static ExperimentOdds experiment_odds(int crafter_level);
     CraftPreview preview_craft(const SchematicDef& schematic, std::span<const std::string> resource_ids,

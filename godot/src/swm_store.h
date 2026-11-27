@@ -45,8 +45,10 @@ public:
     godot::Dictionary add_rewards(int64_t char_id, int64_t xp, int64_t faction_points, int64_t credits);
     godot::Error set_active_loadout(int64_t char_id, int64_t slot_index);
 
+    // `color_json`: an owned copy's, for the modules crafted into it.
     godot::Dictionary resolve_item_stats(const godot::String& def_id, double quality = 0.5,
-                                           bool apply_quality = true, int64_t mark = 0) const;
+                                           bool apply_quality = true, int64_t mark = 0,
+                                           const godot::String& color_json = "{}") const;
     // An item's name at a mark ("E-11 Blaster Rifle Mk IV"), and what the
     // mark asks for: {level, profession (its name; "" for the character's
     // highest), health (worn gear: the max health it adds, as a share)};
@@ -76,7 +78,7 @@ public:
     godot::Dictionary scan_terrain(const godot::String& category, double x, double z, double radius = 60.0,
                                    int64_t grid_n = 17) const;
     godot::PackedStringArray auto_fill_schematic(const godot::String& schematic_id, const godot::Array& materials,
-                                                 const godot::String& mode) const;
+                                                 const godot::String& mode, int64_t mark = 0) const;
     godot::Dictionary preview_craft(const godot::String& schematic_id, const godot::PackedStringArray& resource_ids,
                                     int64_t enhancement_count, int64_t crafter_level,
                                     int64_t exp_quality_pct) const;

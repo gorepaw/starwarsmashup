@@ -6,7 +6,7 @@ Every armor set in Galaxies, sorted into our three armor classes, and how we tur
 
 | Class | Profession | What it's for | Today's sets |
 |---|---|---|---|
-| None (clothing) | Unarmored | The fastest feet and deepest stamina | tunic, jacket, pants, boots |
+| None (clothing) | Unarmored | The fastest feet and deepest stamina | tunic, jacket, pants, boots; 152 Galaxies pieces the Tailor makes ([CRAFTING.md](CRAFTING.md)) |
 | Light / Recon | Light Armor | Mobility, stamina; electro and bio | Ubese ✅ |
 | Medium / Battle | Medium Armor | Balanced; laser and ballistic | Padded ✅, Stormtrooper ✅ |
 | Heavy / Assault | Heavy Armor | Protection at a slower pace; explosive, melee, ballistic | Composite ✅ |

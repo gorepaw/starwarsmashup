@@ -1,8 +1,10 @@
 # Single-Screen Unified Workbench + Dedicated Material Vault + Work Orders +
-# Salvage (docs/PROFESSIONS.md) in Battlefront II's frames, fonts and colors.
+# Salvage + Dye (docs/PROFESSIONS.md, docs/CRAFTING.md) in Battlefront II's
+# frames, fonts and colors.
 extends "res://ui/bf2_screen.gd"
 
-signal craft_requested(schematic_id: String, resource_ids: PackedStringArray, enhancement_ids: PackedInt64Array, exp_quality_pct: int, batch_count: int)
+signal craft_requested(schematic_id: String, resource_ids: PackedStringArray, enhancement_ids: PackedInt64Array, exp_quality_pct: int, batch_count: int, mark: int)
+signal dye_requested(item_id: int, dye: String)
 signal preset_saved(name: String, schematic_id: String, resource_ids: PackedStringArray, enhancement_defs: PackedStringArray, exp_quality_pct: int)
 signal preset_deleted(name: String)
 signal work_order_fulfilled(order_id: String)
@@ -14,7 +16,10 @@ const TABS := [
 	["vault", "Material Vault"],
 	["orders", "Work Orders"],
 	["salvage", "Salvage"],
+	["dye", "Dye"],
 ]
+const NUMERALS := ["", "I", "II", "III", "IV", "V", "VI", "VII", "VIII", "IX", "X"]
+const DYE_SWATCHES := 96  # a palette's first entries offered (its plain colors, then dyes)
 const CRAFTERS := [
 	["weaponsmith", "Weaponsmith"],
 	["droid_engineer", "Droid Engineer"],
@@ -78,6 +83,12 @@ var _slot_resources: Array = []       # resource_id per schematic slot
 var _slot_enhancements: Array = []    # item_id (int) per enhancement slot
 var _exp_quality_pct := 65
 var _sch_scroll := 0
+var _group := ""  # the schematics' group shown ("" every group)
+var _mark := -1   # the Mk chosen (-1: the highest the crafter may make)
+var _dye_item := 0
+var _dye_choice: Dictionary = {}  # variable -> palette entry
+var _dye_scroll := 0
+var _dye_colors: Dictionary = {}  # model path -> SwgColors.load_colors
 var _vault_cat := "all"
 var _vault_sort := "quality"
 var _vault_scroll := 0
@@ -90,6 +101,7 @@ func open_screen(kind := "general", title := "") -> void:
 	station_kind = kind
 	station_title = title
 	_prof_filter = "all"
+	_group = ""
 	_rebuild_lookups()
 	var list := _filtered_schematics()
 	_select_schematic(str(list[0].get("id", "")) if not list.is_empty() else "")
@@ -170,10 +182,23 @@ func _crafters() -> Array:
 	return out
 
 
+# The groups of the schematics this station and profession filter show, in
+# file order.
+func _groups() -> Array:
+	var out: Array = []
+	for s: Dictionary in schematics:
+		var prof := str(s.get("profession", ""))
+		var g := str(s.get("group", ""))
+		if _makes(prof) and (_prof_filter == "all" or prof == _prof_filter) and g != "" and not out.has(g):
+			out.append(g)
+	return out
+
+
 func _filtered_schematics() -> Array:
 	var out := schematics.filter(func(s: Dictionary) -> bool:
 		var prof := str(s.get("profession", ""))
-		return _makes(prof) and (_prof_filter == "all" or prof == _prof_filter))
+		return _makes(prof) and (_prof_filter == "all" or prof == _prof_filter) \
+				and (_group == "" or str(s.get("group", "")) == _group))
 	out.sort_custom(func(a: Dictionary, b: Dictionary) -> bool:
 		var pa := bool(_pinned.get(str(a.get("id", "")), false))
 		var pb := bool(_pinned.get(str(b.get("id", "")), false))
@@ -190,8 +215,46 @@ func _current_schematic() -> Dictionary:
 	return {}
 
 
+# Mk tiers (core crafting.h): up to the crafter's level's, a quarter more
+# materials a mark.
+static func _top_mark(level: int) -> int:
+	return clampi(level / 10, 0, NUMERALS.size() - 1)
+
+
+static func _mark_amount(amount: int, mark: int) -> int:
+	return ceili(amount * (1.0 + 0.25 * mark) - 0.000001)
+
+
+static func _mark_name(mark: int) -> String:
+	return "Mk 0" if mark <= 0 else "Mk " + NUMERALS[mini(mark, NUMERALS.size() - 1)]
+
+
+func _current_mark(sch: Dictionary) -> int:
+	if not bool(sch.get("marks", false)):
+		return 0
+	var top := _top_mark(_prof_level(str(sch.get("profession", ""))))
+	return top if _mark < 0 else mini(_mark, top)
+
+
+# Whether a module tunes an item (core module_fits); one for nothing in
+# particular (a medicine's) goes in anything.
+static func _module_fits(module: Dictionary, item: Dictionary) -> bool:
+	var f := str(module.get("module_for", ""))
+	if f == "":
+		return true
+	match str(item.get("kind", "")):
+		"armor":
+			return f == "armor"
+		"deflector_shield":
+			return f == "shield"
+		"weapon":
+			return f == ("melee" if str(item.get("archetype", "")) in ["melee", "melee_2h"] else "ranged")
+	return false
+
+
 func _select_schematic(id: String) -> void:
 	_selected_schematic = id
+	_mark = -1
 	var sch := _current_schematic()
 	var slots: Array = sch.get("slots", [])
 	_slot_resources.resize(slots.size())
@@ -201,21 +264,29 @@ func _select_schematic(id: String) -> void:
 	_slot_enhancements.resize(enh_n)
 	for i in enh_n:
 		_slot_enhancements[i] = 0
-	if store != null and id != "":
-		var filled: PackedStringArray = store.auto_fill_schematic(id, materials, "best_stat")
-		for i in mini(filled.size(), _slot_resources.size()):
-			_slot_resources[i] = filled[i]
+	_auto_fill("best_stat")
 
 
+func _auto_fill(mode: String) -> void:
+	var sch := _current_schematic()
+	if store == null or sch.is_empty():
+		return
+	var filled: PackedStringArray = store.auto_fill_schematic(str(sch["id"]), materials, mode, _current_mark(sch))
+	for i in mini(filled.size(), _slot_resources.size()):
+		_slot_resources[i] = filled[i]
+
+
+# The unequipped modules that go in the current schematic's output.
 func _enhancement_items() -> Array:
 	var eq := _equipped_ids()
+	var output: Dictionary = _cat_by_id.get(str(_current_schematic().get("output_item", "")), {})
 	var out: Array = []
 	for inst: Dictionary in inventory:
 		var iid := int(inst.get("id", 0))
 		if eq.has(iid):
 			continue
 		var def: Dictionary = _cat_by_id.get(str(inst.get("def_id", "")), {})
-		if str(def.get("kind", "")) == "enhancement":
+		if str(def.get("kind", "")) == "enhancement" and _module_fits(def, output):
 			out.append({"inst": inst, "def": def})
 	return out
 
@@ -247,6 +318,8 @@ func _paint() -> void:
 			_paint_orders(body)
 		"salvage":
 			_paint_salvage(body)
+		"dye":
+			_paint_dye(body)
 	if feedback != "":
 		var fb_y := box.end.y + 8 * u
 		var max_w := box.size.x - 24 * u
@@ -279,14 +352,23 @@ func _paint_workbench(rect: Rect2) -> void:
 	# Left column: Schematics
 	var left := Rect2(rect.position.x, y, 270 * u, col_h)
 	draw_rect(left, Color(0.04, 0.06, 0.09, 0.65))
+	# Its group (every group, or one), then its schematics, wheel-scrolled.
+	var groups := _groups()
+	if _group != "" and not groups.has(_group):
+		_group = ""
 	var list := _filtered_schematics()
-	var rows := 11
-	var row_h := (left.size.y - 8 * u) / rows
+	button(Rect2(left.position.x + 4 * u, left.position.y + 4 * u, 26 * u, 22 * u), "<", "group:-1")
+	button(Rect2(left.end.x - 30 * u, left.position.y + 4 * u, 26 * u, 22 * u), ">", "group:+1")
+	text("gamefont_tiny", "%s (%d)" % [_group if _group != "" else "All groups", list.size()],
+			Vector2(left.get_center().x, left.position.y + 8 * u), "Center", ACCENT)
+	var list_top := left.position.y + 30 * u
+	var rows := 10
+	var row_h := (left.end.y - list_top - 4 * u) / rows
 	_sch_scroll = clampi(_sch_scroll, 0, maxi(0, list.size() - rows))
 	for i in range(_sch_scroll, mini(list.size(), _sch_scroll + rows)):
 		var s: Dictionary = list[i]
 		var sid := str(s.get("id", ""))
-		var row := Rect2(left.position.x + 4 * u, left.position.y + 4 * u + (i - _sch_scroll) * row_h,
+		var row := Rect2(left.position.x + 4 * u, list_top + (i - _sch_scroll) * row_h,
 				left.size.x - 8 * u, row_h - 3 * u)
 		var sel := sid == _selected_schematic
 		draw_rect(row, Color(0.25, 0.34, 0.48, 0.6) if sel else Color(0.1, 0.13, 0.18, 0.45))
@@ -321,6 +403,16 @@ func _paint_workbench(rect: Rect2) -> void:
 	if station_kind == "none":
 		text("gamefont_tiny", "Made at a " + _station_name_for(prof), Vector2(cx, cy), "Left", WARN)
 		cy += 18 * u
+	var mark := _current_mark(sch)
+	if bool(sch.get("marks", false)):
+		var top := _top_mark(lv)
+		text("gamefont_tiny", "Tier:", Vector2(cx, cy + 3 * u), "Left", DIM)
+		button(Rect2(cx + 40 * u, cy, 24 * u, 20 * u), "-", "mark:-1", false, false, mark > 0)
+		text("gamefont_small", _mark_name(mark), Vector2(cx + 100 * u, cy + 1 * u), "Center", ACCENT)
+		button(Rect2(cx + 136 * u, cy, 24 * u, 20 * u), "+", "mark:+1", false, false, mark < top)
+		text("gamefont_tiny", "Lv %d, up to %s" % [maxi(1, mark * 10), _mark_name(top)], Vector2(cx + 168 * u, cy + 3 * u),
+				"Left", DIM)
+		cy += 24 * u
 	cy += 4 * u
 	text("gamefont_tiny", "Auto-Fill:", Vector2(cx, cy + 4 * u), "Left", DIM)
 	button(Rect2(cx + 68 * u, cy, 68 * u, 22 * u), "Quality", "fill:best_quality")
@@ -334,7 +426,7 @@ func _paint_workbench(rect: Rect2) -> void:
 		var rid := str(_slot_resources[i]) if i < _slot_resources.size() else ""
 		var r: Dictionary = _res_by_id.get(rid, {})
 		var have := _vault_amount(rid) if rid != "" else 0
-		var need := int(sl.get("amount", 1))
+		var need := _mark_amount(int(sl.get("amount", 1)), mark)
 		var sr := Rect2(cx, cy, center.size.x - 24 * u, 42 * u)
 		frame(sr, "border_3_pieces", Color(1, 1, 1, 0.85))
 		region(sr, "cslot:%d" % i)
@@ -355,13 +447,21 @@ func _paint_workbench(rect: Rect2) -> void:
 			var er := Rect2(cx, cy, center.size.x - 24 * u, 34 * u)
 			frame(er, "border_3_pieces", Color(0.7, 0.85, 1.0, 0.7))
 			region(er, "eslot:%d" % ei)
-			var elabel := "Empty enhancement slot (click to attach)"
+			var elabel := "Empty module slot (click to attach)"
+			var edesc := ""
 			if eid > 0:
 				for entry: Dictionary in _enhancement_items():
 					if int((entry["inst"] as Dictionary).get("id", 0)) == eid:
 						elabel = str((entry["def"] as Dictionary).get("name", "Module"))
+						edesc = str((entry["def"] as Dictionary).get("description", ""))
 						break
-			text("gamefont_tiny", elabel, er.position + Vector2(8, 10) * u, "Left", TEXT if eid > 0 else DIM)
+			text("gamefont_tiny", elabel, er.position + Vector2(8, 3 if edesc != "" else 10) * u, "Left",
+					TEXT if eid > 0 else DIM)
+			if edesc != "":
+				var shown := edesc
+				while shown.length() > 8 and art.text_width("gamefont_tiny", shown, u * 0.8) > er.size.x - 16 * u:
+					shown = shown.left(shown.length() - 4) + "..."
+				text("gamefont_tiny", shown, er.position + Vector2(8, 18) * u, "Left", DIM, 0.8)
 			cy += 40 * u
 
 	# Right column: Stat weights, Experimentation odds, Presets & Craft
@@ -414,7 +514,7 @@ func _paint_workbench(rect: Rect2) -> void:
 	var ready := lv >= req and station_kind != "none"
 	for i in slots.size():
 		var rid := str(_slot_resources[i]) if i < _slot_resources.size() else ""
-		if rid == "" or _vault_amount(rid) < int((slots[i] as Dictionary).get("amount", 1)):
+		if rid == "" or _vault_amount(rid) < _mark_amount(int((slots[i] as Dictionary).get("amount", 1)), mark):
 			ready = false
 	var by := right.end.y - 42 * u
 	button(Rect2(rx, by, 86 * u, 30 * u), "Craft x1", "craft:1", false, true, ready)
@@ -533,6 +633,147 @@ func _paint_salvage(rect: Rect2) -> void:
 				"Salvage", "salvage:%d" % int(inst.get("id", 0)))
 
 
+# What can be dyed: owned clothing, armor and bodysuits.
+func _dyeable() -> Array:
+	var out: Array = []
+	for inst: Dictionary in inventory:
+		var def: Dictionary = _cat_by_id.get(str(inst.get("def_id", "")), {})
+		if str(def.get("kind", "")) in ["clothing", "armor", "bodysuit"] and str(def.get("model", "")) != "":
+			out.append({"inst": inst, "def": def})
+	return out
+
+
+func _dye_entry() -> Dictionary:
+	for entry: Dictionary in _dyeable():
+		if int((entry["inst"] as Dictionary).get("id", 0)) == _dye_item:
+			return entry
+	return {}
+
+
+# A piece's dye now: its color_json's "dye" ({variable: entry}).
+static func _dye_of(inst: Dictionary) -> Dictionary:
+	var out := {}
+	var data: Variant = JSON.parse_string(str(inst.get("color_json", "{}")))
+	if data is Dictionary:
+		for pair: String in str((data as Dictionary).get("dye", "")).split("&", false):
+			var kv := pair.split("=")
+			if kv.size() == 2:
+				out[kv[0]] = int(kv[1])
+	return out
+
+
+# A model's own colors to choose from: each of its variables (not the
+# body's), with its palette and default.
+func _dye_variables(def: Dictionary) -> Array:
+	var model := str(def.get("model", "")).split(",")[0].replace("{g}", "m")
+	if not _dye_colors.has(model):
+		_dye_colors[model] = SwgColors.load_colors(ProjectSettings.globalize_path("res://imported_assets/" + model))
+	var colors: Dictionary = _dye_colors[model]
+	var out: Array = []
+	if colors.is_empty():
+		return out
+	var seen := {}
+	for entry: Dictionary in (colors["materials"] as Dictionary).values():
+		for key: String in ["MAIN", "HUEB"]:
+			var factor: Variant = entry.get(key)
+			if not factor is Dictionary or bool(factor.get("shared", false)):
+				continue
+			var variable := str(factor["variable"])
+			if seen.has(variable):
+				continue
+			seen[variable] = true
+			out.append({"variable": variable, "default": int(factor.get("index", 0)),
+					"palette": (colors["palettes"] as Dictionary).get(str(factor["palette"]), PackedByteArray())})
+	return out
+
+
+func _paint_dye(rect: Rect2) -> void:
+	var left := Rect2(rect.position.x, rect.position.y, 300 * u, rect.size.y)
+	draw_rect(left, Color(0.04, 0.06, 0.09, 0.65))
+	var list := _dyeable()
+	var rows := 11
+	var row_h := (left.size.y - 8 * u) / rows
+	_dye_scroll = clampi(_dye_scroll, 0, maxi(0, list.size() - rows))
+	if list.is_empty():
+		text("gamefont_tiny", "No clothing or armor to dye.", left.get_center(), "Center", DIM)
+	for i in range(_dye_scroll, mini(list.size(), _dye_scroll + rows)):
+		var inst: Dictionary = list[i]["inst"]
+		var def: Dictionary = list[i]["def"]
+		var iid := int(inst.get("id", 0))
+		var row := Rect2(left.position.x + 4 * u, left.position.y + 4 * u + (i - _dye_scroll) * row_h,
+				left.size.x - 8 * u, row_h - 3 * u)
+		draw_rect(row, Color(0.25, 0.34, 0.48, 0.6) if iid == _dye_item else Color(0.1, 0.13, 0.18, 0.45))
+		region(row, "dyeitem:%d" % iid)
+		text("gamefont_tiny", str(def.get("name", "")), row.position + Vector2(6, 3) * u, "Left",
+				ACCENT if iid == _dye_item else TEXT)
+		var who := "Armorsmith" if str(def.get("kind", "")) == "armor" else "Tailor"
+		text("gamefont_tiny", who + ("   (dyed)" if not _dye_of(inst).is_empty() else ""),
+				row.position + Vector2(6, 18) * u, "Left", DIM)
+
+	var right := Rect2(left.end.x + 12 * u, rect.position.y, rect.end.x - left.end.x - 12 * u, rect.size.y)
+	draw_rect(right, Color(0.04, 0.06, 0.09, 0.65))
+	var entry := _dye_entry()
+	var rx := right.position.x + 12 * u
+	var ry := right.position.y + 10 * u
+	if entry.is_empty():
+		text("gamefont_small", "Choose a piece to dye", right.get_center(), "Center", DIM)
+		return
+	var def: Dictionary = entry["def"]
+	var profession := "armorsmith" if str(def.get("kind", "")) == "armor" else "tailor"
+	text("gamefont_medium", str(def.get("name", "")), Vector2(rx, ry), "Left", ACCENT)
+	ry += 26 * u
+	text("gamefont_tiny", "Dyed by a %s at an Armor & Clothing station, for %d Chemical." % [
+			profession.capitalize(), 2], Vector2(rx, ry), "Left", DIM)
+	ry += 22 * u
+	var variables := _dye_variables(def)
+	if variables.is_empty():
+		text("gamefont_small", "This piece has no colors to dye.", Vector2(rx, ry), "Left", WARN)
+		return
+	var sw := 17 * u
+	var per_row := maxi(8, int((right.size.x - 24 * u) / sw))
+	for vi in variables.size():
+		var v: Dictionary = variables[vi]
+		var palette: PackedByteArray = v["palette"]
+		var count := mini(palette.size() / 3, DYE_SWATCHES)
+		var chosen := int(_dye_choice.get(str(v["variable"]), v["default"]))
+		text("gamefont_tiny", "Color %d" % (vi + 1), Vector2(rx, ry), "Left", TEXT)
+		ry += 16 * u
+		for i in count:
+			var at := Rect2(rx + (i % per_row) * sw, ry + (i / per_row) * sw, sw - 2 * u, sw - 2 * u)
+			if i == chosen:
+				draw_rect(at.grow(1.5 * u), ACCENT)
+			draw_rect(at, Color8(palette[3 * i], palette[3 * i + 1], palette[3 * i + 2]))
+			region(at, "swatch:%d:%d" % [vi, i])
+		ry += ceili(float(count) / per_row) * sw + 8 * u
+	var can := station_kind in ["clothing", "general"]
+	var by := right.end.y - 42 * u
+	button(Rect2(rx, by, 150 * u, 30 * u), "Apply Dye", "dye:apply", false, true, can and not _dye_choice.is_empty())
+	button(Rect2(rx + 158 * u, by, 130 * u, 30 * u), "Remove Dye", "dye:clear", false, false,
+			can and not _dye_of(entry["inst"]).is_empty())
+	if not can:
+		text("gamefont_tiny", "Dye at an Armor & Clothing station", Vector2(rx + 300 * u, by + 8 * u), "Left", WARN)
+
+
+func _gui_input(event: InputEvent) -> void:
+	# The wheel scrolls the tab's list.
+	if event is InputEventMouseButton and event.pressed \
+			and (event as InputEventMouseButton).button_index in [MOUSE_BUTTON_WHEEL_UP, MOUSE_BUTTON_WHEEL_DOWN]:
+		var step := -1 if (event as InputEventMouseButton).button_index == MOUSE_BUTTON_WHEEL_UP else 1
+		match _tab:
+			"workbench":
+				_sch_scroll = maxi(0, _sch_scroll + step)
+			"vault":
+				_vault_scroll = maxi(0, _vault_scroll + step)
+			"salvage":
+				_salvage_scroll = maxi(0, _salvage_scroll + step)
+			"dye":
+				_dye_scroll = maxi(0, _dye_scroll + step)
+		queue_redraw()
+		accept_event()
+		return
+	super._gui_input(event)
+
+
 func _on_click(id: String, _at: Vector2) -> void:
 	if id == "close":
 		closed.emit()
@@ -540,18 +781,41 @@ func _on_click(id: String, _at: Vector2) -> void:
 		_tab = id.substr(4)
 	elif id.begins_with("pfilter:"):
 		_prof_filter = id.substr(8)
+		_group = ""
 		_sch_scroll = 0
+	elif id.begins_with("group:"):
+		var groups: Array = [""] + _groups()
+		var at := groups.find(_group)
+		_group = groups[(at + int(id.substr(6)) + groups.size()) % groups.size()]
+		_sch_scroll = 0
+	elif id.begins_with("mark:"):
+		var sch := _current_schematic()
+		var top := _top_mark(_prof_level(str(sch.get("profession", ""))))
+		_mark = clampi(_current_mark(sch) + int(id.substr(5)), 0, top)
+		_auto_fill("best_stat")
+	elif id.begins_with("dyeitem:"):
+		_dye_item = int(id.substr(8))
+		_dye_choice = _dye_of(_dye_entry().get("inst", {}))
+	elif id.begins_with("swatch:"):
+		var parts := id.split(":")
+		var variables := _dye_variables(_dye_entry().get("def", {}))
+		if int(parts[1]) < variables.size():
+			_dye_choice[str((variables[int(parts[1])] as Dictionary)["variable"])] = int(parts[2])
+	elif id == "dye:apply" or id == "dye:clear":
+		var pairs := PackedStringArray()
+		if id == "dye:apply":
+			for variable: String in _dye_choice:
+				pairs.append("%s=%d" % [variable, int(_dye_choice[variable])])
+		else:
+			_dye_choice.clear()
+		dye_requested.emit(_dye_item, "&".join(pairs))
 	elif id.begins_with("pin:"):
 		var sid := id.substr(4)
 		_pinned[sid] = not bool(_pinned.get(sid, false))
 	elif id.begins_with("sch:"):
 		_select_schematic(id.substr(4))
 	elif id.begins_with("fill:"):
-		var sch := _current_schematic()
-		if store != null and not sch.is_empty():
-			var filled: PackedStringArray = store.auto_fill_schematic(str(sch["id"]), materials, id.substr(5))
-			for i in mini(filled.size(), _slot_resources.size()):
-				_slot_resources[i] = filled[i]
+		_auto_fill(id.substr(5))
 	elif id.begins_with("cslot:"):
 		var idx := int(id.substr(6))
 		var sch := _current_schematic()
@@ -601,7 +865,7 @@ func _on_click(id: String, _at: Vector2) -> void:
 				if int(eid) > 0:
 					eids.append(int(eid))
 			craft_requested.emit(str(sch["id"]), PackedStringArray(_slot_resources), eids,
-					_exp_quality_pct, int(id.substr(6)))
+					_exp_quality_pct, int(id.substr(6)), _current_mark(sch))
 	elif id.begins_with("vcat:"):
 		_vault_cat = id.substr(5)
 		_vault_scroll = 0

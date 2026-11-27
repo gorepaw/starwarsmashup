@@ -287,32 +287,93 @@ void GameServer::handle_craft_request(Client& client, const net::CraftRequest& r
         return;
     }
 
+    // At a station for a profession's work (where the world has stations at all).
+    const auto at_station = [&](std::string_view profession, std::string_view what) {
+        if (workbenches_.empty()) return true;
+        bool near_one = false;
+        bool fits = false;
+        for (const net::Workbench& wb : workbenches_) {
+            const Vec3 d = client.state.position - wb.position;
+            if (std::hypot(d.x, d.z) > wb.radius + 1.0) continue;
+            near_one = true;
+            fits = fits || station_makes(wb.kind, profession);
+        }
+        if (!fits) {
+            notify(client.entity, near_one ? std::format("{} is done at a {}.", what, station_name(station_for(profession)))
+                                           : std::string("Stand at a crafting station to craft."));
+        }
+        return fits;
+    };
+
+    if (req.action == net::CraftRequest::dye) {
+        // A Tailor dyes clothing (and a bodysuit), an Armorsmith armor
+        // (docs/CRAFTING.md, Dyes): colors of its model's own palettes, for
+        // two units of a chemical from the vault.
+        if (store_ == nullptr || client.character == 0 || config_.catalog == nullptr) return;
+        const auto it = std::find_if(client.items.begin(), client.items.end(),
+                                     [&](const ItemInstance& inst) { return inst.id == req.item_id; });
+        const ItemDef* def = it == client.items.end() ? nullptr : config_.catalog->find(it->def_id);
+        if (def == nullptr) return;
+        if (def->kind != ItemKind::clothing && def->kind != ItemKind::armor && def->kind != ItemKind::bodysuit) {
+            notify(client.entity, "Only clothing and armor take a dye.");
+            return;
+        }
+        if (!dye_values_ok(req.dye_values)) return;
+        const std::string profession = def->kind == ItemKind::armor ? "armorsmith" : "tailor";
+        if (!at_station(profession, "Dyeing " + def->display_name)) return;
+        const ResourceDef* dye_stuff = nullptr;
+        if (!req.dye_values.empty()) {
+            for (const MaterialStack& st : client.materials) {
+                const ResourceDef* r = book.find_resource(st.resource_id);
+                if (r && r->category == ResourceCategory::chemical && st.amount >= dye_cost &&
+                    (dye_stuff == nullptr || st.amount > material_amount(client.materials, dye_stuff->id))) {
+                    dye_stuff = r;
+                }
+            }
+            if (dye_stuff == nullptr) {
+                notify(client.entity, std::format("A dye takes {} Chemical from your Material Vault.", dye_cost));
+                return;
+            }
+        }
+        const std::string colors = with_item_json_field(it->color_json, "dye", req.dye_values);
+        if (!store_->update_item_colors(it->id, colors)) return;
+        it->color_json = colors;
+        if (dye_stuff != nullptr) {
+            add_material(client.materials, dye_stuff->id, -dye_cost);
+            save_materials(client);
+            ++client.crafting_rev;
+            client.crafting_sync_tick = 0;
+            earn_profession_xp(client, profession, 20);
+        }
+        ++client.inventory_rev;
+        client.last_sync_tick = 0;
+        notify(client.entity, req.dye_values.empty() ? std::format("Took the dye out of {}.", def->display_name)
+                                              : std::format("Dyed {}.", def->display_name));
+        return;
+    }
+
     if (req.action == net::CraftRequest::craft) {
         if (store_ == nullptr || client.character == 0 || config_.catalog == nullptr) return;
         const SchematicDef* sch = book.find_schematic(req.schematic_id);
         if (sch == nullptr) return;
-        // At a station that makes it (where the world has stations at all).
-        if (!workbenches_.empty()) {
-            bool near_one = false;
-            bool fits = false;
-            for (const net::Workbench& wb : workbenches_) {
-                const Vec3 d = client.state.position - wb.position;
-                if (std::hypot(d.x, d.z) > wb.radius + 1.0) continue;
-                near_one = true;
-                fits = fits || station_makes(wb.kind, sch->profession);
-            }
-            if (!fits) {
-                notify(client.entity, near_one ? std::format("{} is made at a {}.", sch->name,
-                                                             station_name(station_for(sch->profession)))
-                                               : std::string("Stand at a crafting station to craft."));
-                return;
-            }
-        }
+        if (!at_station(sch->profession, sch->name)) return;
         if (!require_licence(client, sch->profession)) return;
         const int lv = profession_level(config_.professions, client.professions, sch->profession);
         if (lv < sch->required_level) {
             notify(client.entity, std::format("Requires {} level {}.", sch->profession, sch->required_level));
             return;
+        }
+        const ItemDef* out_def = config_.catalog->find(sch->output_item);
+        // Its mark: up to its crafter's level's, costing more the higher.
+        int mark = 0;
+        if (out_def != nullptr && item_takes_marks(*out_def)) {
+            const int top = craft_max_mark(lv);
+            mark = req.mark == net::CraftRequest::top_mark ? top : int(req.mark);
+            if (mark > top) {
+                notify(client.entity, std::format("{} takes {} level {}.", mark_name(mark), sch->profession,
+                                                  mark_level(mark)));
+                return;
+            }
         }
         const int batch = std::clamp<int>(req.batch_count, 1, 10);
         if (req.resource_ids.size() < sch->slots.size()) {
@@ -326,7 +387,7 @@ void GameServer::handle_craft_request(Client& client, const net::CraftRequest& r
                 notify(client.entity, "Invalid material for schematic slot.");
                 return;
             }
-            needed[r->id] += int64_t(sch->slots[i].amount) * batch;
+            needed[r->id] += int64_t(mark_material_amount(sch->slots[i].amount, mark)) * batch;
         }
         for (const auto& [rid, amt] : needed) {
             if (material_amount(client.materials, rid) < amt) {
@@ -334,7 +395,10 @@ void GameServer::handle_craft_request(Client& client, const net::CraftRequest& r
                 return;
             }
         }
+        // Its modules: each tunes it (docs/CRAFTING.md, Modules) if it fits,
+        // and adds quality; one for something else isn't used.
         std::vector<uint64_t> enh_ids;
+        std::string mods;
         for (const uint64_t eid : req.enhancement_item_ids) {
             if (int(enh_ids.size()) >= sch->enhancement_slots) break;
             if (std::find(enh_ids.begin(), enh_ids.end(), eid) != enh_ids.end()) continue;
@@ -343,9 +407,15 @@ void GameServer::handle_craft_request(Client& client, const net::CraftRequest& r
                                          [&](const ItemInstance& inst) { return inst.id == eid; });
             if (it == client.items.end()) continue;
             const ItemDef* edef = config_.catalog->find(it->def_id);
-            if (edef != nullptr && edef->kind == ItemKind::enhancement) {
-                enh_ids.push_back(eid);
+            if (edef == nullptr || edef->kind != ItemKind::enhancement) continue;
+            if (!edef->module_for.empty()) {
+                if (out_def == nullptr || !module_fits(*edef, *out_def)) {
+                    notify(client.entity, std::format("{} doesn't fit {}.", edef->display_name, sch->name));
+                    return;
+                }
+                mods += (mods.empty() ? "" : ",") + edef->id;
             }
+            enh_ids.push_back(eid);
         }
         for (const auto& [rid, amt] : needed) {
             add_material(client.materials, rid, -amt);
@@ -358,7 +428,6 @@ void GameServer::handle_craft_request(Client& client, const net::CraftRequest& r
             book.preview_craft(*sch, req.resource_ids, int(enh_ids.size()), lv, req.exp_quality_pct);
         double best_q = 0.0;
         std::string last_outcome = "Success";
-        const ItemDef* out_def = config_.catalog->find(sch->output_item);
         const int unit_count = sch->output_count > 1 ? sch->output_count
                                                      : (out_def && out_def->kind == ItemKind::ammo ? out_def->ammo_batch : 1);
         for (int i = 0; i < batch; ++i) {
@@ -368,7 +437,8 @@ void GameServer::handle_craft_request(Client& client, const net::CraftRequest& r
             if (out_def != nullptr && (unit_count > 1 || out_def->kind == ItemKind::ammo)) {
                 grant_stacked_item(client, *out_def, unit_count, q);
             } else {
-                client.items.push_back(store_->grant_item({0, client.character, sch->output_item, q, "", "{}"}));
+                client.items.push_back(store_->grant_item(
+                    {0, client.character, sch->output_item, q, "", with_item_json_field("{}", "mods", mods), 1, mark}));
             }
         }
         save_materials(client);
@@ -376,9 +446,10 @@ void GameServer::handle_craft_request(Client& client, const net::CraftRequest& r
         client.last_sync_tick = 0;
         ++client.crafting_rev;
         client.crafting_sync_tick = 0;
-        earn_profession_xp(client, sch->profession, sch->base_xp * batch);
+        earn_profession_xp(client, sch->profession, mark_craft_xp(sch->base_xp, mark) * batch);
         quest_event(client, "craft");
-        notify(client.entity, std::format("Crafted {}x {} ({}% - {})", batch, sch->name,
+        notify(client.entity, std::format("Crafted {}x {} ({}% - {})", batch,
+                                          out_def ? item_display_name(*out_def, mark) : sch->name,
                                           int(std::lround(best_q * 100.0)), last_outcome));
     }
 }

@@ -1900,8 +1900,9 @@ func _setup_scene() -> void:
 	_hub_ui.item_sold.connect(func(iid: int) -> void: _client.sell_item(iid))
 	_hub_ui.all_junk_sold.connect(func() -> void: _client.sell_all_junk())
 	_hub_ui.corpse_harvested.connect(func(cid: int) -> void: _client.harvest_corpse(cid))
-	_hub_ui.craft_requested.connect(func(sid: String, rids: PackedStringArray, eids: PackedInt64Array, qpct: int, cnt: int) -> void:
-		_client.craft_item(sid, rids, eids, qpct, cnt))
+	_hub_ui.craft_requested.connect(func(sid: String, rids: PackedStringArray, eids: PackedInt64Array, qpct: int, cnt: int, mark: int) -> void:
+		_client.craft_item(sid, rids, eids, qpct, cnt, mark))
+	_hub_ui.dye_requested.connect(func(iid: int, dye: String) -> void: _client.dye_item(iid, dye))
 	_hub_ui.preset_saved.connect(func(pname: String, sid: String, rids: PackedStringArray, edefs: PackedStringArray, qpct: int) -> void:
 		_client.save_recipe_preset(pname, sid, rids, edefs, qpct))
 	_hub_ui.preset_deleted.connect(func(pname: String) -> void: _client.delete_recipe_preset(pname))

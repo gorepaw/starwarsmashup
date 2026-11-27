@@ -592,7 +592,7 @@ struct GatherRequest {
 
 // Client -> server: craft item(s), manage recipe presets, or fulfill a Hub Work Order.
 struct CraftRequest {
-    enum Action : uint8_t { craft = 0, save_preset = 1, delete_preset = 2, fulfill_order = 3 };
+    enum Action : uint8_t { craft = 0, save_preset = 1, delete_preset = 2, fulfill_order = 3, dye = 4 };
     Action action = craft;
     std::string schematic_id;
     std::vector<std::string> resource_ids;
@@ -602,6 +602,14 @@ struct CraftRequest {
     uint8_t batch_count = 1;
     std::string preset_name;
     std::string order_id;
+    // A craft's mark (docs/CRAFTING.md, Mk tiers): top_mark for the highest
+    // its crafter may make.
+    static constexpr uint8_t top_mark = 255;
+    uint8_t mark = top_mark;
+    // dye: an owned piece and its colors ("index_color_1=5&index_color_2=12";
+    // "" takes the dye out).
+    uint64_t item_id = 0;
+    std::string dye_values;
 };
 
 // Stage 12 (specialist.h): Client -> server, what a player does with their

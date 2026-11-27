@@ -187,6 +187,7 @@ godot::Dictionary to_dict(const core::ItemDef& d, const core::ItemCatalog& catal
         out["damage_type"] = godot::String::utf8(dt.data(), int(dt.size()));
     }
     out["model"] = godot::String::utf8(d.model_path.c_str());
+    out["module_for"] = godot::String::utf8(d.module_for.c_str());  // an enhancement module's: ranged, melee, armor, shield
     godot::PackedStringArray species;  // a species weapon's species (their ids)
     for (const core::Species sp : d.species) species.push_back(godot::String::utf8(core::species_def(sp).id.c_str()));
     out["species"] = species;
@@ -502,6 +503,8 @@ godot::Array SwmCharacterStore::get_schematics() const {
         godot::Dictionary d;
         d["id"] = godot::String::utf8(s.id.c_str());
         d["name"] = godot::String::utf8(s.name.c_str());
+        d["group"] = godot::String::utf8(s.group.c_str());
+        d["marks"] = s.marks;
         d["profession"] = godot::String::utf8(s.profession.c_str());
         d["required_level"] = int64_t(s.required_level);
         d["output_item"] = godot::String::utf8(s.output_item.c_str());
@@ -568,7 +571,7 @@ godot::Dictionary SwmCharacterStore::scan_terrain(const godot::String& category,
 
 godot::PackedStringArray SwmCharacterStore::auto_fill_schematic(const godot::String& schematic_id,
                                                                 const godot::Array& materials,
-                                                                const godot::String& mode) const {
+                                                                const godot::String& mode, int64_t mark) const {
     godot::PackedStringArray out;
     const core::SchematicDef* s = crafting_.find_schematic(to_std(schematic_id));
     if (s == nullptr) return out;
@@ -582,7 +585,7 @@ godot::PackedStringArray SwmCharacterStore::auto_fill_schematic(const godot::Str
     const core::AutoFillMode fill_mode = m == "best_quality" ? core::AutoFillMode::best_quality
                                          : m == "cheapest"   ? core::AutoFillMode::cheapest
                                                              : core::AutoFillMode::best_stat;
-    for (const std::string& rid : crafting_.auto_fill(*s, vault, fill_mode)) {
+    for (const std::string& rid : crafting_.auto_fill(*s, vault, fill_mode, int(mark))) {
         out.push_back(godot::String::utf8(rid.c_str()));
     }
     return out;
@@ -692,10 +695,21 @@ godot::Dictionary SwmCharacterStore::mark_requirement(const godot::String& def_i
 }
 
 godot::Dictionary SwmCharacterStore::resolve_item_stats(const godot::String& def_id, double quality,
-                                                        bool apply_quality, int64_t mark) const {
+                                                        bool apply_quality, int64_t mark,
+                                                        const godot::String& color_json) const {
     godot::Dictionary out;
-    const core::ItemDef* def = catalog_.find(to_std(def_id));
-    if (def == nullptr) return out;
+    const core::ItemDef* found = catalog_.find(to_std(def_id));
+    if (found == nullptr) return out;
+    // As the modules crafted into it tune it.
+    core::ItemInstance inst;
+    inst.color_json = to_std(color_json);
+    const core::ItemDef tuned = catalog_.tuned(*found, inst);
+    const core::ItemDef* def = &tuned;
+    godot::PackedStringArray module_names;
+    for (const std::string& id : core::item_modules(inst)) {
+        if (const core::ItemDef* m = catalog_.find(id)) module_names.push_back(godot::String::utf8(m->display_name.c_str()));
+    }
+    out["modules"] = module_names;
     if (def->kind == core::ItemKind::weapon) {
         const core::WeaponDef w = catalog_.resolve_weapon(*def, quality, apply_quality, int(mark));
         out["damage"] = w.damage;
@@ -952,8 +966,8 @@ void SwmCharacterStore::_bind_methods() {
                          &SwmCharacterStore::add_rewards);
     ClassDB::bind_method(D_METHOD("set_active_loadout", "char_id", "slot_index"),
                          &SwmCharacterStore::set_active_loadout);
-    ClassDB::bind_method(D_METHOD("resolve_item_stats", "def_id", "quality", "apply_quality", "mark"),
-                         &SwmCharacterStore::resolve_item_stats, DEFVAL(0.5), DEFVAL(true), DEFVAL(0));
+    ClassDB::bind_method(D_METHOD("resolve_item_stats", "def_id", "quality", "apply_quality", "mark", "color_json"),
+                         &SwmCharacterStore::resolve_item_stats, DEFVAL(0.5), DEFVAL(true), DEFVAL(0), DEFVAL("{}"));
     ClassDB::bind_method(D_METHOD("item_display_name", "def_id", "mark"), &SwmCharacterStore::item_display_name,
                          DEFVAL(0));
     ClassDB::bind_method(D_METHOD("mark_requirement", "def_id", "mark"), &SwmCharacterStore::mark_requirement);
@@ -972,8 +986,8 @@ void SwmCharacterStore::_bind_methods() {
     ClassDB::bind_method(D_METHOD("get_work_orders"), &SwmCharacterStore::get_work_orders);
     ClassDB::bind_method(D_METHOD("scan_terrain", "category", "x", "z", "radius", "grid_n"),
                          &SwmCharacterStore::scan_terrain, DEFVAL(60.0), DEFVAL(17));
-    ClassDB::bind_method(D_METHOD("auto_fill_schematic", "schematic_id", "materials", "mode"),
-                         &SwmCharacterStore::auto_fill_schematic);
+    ClassDB::bind_method(D_METHOD("auto_fill_schematic", "schematic_id", "materials", "mode", "mark"),
+                         &SwmCharacterStore::auto_fill_schematic, DEFVAL(0));
     ClassDB::bind_method(D_METHOD("preview_craft", "schematic_id", "resource_ids", "enhancement_count", "crafter_level", "exp_quality_pct"),
                          &SwmCharacterStore::preview_craft);
     ClassDB::bind_static_method("SwmCharacterStore", D_METHOD("get_species_list"),

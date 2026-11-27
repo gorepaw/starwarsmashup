@@ -177,8 +177,11 @@ public:
     const std::vector<ItemInstance>& bank_items() const { return bank_items_; }
     void harvest_corpse(uint32_t corpse_entity);
     void salvage_item(uint64_t item_id);
+    // `mark`: the Mk to make (-1: the highest the crafter may).
     void craft_item(const std::string& schematic_id, std::vector<std::string> resource_ids,
-                    std::vector<uint64_t> enhancement_item_ids, int exp_quality_pct, int batch_count);
+                    std::vector<uint64_t> enhancement_item_ids, int exp_quality_pct, int batch_count, int mark = -1);
+    // Dyes an owned piece ("index_color_1=5&..."; "" takes the dye out).
+    void dye_item(uint64_t item_id, const std::string& dye);
     void save_recipe_preset(const std::string& name, const std::string& schematic_id,
                             std::vector<std::string> resource_ids, std::vector<std::string> enhancement_defs,
                             int exp_quality_pct);

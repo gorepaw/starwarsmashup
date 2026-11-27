@@ -161,6 +161,16 @@ struct ItemDef {
     // color_json's "paint" (painted_color_json). Kept as a query string,
     // "index_color_1=1&index_texture_1=0".
     std::map<std::string, std::string> paints;
+    // A robe or a dress, drawn over the legs too ("Covers = leggings"): the
+    // worn slots its model hides, so what's worn there isn't drawn.
+    std::vector<std::string> covers;
+    // An enhancement module (docs/CRAFTING.md, Modules): what it fits
+    // ("ModuleFor = ranged", melee, armor or shield; "" for one that only adds
+    // quality, a medicine's), and how it tunes what it's crafted into: a
+    // weapon's multipliers (its DamageMult ...), armor's typed resistance
+    // (module_resist_share of the piece's spread moves to its Resist), a
+    // shield's Modifier lines.
+    std::string module_for;
 
     // Stat modifiers for armor, deflector shields, or weapon carry penalties.
     std::vector<StatModifier> modifiers;
@@ -196,9 +206,23 @@ double armor_slot_share(std::string_view slot);
 // in the gear; a bodysuit only in the override's full_body.
 bool item_fits_slot(const ItemDef& def, std::string_view slot, bool appearance);
 
+// An owned item's color_json fields: "paint" (its scheme), "dye" (a Tailor's
+// colors, a query string as a paint's: docs/CRAFTING.md, Dyes), "mods" (the
+// modules crafted into it, comma-separated ids). "" if it has none.
+std::string item_json_field(std::string_view json, std::string_view key);
+// The color_json with a field set ("" removes it). Values hold no quotes.
+std::string with_item_json_field(std::string_view json, std::string_view key, std::string_view value);
 // An owned item's paint scheme: its color_json's "paint" ("" if none).
 struct ItemInstance;
 std::string item_paint(const ItemInstance& inst);
+// The modules crafted into an owned item (their ids).
+std::vector<std::string> item_modules(const ItemInstance& inst);
+// Whether an enhancement module tunes an item: its ModuleFor is the item's
+// kind (a ranged or melee weapon, armor, a Deflector Shield).
+bool module_fits(const ItemDef& module, const ItemDef& item);
+// The share of a piece's typed resistance each armor module moves to its own
+// spread.
+inline constexpr double module_resist_share = 0.25;
 // A new item's color_json, painted in a faction's scheme if it has one
 // (a Katarn from the Imperial quartermaster), else "{}".
 std::string painted_color_json(const ItemDef& def, std::string_view faction);
@@ -299,6 +323,9 @@ public:
     Gear resolve_gear(const ItemDef& def, double quality = 0.5, bool apply_quality = true, int mark = 0) const;
     Loadout build_loadout(const CharacterLoadout& cl, std::span<const ItemInstance> inventory, Species species,
                           bool apply_quality = true) const;
+    // An owned item's def, tuned by the modules crafted into it (item_modules;
+    // those that don't fit it, or the catalog lacks, do nothing).
+    ItemDef tuned(const ItemDef& def, const ItemInstance& inst) const;
 
 private:
     std::vector<ItemDef> items_;
@@ -315,7 +342,8 @@ private:
 // doesn't show, its own piece of the worn piece's armor class
 // (species_look), if it has one; else nothing. A painted piece's models carry
 // its paint as a query ("armor/katarn/chest_m.gltf?index_color_1=1&..."): its
-// own scheme, else its "neutral" one.
+// own scheme, else its "neutral" one; then its dye, if it's dyed. What a shown
+// robe covers (its legs) isn't drawn.
 std::string resolve_worn_models(const ItemCatalog& catalog, const CharacterLoadout& cl,
                                 std::span<const ItemInstance> inventory, Species species, Gender gender);
 

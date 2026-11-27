@@ -130,12 +130,17 @@ static func build_lines(def: Dictionary, inst: Dictionary, store: Object, equipp
 	if desc != "":
 		lines.append({"text": desc, "color": Bf2Screen.TEXT})
 
-	var stats: Dictionary = store.resolve_item_stats(def_id, quality, true, mark) if store != null else {}
+	# As the modules crafted into it tune it (docs/CRAFTING.md).
+	var stats: Dictionary = store.resolve_item_stats(def_id, quality, true, mark,
+			str(inst.get("color_json", "{}"))) if store != null else {}
 	var eq_stats: Dictionary = {}
 	if not equipped_def.is_empty() and store != null:
 		var eq_q := float(equipped_inst.get("quality", 0.5)) if not equipped_inst.is_empty() else 0.5
 		eq_stats = store.resolve_item_stats(str(equipped_def.get("id", "")), eq_q, true,
-				int(equipped_inst.get("mark", 0)))
+				int(equipped_inst.get("mark", 0)), str(equipped_inst.get("color_json", "{}")))
+	var modules: PackedStringArray = stats.get("modules", PackedStringArray())
+	if not modules.is_empty():
+		lines.append({"text": "Modules: " + ", ".join(modules), "color": Bf2Screen.ACCENT})
 
 	if kind == "weapon" and not stats.is_empty():
 		var dmg := float(stats.get("damage", 0.0))

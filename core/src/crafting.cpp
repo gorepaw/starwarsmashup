@@ -4,6 +4,7 @@
 #include <array>
 #include <cctype>
 #include <cmath>
+#include <set>
 #include <sstream>
 #include <stdexcept>
 
@@ -68,7 +69,17 @@ void CraftingBook::load_resources(const std::filesystem::path& path) {
 }
 
 void CraftingBook::load_schematics(const std::filesystem::path& path) {
-    parse_schematics(Ini::load(path), path.string());
+    const Ini ini = Ini::load(path);
+    for (const Ini::Section& s : ini.sections()) {
+        if (!same(s.name, "catalog")) continue;
+        const auto rel = s.get("Path");
+        if (!rel) throw std::runtime_error(path.string() + ": [catalog] needs a Path");
+        ItemCatalog catalog;
+        catalog.load(path.parent_path() / *rel);
+        parse_schematics(ini, path.string(), &catalog);
+        return;
+    }
+    parse_schematics(ini, path.string());
 }
 
 void CraftingBook::parse_resources(const Ini& ini, const std::string& where) {
@@ -104,25 +115,88 @@ void CraftingBook::parse_resources(const Ini& ini, const std::string& where) {
     }
 }
 
-void CraftingBook::parse_schematics(const Ini& ini, const std::string& where) {
+namespace {
+
+// A comma-separated list's names, trimmed.
+std::vector<std::string> names_of(std::string_view list) {
+    std::vector<std::string> out;
+    std::stringstream parts{std::string(list)};
+    for (std::string part; std::getline(parts, part, ',');) {
+        part.erase(0, part.find_first_not_of(" \t"));
+        part.erase(part.find_last_not_of(" \t") + 1);
+        if (!part.empty()) out.push_back(part);
+    }
+    return out;
+}
+
+// A glob with '*' for any run of characters ("armor_ubese_*").
+bool glob_match(std::string_view pattern, std::string_view text) {
+    if (pattern.empty()) return text.empty();
+    if (pattern.front() == '*') {
+        for (size_t i = 0; i <= text.size(); ++i) {
+            if (glob_match(pattern.substr(1), text.substr(i))) return true;
+        }
+        return false;
+    }
+    return !text.empty() && pattern.front() == text.front() && glob_match(pattern.substr(1), text.substr(1));
+}
+
+bool any_glob(const std::vector<std::string>& patterns, std::string_view text) {
+    return std::any_of(patterns.begin(), patterns.end(), [&](const std::string& p) { return glob_match(p, text); });
+}
+
+} // namespace
+
+bool item_takes_marks(const ItemDef& def) {
+    return def.kind == ItemKind::weapon || def.kind == ItemKind::armor || def.kind == ItemKind::deflector_shield;
+}
+
+int craft_max_mark(int crafter_level) { return std::clamp(crafter_level / 10, 0, max_mark); }
+
+int mark_material_amount(int amount, int mark) {
+    return int(std::ceil(double(amount) * (1.0 + 0.25 * double(clamp_mark(mark))) - 1e-9));
+}
+
+int64_t mark_craft_xp(int64_t base_xp, int mark) {
+    return int64_t(std::llround(double(base_xp) * (1.0 + 0.15 * double(clamp_mark(mark)))));
+}
+
+bool dye_values_ok(std::string_view dye) {
+    if (dye.empty()) return true;
+    size_t count = 0;
+    for (size_t at = 0; at <= dye.size();) {
+        const size_t amp = std::min(dye.find('&', at), dye.size());
+        const std::string_view pair = dye.substr(at, amp - at);
+        const size_t eq = pair.find('=');
+        if (eq == std::string_view::npos || eq == 0 || eq + 1 == pair.size() || ++count > max_dye_values) return false;
+        for (const char c : pair.substr(0, eq)) {
+            if (!(std::islower(static_cast<unsigned char>(c)) || std::isdigit(static_cast<unsigned char>(c)) || c == '_' ||
+                  c == '/')) {
+                return false;
+            }
+        }
+        const std::string_view index = pair.substr(eq + 1);
+        if (index.size() > 3 || !std::all_of(index.begin(), index.end(), [](char c) { return std::isdigit(static_cast<unsigned char>(c)); }) ||
+            std::stoi(std::string(index)) > 255) {
+            return false;
+        }
+        at = amp + 1;
+    }
+    return true;
+}
+
+void CraftingBook::parse_schematics(const Ini& ini, const std::string& where, const ItemCatalog* catalog) {
     schematics_.clear();
     work_orders_.clear();
-    for (const Ini::Section& s : ini.sections()) {
-        if (s.name.empty() && s.values.empty()) continue;
-        if (same(s.name, "schematic")) {
-            SchematicDef def;
-            def.id = s.get("Id").value_or("");
-            if (def.id.empty()) throw std::runtime_error(where + ": [schematic] missing Id");
-            if (find_schematic(def.id) != nullptr) throw std::runtime_error(where + ": duplicate schematic " + def.id);
-            def.name = s.get("Name").value_or(def.id);
-            def.profession = s.get("Profession").value_or("weaponsmith");
-            def.required_level = std::clamp(int(s.number("RequiredLevel", 1)), 1, 100);
-            def.output_item = s.get("Output").value_or("");
-            if (def.output_item.empty()) throw std::runtime_error(where + " (" + def.id + "): missing Output");
-            def.output_count = std::max(1, int(s.number("OutputCount", 1)));
-            def.base_xp = std::max<int64_t>(10, int64_t(s.number("BaseXP", 60)));
-            def.enhancement_slots = std::clamp(int(s.number("Enhancements", 1)), 0, 2);
-            for (const auto& [k, v] : s.values) {
+    // A schematic's common keys: [schematic]'s and [family]'s.
+    const auto read_recipe = [&](const Ini::Section& s, SchematicDef& def) {
+        def.group = s.get("Group").value_or("");
+        def.profession = s.get("Profession").value_or("weaponsmith");
+        def.required_level = std::clamp(int(s.number("RequiredLevel", 1)), 1, 100);
+        def.output_count = std::max(1, int(s.number("OutputCount", 1)));
+        def.base_xp = std::max<int64_t>(10, int64_t(s.number("BaseXP", 60)));
+        def.enhancement_slots = std::clamp(int(s.number("Enhancements", 1)), 0, 2);
+        for (const auto& [k, v] : s.values) {
                 if (same(k, "Slot")) {
                     std::istringstream fields(v);
                     std::string cat_str;
@@ -147,6 +221,23 @@ void CraftingBook::parse_schematics(const Ini& ini, const std::string& where) {
             }
             if (def.slots.empty()) throw std::runtime_error(where + " (" + def.id + "): needs at least one Slot");
             if (def.weights.empty()) def.weights.push_back({ResourceStat::quality, 1.0});
+    };
+    std::vector<const Ini::Section*> families;
+    for (const Ini::Section& s : ini.sections()) {
+        if (s.name.empty() && s.values.empty()) continue;
+        if (same(s.name, "catalog")) continue;  // (load_schematics')
+        if (same(s.name, "family")) {
+            if (catalog == nullptr) throw std::runtime_error(where + ": a [family] needs a [catalog]");
+            families.push_back(&s);
+        } else if (same(s.name, "schematic")) {
+            SchematicDef def;
+            def.id = s.get("Id").value_or("");
+            if (def.id.empty()) throw std::runtime_error(where + ": [schematic] missing Id");
+            if (find_schematic(def.id) != nullptr) throw std::runtime_error(where + ": duplicate schematic " + def.id);
+            def.name = s.get("Name").value_or(def.id);
+            def.output_item = s.get("Output").value_or("");
+            if (def.output_item.empty()) throw std::runtime_error(where + " (" + def.id + "): missing Output");
+            read_recipe(s, def);
             schematics_.push_back(std::move(def));
         } else if (same(s.name, "work_order")) {
             WorkOrder wo;
@@ -163,6 +254,66 @@ void CraftingBook::parse_schematics(const Ini& ini, const std::string& where) {
         } else {
             throw std::runtime_error(where + ": unknown section [" + s.name + "]");
         }
+    }
+    if (catalog == nullptr) return;
+
+    // Each family's items, in catalog order; an item made already (by a
+    // [schematic], or an earlier family) keeps that.
+    std::set<std::string> made;
+    for (const SchematicDef& def : schematics_) made.insert(def.output_item);
+    for (const Ini::Section* f : families) {
+        const std::string what = where + " ([family] " + f->get("Group").value_or("?") + ")";
+        const auto kind = f->get("Kind");
+        if (!kind) throw std::runtime_error(what + ": needs a Kind");
+        const std::vector<std::string> archetypes = names_of(f->get("Archetype").value_or(""));
+        const std::vector<std::string> classes = names_of(f->get("ArmorClass").value_or(""));
+        const std::vector<std::string> item_slots = names_of(f->get("ItemSlot").value_or(""));
+        const std::vector<std::string> match = names_of(f->get("Match").value_or(""));
+        const std::vector<std::string> exclude = names_of(f->get("Exclude").value_or(""));
+        const std::vector<std::string> factions = names_of(f->get("Faction").value_or("neutral"));
+        const bool by_slot = same(f->get("ScaleBySlot").value_or("no"), "yes");
+        SchematicDef recipe;
+        recipe.id = what;
+        read_recipe(*f, recipe);
+        size_t matched = 0;
+        for (const ItemDef& item : catalog->all()) {
+            if (item_kind_name(item.kind) != *kind || made.contains(item.id)) continue;
+            if (!archetypes.empty() &&
+                std::find(archetypes.begin(), archetypes.end(), weapon_archetype_info(item.archetype).id) ==
+                    archetypes.end()) {
+                continue;
+            }
+            if (!classes.empty() && std::find(classes.begin(), classes.end(), item.armor_class) == classes.end()) continue;
+            if (!item_slots.empty() && std::find(item_slots.begin(), item_slots.end(), item.slot) == item_slots.end()) {
+                continue;
+            }
+            if (!match.empty() && !any_glob(match, item.id)) continue;
+            if (any_glob(exclude, item.id)) continue;
+            if (std::find(factions.begin(), factions.end(), "any") == factions.end() &&
+                std::find(factions.begin(), factions.end(), item.faction) == factions.end()) {
+                continue;
+            }
+            SchematicDef def = recipe;
+            def.id = "sch_" + item.id;
+            if (find_schematic(def.id) != nullptr) throw std::runtime_error(what + ": duplicate schematic " + def.id);
+            def.name = item.display_name.empty() ? item.id : item.display_name;
+            def.output_item = item.id;
+            if (by_slot && item.kind == ItemKind::armor) {
+                // A piece costs its slot's share of a chest's (as its stats).
+                const double scale = armor_slot_share(item.slot) / armor_slot_share("chest");
+                for (SchematicSlot& sl : def.slots) sl.amount = std::max(1, int(std::lround(sl.amount * scale)));
+                def.base_xp = std::max<int64_t>(10, int64_t(std::llround(double(def.base_xp) * std::max(0.4, scale))));
+            }
+            made.insert(item.id);
+            schematics_.push_back(std::move(def));
+            ++matched;
+        }
+        if (matched == 0) throw std::runtime_error(what + ": matches no catalog item");
+    }
+    for (SchematicDef& def : schematics_) {
+        const ItemDef* out = catalog->find(def.output_item);
+        if (out == nullptr) throw std::runtime_error(where + " (" + def.id + "): no catalog item " + def.output_item);
+        def.marks = item_takes_marks(*out);
     }
 }
 
@@ -240,7 +391,7 @@ ScanResult CraftingBook::scan_terrain(ResourceCategory category, double x, doubl
 }
 
 std::vector<std::string> CraftingBook::auto_fill(const SchematicDef& schematic, std::span<const MaterialStack> vault,
-                                                 AutoFillMode mode) const {
+                                                 AutoFillMode mode, int mark) const {
     std::vector<std::string> chosen(schematic.slots.size());
     std::vector<std::pair<std::string, int64_t>> available;
     available.reserve(vault.size());
@@ -279,12 +430,13 @@ std::vector<std::string> CraftingBook::auto_fill(const SchematicDef& schematic, 
 
     for (size_t i = 0; i < schematic.slots.size(); ++i) {
         const SchematicSlot& slot = schematic.slots[i];
+        const int amount = mark_material_amount(slot.amount, mark);
         const ResourceDef* best = nullptr;
         double best_score = -1e18;
         for (const ResourceDef& r : resources_) {
             if (r.category != slot.category) continue;
             const int64_t stock = avail_of(r.id);
-            if (stock < slot.amount) continue;
+            if (stock < amount) continue;
             const double sc = score_of(r, stock);
             if (sc > best_score) {
                 best_score = sc;
@@ -293,7 +445,7 @@ std::vector<std::string> CraftingBook::auto_fill(const SchematicDef& schematic, 
         }
         if (best != nullptr) {
             chosen[i] = best->id;
-            consume(best->id, slot.amount);
+            consume(best->id, amount);
         }
     }
     return chosen;

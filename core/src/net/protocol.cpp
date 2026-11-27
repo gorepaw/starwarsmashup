@@ -1438,6 +1438,9 @@ struct Encoder {
         out.put(m.batch_count);
         out.put_string(m.preset_name);
         out.put_string(m.order_id);
+        out.put(m.mark);
+        out.put(m.item_id);
+        out.put_string(m.dye_values);
     }
     void operator()(const SpecialistRequest& m) {
         out.put(uint8_t(Type::specialist_request));
@@ -2091,7 +2094,7 @@ Message decode(std::span<const uint8_t> packet) {
     case Type::craft_request: {
         CraftRequest m;
         const uint8_t action = in.get<uint8_t>();
-        if (action > uint8_t(CraftRequest::fulfill_order)) throw PacketError("bad craft action");
+        if (action > uint8_t(CraftRequest::dye)) throw PacketError("bad craft action");
         m.action = CraftRequest::Action(action);
         m.schematic_id = in.get_string();
         const size_t rcount = in.get<uint8_t>();
@@ -2107,6 +2110,9 @@ Message decode(std::span<const uint8_t> packet) {
         m.batch_count = in.get<uint8_t>();
         m.preset_name = in.get_string();
         m.order_id = in.get_string();
+        m.mark = in.get<uint8_t>();
+        m.item_id = in.get<uint64_t>();
+        m.dye_values = in.get_string();
         message = std::move(m);
         break;
     }

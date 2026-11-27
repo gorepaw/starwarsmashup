@@ -59,6 +59,24 @@ func _initialize() -> void:
 	_screen.materials = vault
 	_screen.open_screen()
 	_screen.queue_redraw()
+	# docs/CRAFTING.md: the families' schematics, with their groups and Mk
+	# tiers; amounts at a mark; the group picker; the Dye tab (drawn below).
+	var padded: Dictionary = {}
+	for s: Dictionary in sch:
+		if str(s["id"]) == "sch_armor_padded_chest":
+			padded = s
+	assert(str(padded.get("group", "")) == "Medium Armor" and bool(padded.get("marks", false)), "padded: %s" % padded)
+	assert(store.auto_fill_schematic("sch_wp_pistol_d18", vault, "best_stat", 10)[0] != "", "Mk X fits 25 durasteel")
+	assert(store.auto_fill_schematic("sch_wp_pistol_d18", [{"resource_id": "min_tatooine_durasteel", "amount": 5},
+			{"resource_id": "gas_inert_argon", "amount": 5}], "best_stat", 2)[0] == "", "Mk II takes 6 durasteel")
+	_screen._on_click("group:+1", Vector2.ZERO)
+	assert(_screen._group != "" and not _screen._filtered_schematics().is_empty(), "group picker")
+	_screen.inventory = [{"id": 7, "def_id": "cloth_shirt_s04", "quality": 0.5, "color_json": "{\"dye\":\"index_color_1=5\"}"}]
+	_screen._on_click("tab:dye", Vector2.ZERO)
+	_screen._on_click("dyeitem:7", Vector2.ZERO)
+	assert(int(_screen._dye_choice.get("index_color_1", -1)) == 5, "dye read back: %s" % _screen._dye_choice)
+	assert(not _screen._dye_variables(_screen._dye_entry()["def"]).is_empty(), "the shirt's colors")
+	_screen._on_click("tab:workbench", Vector2.ZERO)
 	print("Stage 7 crafting store & workbench screen: OK")
 
 
@@ -71,6 +89,8 @@ func _process(delta: float) -> bool:
 			if _screen == null:
 				quit(1)
 				return true
+			if _phase_frames == 2:  # (each tab drawn: the workbench, then the dyes)
+				_screen._on_click("tab:dye", Vector2.ZERO)
 			if _phase_frames < 4:
 				return false
 			_screen.queue_free()
@@ -108,6 +128,20 @@ func _process(delta: float) -> bool:
 					printerr("FAIL: client did not spawn in desert hub")
 					_cleanup(1)
 				return false
+			# Extracting takes Surveying's licence (docs/PERKS.md): its first milestone, free.
+			client.service(0, "surveying", 1, 0)
+			_next("licensed")
+		"licensed":
+			var client: Object = _session.get_client()
+			var trained := 0
+			for p: Dictionary in client.get_professions():
+				if str(p["id"]) == "surveying":
+					trained = int(p.get("trained", 0))
+			if trained < 1:
+				if _phase_sec > 5.0:
+					printerr("FAIL: the Survey Trainer didn't teach the licence")
+					_cleanup(1)
+				return false
 			var hub_ui: Node = _session.get("_hub_ui")
 			assert(hub_ui.toggle_scanner(), "desert scanner did not turn on")
 			assert(hub_ui.extract_scanner(client), "desert scanner extract failed")
@@ -129,20 +163,6 @@ func _process(delta: float) -> bool:
 			if presets.is_empty():
 				if _phase_sec > 5.0:
 					printerr("FAIL: recipe preset did not sync")
-					_cleanup(1)
-				return false
-			# Extracting takes Surveying's licence (docs/PERKS.md): its first milestone, free.
-			client.service(0, "surveying", 1, 0)
-			_next("licensed")
-		"licensed":
-			var client: Object = _session.get_client()
-			var trained := 0
-			for p: Dictionary in client.get_professions():
-				if str(p["id"]) == "surveying":
-					trained = int(p.get("trained", 0))
-			if trained < 1:
-				if _phase_sec > 5.0:
-					printerr("FAIL: the Survey Trainer didn't teach the licence")
 					_cleanup(1)
 				return false
 			var hub_ui: Node = _session.get("_hub_ui")

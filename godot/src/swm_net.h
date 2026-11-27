@@ -206,7 +206,9 @@ public:
     void harvest_corpse(int64_t corpse_entity);
     void salvage_item(int64_t item_id);
     void craft_item(const godot::String& schematic_id, const godot::PackedStringArray& resource_ids,
-                    const godot::PackedInt64Array& enhancement_ids, int64_t exp_quality_pct, int64_t batch_count);
+                    const godot::PackedInt64Array& enhancement_ids, int64_t exp_quality_pct, int64_t batch_count,
+                    int64_t mark = -1);
+    void dye_item(int64_t item_id, const godot::String& dye);
     void save_recipe_preset(const godot::String& name, const godot::String& schematic_id,
                             const godot::PackedStringArray& resource_ids,
                             const godot::PackedStringArray& enhancement_defs, int64_t exp_quality_pct);

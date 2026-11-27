@@ -1057,7 +1057,7 @@ void SwmClient::salvage_item(int64_t item_id) {
 
 void SwmClient::craft_item(const godot::String& schematic_id, const godot::PackedStringArray& resource_ids,
                            const godot::PackedInt64Array& enhancement_ids, int64_t exp_quality_pct,
-                           int64_t batch_count) {
+                           int64_t batch_count, int64_t mark) {
     if (!client()) return;
     std::vector<std::string> rids;
     rids.reserve(size_t(resource_ids.size()));
@@ -1065,7 +1065,12 @@ void SwmClient::craft_item(const godot::String& schematic_id, const godot::Packe
     std::vector<uint64_t> eids;
     eids.reserve(size_t(enhancement_ids.size()));
     for (int i = 0; i < enhancement_ids.size(); ++i) eids.push_back(uint64_t(enhancement_ids[i]));
-    client()->craft_item(to_std(schematic_id), std::move(rids), std::move(eids), int(exp_quality_pct), int(batch_count));
+    client()->craft_item(to_std(schematic_id), std::move(rids), std::move(eids), int(exp_quality_pct), int(batch_count),
+                         int(mark));
+}
+
+void SwmClient::dye_item(int64_t item_id, const godot::String& dye) {
+    if (client()) client()->dye_item(uint64_t(item_id), to_std(dye));
 }
 
 void SwmClient::save_recipe_preset(const godot::String& name, const godot::String& schematic_id,
@@ -2067,8 +2072,9 @@ void SwmClient::_bind_methods() {
     ClassDB::bind_method(D_METHOD("gather_extract", "category_name"), &SwmClient::gather_extract);
     ClassDB::bind_method(D_METHOD("harvest_corpse", "corpse_entity"), &SwmClient::harvest_corpse);
     ClassDB::bind_method(D_METHOD("salvage_item", "item_id"), &SwmClient::salvage_item);
-    ClassDB::bind_method(D_METHOD("craft_item", "schematic_id", "resource_ids", "enhancement_ids", "exp_quality_pct", "batch_count"),
-                         &SwmClient::craft_item);
+    ClassDB::bind_method(D_METHOD("craft_item", "schematic_id", "resource_ids", "enhancement_ids", "exp_quality_pct", "batch_count", "mark"),
+                         &SwmClient::craft_item, DEFVAL(-1));
+    ClassDB::bind_method(D_METHOD("dye_item", "item_id", "dye"), &SwmClient::dye_item);
     ClassDB::bind_method(D_METHOD("save_recipe_preset", "name", "schematic_id", "resource_ids", "enhancement_defs", "exp_quality_pct"),
                          &SwmClient::save_recipe_preset);
     ClassDB::bind_method(D_METHOD("delete_recipe_preset", "name"), &SwmClient::delete_recipe_preset);
