@@ -5,12 +5,14 @@ extends "res://ui/bf2_screen.gd"
 
 signal resumed
 signal leave_requested
+signal return_requested  # Leave Match: back to the world, at the terminal
 
 const Settings = preload("res://ui/settings.gd")
 const OptionsView = preload("res://ui/options_view.gd")
 
 var settings: Settings
 var in_match := false        # "Leave Battle" rather than "Quit"
+var can_return := false      # a match a hub sent us to: "Leave Match" goes back there
 var _page := "main"         # "main", "settings" or "keybinds"
 var _rebinding := ""         # action waiting for a key
 var _scroll := 0             # the keybinds' first row shown
@@ -37,13 +39,18 @@ func _paint() -> void:
 
 
 func _paint_main() -> void:
-	var box := centered(300, 250)
+	var box := centered(300, 300 if can_return else 250)
 	frame(box)
 	text("gamefont_large", "Paused", Vector2(box.get_center().x, box.position.y + 18 * u), "Center", ACCENT)
 	var row := Rect2(box.position + Vector2(40, 70) * u, Vector2(220, 36) * u)
 	button(row, art.localize("common.resume"), "resume")
 	button(Rect2(row.position + Vector2(0, 50) * u, row.size), "Options", "options")
-	button(Rect2(row.position + Vector2(0, 100) * u, row.size), "Leave Battle" if in_match else art.localize("common.quit"),
+	var next_y := 100.0
+	if can_return:
+		button(Rect2(row.position + Vector2(0, next_y) * u, row.size), "Leave Match", "return")
+		next_y += 50.0
+	button(Rect2(row.position + Vector2(0, next_y) * u, row.size),
+			("Quit to Main Menu" if can_return else "Leave Battle") if in_match else art.localize("common.quit"),
 			"leave", false, true)
 
 
@@ -70,6 +77,8 @@ func _on_click(id: String, at: Vector2) -> void:
 			_scroll = 0
 		"leave":
 			leave_requested.emit()
+		"return":
+			return_requested.emit()
 		"back":
 			_rebinding = ""
 			settings.save_file()

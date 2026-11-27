@@ -1016,6 +1016,15 @@ void Hub::start_battle(const QueueKey& key) {
         }
         return std::nullopt;
     };
+    // Leave Match (the pause menu): back here at once, the match going on without them.
+    b->server->on_leave_match = [this, b](uint32_t entity) {
+        const std::string name = b->server->name_of(entity);
+        if (std::any_of(b->tickets.begin(), b->tickets.end(),
+                        [&](const auto& t) { return t.second.first == name; })) {
+            b->server->transfer(entity, net::Transfer{0, port_, 0, "", config_.planet});
+            say(std::format("{} left battle {}", name, b->id));
+        }
+    };
     b->server->on_match_ended = [this, b](const MatchResult& result) {
         last_result_ = result;
         record_telemetry(*b, result);

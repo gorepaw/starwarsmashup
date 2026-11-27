@@ -204,6 +204,7 @@ public:
     // The abilities, companions, droid modules and slices (specialists.ini), for screens.
     godot::Dictionary get_specialist_book(const godot::String& path);
     godot::Array get_materials() const;
+    godot::PackedStringArray get_blueprints() const;  // `Blueprint = yes` schematics learned
     godot::Array get_presets() const;
     void gather_extract(const godot::String& category_name);
     void harvest_corpse(int64_t corpse_entity);

@@ -20,7 +20,7 @@ namespace swm::core::net {
 // Every packet starts with a magic number, the protocol version and a message
 // type. Peers drop packets with another version. Bump it on any wire change.
 inline constexpr uint16_t protocol_magic = 0x4D53;  // "SM"
-inline constexpr uint16_t protocol_version = 45;
+inline constexpr uint16_t protocol_version = 46;
 // BoltState/Impact::weapon: a placed trap's shot, from that weapon slot
 // (drawn from the trap, not its owner's gun).
 inline constexpr uint8_t trap_shot_flag = 0x40;
@@ -478,6 +478,7 @@ struct ServiceRequest {
         travel = 7,                // `id`: the travel point (a "travel" service's name) to fly to (Stage 13)
         learn_perk = 8,            // `id`: the perk (docs/PERKS.md)
         forget = 9,                // `id`: a perk, or a profession (its last milestone learned)
+        leave_match = 10,          // in a match a hub sent you to: back to that hub now (the pause menu's)
     };
     uint8_t action = 0;
     std::string id;
@@ -577,6 +578,9 @@ struct CraftingSync {
     uint32_t revision = 0;
     std::vector<MaterialStack> materials;
     std::vector<RecipePreset> presets;
+    // Blueprints learned (docs/CRAFTING.md): the ids of the `Blueprint = yes`
+    // schematics this character may make.
+    std::vector<std::string> blueprints;
 
     friend bool operator==(const CraftingSync&, const CraftingSync&) = default;
 };

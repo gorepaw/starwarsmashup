@@ -5,6 +5,7 @@
 #include <cmath>
 #include <format>
 #include <numbers>
+#include <sstream>
 
 #include "swm/core/net/bytes.h"
 #include "swm/core/net/protocol.h"
@@ -888,7 +889,11 @@ void GameServer::handle(const net::Endpoint& from, const net::Datagram& datagram
     } else if (const auto* craft = std::get_if<net::CraftRequest>(&message)) {
         handle_craft_request(*client, *craft);
     } else if (const auto* service = std::get_if<net::ServiceRequest>(&message)) {
-        handle_service_request(*client, *service);
+        if (service->action == net::ServiceRequest::leave_match) {
+            if (conquest_ && on_leave_match && !client->transfer) on_leave_match(client->entity);
+        } else {
+            handle_service_request(*client, *service);
+        }
     } else if (const auto* spec_request = std::get_if<net::SpecialistRequest>(&message)) {
         handle_specialist_request(*client, *spec_request);  // Stage 12
     } else if (const auto* spec_ack = std::get_if<net::SpecialistAck>(&message)) {
@@ -1166,6 +1171,8 @@ void GameServer::handle(const net::Endpoint& from, const net::Datagram& datagram
                 const ItemDef* def = config_.catalog->find(it->def_id);
                 if (def != nullptr && def->kind == ItemKind::vehicle) {
                     call_vehicle(*client, *def);
+                } else if (def != nullptr && learn_blueprint(*client, *def, use->item_id)) {
+                    // A blueprint: learned (or said why not).
                 } else if (def != nullptr && use_specialist_item(*client, *def, use->item_id)) {
                     // Stage 12: used.
                 } else if (def != nullptr && def->kind == ItemKind::supply && def->heal_amount > 0 &&
@@ -1301,6 +1308,12 @@ GameServer::Client* GameServer::join(const net::Endpoint& from, const std::strin
             load_specialist_data(joined);  // Stage 12: before the loadouts are rebuilt below
             joined.materials = store_->list_materials(joined.character);
             joined.presets = store_->list_presets(joined.character);
+            {
+                std::istringstream ids(store_->get_extra(joined.character, "blueprints"));
+                for (std::string id; std::getline(ids, id, ',');) {
+                    if (!id.empty()) joined.blueprints.push_back(id);
+                }
+            }
             joined.crafting_rev = 1;
             rebuild_client_loadouts(joined);  // with their professions' perks
         } catch (const std::exception& error) {
@@ -1861,7 +1874,10 @@ void GameServer::run_match() {
                     continue;
                 }
                 heal(client, station.health);
-                resupply(client.state, loadout_of(client), station.ammo);
+                // An ammo droid tops up a step at a time, as Battlefront's did:
+                // droid_ammo_step of the full load each visit (50 of the
+                // 200-round pool), not all of it at once.
+                resupply(client.state, loadout_of(client), std::min(station.ammo, droid_ammo_step));
             }
         }
         // Leaving the battlefield kills, after a warning.
@@ -2006,6 +2022,10 @@ void GameServer::run_match() {
 }
 
 void GameServer::return_to_waiting(Client& client) {
+    // Out of any vehicle first: a pilot sent back to spawn (the warmup over)
+    // mustn't stay its driver, nor keep its class in their state.
+    if (client.state.vehicle >= 0) leave_vehicle(client);
+    client.remote_chair = -1;
     client.life = Life::waiting;
     client.health = 0;
     client.shield = 0;
@@ -3243,9 +3263,9 @@ void GameServer::damage(Client& victim, double raw, DamageType type, uint32_t at
 void GameServer::kill(Client& victim, uint32_t attacker, bool is_flyer) {
     if (victim.state.vehicle >= 0) {
         const auto classes = vehicle_classes();
+        // (state.vehicle is its class, not an index into vehicles_.)
         const size_t vi = size_t(victim.state.vehicle);
-        if (vi < vehicles_.size() && size_t(vehicles_[vi].cls) < classes.size() &&
-            classes[size_t(vehicles_[vi].cls)].kind == VehicleKind::flyer) {
+        if (vi < classes.size() && classes[vi].kind == VehicleKind::flyer) {
             is_flyer = true;
         }
         leave_vehicle(victim);

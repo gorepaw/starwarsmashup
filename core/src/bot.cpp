@@ -1149,9 +1149,33 @@ void Bot::choose_vehicle(const GameClient& client, double now) {
         return;
     }
     next_vehicle_ = now + 2 + random() * 2;
+    // Players first (playnotes: a bot flew off with the ship you were going
+    // for): the free vehicle nearest each player of its side on foot, and
+    // any a player stands right by, aren't a bot's to take. (A player, not a
+    // bot: only players have an appearance.)
+    std::vector<uint32_t> reserved;
+    for (const GameClient::Remote& other : client.remotes()) {
+        if (other.appearance.empty() || !other.alive() || other.state.vehicle >= 0 ||
+            !field.allied(team, other.team)) {
+            continue;
+        }
+        uint32_t nearest = 0;
+        double nearest_d = 45;  // m: further than that, they aren't going for it
+        for (const net::VehicleState& v : client.vehicles()) {
+            if (!free_seat(v) || std::abs(v.position.y - other.state.position.y) > 12.0) continue;
+            const double d = horizontal_distance(v.position, other.state.position);
+            if (d < 10) reserved.push_back(v.id);
+            if (d < nearest_d) {
+                nearest_d = d;
+                nearest = v.id;
+            }
+        }
+        if (nearest != 0) reserved.push_back(nearest);
+    }
     double best = look_reach;
     for (const net::VehicleState& v : client.vehicles()) {
         if (std::abs(v.position.y - client.predicted().position.y) > 12.0) continue;
+        if (std::find(reserved.begin(), reserved.end(), v.id) != reserved.end()) continue;
         const double d = horizontal_distance(v.position, client.predicted().position);
         if (free_seat(v) && d < best) {
             best = d;

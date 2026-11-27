@@ -285,7 +285,7 @@ void test_families() {
     const SchematicDef* chest = book.find_schematic("sch_armor_padded_chest");
     const SchematicDef* gloves = book.find_schematic("sch_armor_padded_gloves");
     CHECK(chest && gloves && chest->group == "Medium Armor" && chest->profession == "armorsmith");
-    CHECK(chest->required_level == 20 && chest->enhancement_slots == 2 && chest->marks);
+    CHECK(chest->required_level == 1 && chest->enhancement_slots == 2 && chest->marks);
     CHECK(chest->slots.size() == 3 && chest->slots[0].amount == 7 && gloves->slots[0].amount == 2);
     const SchematicDef* shirt = book.find_schematic("sch_cloth_shirt_s04");
     CHECK(shirt && shirt->group == "Shirts" && shirt->profession == "tailor" && !shirt->marks);
@@ -309,6 +309,55 @@ void test_families() {
     CHECK(dye_values_ok("") && dye_values_ok("index_color_1=12") && dye_values_ok("index_color_1=0&/shared_owner/x=255"));
     CHECK(!dye_values_ok("index_color_1") && !dye_values_ok("a=256") && !dye_values_ok("A=1") && !dye_values_ok("a=1&"));
     CHECK(!dye_values_ok("a=1&b=1&c=1&d=1&e=1&f=1&g=1") && !dye_values_ok("a=\"1"));
+}
+
+// docs/CRAFTING.md, Levels and Blueprints: weapons and armor aren't gated by
+// level; a schematic or some of a family can wait behind a blueprint.
+void test_blueprints() {
+    const auto root = repo_root();
+    CraftingBook real;
+    real.load_resources(root / "game" / "crafting" / "resources.ini");
+    real.load_schematics(root / "game" / "crafting" / "schematics.ini");
+    ItemCatalog catalog;
+    catalog.load(root / "game" / "items" / "swg_catalog.ini");
+    for (const SchematicDef& s : real.schematics()) {
+        const ItemDef* out = catalog.find(s.output_item);
+        if (out != nullptr && (out->kind == ItemKind::weapon || out->kind == ItemKind::armor ||
+                               out->kind == ItemKind::deflector_shield)) {
+            CHECK(s.required_level == 1);
+        }
+        CHECK(!s.blueprint);  // none yet: not until they drop somewhere (docs/CRAFTING.md)
+    }
+
+    CraftingBook book;
+    book.load_resources(root / "game" / "crafting" / "resources.ini");
+    book.parse_schematics(Ini::parse("[schematic]\nId = sch_secret\nName = Secret\nOutput = wp_pistol_d18\n"
+                                     "Blueprint = yes\nSlot = mineral 2\n"
+                                     "[schematic]\nId = sch_open\nName = Open\nOutput = wp_pistol_d18\nSlot = mineral 2\n"
+                                     "[family]\nGroup = Rifles\nKind = weapon\nArchetype = rifle_auto\n"
+                                     "BlueprintMatch = wp_rifle_e11*\nSlot = mineral 4\n"),
+                          "test", &catalog);
+    CHECK(book.find_schematic("sch_secret") && book.find_schematic("sch_secret")->blueprint);
+    CHECK(book.find_schematic("sch_open") && !book.find_schematic("sch_open")->blueprint);
+    size_t hidden = 0, open = 0;
+    for (const SchematicDef& s : book.schematics()) {
+        if (s.group != "Rifles") continue;
+        CHECK(s.blueprint == s.output_item.starts_with("wp_rifle_e11"));
+        (s.blueprint ? hidden : open) += 1;
+    }
+    CHECK(hidden >= 1 && open >= 1);
+
+    // A blueprint item: a supply that Teaches.
+    std::filesystem::path cat_file = std::filesystem::temp_directory_path() / "swm_blueprint_catalog.ini";
+    {
+        std::FILE* f = std::fopen(cat_file.string().c_str(), "wb");
+        std::fputs("[item]\nId = bp_secret\nName = Blueprint: Secret\nKind = supply\nTeaches = sch_secret\n", f);
+        std::fclose(f);
+    }
+    ItemCatalog small;
+    small.load(cat_file);
+    CHECK(small.find("bp_secret") && small.find("bp_secret")->teaches == "sch_secret");
+    std::filesystem::remove(cat_file);
 }
 
 // docs/CRAFTING.md, Modules: each tunes what it's crafted into within its
@@ -618,6 +667,7 @@ int main() {
     test_sqlite_v6_materials_and_presets();
     test_server_client_crafting_loopback();
     test_families();
+    test_blueprints();
     test_modules();
     test_marks_modules_and_dyes();
     return swm::test::finish("crafting_test");

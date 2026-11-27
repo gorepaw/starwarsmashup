@@ -1403,6 +1403,10 @@ struct Encoder {
             }
             out.put(p.exp_quality_pct);
         }
+        out.put(uint16_t(std::min<size_t>(m.blueprints.size(), 65535)));
+        for (size_t i = 0; i < m.blueprints.size() && i < 65535; ++i) {
+            out.put_string(m.blueprints[i]);
+        }
     }
     void operator()(const CraftingAck& m) {
         out.put(uint8_t(Type::crafting_ack));
@@ -2068,6 +2072,8 @@ Message decode(std::span<const uint8_t> packet) {
             p.exp_quality_pct = in.get<uint8_t>();
             m.presets.push_back(std::move(p));
         }
+        const size_t blueprints = in.get<uint16_t>();
+        for (size_t i = 0; i < blueprints; ++i) m.blueprints.push_back(in.get_string());
         message = std::move(m);
         break;
     }

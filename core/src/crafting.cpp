@@ -193,6 +193,7 @@ void CraftingBook::parse_schematics(const Ini& ini, const std::string& where, co
         def.group = s.get("Group").value_or("");
         def.profession = s.get("Profession").value_or("weaponsmith");
         def.required_level = std::clamp(int(s.number("RequiredLevel", 1)), 1, 100);
+        def.blueprint = same(s.get("Blueprint").value_or("no"), "yes");
         def.output_count = std::max(1, int(s.number("OutputCount", 1)));
         def.base_xp = std::max<int64_t>(10, int64_t(s.number("BaseXP", 60)));
         def.enhancement_slots = std::clamp(int(s.number("Enhancements", 1)), 0, 2);
@@ -272,6 +273,8 @@ void CraftingBook::parse_schematics(const Ini& ini, const std::string& where, co
         const std::vector<std::string> exclude = names_of(f->get("Exclude").value_or(""));
         const std::vector<std::string> factions = names_of(f->get("Faction").value_or("neutral"));
         const bool by_slot = same(f->get("ScaleBySlot").value_or("no"), "yes");
+        // Some of a family behind blueprints (the exotic ones), by id glob.
+        const std::vector<std::string> blueprint_match = names_of(f->get("BlueprintMatch").value_or(""));
         SchematicDef recipe;
         recipe.id = what;
         read_recipe(*f, recipe);
@@ -295,6 +298,7 @@ void CraftingBook::parse_schematics(const Ini& ini, const std::string& where, co
             }
             SchematicDef def = recipe;
             def.id = "sch_" + item.id;
+            if (any_glob(blueprint_match, item.id)) def.blueprint = true;
             if (find_schematic(def.id) != nullptr) throw std::runtime_error(what + ": duplicate schematic " + def.id);
             def.name = item.display_name.empty() ? item.id : item.display_name;
             def.output_item = item.id;

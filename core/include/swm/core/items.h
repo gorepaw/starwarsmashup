@@ -100,6 +100,9 @@ struct ItemDef {
     int64_t cost_credits = 0;
     int64_t sell_value = 0;
     double heal_amount = 0.0;
+    // A blueprint (a supply: `Teaches = <schematic id>`): used, its owner
+    // learns that `Blueprint = yes` schematic (docs/CRAFTING.md).
+    std::string teaches;
     AmmoClass ammo_class = AmmoClass::none;
     int ammo_batch = 100;
     std::string armor_class;  // armor: light, medium or heavy (its armor profession's)

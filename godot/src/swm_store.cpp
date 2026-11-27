@@ -176,6 +176,7 @@ godot::Dictionary to_dict(const core::ItemDef& d, const core::ItemCatalog& catal
     out["cost_credits"] = int64_t(d.cost_credits);
     out["sell_value"] = int64_t(d.sell_value);
     out["heal_amount"] = d.heal_amount;
+    out["teaches"] = godot::String::utf8(d.teaches.c_str());
     out["ammo_class"] = godot::String::utf8(std::string(core::ammo_class_name(d.ammo_class)).c_str());
     out["ammo_batch"] = int64_t(d.ammo_batch);
     out["damage_mult"] = d.damage_mult;
@@ -507,6 +508,7 @@ godot::Array SwmCharacterStore::get_schematics() const {
         d["marks"] = s.marks;
         d["profession"] = godot::String::utf8(s.profession.c_str());
         d["required_level"] = int64_t(s.required_level);
+        d["blueprint"] = s.blueprint;
         d["output_item"] = godot::String::utf8(s.output_item.c_str());
         d["base_xp"] = s.base_xp;
         d["enhancement_slots"] = int64_t(s.enhancement_slots);

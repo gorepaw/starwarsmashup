@@ -108,6 +108,9 @@ std::optional<double> segment_hits_cylinder(Vec3 a, Vec3 b, Vec3 feet, double ra
 // while there are fewer than droid_standard_ammo_cap (`fraction` of that,
 // up to it); heavy rounds don't. Returns whether anything changed.
 constexpr int droid_standard_ammo_cap = 200;
+// The most of a full load an ammo droid gives a visit (its Delay apart): a
+// quarter, 50 rounds of that pool.
+constexpr double droid_ammo_step = 0.25;
 bool resupply(MoveState& state, const Loadout& loadout, double fraction);
 
 // A dropped ammo or dual pack's resupply: each weapon that carries limited

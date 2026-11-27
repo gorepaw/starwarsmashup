@@ -68,6 +68,7 @@ var schematics: Array = []
 var work_orders: Array = []
 var materials: Array = []
 var presets: Array = []
+var blueprints: PackedStringArray = []  # `Blueprint = yes` schematics learned (the rest stay hidden)
 var inventory: Array = []
 var loadouts: Array = []
 var professions: Dictionary = {}
@@ -182,11 +183,18 @@ func _crafters() -> Array:
 	return out
 
 
+# Whether the crafter knows a schematic: all do, but a blueprint's must be learned.
+func _known(s: Dictionary) -> bool:
+	return not bool(s.get("blueprint", false)) or blueprints.has(str(s.get("id", "")))
+
+
 # The groups of the schematics this station and profession filter show, in
 # file order.
 func _groups() -> Array:
 	var out: Array = []
 	for s: Dictionary in schematics:
+		if not _known(s):
+			continue
 		var prof := str(s.get("profession", ""))
 		var g := str(s.get("group", ""))
 		if _makes(prof) and (_prof_filter == "all" or prof == _prof_filter) and g != "" and not out.has(g):
@@ -197,7 +205,7 @@ func _groups() -> Array:
 func _filtered_schematics() -> Array:
 	var out := schematics.filter(func(s: Dictionary) -> bool:
 		var prof := str(s.get("profession", ""))
-		return _makes(prof) and (_prof_filter == "all" or prof == _prof_filter) \
+		return _known(s) and _makes(prof) and (_prof_filter == "all" or prof == _prof_filter) \
 				and (_group == "" or str(s.get("group", "")) == _group))
 	out.sort_custom(func(a: Dictionary, b: Dictionary) -> bool:
 		var pa := bool(_pinned.get(str(a.get("id", "")), false))
@@ -347,22 +355,34 @@ func _paint_workbench(rect: Rect2) -> void:
 	elif station_kind == "none":
 		text("gamefont_tiny", "Craft at a crafting station", Vector2(rect.end.x, rect.position.y + 4 * u), "Right", WARN)
 	var y := rect.position.y + 30 * u
+	# The type filter: a chip for each group this station and profession show
+	# (weapon types, armor classes, clothing, modules...), wrapping as needed.
+	var groups := _groups()
+	if _group != "" and not groups.has(_group):
+		_group = ""
+	var gx := rect.position.x
+	for g: String in [""] + groups:
+		var label := "All types" if g == "" else g
+		var gw: float = art.text_width("gamefont_tiny", label, u) + 16 * u
+		if gx + gw > rect.end.x and gx > rect.position.x:
+			gx = rect.position.x
+			y += 24 * u
+		button(Rect2(gx, y, gw, 20 * u), label, "gpick:" + g, _group == g)
+		gx += gw + 4 * u
+	y += 28 * u
 	var col_h := rect.end.y - y
 
 	# Left column: Schematics
 	var left := Rect2(rect.position.x, y, 270 * u, col_h)
 	draw_rect(left, Color(0.04, 0.06, 0.09, 0.65))
 	# Its group (every group, or one), then its schematics, wheel-scrolled.
-	var groups := _groups()
-	if _group != "" and not groups.has(_group):
-		_group = ""
 	var list := _filtered_schematics()
 	button(Rect2(left.position.x + 4 * u, left.position.y + 4 * u, 26 * u, 22 * u), "<", "group:-1")
 	button(Rect2(left.end.x - 30 * u, left.position.y + 4 * u, 26 * u, 22 * u), ">", "group:+1")
 	text("gamefont_tiny", "%s (%d)" % [_group if _group != "" else "All groups", list.size()],
 			Vector2(left.get_center().x, left.position.y + 8 * u), "Center", ACCENT)
 	var list_top := left.position.y + 30 * u
-	var rows := 10
+	var rows := clampi(floori((left.end.y - list_top - 4 * u) / (34.0 * u)), 4, 10)
 	var row_h := (left.end.y - list_top - 4 * u) / rows
 	_sch_scroll = clampi(_sch_scroll, 0, maxi(0, list.size() - rows))
 	for i in range(_sch_scroll, mini(list.size(), _sch_scroll + rows)):
@@ -783,6 +803,14 @@ func _on_click(id: String, _at: Vector2) -> void:
 		_prof_filter = id.substr(8)
 		_group = ""
 		_sch_scroll = 0
+	elif id.begins_with("gpick:"):
+		# A type chip: weapon type, armor class, or any other group ("" all).
+		_group = id.substr(6)
+		_sch_scroll = 0
+		var picked := _filtered_schematics()
+		if not picked.is_empty() and not picked.any(func(s: Dictionary) -> bool:
+				return str(s.get("id", "")) == _selected_schematic):
+			_select_schematic(str(picked[0].get("id", "")))
 	elif id.begins_with("group:"):
 		var groups: Array = [""] + _groups()
 		var at := groups.find(_group)

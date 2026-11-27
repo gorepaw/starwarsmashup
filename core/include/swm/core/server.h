@@ -365,6 +365,9 @@ public:
     std::function<void(uint32_t entity, int team, uint8_t mode, uint8_t terminal)> on_queue;
     // A match just ended.
     std::function<void(const MatchResult&)> on_match_ended;
+    // A player in this match asked to go back to the hub that sent them (the
+    // pause menu's Leave Match). Unset: a match no hub runs; nothing happens.
+    std::function<void(uint32_t entity)> on_leave_match;
 
 private:
     // What a character's triggered perks remember (server_perks.cpp).
@@ -451,6 +454,7 @@ private:
         int synced_hvy_ammo = -1;
         std::vector<MaterialStack> materials;
         std::vector<RecipePreset> presets;
+        std::vector<std::string> blueprints;  // `Blueprint = yes` schematics learned (CraftingSync)
         uint32_t crafting_rev = 0;
         uint32_t acked_crafting_rev = 0;
         uint32_t crafting_sync_tick = 0;
@@ -672,6 +676,10 @@ private:
     void finish_extraction(Client& client, ResourceCategory category);
     void handle_craft_request(Client& client, const net::CraftRequest& request);
     void send_crafting_sync(Client& client);
+    // Uses a blueprint (an item that `Teaches`): learns its schematic, keeps
+    // it (character_extras "blueprints") and spends the item. False if it
+    // isn't one, or teaches nothing new.
+    bool learn_blueprint(Client& client, const ItemDef& def, uint64_t item_id);
     void save_materials(Client& client);
     // Quests (server_quests.cpp).
     void handle_quest_request(Client& client, const net::QuestRequest& request);

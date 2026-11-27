@@ -76,6 +76,9 @@ struct SchematicDef {
     std::vector<SchematicSlot> slots;
     std::vector<StatWeight> weights;
     bool marks = false;  // its output takes Mk tiers (item_takes_marks)
+    // `Blueprint = yes`: hidden and unmakeable until its blueprint is learned
+    // (an item with `Teaches = <this id>`, used); otherwise everyone knows it.
+    bool blueprint = false;
 };
 
 // Mk tiers from crafting (docs/CRAFTING.md): a weapon, armor or a Deflector

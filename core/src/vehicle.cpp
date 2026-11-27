@@ -530,7 +530,11 @@ void simulate_vehicle(MoveState& state, const MoveInput& input, const World& wor
 std::pair<double, double> vehicle_aim(const MoveState& state, const MoveInput& input, const VehicleClass& vehicle) {
     const double yaw = double(state.yaw) +
                        std::clamp(wrap_angle(double(input.yaw) - double(state.yaw)), vehicle.yaw_min, vehicle.yaw_max);
-    const double pitch = std::clamp(double(input.pitch), vehicle.pitch_min, vehicle.pitch_max);
+    // A flyer's guns are fixed to its nose, which pitches: within its limits
+    // round the nose's pitch (not round level, which left a climbing or
+    // diving starfighter firing almost flat, nowhere near its reticle).
+    const double base_pitch = vehicle.kind == VehicleKind::flyer ? double(state.pitch) : 0.0;
+    const double pitch = base_pitch + std::clamp(double(input.pitch) - base_pitch, vehicle.pitch_min, vehicle.pitch_max);
     return {yaw, pitch};
 }
 

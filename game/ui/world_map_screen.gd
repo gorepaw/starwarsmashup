@@ -8,7 +8,7 @@
 # 1.6 km across, then the whole planet (its ground preview, as the radar's).
 # In Battlefront II's frames and fonts.
 #
-#   map.places = [{position, name, kind: "quest" | "shop" | "craft" | "terminal", color}]
+#   map.places = [{position, name, kind: "battle" | "quest" | "shop" | "craft" | "service" | "terminal", color}]
 #   map.player_position = ...; map.player_yaw = ...; map.waypoint = {position, name}
 #   map.planet = {texture, left_x, top_z, right_x, bottom_z}   # the radar's minimap
 #   map.open_map()
@@ -25,7 +25,9 @@ const SHOP := Color(0.35, 0.92, 0.55)
 const QUEST := Color(1.0, 0.8, 0.35)
 const CRAFT := Color(0.75, 0.5, 1.0)
 const TERMINAL := Color(0.55, 0.85, 1.0)
-const KINDS := [["quest", "Quests"], ["shop", "Shops"], ["craft", "Crafting"], ["service", "Services"], ["terminal", "Terminals"]]
+const BATTLE := Color(1.0, 0.45, 0.4)
+const KINDS := [["battle", "Battle Terminals"], ["quest", "Quests"], ["shop", "Shops"], ["craft", "Crafting"],
+		["service", "Services"], ["terminal", "Terminals"]]
 
 var title := "Map"
 var places: Array = []
@@ -35,6 +37,8 @@ var waypoint := {}
 var planet := {}
 
 var _zoom := 0
+var _list_scroll := 0      # the list's first line shown (it scrolls with the wheel)
+var _list_rect := Rect2()  # where the list is, this frame
 var _mouse := Vector2.ZERO
 var _picture: Texture2D
 var _picture_center := Vector3.ZERO
@@ -47,6 +51,7 @@ var _render_frames := 0
 
 func open_map() -> void:
 	visible = true
+	_list_scroll = 0
 	_request_picture()
 	queue_redraw()
 
@@ -181,11 +186,12 @@ func _paint() -> void:
 			draw_texture_rect(icon, Rect2(-Vector2(s, s) * 0.5, Vector2(s, s)), false, Color(1.0, 0.92, 0.45))
 		draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
 
-	# The list beside it, nearest first in each kind.
+	# The list beside it, nearest first in each kind: every kind, scrolled
+	# with the wheel when it's longer than the map.
 	var x := map_rect.end.x + 16 * u
 	var width := box.end.x - 18 * u - x
-	var y := map_rect.position.y
 	var row := 14.0 * u
+	var lines: Array = []  # [kind header label] or place index
 	for kind: Array in KINDS:
 		var mine: Array = []
 		for i in places.size():
@@ -195,27 +201,52 @@ func _paint() -> void:
 			continue
 		mine.sort_custom(func(a: int, b: int) -> bool:
 			return _distance(places[a]) < _distance(places[b]))
-		if y + row * 2 > map_rect.end.y:
+		if not lines.is_empty():
+			lines.append("")  # a gap between kinds
+		lines.append([str(kind[1]), mine.size()])
+		lines.append_array(mine)
+	_list_rect = Rect2(x - 4 * u, map_rect.position.y, width + 8 * u, map_rect.size.y)
+	# Each line's height; the furthest it scrolls shows the last line at the bottom.
+	var heights: Array[float] = []
+	for entry: Variant in lines:
+		heights.append(row * 0.5 if entry is String else (row + 3 * u if entry is Array else row))
+	var last_top := lines.size() - 1
+	var below := 0.0
+	while last_top >= 0 and below + heights[last_top] <= map_rect.size.y:
+		below += heights[last_top]
+		last_top -= 1
+	_list_scroll = clampi(_list_scroll, 0, maxi(0, last_top + 1))
+	var y := map_rect.position.y
+	var shown_to := _list_scroll
+	for n in range(_list_scroll, lines.size()):
+		if y + heights[n] > map_rect.end.y + 0.5:
 			break
-		text("gamefont_small", kind[1], Vector2(x, y), "Left", ACCENT)
-		y += row + 3 * u
-		for i: int in mine:
-			if y + row > map_rect.end.y:
-				break
-			var place: Dictionary = places[i]
-			var line := Rect2(x - 4 * u, y - 1 * u, width + 4 * u, row)
-			if i == hovered:
-				draw_rect(line, Color(1, 1, 1, 0.08))
-			draw_circle(Vector2(x + 4 * u, y + row * 0.45), 3.5 * u, place.get("color", TEXT))
-			var name := str(place.get("name", ""))
-			var meters := _distance(place)
-			var distance := "%d m" % roundi(meters) if meters < 1000 else "%.1f km" % (meters / 1000.0)
-			text("gamefont_tiny", _fit(name, width - 60 * u), Vector2(x + 12 * u, y), "Left",
-					TEXT if i == hovered else DIM)
-			text("gamefont_tiny", distance, Vector2(x + width, y), "Right", DIM)
-			region(line, "place:%d" % i)
-			y += row
-		y += 6 * u
+		shown_to = n + 1
+		var entry: Variant = lines[n]
+		if entry is String:
+			y += row * 0.5
+			continue
+		if entry is Array:
+			text("gamefont_small", "%s (%d)" % [entry[0], entry[1]], Vector2(x, y), "Left", ACCENT)
+			y += row + 3 * u
+			continue
+		var i: int = entry
+		var place: Dictionary = places[i]
+		var line := Rect2(x - 4 * u, y - 1 * u, width + 4 * u, row)
+		if i == hovered:
+			draw_rect(line, Color(1, 1, 1, 0.08))
+		draw_circle(Vector2(x + 4 * u, y + row * 0.45), 3.5 * u, place.get("color", TEXT))
+		var name := str(place.get("name", ""))
+		var meters := _distance(place)
+		var distance := "%d m" % roundi(meters) if meters < 1000 else "%.1f km" % (meters / 1000.0)
+		text("gamefont_tiny", _fit(name, width - 60 * u), Vector2(x + 12 * u, y), "Left",
+				TEXT if i == hovered else DIM)
+		text("gamefont_tiny", distance, Vector2(x + width, y), "Right", DIM)
+		region(line, "place:%d" % i)
+		y += row
+	if _list_scroll > 0 or shown_to < lines.size():
+		text("gamefont_tiny", "%d-%d of %d  (wheel)" % [_list_scroll + 1, shown_to, lines.size()],
+				Vector2(x + width, map_rect.end.y + 4 * u), "Right", DIM)
 
 	var span := float(view["extent"])
 	var scale := "%d m across" % roundi(span) if span < 1000 else "%.1f km across" % (span / 1000.0)
@@ -285,6 +316,15 @@ func _on_click(id: String, _at: Vector2) -> void:
 func _gui_input(event: InputEvent) -> void:
 	if event is InputEventMouseMotion:
 		_mouse = (event as InputEventMouseMotion).position
+	if event is InputEventMouseButton and event.pressed \
+			and (event as InputEventMouseButton).button_index in [MOUSE_BUTTON_WHEEL_UP, MOUSE_BUTTON_WHEEL_DOWN] \
+			and _list_rect.has_point((event as InputEventMouseButton).position):
+		# Over the list: it scrolls (three lines a notch).
+		var notch := -3 if (event as InputEventMouseButton).button_index == MOUSE_BUTTON_WHEEL_UP else 3
+		_list_scroll = maxi(0, _list_scroll + notch)
+		queue_redraw()
+		accept_event()
+		return
 	if event is InputEventMouseButton and event.pressed \
 			and (event as InputEventMouseButton).button_index in [MOUSE_BUTTON_WHEEL_UP, MOUSE_BUTTON_WHEEL_DOWN]:
 		var last := ZOOMS.size() if not planet.is_empty() else ZOOMS.size() - 1

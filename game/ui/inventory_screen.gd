@@ -382,8 +382,7 @@ func _paint_paperdoll(box: Rect2) -> void:
 		_name_edit.position = Vector2(x, y)
 		_name_edit.size = Vector2(box.size.x - 340 * u, 24 * u)
 	else:
-		text("gamefont_small", "%s (%s)" % [str(lo.get("name", "Loadout")), species.capitalize()],
-				Vector2(x, y + 4 * u), "Left", ACCENT)
+		text("gamefont_small", str(lo.get("name", "Loadout")), Vector2(x, y + 4 * u), "Left", ACCENT)
 	button(Rect2(box.end.x - 320 * u, y, 68 * u, 24 * u), "Rename", "rename", _name_edit.visible)
 	button(Rect2(box.end.x - 246 * u, y, 108 * u, 24 * u), "Gear (Combat)", "pmode:gear", _paperdoll_mode == "gear")
 	button(Rect2(box.end.x - 134 * u, y, 130 * u, 24 * u), "Cosmetic Override", "pmode:appearance", _paperdoll_mode == "appearance")
@@ -399,6 +398,11 @@ func _paint_paperdoll(box: Rect2) -> void:
 	var is_app := _paperdoll_mode == "appearance"
 
 	_stage_rect = Rect2(x + col_w + 6 * u, slots_y, box.size.x - col_w * 2 - 32 * u, 280 * u)
+	# The preview renders at its box's own size and shape: drawn into a box
+	# of another shape, the character came out squeezed thin (tall-looking).
+	var want := Vector2i(maxi(16, roundi(_stage_rect.size.x)), maxi(16, roundi(_stage_rect.size.y)))
+	if _viewport != null and _viewport.size != want:
+		_viewport.size = want
 	if _viewport != null and _viewport.get_texture() != null:
 		draw_texture_rect(_viewport.get_texture(), _stage_rect, false)
 	else:
@@ -429,8 +433,9 @@ func _paint_paperdoll(box: Rect2) -> void:
 		# Its two rows centred in the slot (slots shrink when there are many).
 		var pad := maxf(2.0 * u, (slot_h - 30.0 * u) * 0.5)
 		text("gamefont_tiny", s_lbl + (" (not shown)" if hidden else ""), Vector2(sx + 6 * u, sy + pad), "Left", DIM)
-		text("gamefont_tiny", eq_name, Vector2(sx + 6 * u, sy + pad + 15 * u), "Left",
-				TEXT if eq_id > 0 else DIM)
+		# Within the slot (and clear of its [x]): a long name with a Mk is cut short.
+		text("gamefont_tiny", fit_text("gamefont_tiny", eq_name, col_w - (32.0 if eq_id > 0 else 12.0) * u),
+				Vector2(sx + 6 * u, sy + pad + 15 * u), "Left", TEXT if eq_id > 0 else DIM)
 		if eq_id > 0:
 			var clear_r := Rect2(r.end.x - 20 * u, sy + pad, 16 * u, 16 * u)
 			button(clear_r, "x", "unequip:%s:%s" % ["app" if is_app else "gear", s_id])
@@ -518,6 +523,8 @@ func _paint_inventory(box: Rect2) -> void:
 		var sub_txt := ""
 		if kind == "junk":
 			sub_txt = "Junk | Sell: %d Cr" % int(def.get("sell_value", 0))
+		elif kind == "supply" and str(def.get("teaches", "")) != "":
+			sub_txt = "Blueprint | Use to learn its schematic"
 		elif kind == "supply":
 			sub_txt = "Supply | +%d HP" % roundi(float(def.get("heal_amount", 0.0)))
 		elif kind == "ammo":

@@ -52,6 +52,16 @@ godot::Dictionary to_dictionary(const core::MoveState& state) {
     out["heat"] = double(c.weapons[c.weapon].heat);
     out["overheated"] = c.weapons[c.weapon].overheated;
     out["reloading"] = c.reload > 0;
+    // Every slot's (a vehicle's two weapons both on the HUD at once).
+    godot::Array slots;
+    for (const core::WeaponState& w : c.weapons) {
+        godot::Dictionary slot;
+        slot["rounds"] = int64_t(w.rounds);
+        slot["reserve"] = int64_t(w.reserve);
+        slot["heat"] = double(w.heat);
+        slots.push_back(slot);
+    }
+    out["slots"] = slots;
     return out;
 }
 
@@ -1018,6 +1028,14 @@ godot::Array SwmClient::get_materials() const {
     return out;
 }
 
+godot::PackedStringArray SwmClient::get_blueprints() const {
+    godot::PackedStringArray out;
+    if (client()) {
+        for (const std::string& id : client()->crafting().blueprints) out.push_back(godot::String::utf8(id.c_str()));
+    }
+    return out;
+}
+
 godot::Array SwmClient::get_presets() const {
     godot::Array out;
     if (client()) {
@@ -1158,6 +1176,11 @@ godot::Array vehicle_class_dicts(std::span<const core::VehicleClass> classes) {
         entry["max_health"] = v.max_health;
         entry["altitude"] = v.altitude;
         entry["eye"] = to_godot(v.eye);
+        // Its guns' reach round its heading (radians; core vehicle_aim), for the reticle.
+        entry["yaw_min"] = v.yaw_min;
+        entry["yaw_max"] = v.yaw_max;
+        entry["pitch_min"] = v.pitch_min;
+        entry["pitch_max"] = v.pitch_max;
         godot::Array seats;
         for (const core::VehicleSeat& seat : v.seats) {
             godot::Dictionary s;
@@ -1316,13 +1339,15 @@ godot::Dictionary SwmClient::get_battlefield() const {
         entry["kind"] = godot::String::utf8(sys.kind.c_str());
         entry["points"] = int64_t(sys.points);
         entry["label"] = godot::String::utf8(sys.label.c_str());
-        core::Vec3 pos;
+        core::Vec3 pos, half;
         double max_hp = 0;
         if (sys.destructible >= 0 && size_t(sys.destructible) < field.destructibles.size()) {
             pos = field.destructibles[size_t(sys.destructible)].center;
+            half = field.destructibles[size_t(sys.destructible)].half_size;
             max_hp = field.destructibles[size_t(sys.destructible)].max_health;
         }
         entry["position"] = to_godot(pos);
+        entry["half_size"] = to_godot(half);  // its bounds (a frigate's are hundreds of meters)
         entry["max_health"] = max_hp;
         int shield_ctrl = -1;
         for (const core::ShieldLink& sl : field.shield_links) {
@@ -2098,6 +2123,7 @@ void SwmClient::_bind_methods() {
     ClassDB::bind_method(D_METHOD("get_specialist_book", "path"), &SwmClient::get_specialist_book);
     ClassDB::bind_method(D_METHOD("get_workbenches"), &SwmClient::get_workbenches);
     ClassDB::bind_method(D_METHOD("get_materials"), &SwmClient::get_materials);
+    ClassDB::bind_method(D_METHOD("get_blueprints"), &SwmClient::get_blueprints);
     ClassDB::bind_method(D_METHOD("get_presets"), &SwmClient::get_presets);
     ClassDB::bind_method(D_METHOD("gather_extract", "category_name"), &SwmClient::gather_extract);
     ClassDB::bind_method(D_METHOD("harvest_corpse", "corpse_entity"), &SwmClient::harvest_corpse);

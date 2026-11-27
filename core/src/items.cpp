@@ -602,6 +602,7 @@ void ItemCatalog::load(const std::filesystem::path& catalog_ini, const std::file
             def.sell_value = def.cost_credits > 0 ? std::max<int64_t>(1, def.cost_credits / 4) : 0;
         }
         def.heal_amount = s.number("HealAmount", 0.0);
+        def.teaches = s.get("Teaches").value_or("");
         def.vehicle = s.get("Vehicle").value_or("");
         if (def.kind == ItemKind::vehicle && def.vehicle.empty()) {
             throw std::runtime_error(where + " (" + def.id + "): a vehicle needs Vehicle = its class");

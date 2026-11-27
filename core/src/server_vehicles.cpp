@@ -16,6 +16,13 @@ constexpr double home_reach = 15;     // m from its spawn: still at home (never 
 constexpr double wreck_time = 3;      // s a destroyed vehicle stays listed, for drawing its end
 constexpr double eject_speed = 3;     // m/s: getting out of a vehicle going faster throws you clear
 constexpr double eject_hop = 4;       // m/s up, thrown clear (ASSUMPTION)
+// A capital ship's automated guns (unmanned turrets in space; playnotes
+// 2026-11-26: too strong to get near). ASSUMPTION: tuned by feel.
+constexpr double auto_turret_range = 380;        // m they engage at, at most
+constexpr double auto_turret_scatter = 0.06;     // radians off aim (some 3.5 degrees), up close 60% of it
+constexpr double auto_turret_damage = 0.45;      // of the gun's own damage
+constexpr double auto_turret_delay_factor = 2.5; // its refire delay, times the gun's
+constexpr double auto_turret_min_delay = 0.6;    // s between shots, at least
 
 } // namespace
 
@@ -82,13 +89,17 @@ void GameServer::update_vehicles(double dt) {
     if (conquest_) {
         const Battlefield& field = conquest_->battlefield();
         const MatchState& match = conquest_->state();
-        // A new match: none left over.
-        if (vehicles_phase_ == Phase::ended && match.phase == Phase::warmup) {
+        // A new match, or the warmup over (everyone's sent back to spawn
+        // then, and so is every vehicle: a full hangar, not the ships the
+        // warmup flew off in): none left over, each spawn's anew at once.
+        if ((vehicles_phase_ == Phase::ended && match.phase == Phase::warmup) ||
+            (vehicles_phase_ == Phase::warmup && match.phase == Phase::live)) {
             for (Client& client : clients_) {
                 if (client.state.vehicle >= 0) leave_vehicle(client);
             }
             vehicles_.clear();
             spawned_.clear();
+            spawn_wait_.assign(field.vehicle_spawns.size(), 0);
         }
         vehicles_phase_ = match.phase;
         spawn_wait_.resize(field.vehicle_spawns.size(), 0);
@@ -159,7 +170,10 @@ void GameServer::update_vehicles(double dt) {
                     const WeaponDef& w = *cls.loadout.weapons[0];
                     const Vec3 eye = vehicle_to_world(v.state.position, v.state.yaw, cls.eye);
                     const double w_range = w.bolt_speed * w.bolt_life;
-                    const double max_range = w_range > 0 ? std::min(w_range, 600.0) : 500.0;
+                    // Automated guns are a hazard, not a wall (playnotes: no
+                    // getting close to a capital ship): a shorter reach than
+                    // a manned gun's, a scatter, a slower rate and lighter bolts.
+                    const double max_range = std::min(w_range > 0 ? w_range : 500.0, auto_turret_range);
                     double best_d2 = max_range * max_range;
                     std::optional<Vec3> target_pos;
                     for (const Vehicle& other : vehicles_) {
@@ -206,7 +220,10 @@ void GameServer::update_vehicles(double dt) {
                         v.state.roll_yaw = v.state.yaw;
                         if (std::abs(dy) < 0.18 && v.auto_cooldown <= 0) {
                             const Vec3 muzzle = vehicle_muzzle(v.state, cls);
-                            const Vec3 dir = aim_direction(v.state.yaw, v.state.pitch);
+                            // Its scatter: a few degrees off, more the farther its mark.
+                            const double scatter = auto_turret_scatter * (0.6 + 0.4 * std::sqrt(best_d2) / max_range);
+                            const Vec3 dir = aim_direction(float(double(v.state.yaw) + (random_unit() * 2 - 1) * scatter),
+                                                           float(double(v.state.pitch) + (random_unit() * 2 - 1) * scatter));
                             Bolt bolt;
                             bolt.id = next_bolt_++;
                             bolt.owner = 0;
@@ -214,11 +231,12 @@ void GameServer::update_vehicles(double dt) {
                             bolt.weapon = 0;
                             bolt.position = muzzle;
                             bolt.def = w;
+                            bolt.def.damage *= auto_turret_damage;
                             bolt.velocity = dir * w.bolt_speed;
                             bolt.life = w.bolt_life;
                             bolt.gravity = 0;
                             bolts_.push_back(bolt);
-                            v.auto_cooldown = std::max(0.25, w.shot_delay);
+                            v.auto_cooldown = std::max(auto_turret_min_delay, w.shot_delay * auto_turret_delay_factor);
                         }
                     }
                 }
@@ -419,6 +437,16 @@ void GameServer::use_vehicle(Client& client) {
     }
     if (best == nullptr) {
         return;
+    }
+    // In this one only: no other vehicle may still count this player aboard
+    // (two of a class, one driven by someone it thinks is still in it, put
+    // the view on one and the controls on the other).
+    for (Vehicle& other : vehicles_) {
+        if (&other == best) continue;
+        if (other.driver == client.entity) other.driver = 0;
+        for (uint32_t& g : other.gunners) {
+            if (g == client.entity) g = 0;
+        }
     }
     client.remote_chair = chosen_chair;
     if (best_seat > 0) {

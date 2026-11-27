@@ -60,6 +60,16 @@ func text(font: String, value: String, at: Vector2, align := "Left", color := TE
 	art.draw_text(self, font, value, at, u * scale, align, color, true)
 
 
+# `value`, cut short with ".." if it's wider than `max_width` pixels.
+func fit_text(font: String, value: String, max_width: float, scale := 1.0) -> String:
+	if art == null or art.text_width(font, value, u * scale) <= max_width:
+		return value
+	var cut := value
+	while cut.length() > 1 and art.text_width(font, cut + "..", u * scale) > max_width:
+		cut = cut.left(cut.length() - 1)
+	return cut.strip_edges() + ".."
+
+
 func frame(rect: Rect2, style := "border_3_pieces", tint := Color.WHITE) -> void:
 	art.draw_frame(self, rect, style, tint)
 

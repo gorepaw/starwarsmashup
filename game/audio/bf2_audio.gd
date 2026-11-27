@@ -15,6 +15,19 @@ const SFX_POOL_2D := 12
 const DEDUP_WINDOW := 0.035
 const MUSIC_FADE_SECONDS := 1.5
 const MAX_VO_QUEUE := 2
+# Stand-ins for craft sounds missing from the export (see _resolve): a
+# name's ending, then what may stand in for it, best first.
+const FALLBACK_SUFFIXES := [
+	["_ptorpedo_fire", ["imp_weap_fly_tiebomber_ptorpedo_fire", "imp_weap_fly_tieinter_ptorpedo_fire",
+			"all_weap_fly_awing_missile_fire", "rep_weap_fly_anakinfighter_missle_fire"]],
+	["_missile_fire", ["all_weap_fly_awing_missile_fire", "imp_weap_fly_guided_rocket_fire",
+			"rep_weap_fly_anakinfighter_missle_fire"]],
+	["_cannon_fire", ["all_weap_fly_ywing_cannon_fire", "all_weap_fly_snowspeeder_cannon_fire",
+			"rep_weap_fly_vwing_cannon_fire", "cis_weap_fly_grievousfighter_cannon_fire",
+			"rep_weap_fly_gunship_cannon_fire"]],
+	["_engine_parameterized", ["all_fly_snowspeeder_engine_parameterized", "all_fly_gunship_engine_parameterized",
+			"rep_fly_gunship_engine_parameterized", "imp_fly_tiefighter_engine_parameterized"]],
+]
 
 var _root: Node
 var _dir := ""
@@ -35,6 +48,7 @@ var _music_fading := false
 var _music_stopping := false
 var _pending_layers: Array[Dictionary] = []
 var _recent_plays: Dictionary = {}  # name -> elapsed time
+var _fallbacks: Dictionary = {}  # missing name -> the sound played for it ("" none)
 var _elapsed := 0.0
 
 
@@ -99,12 +113,40 @@ static func _set_bus_linear(bus_name: String, value: float) -> void:
 
 
 func has_sound(sound_name: String) -> bool:
-	return _sounds.has(sound_name.to_lower())
+	return _resolve(sound_name) != ""
+
+
+# A sound's name as exported, or, for a craft's weapon or engine the export
+# hasn't got (the X-wing's cannons and torpedoes, its engine: their space
+# sound banks aren't read yet), the nearest one it has: the same kind of
+# sound from a craft of its side, then any side. "" if none.
+func _resolve(sound_name: String) -> String:
+	var key := sound_name.to_lower()
+	if key == "" or _sounds.has(key):
+		return key
+	if _fallbacks.has(key):
+		return _fallbacks[key]
+	var found := ""
+	for pair: Array in FALLBACK_SUFFIXES:
+		if key.ends_with(pair[0]):
+			var side := key.get_slice("_", 0)
+			for candidate: String in pair[1]:
+				if candidate.begins_with(side + "_") and _sounds.has(candidate):
+					found = candidate
+					break
+			if found == "":
+				for candidate: String in pair[1]:
+					if _sounds.has(candidate):
+						found = candidate
+						break
+			break
+	_fallbacks[key] = found
+	return found
 
 
 func play_2d(sound_name: String, volume_scale := 1.0) -> void:
-	var key := sound_name.to_lower()
-	if key == "" or not _sounds.has(key):
+	var key := _resolve(sound_name)
+	if key == "":
 		return
 	var spec: Dictionary = _sounds[key]
 	if str(spec.get("kind", "")) == "layered":
@@ -123,8 +165,8 @@ func play_2d(sound_name: String, volume_scale := 1.0) -> void:
 
 
 func play_3d(sound_name: String, pos: Vector3, camera_pos: Vector3, volume_scale := 1.0) -> void:
-	var key := sound_name.to_lower()
-	if key == "" or not _sounds.has(key):
+	var key := _resolve(sound_name)
+	if key == "":
 		return
 	var spec: Dictionary = _sounds[key]
 	if str(spec.get("kind", "")) == "layered":
@@ -275,7 +317,7 @@ func dispose() -> void:
 # SoundParameterized): its loops, played from `node`, until stop_engine().
 # {} if there's no such engine.
 func start_engine(sound_name: String, node: Node3D) -> Dictionary:
-	var spec: Dictionary = _sounds.get(sound_name.to_lower(), {})
+	var spec: Dictionary = _sounds.get(_resolve(sound_name), {})
 	if str(spec.get("kind", "")) != "engine":
 		return {}
 	var layers := []

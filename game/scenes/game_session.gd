@@ -24,6 +24,7 @@ const Vehicles = preload("res://rendering/vehicles.gd")
 const RIDER_SEAT := Vector3(0, -0.5, -0.25)
 const Bf2Effects = preload("res://rendering/bf2_effects.gd")
 const Bf2Audio = preload("res://audio/bf2_audio.gd")
+const WorldAudio = preload("res://audio/world_audio.gd")
 const Settings = preload("res://ui/settings.gd")
 const PauseMenu = preload("res://ui/pause_menu.gd")
 const HubUI = preload("res://scenes/hub_ui.gd")
@@ -98,6 +99,7 @@ var _zoom_weapon := -1
 var _pickups: Pickups
 var _effects: Bf2Effects
 var _audio: Bf2Audio
+var _world_audio: WorldAudio  # Galaxies' ambience and music, out in the world
 var _prev_reloading := false
 var _prev_overheated := false
 var _prev_weapon := -1
@@ -122,6 +124,7 @@ var _hits := 0
 var _pending_shot := ""
 var _settings: Settings
 var _pause_menu: PauseMenu
+var _from_hub := false  # the session began in the world (a hub), so a match it's sent to can be left back to it
 var _hub_ui: HubUI
 var _specialist_ui: SpecialistUIScript  # Stage 12: ability bar, datapad, bazaar, field effects
 var _battle_ui: BattleUI
@@ -293,6 +296,7 @@ func start_session(config: Dictionary) -> bool:
 		_emit_or_menu(1)
 		return false
 	_battlefield = _client.get_battlefield()
+	_from_hub = _battlefield.is_empty()  # began in the world: its matches can be left back to it
 
 	_terrain3d = bool(_config.get("terrain3d", false))
 	if building.size() >= 5:
@@ -484,6 +488,9 @@ func step_frame(delta: float) -> void:
 
 	if _audio != null:
 		_audio.update(delta, _camera.global_position)
+	if _world_audio != null:
+		var in_match: bool = not _battlefield.is_empty() or (_client != null and not _client.get_match().is_empty())
+		_world_audio.update(delta, _world_bake.get_file().get_slice("_", 0), _client, in_match)
 	if _sky_dome != null:
 		_sky_dome.global_position = _camera.global_position
 	_weather.update(_camera.global_position, delta)
@@ -606,6 +613,7 @@ func _input(event: InputEvent) -> void:
 	if escape and _pause_menu != null:
 		_capture_mouse(false)
 		_pause_menu.in_match = not _battlefield.is_empty()
+		_pause_menu.can_return = _from_hub and not _battlefield.is_empty()
 		_view_setting = _settings.first_person
 		_pause_menu.open()
 		return
@@ -738,6 +746,9 @@ func _dispose_resources() -> void:
 	if _audio != null:
 		_audio.dispose()
 		_audio = null
+	if _world_audio != null:
+		_world_audio.dispose()
+		_world_audio = null
 
 
 func _finish(forced_exit: int) -> void:
@@ -1427,7 +1438,9 @@ func _update_own_audio(own: Dictionary, _game: Dictionary) -> void:
 	var reserve := int(own.get("reserve", 0))
 	var grenades := int(own.get("grenades", 0))
 	if alive:
-		if _prev_weapon >= 0 and slot != _prev_weapon:
+		# (A vehicle's secondary fires on its own button, switching to it each
+		# press: no equip click for that, its own fire sound is the cue.)
+		if _prev_weapon >= 0 and slot != _prev_weapon and int(own.get("vehicle", -1)) < 0:
 			_audio.play_2d(str(weapon.get("weapon_change_sound", "")))
 		if reloading and not _prev_reloading:
 			_audio.play_2d(str(weapon.get("reload_sound", "")))
@@ -1435,7 +1448,9 @@ func _update_own_audio(own: Dictionary, _game: Dictionary) -> void:
 			_audio.play_2d(str(weapon.get("overheat_sound", "")))
 		elif not overheated and _prev_overheated:
 			_audio.play_2d(str(weapon.get("overheat_stop_sound", "")))
+		# (Driving, fire is always the first weapon's: the torpedoes' empty clip isn't its.)
 		if _mouse_captured and Input.is_action_pressed("fire") and _fire_lockout <= 0.0 and not _wait_fire_release \
+				and (int(own.get("vehicle", -1)) < 0 or slot == 0) \
 				and not _battle_ui.aiming_at_peaceful() \
 				and int(weapon.get("rounds_per_clip", 0)) > 0 and rounds <= 0 and reserve == 0 and not reloading \
 				and _empty_click_cd <= 0.0:
@@ -1861,6 +1876,8 @@ func _setup_scene() -> void:
 	_effects = Bf2Effects.new(self, EFFECTS_DIR)
 	_audio = Bf2Audio.new(self, AUDIO_DIR)
 	_audio.apply_volumes(_settings)
+	if _bot == "":
+		_world_audio = WorldAudio.new(self)
 
 	var layer := CanvasLayer.new()
 	add_child(layer)
@@ -1879,6 +1896,11 @@ func _setup_scene() -> void:
 		_pause_menu.visible = false
 		_pause_menu.resumed.connect(_resume)
 		_pause_menu.leave_requested.connect(func() -> void: _finish(0))
+		_pause_menu.return_requested.connect(func() -> void:
+			# Leave Match: the match's server sends us back to the hub (a transfer).
+			_client.service(10, "", 0, 0)
+			_pause_menu.visible = false
+			_resume())
 		layer.add_child(_pause_menu)
 
 	_hub_ui = HubUI.new()

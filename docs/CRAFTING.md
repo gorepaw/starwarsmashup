@@ -64,19 +64,25 @@ Levels:
 
 | Group | Level |
 |---|---|
-| Pistols, carbines, one-handed melee, light armor | 1 |
+| Every weapon, armor class and Deflector Shield | 1 |
 | Shirts, trousers and skirts | 1 |
 | Footwear, gloves, belts and hats | 5 |
-| Rifles, jackets and vests | 10 |
-| Scatterguns, two-handed melee | 15 |
-| Medium armor, grenades and mines | 20 |
-| Sniper rifles, Deflector Shields | 25 |
+| Jackets and vests | 10 |
 | Speeders, robes | 30 |
-| Beams and flamers | 35 |
-| Heavy armor, mounts | 40 |
-| Heavy weapons | 50 |
+| Mounts | 40 |
+
+Weapons and armor aren't gated by level (playnotes, 2026-11-26): what a crafter can make grows with the blueprints they find in the world and buy from reputation vendors (below), not with their level. Until those sources exist every weapon type and armor class is open at level 1. Ammunition, modules, food, medicine and camp kits keep their levels.
 
 ASSUMPTION: a starting point, to tune in play.
+
+## Blueprints ✅
+
+A schematic can be hidden until learned:
+
+- **Marking:** `Blueprint = yes` on a `[schematic]` or a `[family]` (all of its schematics), or `BlueprintMatch = <id globs>` on a family (only the matching items: the exotic ones).
+- **Learning:** a blueprint is a supply with `Teaches = <schematic id>`. Using it from the inventory teaches it for good and spends it. Known blueprints are kept per character (`character_extras` "blueprints") and sent in `CraftingSync`.
+- **Effect:** a blueprint schematic you don't know isn't listed at the workbench, and the server refuses to make it.
+- **Plan:** in time more than half the weapon and armor types come from blueprints (loot drops, reputation vendors). No schematic is marked yet: none moves out of the default pool until it has a drop source somewhere.
 
 ## Mk tiers ✅
 

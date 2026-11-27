@@ -488,6 +488,8 @@ func _play(walk: Dictionary, clip: String, rate: float, backward := false) -> vo
 func riding(entity: int) -> Dictionary:
 	for entry: Dictionary in _nodes.values():
 		var v: Dictionary = entry.get("state", {})
+		if not bool(v.get("alive", true)):
+			continue  # a wreck's last state may still name its pilot
 		var seat := -1
 		if int(v.get("driver", 0)) == entity:
 			seat = 0

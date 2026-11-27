@@ -618,6 +618,12 @@ func _update_bf2_hud(client: Object, weapons: Array, max_health: float, delta: f
 	if alive:
 		b["player1.weaponsEnable"] = true
 		b["player1.weapon1.reticule.position"] = true
+		# Flying: the reticle where the guns really point (the nose, turned
+		# toward the look within the guns' limits), not the screen's middle
+		# the look leads it to while the ship turns.
+		var aim_at := _flyer_aim_point(own, camera)
+		if aim_at != Vector2(-1, -1):
+			b["player1.weapon1.reticule.position"] = aim_at
 		b["player1.health"] = true
 		b["player1.healthFraction"] = clampf(float(own["health"]) / maxf(1.0, max_health), 0.0, 1.0)
 		if not driving.is_empty():
@@ -674,6 +680,14 @@ func _update_bf2_hud(client: Object, weapons: Array, max_health: float, delta: f
 			else:
 				b["player1.weapon1.heat"] = clampf(float(own["heat"]), 0.0, 1.0)
 				b["player1.weapon1.ammoInfinite"] = true
+		# Driving something with two weapons (a starfighter's cannons and
+		# torpedoes): both always on the HUD, each its own panel, not one
+		# swapping into the other while the secondary's button is held.
+		var slots: Array = own.get("slots", [])
+		if not driving.is_empty() and weapons.size() >= 2 and not (weapons[1] as Dictionary).is_empty() \
+				and slots.size() >= 2:
+			_vehicle_weapon_bindings(b, "player1.weapon1", weapons[0], slots[0])
+			_vehicle_weapon_bindings(b, "player1.weapon2", weapons[1], slots[1])
 		var secondary: Dictionary = client.get_secondary() if driving.is_empty() else {}
 		if not secondary.is_empty():
 			b["player1.weapon2.name"] = _display_name(str(secondary["name"]))
@@ -901,6 +915,27 @@ func _update_minimap(client: Object, team: int, game: Dictionary) -> void:
 				"color": FRIEND_COLOR if friend else ENEMY_COLOR})
 
 
+# Where a ray (from `origin`, unit `dir`) enters an axis-aligned box: its
+# distance, 0 if it starts inside, -1 if it misses.
+static func _ray_box(origin: Vector3, dir: Vector3, center: Vector3, half: Vector3) -> float:
+	var t_near := -INF
+	var t_far := INF
+	for axis in 3:
+		var o := origin[axis] - center[axis]
+		var d := dir[axis]
+		if absf(d) < 1e-6:
+			if absf(o) > half[axis]:
+				return -1.0
+			continue
+		var t1 := (-half[axis] - o) / d
+		var t2 := (half[axis] - o) / d
+		t_near = maxf(t_near, minf(t1, t2))
+		t_far = minf(t_far, maxf(t1, t2))
+	if t_near > t_far or t_far < 0.0:
+		return -1.0
+	return maxf(t_near, 0.0)
+
+
 # What the reticle can name: {key, name, at (where to aim), team, friend,
 # hostile, health, max_health}. Soldiers and players always; in the world
 # also its people (citizens, creatures, bandits), the practice targets, and
@@ -953,7 +988,7 @@ func _aim_candidates(client: Object, team: int) -> Array:
 			out.append({"key": "s%d" % d_idx, "name": sname, "at": sys["position"], "team": steam,
 					"friend": friend, "hostile": not friend, "peaceful": false,
 					"health": float(dest_health[d_idx]), "max_health": float(sys.get("max_health", 0.0)),
-					"range": 1400.0, "margin": 65.0})
+					"range": 1400.0, "margin": 65.0, "box": sys.get("half_size", Vector3.ZERO)})
 	if in_world and hub_ui_ref != null:
 		for t: Dictionary in client.get_targets():
 			if not bool(t["alive"]):
@@ -982,7 +1017,27 @@ func _aimed_at(client: Object, camera: Camera3D, candidates: Array) -> Dictionar
 	var forward := -camera.global_basis.z
 	var best := {}
 	var best_angle := TARGET_CONE
+	# A big target (a ship's system, a frigate: hundreds of meters across) is
+	# aimed at when the reticle's ray goes into its bounds, the nearest such;
+	# what's precisely under the reticle (a fighter in front of it) wins.
+	var box_hit := {}
+	var box_t := INF
 	for c: Dictionary in candidates:
+		var half: Vector3 = c.get("box", Vector3.ZERO)
+		if half == Vector3.ZERO:
+			continue
+		var t := _ray_box(from, forward, c["at"], half.abs())
+		if t >= 0.0 and t < box_t and t <= float(c.get("range", TARGET_RANGE)):
+			box_t = t
+			box_hit = c.duplicate()
+			box_hit["at"] = from + forward * maxf(t, 0.5)
+			box_hit["margin"] = 6.0
+	if not box_hit.is_empty():
+		best = box_hit
+		best_angle = TARGET_CONE * 0.5
+	for c: Dictionary in candidates:
+		if c.has("box") and c["box"] != Vector3.ZERO:
+			continue
 		var to: Vector3 = (c["at"] as Vector3) - from
 		var distance := to.length()
 		var max_range := float(c.get("range", TARGET_RANGE))
@@ -1099,6 +1154,55 @@ func _mode_banner(game: Dictionary, team: int, score_limit: int) -> String:
 	if not notes.is_empty():
 		line += "\n" + "   ".join(notes)
 	return line + "[/center]"
+
+
+# Driving a flyer: where its guns point, on screen (0..1 of its size), as core
+# vehicle_aim reckons it (the camera's look standing in for the pilot's);
+# (-1, -1) when not flying or it's off screen.
+func _flyer_aim_point(own: Dictionary, camera: Camera3D) -> Vector2:
+	if driving.is_empty() or str(driving.get("kind", "")) != "flyer" or int(own.get("seat", 0)) != 0 or camera == null:
+		return Vector2(-1, -1)
+	var forward := -camera.global_basis.z
+	var look_yaw := atan2(-forward.x, -forward.z)
+	var look_pitch := asin(clampf(forward.y, -1.0, 1.0))
+	var nose_yaw := float(own.get("yaw", 0.0))
+	var nose_pitch := float(own.get("pitch", 0.0))
+	var yaw := nose_yaw + clampf(wrapf(look_yaw - nose_yaw, -PI, PI), float(driving.get("yaw_min", -0.26)),
+			float(driving.get("yaw_max", 0.26)))
+	var pitch := nose_pitch + clampf(look_pitch - nose_pitch, float(driving.get("pitch_min", -0.09)),
+			float(driving.get("pitch_max", 0.09)))
+	var dir := Vector3(-sin(yaw) * cos(pitch), sin(pitch), -cos(yaw) * cos(pitch))
+	var at: Vector3 = (own["position"] as Vector3) + dir * 250.0
+	if camera.is_position_behind(at):
+		return Vector2(-1, -1)
+	var screen := camera.unproject_position(at)
+	var view := camera.get_viewport().get_visible_rect().size
+	if view.x <= 0.0 or view.y <= 0.0:
+		return Vector2(-1, -1)
+	return Vector2(clampf(screen.x / view.x, 0.02, 0.98), clampf(screen.y / view.y, 0.02, 0.98))
+
+
+# A vehicle weapon's HUD panel (weapon1 or weapon2): its name, model, and
+# its own ammo or heat, whichever slot is the active one.
+func _vehicle_weapon_bindings(b: Dictionary, prefix: String, weapon: Dictionary, state: Dictionary) -> void:
+	if weapon.is_empty():
+		return
+	b[prefix + ".name"] = _display_name(str(weapon["name"]))
+	b[prefix + ".change"] = true
+	var model := str(weapon.get("held_model", ""))
+	b[prefix + ".mesh"] = model if model != "" else str(weapon["name"])
+	b.erase(prefix + ".totalClipFraction")
+	b.erase(prefix + ".heat")
+	b.erase(prefix + ".ammoInfinite")
+	if int(weapon.get("rounds_per_clip", 0)) > 0:
+		var rounds := int(state.get("rounds", 0))
+		var reserve := int(state.get("reserve", -1))
+		b[prefix + ".totalClipFraction"] = float(rounds) / float(weapon["rounds_per_clip"])
+		b[prefix + ".totalAmmoBullets"] = str(rounds) if reserve < 0 else "%d/%d" % [rounds, reserve]
+	else:
+		b[prefix + ".heat"] = clampf(float(state.get("heat", 0.0)), 0.0, 1.0)
+		b[prefix + ".ammoInfinite"] = true
+		b.erase(prefix + ".totalAmmoBullets")
 
 
 func _space_systems_banner(game: Dictionary, team: int, score_limit: int) -> String:

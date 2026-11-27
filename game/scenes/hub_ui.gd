@@ -516,7 +516,7 @@ func map_places(client: Object) -> Array:
 	for wb: Dictionary in client.get_workbenches():
 		out.append({"position": wb["position"], "name": str(wb["name"]), "kind": "craft", "color": WorldMapScreen.CRAFT})
 	for r: Dictionary in client.get_recruiters():
-		out.append({"position": r["position"], "name": str(r["name"]), "kind": "terminal", "color": WorldMapScreen.TERMINAL})
+		out.append({"position": r["position"], "name": str(r["name"]), "kind": "battle", "color": WorldMapScreen.BATTLE})
 	for t: Dictionary in client.get_mission_terminals():
 		out.append({"position": t["position"], "name": str(t["name"]), "kind": "terminal", "color": _mission_terminal_color(str(t.get("kind", "general")))})
 	return out
@@ -1329,6 +1329,8 @@ func _sync_screen_data(client: Object) -> void:
 	if _workbench_screen != null:
 		_workbench_screen.materials = client.get_materials()
 		_workbench_screen.presets = client.get_presets()
+		if client.has_method("get_blueprints"):
+			_workbench_screen.blueprints = client.get_blueprints()
 		_workbench_screen.inventory = inv
 		_workbench_screen.loadouts = los
 		var prof_xp := {}

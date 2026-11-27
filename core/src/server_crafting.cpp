@@ -69,8 +69,34 @@ void GameServer::send_crafting_sync(Client& client) {
     sync.revision = client.crafting_rev;
     sync.materials = client.materials;
     sync.presets = client.presets;
+    sync.blueprints = client.blueprints;
     link_.send(client.endpoint, net::encode(sync));
     client.crafting_sync_tick = tick_;
+}
+
+bool GameServer::learn_blueprint(Client& client, const ItemDef& def, uint64_t item_id) {
+    if (def.teaches.empty() || store_ == nullptr || client.character == 0) return false;
+    const SchematicDef* sch = config_.crafting ? config_.crafting->find_schematic(def.teaches) : nullptr;
+    if (sch == nullptr) {
+        notify(client.entity, def.display_name + " teaches nothing anyone can make.");
+        return true;
+    }
+    if (!sch->blueprint ||
+        std::find(client.blueprints.begin(), client.blueprints.end(), sch->id) != client.blueprints.end()) {
+        notify(client.entity, std::format("You already know how to make {}.", sch->name));
+        return true;
+    }
+    if (!store_->remove_item(item_id)) return true;
+    client.blueprints.push_back(sch->id);
+    std::string list;
+    for (const std::string& id : client.blueprints) list += (list.empty() ? "" : ",") + id;
+    store_->set_extra(client.character, "blueprints", list);
+    client.items = store_->list_items(client.character);
+    ++client.inventory_rev;
+    client.last_sync_tick = 0;
+    ++client.crafting_rev;
+    notify(client.entity, std::format("Learned a blueprint: {} ({})", sch->name, sch->group));
+    return true;
 }
 
 void GameServer::handle_gather_request(Client& client, const net::GatherRequest& req, double now) {
@@ -361,6 +387,11 @@ void GameServer::handle_craft_request(Client& client, const net::CraftRequest& r
         const int lv = profession_level(config_.professions, client.professions, sch->profession);
         if (lv < sch->required_level) {
             notify(client.entity, std::format("Requires {} level {}.", sch->profession, sch->required_level));
+            return;
+        }
+        if (sch->blueprint &&
+            std::find(client.blueprints.begin(), client.blueprints.end(), sch->id) == client.blueprints.end()) {
+            notify(client.entity, std::format("Learn the blueprint for {} first.", sch->name));
             return;
         }
         const ItemDef* out_def = config_.catalog->find(sch->output_item);
