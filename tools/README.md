@@ -12,6 +12,36 @@ cmake --build --preset msvc-release
 ctest --preset msvc-release
 ```
 
+## Rebuilding game/imported_assets
+
+`game/imported_assets/` is never committed: everything in it is exported from your own installs. One script runs every export the game needs, in order:
+
+```powershell
+cmake --build build\msvc --config Release --target swgtool bf2tool
+python -I tools\assets\rebuild_imported_assets.py --swg E:\swg_te\extracted\Star_Wars_files `
+  [--bf2 "<Battlefront>\GameData\Data\_lvl_pc"] [bf2 maps vehicles swg planets check]
+```
+
+- `--swg`: a folder of unencrypted Galaxies `.tre` archives (*The Total Experience*'s, extracted as in [Manifests](#manifests)). `--bf2`: Battlefront II's `_lvl_pc`. It defaults to the Steam install's.
+- `--list` prints every command without running anything. Each step's output goes to a log; failures are listed at the end. The last phase, `check`, confirms that every `imported_assets` path named by the repo's data and code exists.
+- Run it from the repository root. A full rebuild takes about 10 minutes and about 5 GB.
+
+Where its commands come from, so a new asset is added by recording it, not by remembering a command line:
+
+| What | Recorded in |
+|---|---|
+| Conquest maps | the battlefield file's `; bf2tool export-map ...` comment line |
+| Other modes (CTF, 1-Flag, Hunt, XL) | [`tools/assets/mode_exports.txt`](assets/mode_exports.txt), read off the mission scripts |
+| Space maps (Space Assault rules) | worked out from the mission scripts each run by [`tools/assets/space_assault.py`](assets/space_assault.py) |
+| Vehicles and turrets | the battlefield file's `; for <side> <class>, ...` line; the space maps' own spawns |
+| Soldiers' kits | the battlefield files' `Loadout = ../imported_assets/loadouts/<side>_<class>.ini` |
+| Clone and droid models | the catalog's `Model = characters/<name>/...` |
+| Weapons, armor, clothing | the catalog's `Template =` (`swgtool export-items`) |
+| Planets, towns, people | `game/hubs/galaxy.ini` (`Bake`, `Hub`) and each hub's `[hub]` and `Town =` files |
+| Species, stormtrooper, natives, HUD, audio, effects | `rebuild_imported_assets.py` itself (the clip lists and armor pieces the client uses) |
+
+[`tools/assets/bf2_lua.py`](assets/bf2_lua.py) decodes Battlefront's compiled mission scripts (`mission.lvl`, Lua 5.0), including their tables. It's how the mode and Space Assault options are read: `python -I tools\assets\bf2_lua.py <_lvl_pc>\mission.lvl spa8g_ass` prints the Hoth space mission's calls.
+
 ## swgtool
 
 ```
@@ -231,6 +261,16 @@ Battlefront II munged files (`.lvl`) are `ucfb` chunk trees: `lvl_` sub-levels h
   ```
 
   **Clone Wars battlefields.** Battlefront II's Clone Wars conquest missions (`<map>c_con`) set up the same posts, regions, barriers and doors as the Galactic Civil War ones (`<map>g_con`), so one conquest export serves both; `game/battlefields/<map>_cw.ini` lists the Republic and the Separatists in the order the Clone Wars script numbers them (`SetupTeams`: on Coruscant, Kamino, Naboo, Polis Massa, Utapau and Yavin the Separatists are team 1). The Phase II clones' kits: `export-loadout <_lvl_pc> rep rep_inf_ep3_<class>` for rifleman, rocketeer, sniper, engineer and jettrooper (the officer's is `rep_inf_ep3_officer`).
+
+  **Space Assault.** `--mode assault` exports a space map (`spa1` ... `spa9`, its sky from `spa_sky.lvl` picked by the map). Its rules come from its mission script (`spa<N>g_ass` or `spa<N>c_ass`), as options, all worked out by `tools/assets/space_assault.py`:
+  - `--score-limit 180`.
+  - `--extents`, `--fly-height <min>,<max>`, `--landing <region>` (the hangars) and `--death <region>`.
+  - `--turret-mainframe <mainframe>=<turrets>` (LinkedTurrets).
+  - `--shield <generator>=<objects>` (LinkedShields).
+  - `--link <object>=<objects>` (LinkedDestroyables: destroying the one destroys the others).
+  - `--system <object>=<owner team>:<kind>:<points>:<label>` for each critical system. Points come from ObjectiveSpaceAssault's `gSpaceAssaultSystems_template` for the side that scores it, and internal systems are worth 18. The shield generators (`shieldgen`) and turret mainframes (`autodefense`) are listed too, worth 0.
+
+  A capital ship's turrets (`*_bldg_frigateturret`, `*_prop_shipturret`) live in the map's own level, so `export-vehicle` takes `spa/<map>` as their side.
 
   **Tow cable.** `export-vehicle` keeps a seat whose weapon is a `towcableweapon` (the snowspeeder's rear gun, its harpoon written as a bolt) and marks it `TowCable = <LockOnRange> <LockTime>`: the server makes that gunner's shot harpoon an enemy AT-AT in reach (`core/src/server_tow.cpp`).
 

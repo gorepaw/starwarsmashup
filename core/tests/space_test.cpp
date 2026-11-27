@@ -455,6 +455,16 @@ void test_exported_space_assets() {
         CHECK(!f.turret_chairs.empty());
         CHECK(!f.space_systems.empty());
         CHECK(!f.vehicles.empty());
+        // Bots on foot go for each ship's shield generator and turret mainframe.
+        int targeted = 0;
+        for (const SpaceSystem& sys : f.space_systems) {
+            if (sys.kind == "shieldgen" || sys.kind == "autodefense") {
+                const auto& atk = f.destructibles[size_t(sys.destructible)].attackers;
+                CHECK(std::find(atk.begin(), atk.end(), 1 - sys.owner_team) != atk.end());
+                ++targeted;
+            }
+        }
+        CHECK(targeted == 4);
 
         // Every starfighter flies out of its hangar at full throttle: the
         // hangar shield (VehicleCollision CLEAR) stops soldiers, not ships.

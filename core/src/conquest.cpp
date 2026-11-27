@@ -988,7 +988,7 @@ Battlefield load_battlefield(const std::filesystem::path& path, GameMode mode) {
         for (const SpaceSystem& sys : field.space_systems) {
             if (sys.destructible >= 0 && size_t(sys.destructible) < field.destructibles.size() &&
                 (sys.owner_team == 0 || sys.owner_team == 1) &&
-                (sys.kind == "shields" || sys.kind == "autodefense" ||
+                (sys.kind == "shieldgen" || sys.kind == "autodefense" ||
                  field.in_landing_region(field.destructibles[size_t(sys.destructible)].center))) {
                 auto& atk = field.destructibles[size_t(sys.destructible)].attackers;
                 if (std::find(atk.begin(), atk.end(), 1 - sys.owner_team) == atk.end()) {
