@@ -14,7 +14,11 @@
 
 namespace swm::core {
 
-enum class ItemKind : uint8_t { weapon, armor, deflector_shield, clothing, junk, supply, quest, enhancement, vehicle, ammo };
+// A bodysuit is the one look-only item (docs/ARMOR.md): a whole-body model
+// (a Battlefront II clone or droid), worn only in the cosmetic override.
+enum class ItemKind : uint8_t {
+    weapon, armor, deflector_shield, clothing, junk, supply, quest, enhancement, vehicle, ammo, bodysuit
+};
 
 inline constexpr std::array<std::string_view, 4> playable_factions{"rebellion", "empire", "republic", "separatists"};
 
@@ -145,9 +149,46 @@ struct ItemDef {
     std::optional<DamageType> damage_type;
     std::string bolt_color_name;  // optional red/blue/green/yellow
 
+    // Armor: how its class's typed resistance is spread ("Resist = laser:0.6,
+    // ballistic:0.4", shares summing to 1), and its own small perk (its
+    // Modifier lines), beyond the class budget. The loader adds its slot's
+    // share of the class budget (armor_budget) to `modifiers`.
+    std::vector<std::pair<DamageType, double>> resist;
+    std::vector<StatModifier> perks;
+
     // Stat modifiers for armor, deflector shields, or weapon carry penalties.
     std::vector<StatModifier> modifiers;
 };
+
+// The worn slots (docs/ARMOR.md): armor and clothing each go in one, in a
+// loadout's gear or its cosmetic override (appearance). The override also
+// has "full_body", for a bodysuit, which shows in place of all of them.
+inline constexpr std::array<std::string_view, 8> worn_slots{"helmet", "chest",  "biceps",   "bracers",
+                                                            "gloves", "belt",   "leggings", "boots"};
+inline constexpr std::string_view full_body_slot = "full_body";
+bool is_worn_slot(std::string_view slot);  // one of worn_slots
+
+// A full kit's statistics for an armor class (docs/ARMOR.md, Balance): every
+// set of the class has the same, and each piece its slot's share. Clothing
+// ("none") has nothing.
+struct ArmorBudget {
+    double mitigation = 0;      // general
+    double typed = 0;           // by type, spread as the set's Resist says
+    double health = 0;
+    double run_speed = 1;       // multipliers: a piece gets them to the power of its share
+    double sprint_factor = 1;
+    double energy_restore = 1;
+};
+const ArmorBudget& armor_budget(std::string_view armor_class);
+// A worn slot's share of a full kit: its defense_mark_weight over the worn
+// slots' (the chest's 2/7 ...); 0 for anything else.
+double armor_slot_share(std::string_view slot);
+
+// Whether an item goes in a loadout slot: in its gear (`appearance` false),
+// or in its cosmetic override, which only shows (`appearance` true). Any
+// armor or clothing goes in either; weapons, shields, ammo and mounts only
+// in the gear; a bodysuit only in the override's full_body.
+bool item_fits_slot(const ItemDef& def, std::string_view slot, bool appearance);
 
 // An item owned by a character (persisted in SQLite).
 struct ItemInstance {
@@ -207,8 +248,8 @@ struct CharacterLoadout {
     uint64_t primary_id = 0;
     uint64_t sidearm_id = 0;
     uint64_t secondary_id = 0;
-    std::map<std::string, uint64_t> gear_ids;        // armor slots + deflector_shield
-    std::map<std::string, uint64_t> appearance_ids;  // separate cosmetic clothing/armor layer
+    std::map<std::string, uint64_t> gear_ids;        // worn slots, deflector_shield, ammo, mount
+    std::map<std::string, uint64_t> appearance_ids;  // the cosmetic override: worn slots, shown over the gear
     // Its Active Specialization Slots: profession ids, at most
     // specialization_slots (profession.h), and its Companion Slot (none yet).
     std::vector<std::string> specializations;
@@ -239,8 +280,11 @@ private:
     std::map<std::string, WeaponDef, std::less<>> bf2_bases_;
 };
 
-// Resolves worn armor & cosmetic clothing model paths (comma-separated,
-// game/imported_assets/-relative) with appearance slots overriding armor visuals.
+// The models a loadout shows (comma-separated, game/imported_assets/-relative;
+// "override:<path>" for a bodysuit): its gear's worn slots, each shown as
+// what its cosmetic override has there instead, if anything; or the
+// override's bodysuit, in place of all of them. A slot this species doesn't
+// show is left out.
 std::string resolve_worn_models(const ItemCatalog& catalog, const CharacterLoadout& cl,
                                 std::span<const ItemInstance> inventory, Species species, Gender gender);
 

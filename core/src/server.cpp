@@ -914,18 +914,29 @@ void GameServer::handle(const net::Endpoint& from, const net::Datagram& datagram
                 })) {
                 clean.companion.clear();
             }
-            if (!owns(clean.primary_id)) clean.primary_id = 0;
-            if (!owns(clean.sidearm_id)) clean.sidearm_id = 0;
-            if (!owns(clean.secondary_id)) clean.secondary_id = 0;
+            // Each item only where it fits: the gear, or (worn things) the
+            // cosmetic override.
+            const auto fits = [&](uint64_t item_id, std::string_view slot, bool appearance) {
+                const auto it = std::find_if(client->items.begin(), client->items.end(),
+                                             [&](const ItemInstance& inst) { return inst.id == item_id; });
+                const ItemDef* def = it == client->items.end() ? nullptr : config_.catalog->find(it->def_id);
+                return def == nullptr || item_fits_slot(*def, slot, appearance);
+            };
+            const auto keep_weapon = [&](uint64_t& id, std::string_view slot) {
+                if (!owns(id) || !fits(id, slot, false)) id = 0;
+            };
+            keep_weapon(clean.primary_id, "primary");
+            keep_weapon(clean.sidearm_id, "sidearm");
+            keep_weapon(clean.secondary_id, "secondary");
             for (auto it = clean.gear_ids.begin(); it != clean.gear_ids.end();) {
-                if (!owns(it->second)) {
+                if (!owns(it->second) || !fits(it->second, it->first, false)) {
                     it = clean.gear_ids.erase(it);
                 } else {
                     ++it;
                 }
             }
             for (auto it = clean.appearance_ids.begin(); it != clean.appearance_ids.end();) {
-                if (!owns(it->second)) {
+                if (!owns(it->second) || !fits(it->second, it->first, true)) {
                     it = clean.appearance_ids.erase(it);
                 } else {
                     ++it;
@@ -977,9 +988,7 @@ void GameServer::handle(const net::Endpoint& from, const net::Datagram& datagram
                     return std::hypot(d.x, d.z) <= v.radius + 1.5;
                 });
                 if (buy->use_faction_points && matched_qm != nullptr) {
-                    if (def->kind != ItemKind::clothing) {
-                        notify(client->entity, "Quartermasters only issue cosmetic rewards for Faction Points");
-                    } else if (def->cost_faction_points <= 0) {
+                    if (def->cost_faction_points <= 0) {
                         notify(client->entity, def->display_name + " is not available for Faction Points");
                     } else {
                         const std::string qf = normalize_faction(matched_qm->faction);

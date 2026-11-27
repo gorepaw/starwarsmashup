@@ -1,6 +1,6 @@
-# Faction Quartermaster screen in Battlefront II's style: browse faction +
-# neutral standard-issue weapons, armor, shields, and clothing, compare stats
-# with currently equipped gear via ItemTooltip, and buy with Faction Points.
+# Faction Quartermaster screen in Battlefront II's style: browse the faction's
+# requisitions (its armor, suits, clothing and the rest it sells for Faction
+# Points), compare stats with what's equipped via ItemTooltip, and buy.
 extends "res://ui/bf2_screen.gd"
 
 const ItemTooltip = preload("res://ui/item_tooltip.gd")
@@ -9,10 +9,10 @@ signal item_bought(def_id: String, use_fp: bool)
 signal closed
 
 const CATEGORIES := [
-	["all", "All Cosmetics"],
-	["full_body", "Full-Body"],
+	["all", "All"],
+	["full_body", "Bodysuits"],
 	["helmet", "Helmets"],
-	["body", "Uniforms & Armor Looks"],
+	["body", "Armor & Clothing"],
 ]
 
 const REP_THRESHOLDS := [
@@ -86,7 +86,7 @@ func _paint() -> void:
 	var rinfo := _rep_info(faction)
 	text("gamefont_medium", "Faction: %s   [%s: %d]" % [faction.capitalize(), rinfo["tier"], int(rinfo["val"])],
 			Vector2(x, y), "Left", TEXT)
-	text("gamefont_medium", "%d FP   |   Cosmetic Requisitions" % faction_points,
+	text("gamefont_medium", "%d FP   |   Requisitions" % faction_points,
 			Vector2(box.end.x - 18 * u, y), "Right", ACCENT)
 	y += 24 * u
 	var rep_bar := Rect2(x, y, box.size.x - 36 * u, 6 * u)
@@ -108,9 +108,6 @@ func _paint() -> void:
 		owned_counts[did] = int(owned_counts.get(did, 0)) + 1
 
 	for def: Dictionary in catalog:
-		var kind := str(def.get("kind", ""))
-		if kind != "clothing":
-			continue
 		if int(def.get("cost_fp", 0)) <= 0:
 			continue
 		var df := str(def.get("faction", "neutral"))
@@ -121,7 +118,7 @@ func _paint() -> void:
 			continue
 		elif _category == "helmet" and slot != "helmet":
 			continue
-		elif _category == "body" and slot in ["full_body", "helmet"]:
+		elif _category == "body" and (slot in ["full_body", "helmet"] or not str(def.get("kind", "")) in ["armor", "clothing"]):
 			continue
 		_filtered.append(def)
 
@@ -181,7 +178,7 @@ func _find_equipped(def: Dictionary) -> Dictionary:
 		if slot == "primary": target_id = int(active_loadout.get("primary_id", 0))
 		elif slot == "sidearm": target_id = int(active_loadout.get("sidearm_id", 0))
 		elif slot == "secondary": target_id = int(active_loadout.get("secondary_id", 0))
-	elif kind == "clothing":
+	elif kind == "bodysuit":  # (worn only in the Cosmetic Override)
 		target_id = int((active_loadout.get("appearance_ids", {}) as Dictionary).get(slot, 0))
 	else:
 		target_id = int((active_loadout.get("gear_ids", {}) as Dictionary).get(slot, 0))

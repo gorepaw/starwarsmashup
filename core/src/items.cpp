@@ -323,6 +323,7 @@ std::optional<ItemKind> item_kind_from_name(std::string_view name) {
     if (name == "vehicle") return ItemKind::vehicle;
     if (name == "enhancement") return ItemKind::enhancement;
     if (name == "ammo") return ItemKind::ammo;
+    if (name == "bodysuit") return ItemKind::bodysuit;
     return std::nullopt;
 }
 
@@ -338,6 +339,7 @@ std::string_view item_kind_name(ItemKind k) {
     case ItemKind::vehicle: return "vehicle";
     case ItemKind::enhancement: return "enhancement";
     case ItemKind::ammo: return "ammo";
+    case ItemKind::bodysuit: return "bodysuit";
     }
     return "weapon";
 }
@@ -547,6 +549,14 @@ void ItemCatalog::load(const std::filesystem::path& catalog_ini, const std::file
             }
             def.slot = s.get("Slot").value_or(default_slot);
             def.anim_set.clear();
+            // A bodysuit has the override's one slot of its own; armor and
+            // clothing, a worn slot.
+            if (def.kind == ItemKind::bodysuit) {
+                def.slot = std::string(full_body_slot);
+            } else if ((def.kind == ItemKind::armor || def.kind == ItemKind::clothing) && !is_worn_slot(def.slot)) {
+                throw std::runtime_error(where + " (" + def.id + "): Slot " + def.slot +
+                                         " isn't a worn slot (a whole-body look is a bodysuit)");
+            }
         }
 
         def.faction = normalize_faction(s.get("Faction").value_or("neutral"));
@@ -630,6 +640,49 @@ void ItemCatalog::load(const std::filesystem::path& catalog_ini, const std::file
                 def.modifiers.push_back(parse_catalog_modifier(v, where + " (" + def.id + ")"));
             }
         }
+        if (def.kind == ItemKind::armor) {
+            // Its perk is what it lists; its slot's share of its class's
+            // budget comes on top, the typed part spread as Resist says.
+            def.perks = def.modifiers;
+            if (const auto r = s.get("Resist")) {
+                std::stringstream parts(*r);
+                std::string part;
+                double total = 0;
+                while (std::getline(parts, part, ',')) {
+                    const size_t colon = part.find(':');
+                    std::string name = part.substr(0, colon);
+                    name.erase(0, name.find_first_not_of(" \t"));
+                    name.erase(name.find_last_not_of(" \t") + 1);
+                    const auto type = damage_type_from_name(name);
+                    if (!type || colon == std::string::npos) {
+                        throw std::runtime_error(where + " (" + def.id + "): Resist is '<type>:<share>, ...', got '" +
+                                                 *r + "'");
+                    }
+                    const double share = std::stod(part.substr(colon + 1));
+                    def.resist.emplace_back(*type, share);
+                    total += share;
+                }
+                if (std::abs(total - 1.0) > 0.01) {
+                    throw std::runtime_error(where + " (" + def.id + "): Resist's shares add up to 1");
+                }
+            }
+            const ArmorBudget& b = armor_budget(def.armor_class);
+            const double share = armor_slot_share(def.slot);
+            if (share > 0) {
+                def.modifiers.push_back({Stat::mitigation, b.mitigation * share});
+                for (const auto& [type, part] : def.resist) {
+                    const Stat stat = Stat(size_t(Stat::mitigation_ballistic) + size_t(type));
+                    def.modifiers.push_back({stat, b.typed * share * part});
+                }
+                def.modifiers.push_back({Stat::max_health, b.health * share});
+                const auto mult = [&](Stat stat, double full) {
+                    if (full != 1.0) def.modifiers.push_back({stat, 0, std::pow(full, share)});
+                };
+                mult(Stat::run_speed, b.run_speed);
+                mult(Stat::sprint_factor, b.sprint_factor);
+                mult(Stat::energy_restore, b.energy_restore);
+            }
+        }
 
         if (def.kind == ItemKind::weapon && !def.bf2_base.empty() && !bf2_bases_.contains(def.bf2_base) &&
             !bf2_items_dir.empty()) {
@@ -676,6 +729,42 @@ double defense_mark_weight(std::string_view slot) {
     if (slot == "boots") return 0.06;
     if (slot == "gloves" || slot == "biceps" || slot == "bracers" || slot == "belt") return 0.05;
     return 0.0;
+}
+
+bool is_worn_slot(std::string_view slot) {
+    return std::find(worn_slots.begin(), worn_slots.end(), slot) != worn_slots.end();
+}
+
+const ArmorBudget& armor_budget(std::string_view armor_class) {
+    // docs/ARMOR.md, Balance. ASSUMPTION: a starting point, to tune in play.
+    static const ArmorBudget none{};
+    static const ArmorBudget light{0.12, 0.10, 60, 1.02, 1.0, 1.05};
+    static const ArmorBudget medium{0.20, 0.12, 100, 0.96, 1.0, 1.0};
+    static const ArmorBudget heavy{0.28, 0.15, 140, 0.92, 0.95, 1.0};
+    if (armor_class == "light") return light;
+    if (armor_class == "medium") return medium;
+    if (armor_class == "heavy") return heavy;
+    return none;
+}
+
+double armor_slot_share(std::string_view slot) {
+    if (!is_worn_slot(slot)) return 0.0;
+    double all = 0;
+    for (const std::string_view s : worn_slots) all += defense_mark_weight(s);
+    return defense_mark_weight(slot) / all;
+}
+
+bool item_fits_slot(const ItemDef& def, std::string_view slot, bool appearance) {
+    switch (def.kind) {
+    case ItemKind::armor:
+    case ItemKind::clothing: return is_worn_slot(slot) && def.slot == slot;
+    case ItemKind::weapon:
+    case ItemKind::deflector_shield:
+    case ItemKind::ammo: return !appearance && def.slot == slot;
+    case ItemKind::vehicle: return !appearance && slot == "mount";
+    case ItemKind::bodysuit: return appearance && slot == full_body_slot;
+    default: return false;
+    }
 }
 
 bool is_melee_archetype(WeaponArchetype a) { return a == WeaponArchetype::melee || a == WeaponArchetype::melee_2h; }
@@ -847,13 +936,16 @@ Loadout ItemCatalog::build_loadout(const CharacterLoadout& cl, std::span<const I
     double marked_weight = 0;  // the slots' weights times their pieces' marks
     for (const auto& [slot, item_id] : cl.gear_ids) {
         if (const ItemInstance* inst = find_inst(item_id)) {
-            if (const ItemDef* def = find(inst->def_id)) {
+            if (const ItemDef* def = find(inst->def_id); def && item_fits_slot(*def, slot, false)) {
                 if (def->kind == ItemKind::armor || def->kind == ItemKind::deflector_shield) {
                     out.gear.push_back(resolve_gear(*def, inst->quality, apply_quality, inst->mark));
                     marked_weight += defense_mark_weight(slot) * clamp_mark(inst->mark);
                 }
+                // Clothing is worn too: it counts toward being unarmored.
                 if (def->kind == ItemKind::armor) {
                     armor_classes.push_back(def->armor_class);
+                } else if (def->kind == ItemKind::clothing) {
+                    armor_classes.emplace_back("none");
                 }
             }
         }
@@ -939,59 +1031,38 @@ std::string substitute_gender(std::string path, Gender gender) {
     return path;
 }
 
-std::string covered_armor_slot(std::string_view app_slot) {
-    if (app_slot == "jacket" || app_slot == "shirt") return "chest";
-    if (app_slot == "pants") return "leggings";
-    if (app_slot == "boots_cosmetic" || app_slot == "boots") return "boots";
-    return std::string(app_slot);
-}
-
 } // namespace
 
 std::string resolve_worn_models(const ItemCatalog& catalog, const CharacterLoadout& cl,
                                 std::span<const ItemInstance> inventory, Species species, Gender gender) {
-    const auto find_inst = [&](uint64_t id) -> const ItemInstance* {
-        if (id == 0) return nullptr;
-        for (const ItemInstance& inst : inventory) {
-            if (inst.id == id) return &inst;
+    // A layer's worn models by slot: only what fits there and has a model (a
+    // mount's model is the vehicle it summons; it isn't worn).
+    const auto layer = [&](const std::map<std::string, uint64_t>& ids, bool appearance) {
+        std::map<std::string, std::string> by_slot;
+        for (const auto& [slot, item_id] : ids) {
+            if (item_id == 0 || (!is_worn_slot(slot) && slot != full_body_slot)) continue;
+            for (const ItemInstance& inst : inventory) {
+                if (inst.id != item_id) continue;
+                if (const ItemDef* def = catalog.find(inst.def_id);
+                    def && !def->model_path.empty() && item_fits_slot(*def, slot, appearance)) {
+                    by_slot[slot] = substitute_gender(def->model_path, gender);
+                }
+                break;
+            }
         }
-        return nullptr;
+        return by_slot;
     };
+    const auto gear = layer(cl.gear_ids, false);
+    const auto look = layer(cl.appearance_ids, true);
 
-    // A full-body cosmetic override replaces the entire worn appearance layer.
-    if (const auto full = cl.appearance_ids.find("full_body"); full != cl.appearance_ids.end()) {
-        if (const ItemInstance* inst = find_inst(full->second)) {
-            if (const ItemDef* def = catalog.find(inst->def_id); def && !def->model_path.empty()) {
-                return "override:" + substitute_gender(def->model_path, gender);
-            }
-        }
-    }
+    // A bodysuit shows in place of everything.
+    if (const auto it = look.find(std::string(full_body_slot)); it != look.end()) return "override:" + it->second;
 
-    // Appearance slots visually override their matching armor slots.
-    std::map<std::string, std::string> visual_by_slot;
-    for (const auto& [slot, item_id] : cl.gear_ids) {
-        if (!species_shows_slot(species, slot)) {
-            continue;
-        }
-        if (const ItemInstance* inst = find_inst(item_id)) {
-            // A mount's model is the vehicle it summons, not something worn.
-            if (const ItemDef* def = catalog.find(inst->def_id);
-                def && !def->model_path.empty() && def->kind != ItemKind::vehicle) {
-                visual_by_slot[slot] = substitute_gender(def->model_path, gender);
-            }
-        }
-    }
-    for (const auto& [app_slot, item_id] : cl.appearance_ids) {
-        if (const ItemInstance* inst = find_inst(item_id)) {
-            if (const ItemDef* def = catalog.find(inst->def_id); def && !def->model_path.empty()) {
-                visual_by_slot[covered_armor_slot(app_slot)] = substitute_gender(def->model_path, gender);
-            }
-        }
-    }
-
+    std::map<std::string, std::string> shown = gear;
+    for (const auto& [slot, path] : look) shown[slot] = path;
     std::string out;
-    for (const auto& [slot, path] : visual_by_slot) {
-        if (path.empty()) continue;
+    for (const auto& [slot, path] : shown) {
+        if (path.empty() || !species_shows_slot(species, slot)) continue;
         if (!out.empty()) out += ',';
         out += path;
     }

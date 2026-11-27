@@ -34,9 +34,9 @@ int main() {
             << "Id = armor_stormtrooper_chest\n"
             << "Name = Stormtrooper Chestplate\n"
             << "Kind = armor\n"
+            << "ArmorClass = medium\n"
             << "Slot = chest\n"
-            << "Modifier = max_health + 50\n"
-            << "Modifier = mitigation + 0.10\n"
+            << "Resist = laser:1\n"
             << "\n"
             << "[item]\n"
             << "Id = psg_mark1\n"
@@ -84,10 +84,14 @@ int main() {
 
     const CharacterStats hum_stats = stats_for(hum_lo, Species::human);
     const CharacterStats wke_stats = stats_for(wke_lo, Species::wookiee);
-    CHECK(near(hum_stats.max_health, 450.0));
-    CHECK(near(wke_stats.max_health, 490.0));  // the chest's 50 and the Wookiee's own 40
-    CHECK(near(hum_stats.mitigation_by_type[size_t(DamageType::laser)], 0.12));
-    CHECK(near(wke_stats.mitigation_by_type[size_t(DamageType::laser)], 0.12));
+    // The chest: its 2/7 share of the medium budget (100 health, 12% typed,
+    // all of it laser), with the shield's 12% laser.
+    const double chest_hp = 400.0 + 100.0 * 2 / 7, chest_laser = 0.12 + 0.12 * 2 / 7;
+    CHECK(near(hum_stats.max_health, chest_hp));
+    CHECK(near(wke_stats.max_health, chest_hp + 40));  // and the Wookiee's own 40
+    CHECK(near(hum_stats.mitigation_by_type[size_t(DamageType::laser)], chest_laser));
+    CHECK(near(wke_stats.mitigation_by_type[size_t(DamageType::laser)], chest_laser));
+    CHECK(near(hum_stats.mitigation, 0.20 * 2 / 7));
 
     // Mk tiers: names, levels, and the power curve (x2 at Mk X).
     CHECK(mark_name(0).empty() && mark_name(4) == "Mk IV" && mark_name(10) == "Mk X" && mark_name(12) == "Mk X");
@@ -110,8 +114,8 @@ int main() {
         const Loadout hum10_lo = catalog.build_loadout(cl, marked, Species::human, true);
         const CharacterStats hum10 = stats_for(hum10_lo, Species::human);
         // Chest and Deflector Shield worn (0.2 + 0.3 of the weight) at Mk X: x1.5.
-        CHECK(near(hum10.max_health, 450.0 * 1.5));
-        CHECK(near(hum10.mitigation_by_type[size_t(DamageType::laser)], 0.12));  // marks don't touch mitigation
+        CHECK(near(hum10.max_health, chest_hp * 1.5));
+        CHECK(near(hum10.mitigation_by_type[size_t(DamageType::laser)], chest_laser));  // marks don't touch mitigation
         CHECK(near(hum10_lo.weapons[primary_slot]->damage, hum_lo.weapons[primary_slot]->damage * 2));
         // A Wookiee's marks count the same as anyone's.
         const CharacterStats wke10 =
@@ -137,8 +141,8 @@ int main() {
     const auto bob_los = store.list_loadouts(bob.id);
     CHECK(bob_items.size() == 9 && bob_los.size() == 1);
     CHECK(!bob_los.empty() && bob_los[0].gear_ids.count("ammo_standard") == 1 &&
-          bob_los[0].appearance_ids.count("shirt") == 1 &&
-          bob_los[0].appearance_ids.count("pants") == 1 && bob_los[0].appearance_ids.count("boots_cosmetic") == 1);
+          bob_los[0].gear_ids.count("chest") == 1 && bob_los[0].gear_ids.count("leggings") == 1 &&
+          bob_los[0].gear_ids.count("boots") == 1 && bob_los[0].appearance_ids.empty());
     const auto bob_after = *store.find(bob.id);
     CHECK(bob_after.credits == 500 && bob_after.faction_points == 100);
 
@@ -152,22 +156,38 @@ int main() {
     {
         std::ofstream out(worn_ini);
         out << "[item]\nId = armor_stormtrooper_chest\nKind = armor\nSlot = chest\nModel = armor/stormtrooper/chest_{g}.gltf\n"
-            << "[item]\nId = cloth_jacket_rebel\nKind = clothing\nSlot = jacket\nModel = clothing/jacket_rebel_{g}.gltf\n"
-            << "[item]\nId = speeder_test\nKind = vehicle\nVehicle = swg_speeder_bike\nSlot = mount\nModel = swg_vehicles/speeder/speeder.gltf\n";
+            << "[item]\nId = cloth_jacket_rebel\nKind = clothing\nSlot = chest\nModel = clothing/jacket_rebel_{g}.gltf\n"
+            << "[item]\nId = speeder_test\nKind = vehicle\nVehicle = swg_speeder_bike\nSlot = mount\nModel = swg_vehicles/speeder/speeder.gltf\n"
+            << "[item]\nId = helm\nKind = armor\nSlot = helmet\nModel = armor/h_{g}.gltf\n"
+            << "[item]\nId = suit\nKind = bodysuit\nModel = characters/suit/suit.gltf\n";
     }
     ItemCatalog worn_cat;
     worn_cat.load(worn_ini);
     std::filesystem::remove(worn_ini);
     std::vector<ItemInstance> winv{{1, 1, "armor_stormtrooper_chest", 0.5, "", "{}"},
                                    {2, 1, "cloth_jacket_rebel", 0.5, "", "{}"},
-                                   {3, 1, "speeder_test", 0.5, "", "{}"}};
+                                   {3, 1, "speeder_test", 0.5, "", "{}"},
+                                   {4, 1, "helm", 0.5, "", "{}"},
+                                   {5, 1, "suit", 0.5, "", "{}"}};
     CharacterLoadout wcl;
     wcl.gear_ids["chest"] = 1;
     wcl.gear_ids["mount"] = 3;  // a mount isn't worn: it's summoned
     CHECK(resolve_worn_models(worn_cat, wcl, winv, Species::human, Gender::female) == "armor/stormtrooper/chest_f.gltf");
     CHECK(resolve_worn_models(worn_cat, wcl, winv, Species::wookiee, Gender::male).empty());
-    wcl.appearance_ids["jacket"] = 2;
+    wcl.appearance_ids["chest"] = 2;
     CHECK(resolve_worn_models(worn_cat, wcl, winv, Species::human, Gender::male) == "clothing/jacket_rebel_m.gltf");
+    wcl.appearance_ids["boots"] = 4;  // only where it fits
+    wcl.appearance_ids["helmet"] = 4;
+    CHECK(resolve_worn_models(worn_cat, wcl, winv, Species::human, Gender::male) ==
+          "clothing/jacket_rebel_m.gltf,armor/h_m.gltf");
+    // A bodysuit is a look only: in the gear it's nothing; in the override
+    // it shows in place of everything.
+    CHECK(worn_cat.find("suit")->slot == "full_body");
+    CharacterLoadout scl;
+    scl.gear_ids = {{"chest", 1}, {"full_body", 5}};
+    CHECK(resolve_worn_models(worn_cat, scl, winv, Species::human, Gender::male) == "armor/stormtrooper/chest_m.gltf");
+    scl.appearance_ids = {{"helmet", 4}, {"full_body", 5}};
+    CHECK(resolve_worn_models(worn_cat, scl, winv, Species::human, Gender::male) == "override:characters/suit/suit.gltf");
 
     // Reputation standing helpers + opposing faction calculation
     CHECK(normalize_faction("CIS") == "separatists" && normalize_faction("Imperial") == "empire");
@@ -284,6 +304,93 @@ int main() {
             std::printf("%-28s %-15s %.3f / %.2f%s\n", def.id.c_str(), weapon_archetype_info(def.archetype).id.c_str(),
                         score, sidegrade_budget(def), ok ? "" : "  OVER/UNDER");
             CHECK(ok);
+        }
+
+        // Armor (docs/ARMOR.md): every piece is its slot's share of its
+        // class's budget, its typed resistance spread by its Resist, with at
+        // most one small perk; the slots' shares make a whole kit.
+        {
+            double shares = 0;
+            for (const std::string_view s : worn_slots) shares += armor_slot_share(s);
+            CHECK(near(shares, 1.0) && armor_slot_share(full_body_slot) == 0 &&
+                  armor_slot_share("deflector_shield") == 0);
+            CHECK(armor_budget("light").mitigation < armor_budget("medium").mitigation &&
+                  armor_budget("medium").mitigation < armor_budget("heavy").mitigation &&
+                  armor_budget("light").run_speed > armor_budget("heavy").run_speed && armor_budget("none").health == 0);
+        }
+        for (const ItemDef& def : real.all()) {
+            if (def.kind == ItemKind::clothing) {
+                CHECK(is_worn_slot(def.slot) && def.modifiers.empty());
+                continue;
+            }
+            if (def.kind == ItemKind::bodysuit) {  // the one look-only item
+                CHECK(def.slot == full_body_slot && def.modifiers.empty() && !def.model_path.empty());
+                continue;
+            }
+            if (def.kind != ItemKind::armor) continue;
+            double resist = 0;
+            for (const auto& [type, share] : def.resist) resist += share;
+            bool perk_ok = def.perks.size() <= 1;
+            for (const StatModifier& p : def.perks) {
+                perk_ok = perk_ok && (p.add == 0 ? std::abs(p.multiply - 1) <= 0.05 + 1e-9
+                                                 : p.stat == Stat::max_energy && p.add <= 20);
+            }
+            std::printf("%-28s %-7s %-9s resist %.2f perks %zu%s\n", def.id.c_str(), def.armor_class.c_str(),
+                        def.slot.c_str(), resist, def.perks.size(), near(resist, 1.0) && perk_ok ? "" : "  BAD");
+            CHECK(is_worn_slot(def.slot) && near(resist, 1.0) && perk_ok);
+        }
+        {
+            // A whole Stormtrooper kit is the medium budget.
+            std::vector<ItemInstance> kit;
+            CharacterLoadout kit_lo;
+            for (const std::string_view s : worn_slots) {
+                const std::string id = "armor_stormtrooper_" + std::string(s);
+                CHECK(real.find(id) != nullptr);
+                kit.push_back({kit.size() + 1, 1, id});
+                kit_lo.gear_ids[std::string(s)] = kit.back().id;
+            }
+            const Loadout full = real.build_loadout(kit_lo, kit, Species::human);
+            const CharacterStats st = stats_for(full, Species::human);
+            const ArmorBudget& mb = armor_budget("medium");
+            CHECK(full.armor_class == "medium");
+            CHECK(near(st.mitigation, mb.mitigation) && near(st.mitigation_by_type[size_t(DamageType::laser)], mb.typed));
+            CHECK(near(st.max_health, CharacterStats{}.max_health + mb.health));
+            CHECK(near(st.move.run_speed, MoveParams{}.run_speed * mb.run_speed));
+
+            // A bodysuit gives nothing, wherever it's put (and changes
+            // nothing about the kit). In the cosmetic override, nothing counts.
+            kit.push_back({100, 1, "suit_imp_stormtrooper"});
+            kit_lo.gear_ids["full_body"] = 100;
+            const Loadout suited = real.build_loadout(kit_lo, kit, Species::human);
+            CHECK(suited.armor_class == "medium" &&
+                  near(stats_for(suited, Species::human).mitigation, mb.mitigation) &&
+                  near(stats_for(suited, Species::human).max_health, st.max_health));
+            CharacterLoadout look_lo;
+            look_lo.appearance_ids = kit_lo.gear_ids;
+            const CharacterStats looks = stats_for(real.build_loadout(look_lo, kit, Species::human), Species::human);
+            CHECK(looks.mitigation == 0 && near(looks.max_health, CharacterStats{}.max_health));
+
+            // Clothes are worn (unarmored); a loadout mostly in them is too.
+            std::vector<ItemInstance> mixed{{1, 1, "cloth_shirt_tunic"}, {2, 1, "cloth_pants_cargo"},
+                                            {3, 1, "armor_composite_helmet"}};
+            CharacterLoadout mixed_lo;
+            mixed_lo.gear_ids = {{"chest", 1}, {"leggings", 2}, {"helmet", 3}};
+            CHECK(real.build_loadout(mixed_lo, mixed, Species::human).armor_class == "none");
+            mixed_lo.gear_ids.erase("leggings");
+            CHECK(real.build_loadout(mixed_lo, mixed, Species::human).armor_class == "heavy");  // a tie: the heavier
+
+            // What goes where: worn things in either panel, the rest in the gear.
+            const ItemDef* helm = real.find("armor_ubese_helmet");
+            const ItemDef* tunic = real.find("cloth_shirt_tunic");
+            const ItemDef* e11r = real.find("wp_rifle_e11");
+            CHECK(item_fits_slot(*helm, "helmet", false) && item_fits_slot(*helm, "helmet", true) &&
+                  !item_fits_slot(*helm, "chest", true));
+            CHECK(item_fits_slot(*tunic, "chest", false) && item_fits_slot(*tunic, "chest", true));
+            CHECK(item_fits_slot(*e11r, "primary", false) && !item_fits_slot(*e11r, "primary", true) &&
+                  !item_fits_slot(*e11r, "sidearm", false));
+            const ItemDef* b1 = real.find("suit_cis_bdroid");
+            CHECK(b1 && b1->kind == ItemKind::bodysuit && item_fits_slot(*b1, "full_body", true) &&
+                  !item_fits_slot(*b1, "full_body", false) && !item_fits_slot(*helm, "full_body", true));
         }
 
         // A species weapon works only in its species' hands.

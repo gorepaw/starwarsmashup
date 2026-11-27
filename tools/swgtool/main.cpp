@@ -1532,7 +1532,7 @@ int cmd_export_items(const std::vector<std::string>& args) {
 
     size_t weapon_count = 0;
     for (const swm::core::ItemDef& w : catalog.all()) {
-        if (w.swg_template.empty()) continue;
+        if (w.swg_template.empty() || w.kind != swm::core::ItemKind::weapon) continue;
         if (!only.empty() && std::find(only.begin(), only.end(), w.id) == only.end()) continue;
         if (!lib.contains(w.swg_template)) {
             std::cerr << "skipping weapon " << w.id << ": no " << w.swg_template << "\n";
@@ -1606,71 +1606,80 @@ int cmd_export_items(const std::vector<std::string>& args) {
         }
     }
 
-    struct WearableEntry {
-        const char* rel_dir;
-        const char* out_stem;
-        const char* sat_m;
-        const char* sat_f;
-    };
-    const WearableEntry wearables[] = {
-        // Ubese
-        {"armor/ubese", "helmet", "appearance/armor_ubese_helmet_m.sat", "appearance/armor_ubese_helmet_f.sat"},
-        {"armor/ubese", "chest", "appearance/armor_ubese_shirt_m.sat", "appearance/armor_ubese_shirt_f.sat"},
-        {"armor/ubese", "leggings", "appearance/armor_ubese_pants_m.sat", "appearance/armor_ubese_pants_f.sat"},
-        {"armor/ubese", "boots", "appearance/armor_ubese_boots_m.sat", "appearance/armor_ubese_boots_f.sat"},
-        {"armor/ubese", "gloves", "appearance/armor_ubese_gloves_m.sat", "appearance/armor_ubese_gloves_f.sat"},
-        {"armor/ubese", "bracer_l", "appearance/armor_ubese_bracer_l_m.sat", "appearance/armor_ubese_bracer_l_f.sat"},
-        {"armor/ubese", "bracer_r", "appearance/armor_ubese_bracer_r_m.sat", "appearance/armor_ubese_bracer_r_f.sat"},
-        // Padded
-        {"armor/padded", "chest", "appearance/armor_padded_s01_chest_plate_m.sat", "appearance/armor_padded_s01_chest_plate_f.sat"},
-        {"armor/padded", "leggings", "appearance/armor_padded_s01_leggings_m.sat", "appearance/armor_padded_s01_leggings_f.sat"},
-        {"armor/padded", "boots", "appearance/armor_padded_s01_boots_m.sat", "appearance/armor_padded_s01_boots_f.sat"},
-        // Stormtrooper
-        {"armor/stormtrooper", "helmet", "appearance/armor_stormtrooper_helmet_m.sat", "appearance/armor_stormtrooper_helmet_f.sat"},
-        {"armor/stormtrooper", "chest", "appearance/armor_stormtrooper_chest_plate_m.sat", "appearance/armor_stormtrooper_chest_plate_f.sat"},
-        {"armor/stormtrooper", "bicep_l", "appearance/armor_stormtrooper_bicep_l_m.sat", "appearance/armor_stormtrooper_bicep_l_f.sat"},
-        {"armor/stormtrooper", "bracer_l", "appearance/armor_stormtrooper_bracer_l_m.sat", "appearance/armor_stormtrooper_bracer_l_f.sat"},
-        {"armor/stormtrooper", "bicep_r", "appearance/armor_stormtrooper_bicep_r_m.sat", "appearance/armor_stormtrooper_bicep_r_f.sat"},
-        {"armor/stormtrooper", "bracer_r", "appearance/armor_stormtrooper_bracer_r_m.sat", "appearance/armor_stormtrooper_bracer_r_f.sat"},
-        {"armor/stormtrooper", "gloves", "appearance/armor_stormtrooper_gloves_m.sat", "appearance/armor_stormtrooper_gloves_f.sat"},
-        {"armor/stormtrooper", "belt", "appearance/armor_stormtrooper_utility_belt_m.sat", "appearance/armor_stormtrooper_utility_belt_f.sat"},
-        {"armor/stormtrooper", "leggings", "appearance/armor_stormtrooper_leggings_m.sat", "appearance/armor_stormtrooper_leggings_f.sat"},
-        {"armor/stormtrooper", "boots", "appearance/armor_stormtrooper_boots_m.sat", "appearance/armor_stormtrooper_boots_f.sat"},
-        // Composite
-        {"armor/composite", "helmet", "appearance/armor_composite_s01_helmet_m.sat", "appearance/armor_composite_s01_helmet_f.sat"},
-        {"armor/composite", "chest", "appearance/armor_composite_s01_chest_plate_m.sat", "appearance/armor_composite_s01_chest_plate_f.sat"},
-        {"armor/composite", "leggings", "appearance/armor_composite_s01_leggings_m.sat", "appearance/armor_composite_s01_leggings_f.sat"},
-        {"armor/composite", "boots", "appearance/armor_composite_s01_boots_m.sat", "appearance/armor_composite_s01_boots_f.sat"},
-        {"armor/composite", "gloves", "appearance/armor_composite_s01_gloves_m.sat", "appearance/armor_composite_s01_gloves_f.sat"},
-        // Clothing
-        {"clothing", "shirt_tunic", "appearance/shirt_s03_m.sat", "appearance/shirt_s03_f.sat"},
-        {"clothing", "jacket_rebel", "appearance/jacket_s10_m.sat", "appearance/jacket_s10_f.sat"},
-        {"clothing", "pants_cargo", "appearance/pants_s05_m.sat", "appearance/pants_s05_f.sat"},
-        {"clothing", "boots_leather", "appearance/boots_s14_m.sat", "appearance/boots_s14_f.sat"},
-    };
-
+    // Worn things (armor, clothing): every catalog item naming its Galaxies
+    // objects (Template, comma-separated, one for each model its Model lists:
+    // biceps and bracers name both sides), each exported for both genders,
+    // fitted to the human body, to its Model path ({g}: m or f). Galaxies
+    // names one gender's model; the other is the same name, _m and _f swapped.
     size_t wearable_count = 0;
     std::ostringstream dummy_log;
-    for (const auto& item : wearables) {
-        for (int g = 0; g < 2; ++g) {
-            const char* sat = g == 0 ? item.sat_m : item.sat_f;
-            const char* base_sat = g == 0 ? "appearance/hum_m.sat" : "appearance/hum_f.sat";
-            if (!lib.contains(sat) || !lib.contains(base_sat)) {
-                std::cerr << "skipping wearable " << sat << ": not found (or no " << base_sat << ")\n";
+    const auto split = [](const std::string& list) {
+        std::vector<std::string> out;
+        std::stringstream parts(list);
+        std::string part;
+        while (std::getline(parts, part, ',')) {
+            part.erase(0, part.find_first_not_of(" \t"));
+            part.erase(part.find_last_not_of(" \t") + 1);
+            if (!part.empty()) out.push_back(part);
+        }
+        return out;
+    };
+    for (const swm::core::ItemDef& item : catalog.all()) {
+        if (item.swg_template.empty() ||
+            (item.kind != swm::core::ItemKind::armor && item.kind != swm::core::ItemKind::clothing)) {
+            continue;
+        }
+        if (!only.empty() && std::find(only.begin(), only.end(), item.id) == only.end()) continue;
+        const std::vector<std::string> tpls = split(item.swg_template);
+        const std::vector<std::string> models = split(item.model_path);
+        if (tpls.size() != models.size()) {
+            std::cerr << "skipping " << item.id << ": " << tpls.size() << " Template(s) for " << models.size()
+                      << " Model(s)\n";
+            continue;
+        }
+        for (size_t i = 0; i < tpls.size(); ++i) {
+            if (!lib.contains(tpls[i])) {
+                std::cerr << "skipping " << item.id << ": no " << tpls[i] << "\n";
                 continue;
             }
+            std::string named;
             try {
-                const SkeletalAppearance app = parse_skeletal_appearance(lib.read(sat));
-                if (app.mesh_generators.empty()) continue;
-                CharacterExport req;
-                req.name = std::string(item.out_stem) + (g == 0 ? "_m" : "_f");
-                req.appearances = {base_sat};
-                req.meshes = app.mesh_generators;
-                req.export_appearance_meshes = false;
-                export_character(lib, req, out_root / item.rel_dir, dummy_log);
-                ++wearable_count;
+                named = templates.shared(tpls[i]).appearance;
             } catch (const std::exception& e) {
-                std::cerr << "skipping wearable " << sat << ": " << e.what() << "\n";
+                std::cerr << "skipping " << item.id << ": " << e.what() << "\n";
+                continue;
+            }
+            for (int g = 0; g < 2; ++g) {
+                const char gc = g == 0 ? 'm' : 'f';
+                // Its gender's model: the named one with _m/_f swapped (the
+                // other gender's, if this one has none).
+                std::string sat = named;
+                if (sat.size() > 6 && sat.ends_with(".sat") && (sat[sat.size() - 6] == '_')) {
+                    sat[sat.size() - 5] = gc;
+                    if (!lib.contains(sat)) sat = named;
+                }
+                const char* base_sat = g == 0 ? "appearance/hum_m.sat" : "appearance/hum_f.sat";
+                std::string out_rel = models[i];
+                for (size_t at; (at = out_rel.find("{g}")) != std::string::npos;) out_rel.replace(at, 3, 1, gc);
+                const std::filesystem::path out_path(out_rel);
+                if (!lib.contains(sat) || !lib.contains(base_sat)) {
+                    std::cerr << "skipping " << item.id << " " << out_rel << ": no " << sat << "\n";
+                    continue;
+                }
+                try {
+                    const SkeletalAppearance app = parse_skeletal_appearance(lib.read(sat));
+                    if (app.mesh_generators.empty()) continue;
+                    CharacterExport req;
+                    req.name = out_path.stem().string();
+                    req.appearances = {base_sat};
+                    req.meshes = app.mesh_generators;
+                    req.export_appearance_meshes = false;
+                    export_character(lib, req, out_root / out_path.parent_path(), dummy_log);
+                    std::cout << std::format("{:28} {:44} {}\n", item.id, out_rel, sat);
+                    ++wearable_count;
+                } catch (const std::exception& e) {
+                    std::cerr << "skipping " << item.id << " " << out_rel << ": " << e.what() << "\n";
+                }
             }
         }
     }

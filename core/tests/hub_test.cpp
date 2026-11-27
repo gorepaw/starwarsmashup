@@ -466,11 +466,11 @@ void test_stage4_hub_loop() {
             << "Model = weapons/wp_rifle_t21/wp_rifle_t21.gltf\n"
             << "[item]\nId = psg_mark1\nName = PSG Mk I\nKind = deflector_shield\nSlot = deflector_shield\n"
             << "Faction = neutral\nCostFactionPoints = 0\nCostCredits = 100\nModifier = mitigation_laser + 0.08\n"
-            << "[item]\nId = cloth_jacket_rebel\nName = Jacket\nKind = clothing\nSlot = jacket\nFaction = neutral\n"
-            << "[item]\nId = cloth_imp_uniform\nName = Imperial Officer Jacket\nKind = clothing\nSlot = jacket\n"
+            << "[item]\nId = cloth_jacket_rebel\nName = Jacket\nKind = clothing\nSlot = chest\nFaction = neutral\n"
+            << "[item]\nId = cloth_imp_uniform\nName = Imperial Officer Jacket\nKind = clothing\nSlot = chest\n"
             << "Faction = empire\nCostFactionPoints = 50\nCostCredits = 0\n"
-            << "[item]\nId = cloth_pants_cargo\nName = Pants\nKind = clothing\nSlot = pants\nFaction = neutral\n"
-            << "[item]\nId = cloth_boots_leather\nName = Boots\nKind = clothing\nSlot = boots_cosmetic\nFaction = neutral\n";
+            << "[item]\nId = cloth_pants_cargo\nName = Pants\nKind = clothing\nSlot = leggings\nFaction = neutral\n"
+            << "[item]\nId = cloth_boots_leather\nName = Boots\nKind = clothing\nSlot = boots\nFaction = neutral\n";
     }
     ItemCatalog catalog;
     catalog.load(cat_path);
@@ -556,7 +556,7 @@ void test_stage4_hub_loop() {
     session.client().set_input({});
     CHECK(session.client().targets()[0].health < start_hp || !session.client().targets()[0].alive);
 
-    // Quartermaster sells FP cosmetic rewards only; Gear Vendor sells weapons for Credits.
+    // The quartermaster sells its faction's equipment for Faction Points; the Gear Vendor, gear for Credits.
     const size_t before_buy = session.client().items().size();
     session.client().buy_item("cloth_imp_uniform", true);
     step_for(0.35);

@@ -43,7 +43,7 @@ Professions are grouped into three implementation waves. SWG's six starter profe
 ### Wave 7A — Foundation (17 Professions)
 
 #### Decoupled Armor Professions (4)
-Armor proficiency is completely decoupled from weapon and advanced professions. Appearance stays a separate cosmetic layer.
+Armor proficiency is completely decoupled from weapon and advanced professions. What a loadout looks like is up to its cosmetic override: any armor or clothing slotted there shows in place of its gear, without its statistics ([Armor](ARMOR.md)).
 
 | Profession | Role & Stat Profile | Baseline SWG Sets | Key 1–100 Unlocks |
 |---|---|---|---|
@@ -67,7 +67,7 @@ Armor proficiency is completely decoupled from weapon and advanced professions. 
 #### Core Crafting Professions (5)
 - **Weaponsmith:** Ranged and melee weapons, weapon enhancement modules (barrels, scopes, cooling cores), ammo/ordnance packs, weapon repair kits.
 - **Armorsmith:** Light/Medium/Heavy armor pieces, universal **Deflector Shields (PSGs)**, armor plating modules, armor repair kits.
-- **Tailor:** Cosmetic clothing/appearance outfits, armor-weave linings, bags/bandoliers, dye kits.
+- **Tailor:** Clothing (worn like armor, for the unarmored), armor-weave linings, bags/bandoliers, dye kits.
 - **Chef:** Rations, meals, and drinks providing clean, readable timed buffs (stamina regen, heat dissipation, crafting/gathering focus) without SWG's 50-item stacking clutter.
 - **Architect:** Field camps, portable cover, and interior furniture/decor now; full player housing, shops, factories, and harvesters in Stage 10+.
 

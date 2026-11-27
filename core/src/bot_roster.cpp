@@ -25,7 +25,7 @@ struct LoadoutRecipe {
     const char* secondary;
     const char* shield;
     std::array<const char*, 5> armor;     // helmet, chest, biceps/bracers, leggings, boots
-    std::array<const char*, 5> cosmetic;  // full_body, helmet, jacket, pants, boots_cosmetic
+    std::array<const char*, 5> look;      // its cosmetic override: full_body, helmet, chest, leggings, boots
 };
 
 constexpr std::array<const char*, 24> rebel_names{
@@ -69,8 +69,7 @@ const std::array<LoadoutRecipe, max_character_loadouts> rebel_recipes{{
      {nullptr, nullptr, "cloth_shirt_tunic", "cloth_pants_cargo", "cloth_boots_leather"}},
     {"SpecForce Heavy", "wp_heavy_rocket_launcher", "wp_pistol_dh17", "wp_grenade_ion", "psg_mark3_rebel",
      {"armor_composite_helmet", "armor_padded_chest", nullptr, "armor_padded_leggings", "armor_padded_boots"},
-     {nullptr, "cosmetic_rebel_composite_helmet", "cosmetic_rebel_composite_chest", "cosmetic_rebel_composite_pants",
-      "cosmetic_rebel_composite_boots"}},
+     {nullptr, nullptr, "armor_composite_chest", "armor_composite_leggings", "armor_composite_boots"}},
     {"Alliance Marksman", "wp_rifle_laser", "wp_pistol_ion", "wp_grenade_c22", "psg_mark1",
      {"armor_ubese_helmet", "armor_ubese_shirt", "armor_ubese_bracer_l", "armor_ubese_leggings", "armor_ubese_boots"},
      {nullptr, nullptr, "cloth_jacket_rebel", "cloth_pants_cargo", "cloth_boots_leather"}},
@@ -80,70 +79,68 @@ const std::array<LoadoutRecipe, max_character_loadouts> empire_recipes{{
     {"Imperial Stormtrooper", "wp_rifle_e11", "wp_pistol_scout_blaster", "wp_grenade_c22", "psg_mark1",
      {"armor_stormtrooper_helmet", "armor_stormtrooper_chest", "armor_stormtrooper_gloves",
       "armor_stormtrooper_leggings", "armor_stormtrooper_boots"},
-     {"cosmetic_imp_stormtrooper_full", nullptr, nullptr, nullptr, nullptr}},
+     {"suit_imp_stormtrooper", nullptr, nullptr, nullptr, nullptr}},
     {"Imperial Heavy", "wp_rifle_t21", "wp_pistol_d18", "wp_grenade_fragmentation", "psg_mark3_imperial",
      {"armor_stormtrooper_helmet", "armor_stormtrooper_chest", "armor_stormtrooper_belt",
       "armor_stormtrooper_leggings", "armor_stormtrooper_boots"},
-     {nullptr, "cosmetic_imp_stormtrooper_helmet", "cosmetic_imp_stormtrooper_chest", "cosmetic_imp_stormtrooper_pants",
-      "cosmetic_imp_stormtrooper_boots"}},
+     {nullptr, nullptr, nullptr, nullptr, nullptr}},
     {"Imperial Scout", "wp_rifle_dlt20a", "wp_pistol_scout_blaster", "wp_grenade_glop", "psg_mark2_energy",
      {"armor_ubese_helmet", "armor_padded_chest", nullptr, "armor_padded_leggings", "armor_padded_boots"},
-     {nullptr, "cosmetic_imp_stormtrooper_helmet", "cloth_shirt_tunic", "cosmetic_imp_stormtrooper_pants",
-      "cosmetic_imp_stormtrooper_boots"}},
+     {nullptr, "armor_stormtrooper_helmet", "cloth_shirt_tunic", "armor_stormtrooper_leggings",
+      "armor_stormtrooper_boots"}},
     {"Imperial Rocket", "wp_heavy_rocket_launcher", "wp_pistol_scout_blaster", "wp_grenade_ion", "psg_mark2_kinetic",
      {"armor_stormtrooper_helmet", "armor_stormtrooper_chest", "armor_stormtrooper_bracers",
       "armor_stormtrooper_leggings", "armor_stormtrooper_boots"},
-     {"cosmetic_imp_stormtrooper_full", nullptr, nullptr, nullptr, nullptr}},
+     {"suit_imp_stormtrooper", nullptr, nullptr, nullptr, nullptr}},
     {"Storm Commando", "wp_carbine_ee3", "wp_melee_stun_baton", "wp_grenade_c22", "psg_mark3_imperial",
      {"armor_stormtrooper_helmet", "armor_stormtrooper_chest", "armor_stormtrooper_biceps",
       "armor_stormtrooper_leggings", "armor_stormtrooper_boots"},
-     {nullptr, "cosmetic_imp_stormtrooper_helmet", "cosmetic_imp_stormtrooper_chest", "cosmetic_imp_stormtrooper_pants",
-      "cosmetic_imp_stormtrooper_boots"}},
+     {nullptr, nullptr, nullptr, nullptr, nullptr}},
 }};
 
 const std::array<LoadoutRecipe, max_character_loadouts> republic_recipes{{
     {"Clone Trooper", "wp_rifle_laser", "wp_pistol_d18", "wp_grenade_c22", "psg_mark1",
      {"armor_composite_helmet", "armor_composite_chest", "armor_composite_gloves", "armor_composite_leggings",
       "armor_composite_boots"},
-     {"cosmetic_rep_clone_p2", nullptr, nullptr, nullptr, nullptr}},
+     {"suit_rep_clone_p2", nullptr, nullptr, nullptr, nullptr}},
     {"Phase I Clone", "wp_rifle_e11", "wp_pistol_d18", "wp_grenade_ion", "psg_mark2_energy",
      {"armor_composite_helmet", "armor_composite_chest", "armor_composite_gloves", "armor_composite_leggings",
       "armor_composite_boots"},
-     {"cosmetic_rep_clone_p1", nullptr, nullptr, nullptr, nullptr}},
+     {"suit_rep_clone_p1", nullptr, nullptr, nullptr, nullptr}},
     {"ARC Trooper", "wp_carbine_ee3", "wp_pistol_ion", "wp_grenade_fragmentation", "psg_mark3_rebel",
      {"armor_composite_helmet", "armor_composite_chest", "armor_composite_gloves", "armor_composite_leggings",
       "armor_composite_boots"},
-     {"cosmetic_rep_arc_trooper", nullptr, nullptr, nullptr, nullptr}},
+     {"suit_rep_arc_trooper", nullptr, nullptr, nullptr, nullptr}},
     {"Clone Heavy", "wp_heavy_rocket_launcher", "wp_pistol_d18", "wp_grenade_ion", "psg_mark2_kinetic",
      {"armor_composite_helmet", "armor_padded_chest", nullptr, "armor_padded_leggings", "armor_padded_boots"},
-     {"cosmetic_rep_heavy_trooper", nullptr, nullptr, nullptr, nullptr}},
+     {"suit_rep_heavy_trooper", nullptr, nullptr, nullptr, nullptr}},
     {"Jet Trooper", "wp_rifle_sg82", "wp_pistol_ion", "wp_grenade_glop", "psg_mark2_energy",
      {"armor_ubese_helmet", "armor_padded_chest", nullptr, "armor_padded_leggings", "armor_padded_boots"},
-     {"cosmetic_rep_jet_trooper", nullptr, nullptr, nullptr, nullptr}},
+     {"suit_rep_jet_trooper", nullptr, nullptr, nullptr, nullptr}},
 }};
 
 const std::array<LoadoutRecipe, max_character_loadouts> separatist_recipes{{
     {"B1 Assault Droid", "wp_rifle_e11", "wp_pistol_d18", "wp_grenade_c22", "psg_mark1",
      {nullptr, "armor_padded_chest", nullptr, "armor_padded_leggings", "armor_padded_boots"},
-     {"cosmetic_cis_bdroid", nullptr, nullptr, nullptr, nullptr}},
+     {"suit_cis_bdroid", nullptr, nullptr, nullptr, nullptr}},
     {"Super Battle Droid", "wp_carbine_laser", "wp_pistol_ion", "wp_grenade_fragmentation", "psg_mark2_kinetic",
      {"armor_composite_helmet", "armor_composite_chest", "armor_composite_gloves", "armor_composite_leggings",
       "armor_composite_boots"},
-     {"cosmetic_cis_sbdroid", nullptr, nullptr, nullptr, nullptr}},
+     {"suit_cis_sbdroid", nullptr, nullptr, nullptr, nullptr}},
     {"B1 Marksman Droid", "wp_rifle_dlt20a", "wp_pistol_d18", "wp_grenade_c22", "psg_mark1",
      {nullptr, "armor_ubese_shirt", nullptr, "armor_ubese_leggings", "armor_ubese_boots"},
-     {"cosmetic_cis_bdroid", nullptr, nullptr, nullptr, nullptr}},
+     {"suit_cis_bdroid", nullptr, nullptr, nullptr, nullptr}},
     {"Heavy Rocket Droid", "wp_heavy_rocket_launcher", "wp_pistol_ion", "wp_grenade_ion", "psg_mark2_energy",
      {"armor_composite_helmet", "armor_padded_chest", nullptr, "armor_padded_leggings", "armor_padded_boots"},
-     {"cosmetic_cis_sbdroid", nullptr, nullptr, nullptr, nullptr}},
+     {"suit_cis_sbdroid", nullptr, nullptr, nullptr, nullptr}},
     {"MagnaGuard", "wp_melee_vibrolance", "wp_pistol_ion", "wp_grenade_glop", "psg_mark3_imperial",
      {"armor_stormtrooper_helmet", "armor_stormtrooper_chest", "armor_stormtrooper_gloves",
       "armor_stormtrooper_leggings", "armor_stormtrooper_boots"},
-     {"cosmetic_cis_magnaguard", nullptr, nullptr, nullptr, nullptr}},
+     {"suit_cis_magnaguard", nullptr, nullptr, nullptr, nullptr}},
 }};
 
 constexpr std::array<const char*, 5> armor_slot_keys{"helmet", "chest", "gloves", "leggings", "boots"};
-constexpr std::array<const char*, 5> cosmetic_slot_keys{"full_body", "helmet", "jacket", "pants", "boots_cosmetic"};
+constexpr std::array<const char*, 5> look_slot_keys{"full_body", "helmet", "chest", "leggings", "boots"};
 
 std::string make_appearance(uint64_t& rng) {
     const double h = 0.35 + rand_unit(rng) * 0.40;
@@ -232,14 +229,14 @@ BotProfileEntry build_entry(std::string name, std::string faction, Species speci
                 cl.gear_ids[armor_slot_keys[k]] = id;
             }
         }
-        for (size_t k = 0; k < cosmetic_slot_keys.size(); ++k) {
+        for (size_t k = 0; k < look_slot_keys.size(); ++k) {
             // Empire mixes full-body stormtrooper suit & modular armor looks across bots.
-            if (out.faction == "empire" && std::string_view(cosmetic_slot_keys[k]) == "full_body" &&
+            if (out.faction == "empire" && std::string_view(look_slot_keys[k]) == "full_body" &&
                 rand_unit(rng) < 0.45) {
                 continue;
             }
-            if (const uint64_t id = add_item(r.cosmetic[k])) {
-                cl.appearance_ids[cosmetic_slot_keys[k]] = id;
+            if (const uint64_t id = add_item(r.look[k])) {
+                cl.appearance_ids[look_slot_keys[k]] = id;
             }
         }
 

@@ -223,9 +223,9 @@ void ensure_starter_kit(CharacterStore& store, PersistentId char_id) {
     lo.secondary_id = grenade.id;
     lo.gear_ids["deflector_shield"] = psg.id;
     lo.gear_ids["ammo_standard"] = ammo_std.id;
-    lo.appearance_ids["shirt"] = shirt.id;
-    lo.appearance_ids["pants"] = pants.id;
-    lo.appearance_ids["boots_cosmetic"] = boots.id;
+    lo.gear_ids["chest"] = shirt.id;  // clothes are worn like armor: unarmored
+    lo.gear_ids["leggings"] = pants.id;
+    lo.gear_ids["boots"] = boots.id;
     store.save_loadout(char_id, lo);
     if (ch->credits == 0 && ch->faction_points == 0 && ch->experience == 0) {
         store.update_economy(char_id, 500, 100, 0, 0);

@@ -30,13 +30,20 @@ const GEAR_SLOTS := [
 	["mount", "Mount / Speeder"],
 ]
 
+# The cosmetic override: the same worn slots, shown over the gear. Any armor
+# or clothing goes in either; here it's only seen. And a Bodysuit, the one
+# look-only item, shown in place of everything.
+const WORN_SLOTS := ["helmet", "chest", "biceps", "bracers", "gloves", "belt", "leggings", "boots"]
 const APPEARANCE_SLOTS := [
-	["full_body", "Full Body"],
-	["helmet", "Helmet (Look)"],
-	["jacket", "Jacket"],
-	["shirt", "Shirt"],
-	["pants", "Pants"],
-	["boots_cosmetic", "Boots (Look)"],
+	["helmet", "Helmet"],
+	["chest", "Chest"],
+	["biceps", "Biceps"],
+	["bracers", "Bracers"],
+	["gloves", "Gloves"],
+	["belt", "Belt"],
+	["leggings", "Leggings"],
+	["boots", "Boots"],
+	["full_body", "Bodysuit"],
 ]
 
 const CATEGORIES := [
@@ -234,13 +241,10 @@ func _sync_stage() -> void:
 	if _stage == null:
 		return
 	var lo := _current_loadout()
-	var ov_rel := ""
-	var fb_id := int((lo.get("appearance_ids", {}) as Dictionary).get("full_body", 0))
-	if fb_id > 0:
-		var fb_inst := _inst_by_id(fb_id)
-		if not fb_inst.is_empty():
-			var fb_def: Dictionary = _def_by_id.get(str(fb_inst.get("def_id", "")), {})
-			ov_rel = str(fb_def.get("model", "")).replace("{g}", "f" if gender == "female" else "m")
+	var gear_layer := _worn_layer(lo.get("gear_ids", {}), false)
+	var look_layer := _worn_layer(lo.get("appearance_ids", {}), true)
+	# A bodysuit replaces the whole body (as core resolve_worn_models).
+	var ov_rel := str(look_layer.get("full_body", ""))
 	var key := "%s|%s|%s|%s" % [species, gender, appearance_json, ov_rel]
 	if key != _stage_key:
 		_stage_key = key
@@ -258,7 +262,7 @@ func _sync_stage() -> void:
 				_stage.set_hair("hairs/" + hair_id + ".gltf", app.get("colors", {}))
 		_stage_worn_key = ""
 
-	var worn := [] if ov_rel != "" else _resolve_stage_worn(lo)
+	var worn := [] if ov_rel != "" else _resolve_stage_worn(gear_layer, look_layer)
 	var weapon_model := ""
 	var prim := _inst_by_id(int(lo.get("primary_id", 0)))
 	if not prim.is_empty():
@@ -270,35 +274,34 @@ func _sync_stage() -> void:
 		_stage.set_worn_models(worn, weapon_model)
 
 
-func _resolve_stage_worn(lo: Dictionary) -> Array:
+# A layer's (gear's or cosmetic override's) worn models by slot, for this
+# gender: only worn things, in the slot they fit.
+func _worn_layer(ids: Dictionary, is_app: bool) -> Dictionary:
 	var by_slot := {}
 	var gen_code := "f" if gender == "female" else "m"
-	var gear_ids: Dictionary = lo.get("gear_ids", {})
-	for slot: String in gear_ids:
-		if _hidden_slots.has(slot):
+	for slot: String in ids:
+		if not WORN_SLOTS.has(slot) and slot != "full_body":
 			continue
-		var inst := _inst_by_id(int(gear_ids[slot]))
+		var inst := _inst_by_id(int(ids[slot]))
 		if inst.is_empty():
 			continue
 		var def: Dictionary = _def_by_id.get(str(inst.get("def_id", "")), {})
-		if str(def.get("kind", "")) == "vehicle":
-			continue  # (a mount's model is the vehicle it summons, not worn)
 		var mp := str(def.get("model", "")).replace("{g}", gen_code)
-		if mp != "":
+		if mp != "" and _is_compatible(def, slot, is_app):
 			by_slot[slot] = mp
-	var app_ids: Dictionary = lo.get("appearance_ids", {})
-	for aslot: String in app_ids:
-		var inst := _inst_by_id(int(app_ids[aslot]))
-		if inst.is_empty():
-			continue
-		var def: Dictionary = _def_by_id.get(str(inst.get("def_id", "")), {})
-		var mp := str(def.get("model", "")).replace("{g}", gen_code)
-		if mp != "":
-			var covered := "chest" if aslot in ["jacket", "shirt"] else ("leggings" if aslot == "pants" else ("boots" if aslot in ["boots_cosmetic", "boots"] else aslot))
-			by_slot[covered] = mp
+	return by_slot
+
+
+# The pieces shown: the gear's, each slot as the override has it instead; a
+# slot this species doesn't show left out.
+func _resolve_stage_worn(gear_layer: Dictionary, look_layer: Dictionary) -> Array:
+	var by_slot := gear_layer.duplicate()
+	by_slot.merge(look_layer, true)
+	by_slot.erase("full_body")
 	var out: Array = []
 	for s: String in by_slot:
-		out.append_array((by_slot[s] as String).split(",", false))  # (a pair of arms is two models)
+		if not _hidden_slots.has(s):
+			out.append_array((by_slot[s] as String).split(",", false))  # (a pair of arms is two models)
 	return out
 
 
@@ -439,7 +442,7 @@ func _paint_paperdoll(box: Rect2) -> void:
 		var sx := x if left_col else box.end.x - col_w - 10 * u
 		var sy := slots_y + row * step
 		var r := Rect2(sx, sy, col_w, slot_h)
-		var hidden := not is_app and _hidden_slots.has(s_id)
+		var hidden := _hidden_slots.has(s_id)
 		var valid_drop := _drag_active and _is_compatible(drag_def, s_id, is_app)
 		var tint := Color(0.65, 1.0, 0.7) if valid_drop else Color.WHITE
 		frame(r, "border_3_pieces", tint)
@@ -473,7 +476,7 @@ func _paint_paperdoll(box: Rect2) -> void:
 				roundi(float(st.get("mitigation_ballistic", 0)) * 100),
 				roundi(float(st.get("mitigation_explosive", 0)) * 100)],
 				Vector2(x, stats_y + 18 * u), "Left", DIM)
-	text("gamefont_tiny", "Drag items onto slots (or double-click). Right-click or [x] unequips. Appearance overrides armor look.",
+	text("gamefont_tiny", "Drag items onto slots (or double-click). Right-click or [x] unequips. Cosmetic Override: worn only for its look.",
 			Vector2(x, box.end.y - 24 * u), "Left", DIM)
 
 
@@ -501,6 +504,9 @@ func _paint_inventory(box: Rect2) -> void:
 		var k := str(def.get("kind", ""))
 		if _category == "misc":
 			if k != "junk" and k != "supply" and k != "quest":
+				continue
+		elif _category == "clothing":
+			if k != "clothing" and k != "bodysuit":  # (bodysuits with the clothes)
 				continue
 		elif _category != "all" and k != _category:
 			continue
@@ -603,20 +609,21 @@ func _equipped_id_in_slot(lo: Dictionary, slot: String, is_app: bool) -> int:
 func _is_compatible(def: Dictionary, slot: String, is_app: bool) -> bool:
 	if def.is_empty():
 		return false
+	# As core item_fits_slot: armor and clothing in either panel, the rest
+	# only in the gear.
 	var kind := str(def.get("kind", ""))
 	var dslot := str(def.get("slot", ""))
+	if kind == "armor" or kind == "clothing":
+		return WORN_SLOTS.has(slot) and dslot == slot
+	if kind == "bodysuit":  # the one look-only item
+		return is_app and slot == "full_body"
 	if is_app:
-		if kind == "clothing":
-			return dslot == slot
-		if kind == "armor":
-			return (dslot == "helmet" and slot == "helmet") or (dslot == "chest" and slot in ["jacket", "shirt"]) \
-					or (dslot == "leggings" and slot == "pants") or (dslot == "boots" and slot == "boots_cosmetic")
 		return false
 	if kind == "weapon":
 		# A species weapon: only its species' hands.
 		var only: PackedStringArray = def.get("species", PackedStringArray())
 		return dslot == slot and (only.is_empty() or only.has(species))
-	if kind == "armor" or kind == "deflector_shield" or kind == "ammo":
+	if kind == "deflector_shield" or kind == "ammo":
 		return dslot == slot
 	if kind == "vehicle":
 		return slot == "mount"
@@ -661,7 +668,9 @@ func _quick_equip(inst: Dictionary) -> void:
 		return
 	if kind == "junk" or kind == "quest":
 		return
-	if kind == "clothing":
+	# Into the panel that's open, if it fits there: worn things go in either,
+	# a bodysuit only in the Cosmetic Override.
+	if (_paperdoll_mode == "appearance" or kind == "bodysuit") and _is_compatible(def, slot, true):
 		_paperdoll_mode = "appearance"
 		_try_equip_into(inst, slot, true)
 	else:
@@ -690,7 +699,7 @@ func _unequip_slot(slot: String, is_app: bool) -> void:
 
 func _find_equipped_for_def(def: Dictionary) -> Dictionary:
 	var lo := _current_loadout()
-	var is_app := str(def.get("kind", "")) == "clothing"
+	var is_app := _paperdoll_mode == "appearance" and _is_compatible(def, str(def.get("slot", "")), true)
 	var slot := str(def.get("slot", ""))
 	var eq_id := _equipped_id_in_slot(lo, slot, is_app)
 	if eq_id <= 0:

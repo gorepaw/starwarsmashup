@@ -250,10 +250,10 @@ func _find_equipped(def: Dictionary) -> Dictionary:
 		if slot == "primary": target_id = int(active_loadout.get("primary_id", 0))
 		elif slot == "sidearm": target_id = int(active_loadout.get("sidearm_id", 0))
 		elif slot == "secondary": target_id = int(active_loadout.get("secondary_id", 0))
-	elif kind == "clothing":
-		target_id = int((active_loadout.get("appearance_ids", {}) as Dictionary).get(slot, 0))
-	elif kind == "armor" or kind == "deflector_shield":
+	elif kind == "armor" or kind == "clothing" or kind == "deflector_shield":
 		target_id = int((active_loadout.get("gear_ids", {}) as Dictionary).get(slot, 0))
+	elif kind == "bodysuit":  # (worn only in the Cosmetic Override)
+		target_id = int((active_loadout.get("appearance_ids", {}) as Dictionary).get(slot, 0))
 	if target_id <= 0:
 		return {}
 	for inst: Dictionary in inventory:

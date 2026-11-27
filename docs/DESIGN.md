@@ -87,7 +87,7 @@ Galaxies has hundreds of weapons and dozens of armor sets. Battlefront has about
 
 - **Every character is a Galaxies model.** Players and AI soldiers alike use Galaxies species bodies and armor, animated with Battlefront II's shooter animations.
 - Galaxies-style character creation: species, body shape sliders (blend shapes), hue/palette choices for skin, hair, and markings.
-- All ten of Galaxies' playable species. Every species wears every armor slot for its statistics, so gearing is the same for all. Where a body can't show some armor, as in Galaxies (Wookiees, Trandoshans, Ithorians), that only affects the cosmetic layer. Each species has small built-in traits.
+- All ten of Galaxies' playable species. Every species wears every armor slot for its statistics, so gearing is the same for all. Where a body can't show some armor, as in Galaxies (Wookiees, Trandoshans, Ithorians), that only affects what shows. Each species has small built-in traits.
 - **Species weapons** (bowcasters, Wookiee and Trandoshan weapons) are locked to their species and are a little stronger than common weapons in return. See [Weapons](WEAPONS.md).
 - Armor and clothing appearance as a separate layer from stats (wear what you like).
 

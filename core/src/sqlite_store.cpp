@@ -1,6 +1,7 @@
 #include "swm/core/sqlite_store.h"
 
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <stdexcept>
 #include <string>
@@ -165,7 +166,7 @@ SqliteCharacterStore::SqliteCharacterStore(const std::filesystem::path& path) {
                  ") STRICT");
             exec(("PRAGMA user_version = " + std::to_string(schema_version)).c_str());
             exec("COMMIT");
-        } else if (version >= 1 && version <= 7) {
+        } else if (version >= 1 && version <= 8) {
             exec("BEGIN");
             if (version == 1) {
                 exec("ALTER TABLE characters ADD COLUMN species TEXT NOT NULL DEFAULT 'human'");
@@ -241,6 +242,37 @@ SqliteCharacterStore::SqliteCharacterStore(const std::filesystem::path& path) {
             }
             if (version <= 7) {
                 exec("ALTER TABLE items ADD COLUMN mark INTEGER NOT NULL DEFAULT 0");
+            }
+            if (version <= 8) {
+                // No cosmetic-only items any more (docs/ARMOR.md): a look of
+                // an armor piece is that piece, a full-body look a suit, and
+                // the cosmetic override's slots are the worn slots.
+                static constexpr std::array<std::pair<const char*, const char*>, 18> renamed{{
+                    {"cosmetic_rebel_composite_helmet", "armor_composite_helmet"},
+                    {"cosmetic_rebel_composite_chest", "armor_composite_chest"},
+                    {"cosmetic_rebel_composite_pants", "armor_composite_leggings"},
+                    {"cosmetic_rebel_composite_boots", "armor_composite_boots"},
+                    {"cosmetic_imp_stormtrooper_helmet", "armor_stormtrooper_helmet"},
+                    {"cosmetic_imp_stormtrooper_chest", "armor_stormtrooper_chest"},
+                    {"cosmetic_imp_stormtrooper_pants", "armor_stormtrooper_leggings"},
+                    {"cosmetic_imp_stormtrooper_boots", "armor_stormtrooper_boots"},
+                    {"cosmetic_imp_stormtrooper_full", "suit_imp_stormtrooper"},
+                    {"cosmetic_rep_clone_p1", "suit_rep_clone_p1"},
+                    {"cosmetic_rep_clone_p2", "suit_rep_clone_p2"},
+                    {"cosmetic_rep_heavy_trooper", "suit_rep_heavy_trooper"},
+                    {"cosmetic_rep_jet_trooper", "suit_rep_jet_trooper"},
+                    {"cosmetic_rep_arc_trooper", "suit_rep_arc_trooper"},
+                    {"cosmetic_rep_commander", "suit_rep_commander"},
+                    {"cosmetic_cis_bdroid", "suit_cis_bdroid"},
+                    {"cosmetic_cis_sbdroid", "suit_cis_sbdroid"},
+                    {"cosmetic_cis_magnaguard", "suit_cis_magnaguard"},
+                }};
+                for (const auto& [from, to] : renamed) {
+                    exec((std::string("UPDATE items SET def_id = '") + to + "' WHERE def_id = '" + from + "'").c_str());
+                }
+                exec("UPDATE loadouts SET appearance_json = REPLACE(REPLACE(REPLACE(REPLACE(appearance_json,"
+                     " '\"jacket\":', '\"chest\":'), '\"shirt\":', '\"chest\":'), '\"pants\":', '\"leggings\":'),"
+                     " '\"boots_cosmetic\":', '\"boots\":')");
             }
             exec("CREATE TABLE IF NOT EXISTS faction_reputation ("
                  " owner_id INTEGER NOT NULL,"

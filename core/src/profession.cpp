@@ -438,8 +438,9 @@ std::string loadout_armor_class(std::span<const std::string> piece_classes) {
     for (const std::string& c : piece_classes) {
         ++counts[size_t(armor_weight(c))];
     }
-    // The most pieces; on a tie the heavier (the loop keeps the later, heavier one).
-    int best = 0, most = 0;
+    // The most pieces, clothing ("none") counting too; on a tie the heavier
+    // (the loop keeps the later, heavier one).
+    int best = 0, most = counts[0];
     for (int w = 1; w <= 3; ++w) {
         if (counts[size_t(w)] > 0 && counts[size_t(w)] >= most) {
             most = counts[size_t(w)];

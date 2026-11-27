@@ -77,6 +77,9 @@ static func build_lines(def: Dictionary, inst: Dictionary, store: Object, equipp
 			"color": Bf2Screen.DIM})
 	if not inst.is_empty() and kind != "junk" and kind != "supply" and kind != "quest" and kind != "ammo":
 		lines.append({"text": "Quality: %d%%" % roundi(quality * 100.0), "color": Bf2Screen.ACCENT})
+	if kind == "bodysuit":
+		lines.append({"text": "A look only: worn in the Cosmetic Override, in place of everything",
+				"color": Bf2Screen.ACCENT})
 	var only: PackedStringArray = def.get("species", PackedStringArray())
 	if not only.is_empty():
 		var names: PackedStringArray = []

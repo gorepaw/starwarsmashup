@@ -90,9 +90,11 @@ void test_services() {
         for (const ItemInstance& item : client.items()) {
             const ItemDef* def = catalog.find(item.def_id);
             const bool worn = item.id == loadout.primary_id || item.id == loadout.sidearm_id || item.id == loadout.secondary_id;
-            if (def != nullptr && !worn && def->kind == ItemKind::clothing &&
-                std::none_of(loadout.appearance_ids.begin(), loadout.appearance_ids.end(),
-                             [&](const auto& slot) { return slot.second == item.id; })) {
+            const auto in = [&](const std::map<std::string, uint64_t>& ids) {
+                return std::any_of(ids.begin(), ids.end(), [&](const auto& slot) { return slot.second == item.id; });
+            };
+            if (def != nullptr && !worn && def->kind == ItemKind::clothing && !in(loadout.gear_ids) &&
+                !in(loadout.appearance_ids)) {
                 spare = item.id;
             }
         }

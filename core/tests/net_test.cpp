@@ -78,7 +78,7 @@ void test_protocol() {
     cl.name = "Heavy";
     cl.primary_id = 10;
     cl.gear_ids["deflector_shield"] = 11;
-    cl.appearance_ids["pants"] = 12;
+    cl.appearance_ids["leggings"] = 12;
     isync.loadouts.push_back(cl);
     Loadout rl;
     rl.name = "Heavy";

@@ -91,7 +91,7 @@ void test_store(CharacterStore& store) {
     lo.name = "Heavy";
     lo.primary_id = i1.id;
     lo.gear_ids["deflector_shield"] = i2.id;
-    lo.appearance_ids["jacket"] = 99;
+    lo.appearance_ids["chest"] = 99;
     store.save_loadout(created_wke.id, lo);
     const auto loadouts = store.list_loadouts(created_wke.id);
     CHECK(loadouts.size() == 1 && loadouts[0] == lo);
@@ -150,6 +150,34 @@ void test_sqlite_file() {
         sqlite3_exec(db, "PRAGMA user_version = 99", nullptr, nullptr, nullptr);
         sqlite3_close(db);
         CHECK(throws([&] { SqliteCharacterStore store(database.path); }));
+    }
+    // A v8 database's cosmetic-only items become the equipment they showed,
+    // and its cosmetic override's slots the worn slots (docs/ARMOR.md).
+    {
+        TempDatabase v8;
+        PersistentId owner = 0;
+        {
+            SqliteCharacterStore fresh(v8.path);
+            owner = fresh.create("dresser", {}, 0).id;
+            const auto suit = fresh.grant_item({0, owner, "cosmetic_rep_clone_p1", 0.5, "", "{}"});
+            const auto legs = fresh.grant_item({0, owner, "cosmetic_imp_stormtrooper_pants", 0.5, "", "{}"});
+            const auto boots = fresh.grant_item({0, owner, "cloth_boots_leather", 0.5, "", "{}"});
+            CharacterLoadout old;
+            old.appearance_ids = {{"full_body", suit.id}, {"pants", legs.id}, {"boots_cosmetic", boots.id}};
+            fresh.save_loadout(owner, old);
+        }
+        sqlite3* db = nullptr;
+        CHECK(sqlite3_open(v8.path.string().c_str(), &db) == SQLITE_OK);
+        sqlite3_exec(db, "PRAGMA user_version = 8", nullptr, nullptr, nullptr);
+        sqlite3_close(db);
+
+        SqliteCharacterStore migrated(v8.path);
+        std::vector<std::string> defs;
+        for (const ItemInstance& item : migrated.list_items(owner)) defs.push_back(item.def_id);
+        CHECK((defs == std::vector<std::string>{"suit_rep_clone_p1", "armor_stormtrooper_leggings", "cloth_boots_leather"}));
+        const auto los = migrated.list_loadouts(owner);
+        CHECK(los.size() == 1 && los[0].appearance_ids.size() == 3 && los[0].appearance_ids.contains("full_body") &&
+              los[0].appearance_ids.contains("leggings") && los[0].appearance_ids.contains("boots"));
     }
     // A v1 database migrates cleanly to v2, preserving existing characters.
     {
