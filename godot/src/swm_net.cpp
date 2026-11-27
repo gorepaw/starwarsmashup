@@ -865,6 +865,7 @@ godot::Dictionary SwmClient::get_specialist() const {
     out["prices"] = prices;
     out["performing"] = s.performing;
     out["bounty_flag"] = s.bounty_flag;
+    out["inspiration_choice"] = godot::String::utf8(s.inspiration_choice.c_str());
     out["channel"] = godot::String::utf8(s.channel.c_str());
     out["channel_remaining"] = double(s.channel_remaining);
     return out;
@@ -996,6 +997,17 @@ godot::Dictionary SwmClient::get_specialist_book(const godot::String& path) {
         slices.push_back(d);
     }
     out["slices"] = slices;
+    godot::Array inspirations;
+    for (const core::InspirationDef& i : book.inspirations()) {
+        godot::Dictionary d;
+        d["id"] = godot::String::utf8(i.id.c_str());
+        d["name"] = godot::String::utf8(i.name.c_str());
+        d["description"] = godot::String::utf8(i.description.c_str());
+        d["kind"] = godot::String::utf8(i.kind.c_str());
+        d["level"] = int64_t(i.level);
+        inspirations.push_back(d);
+    }
+    out["inspirations"] = inspirations;
     return out;
 }
 

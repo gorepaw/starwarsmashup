@@ -39,6 +39,7 @@ void GameServer::earn_profession_xp(Client& client, const std::string& id, int64
     if (def == nullptr || !def->available || xp <= 0) {
         return;
     }
+    xp = int64_t(std::llround(double(xp) * std::max(0.0, client.stats.xp_gain)));  // (a Studious Inspiration)
     if (store_ == nullptr || client.character == 0) {
         // A match: the hub saves it with the battle's rewards.
         client.battle_profession_xp[id] += xp;

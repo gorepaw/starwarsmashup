@@ -50,6 +50,8 @@ static func stat_label(stat_name: String) -> String:
 		"healing_received": return "Healing Received"
 		"ability_cooldown": return "Ability Cooldowns"
 		"effect_resistance": return "Debuff Resist"
+		"xp_gain": return "Experience Gained"
+		"faction_gain": return "Faction Points Gained"
 	return stat_name.replace("_", " ").capitalize()
 
 

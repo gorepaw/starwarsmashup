@@ -10,6 +10,7 @@
 #   Droids      assemble a chassis with modules from the Material Vault
 #   Contracts   bounties, contraband runs, tracking jobs and gigs
 #   Slicing     a Smuggler's permanent sidegrades on weapons and armor
+#   Inspiration what to build in an Entertainer's audience, and what you have
 #
 # The controller (SpecialistUI) sets the data; requests go out as `request`.
 extends "res://ui/bf2_screen.gd"
@@ -39,8 +40,9 @@ const SLICE := 21
 const BOUNTY_FLAG := 23
 const SUPPLY := 24
 const COMPANION_SLOT := 25
+const CHOOSE_INSPIRATION := 27
 
-const TABS := ["Kit", "Companions", "Lab", "Droids", "Contracts", "Slicing"]
+const TABS := ["Kit", "Companions", "Lab", "Droids", "Contracts", "Slicing", "Inspiration"]
 const ROWS := 8
 
 var spec := {}             # SwmClient.get_specialist()
@@ -141,7 +143,7 @@ func _paint() -> void:
 	button(Rect2(box.end.x - 104 * u, box.position.y + 10 * u, 88 * u, 26 * u), "Close", "close", false, true)
 	var tx := box.position.x + 14 * u
 	for i in TABS.size():
-		var w := 104.0 * u
+		var w := minf(104.0 * u, (box.size.x - 140 * u) / TABS.size() - 4 * u)
 		button(Rect2(tx, box.position.y + 10 * u, w, 26 * u), TABS[i], "tab:%d" % i, i == _tab)
 		tx += w + 4 * u
 	var body := Rect2(box.position.x + 18 * u, box.position.y + 50 * u, box.size.x - 36 * u, box.size.y - 90 * u)
@@ -153,6 +155,7 @@ func _paint() -> void:
 		3: _paint_droids(body)
 		4: _paint_contracts(body)
 		5: _paint_slicing(body)
+		6: _paint_inspiration(body)
 	if feedback != "":
 		text("gamefont_small", feedback, Vector2(box.get_center().x, box.end.y - 30 * u), "Center", ACCENT)
 
@@ -416,6 +419,39 @@ func _paint_slicing(body: Rect2) -> void:
 				"supply", false, false, _slice_item >= 0)
 
 
+# Inspiration (docs/PROFESSIONS.md): one long buff, built by watching an
+# Entertainer perform. What you have, and the menu: an option is built when
+# the performer you watch has learned its milestone.
+func _paint_inspiration(body: Rect2) -> void:
+	var x := body.position.x
+	var y := body.position.y
+	var have := {}
+	for e: Dictionary in spec.get("effects", []):
+		if str(e.get("id", "")) == "inspiration":
+			have = e
+	if have.is_empty():
+		text("gamefont_small", "No Inspiration: watch an Entertainer perform (5 minutes for an hour).", Vector2(x, y), "Left", DIM)
+	else:
+		var left := int(have.get("remaining", 0.0))
+		text("gamefont_small", "%s  ·  %d:%02d left (counts down while you play; a death in the open world ends it)" %
+				[str(have.get("name", "")), left / 60, left % 60], Vector2(x, y), "Left", ACCENT)
+	y += 30 * u
+	var choice := str(spec.get("inspiration_choice", ""))
+	text("gamefont_small", "Build in an audience:", Vector2(x, y), "Left", TEXT)
+	button(Rect2(body.end.x - 260 * u, y - 2 * u, 260 * u, 26 * u), "Whatever they perform", "insp:", choice == "")
+	y += 30 * u
+	for i: Dictionary in book.get("inspirations", []):
+		var iid := str(i.get("id", ""))
+		var rect := Rect2(x, y, body.size.x, 40 * u)
+		_row(rect, "insp:" + iid, iid == choice)
+		text("gamefont_tiny", "%s  (%s, a performer's milestone %d)" % [str(i.get("name", iid)), str(i.get("kind", "")),
+				int(i.get("level", 1))], Vector2(rect.position.x + 8 * u, y + 3 * u), "Left", ACCENT if iid == choice else TEXT)
+		text("gamefont_tiny", str(i.get("description", "")), Vector2(rect.position.x + 8 * u, y + 21 * u), "Left", DIM, 0.85)
+		y += 44 * u
+		if y > body.end.y - 44 * u:
+			break
+
+
 func _on_click(id: String, _at: Vector2) -> void:
 	feedback = ""
 	if id == "close":
@@ -427,6 +463,8 @@ func _on_click(id: String, _at: Vector2) -> void:
 		_renaming = -1
 	elif id == "bounty_flag":
 		_send(BOUNTY_FLAG, 0 if bool(spec.get("bounty_flag", false)) else 1)
+	elif id.begins_with("insp:"):
+		_send(CHOOSE_INSPIRATION, 0, 0, id.substr(5))
 	elif id == "bar_reset":
 		bar_edit.emit("", -1)
 	elif id.begins_with("bar:"):

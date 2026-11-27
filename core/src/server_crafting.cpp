@@ -302,7 +302,7 @@ void GameServer::handle_craft_request(Client& client, const net::CraftRequest& r
             std::erase_if(client.items, [&](const ItemInstance& inst) { return inst.id == id; });
         }
         client.credits += order->reward_credits;
-        client.faction_points += order->reward_fp;
+        client.faction_points += int64_t(std::llround(double(order->reward_fp) * client.stats.faction_gain));
         save_economy(client);
         ++client.inventory_rev;
         client.last_sync_tick = 0;

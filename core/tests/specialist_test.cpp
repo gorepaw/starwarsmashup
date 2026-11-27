@@ -168,9 +168,24 @@ void test_rules(const SpecialistBook& book, const ProfessionBook& professions) {
     apply_slice(w, *book.slice("slice_overclock"));
     CHECK(near(w.shot_delay, delay / 1.12) && near(w.heat_per_shot, heat * 1.2));
 
-    // Entertainers: 15 s from a novice, 30 s from a master; bands are stronger.
-    CHECK(near(inspiration(0, 1, 1).duration, 15) && near(inspiration(100, 1, 1).duration, 30));
-    CHECK(inspiration(50, 3, 1).modifiers[0].multiply > inspiration(50, 1, 1).modifiers[0].multiply);
+    // Inspiration: 5 minutes watched is an hour; a band and a flourish build
+    // faster; a novice's is 60% as strong; saved as text; shown as an effect.
+    CHECK(near(inspiration_gain(300, 1, false, false), 3600));
+    CHECK(near(inspiration_gain(5, 3, false, false), 90) && near(inspiration_gain(5, 3, true, true), 240));
+    CHECK(near(inspiration_strength(1), 0.604) && near(inspiration_strength(100), 1.0));
+    CHECK(book.inspirations().size() == 7);
+    const InspirationDef* wind = book.inspiration("insp_second_wind");
+    const InspirationDef* studious = book.inspiration("insp_studious");
+    CHECK(wind && wind->kind == "combat" && wind->level == 1);
+    CHECK(studious && studious->kind == "progression" && studious->modifiers[0].stat == Stat::xp_gain);
+    const Inspiration half{"insp_second_wind", 600, 0.5};
+    CHECK(parse_inspiration(format_inspiration(half)) == half);
+    CHECK(!parse_inspiration("") && format_inspiration(Inspiration{}).empty());
+    if (wind != nullptr) {
+        const TimedEffect e = inspiration_effect(*wind, half);
+        CHECK(e.id == "inspiration" && near(e.remaining, 600) && (e.flags & effect_flag::inspired) != 0);
+        CHECK(e.modifiers.size() == 1 && near(e.modifiers[0].multiply, 1.04));
+    }
 }
 
 void test_wire() {
@@ -195,13 +210,14 @@ void test_wire() {
     sync.contracts = {c, order};
     sync.prices = {{"wp_rifle_e11", PriceStats{2, 100, 300, 200, 300}}};
     sync.performing = true;
+    sync.inspiration_choice = "insp_fleet";
     const auto decoded = std::get<net::SpecialistSync>(net::decode(net::encode(sync)));
     CHECK(decoded.revision == 9 && decoded.abilities == sync.abilities && decoded.effects == sync.effects);
     CHECK(decoded.companions.size() == 1 && decoded.companions[0].name == "Biter");
     CHECK(decoded.contracts.size() == 2 && decoded.contracts[0].kind == ContractKind::track && decoded.contracts[0].reward == 120);
     CHECK(decoded.contracts.size() == 2 && decoded.contracts[1] == order);
     CHECK(decoded.prices.size() == 1 && decoded.prices[0].second.average == 200);
-    CHECK(decoded.performing);
+    CHECK(decoded.performing && decoded.inspiration_choice == "insp_fleet");
 
     net::SpecialistRequest request;
     request.action = net::SpecialistRequest::bazaar_list;
@@ -310,14 +326,30 @@ void test_server(const std::filesystem::path& root, const SpecialistBook& book, 
     const auto* mine = server.professions_of(me);
     CHECK(mine && profession_xp(*mine, "bounty_hunter") > master);
 
-    // A performance: we (and anyone near) are Inspired.
+    // A performance: the audience (the buyer, near) builds Inspiration, a
+    // master's at full strength; the performer doesn't, but is tipped.
+    CHECK(performance_tips(1, 0) == 1 && performance_tips(50, 0) == 2 && performance_tips(100, 12) == 11);
+    const int64_t before_tips = vet_client.player_status().credits;
     use("ent_perform", 0, {});
     run(1.5);
     const SpecialistState* spec = server.specialist_state(me);
-    CHECK(spec && spec->performing);
-    CHECK(spec && has_effect_flag(spec->effects, effect_flag::inspired));
+    const SpecialistState* fan = server.specialist_state(buyer.entity_id());
+    CHECK(spec && spec->performing && spec->inspiration.id.empty());
+    CHECK(fan && fan->inspiration.id == "insp_second_wind" && fan->inspiration.remaining > 50 &&
+          near(fan->inspiration.strength, 1.0));
+    CHECK(fan && has_effect_flag(fan->effects, effect_flag::inspired));
     CHECK(std::any_of(vet_client.field().performers.begin(), vet_client.field().performers.end(),
                       [&](uint32_t e) { return e == me; }));
+    // The buyer chooses Composure (a Band Leader's, which a master offers): it's built instead.
+    net::SpecialistRequest choose;
+    choose.action = net::SpecialistRequest::choose_inspiration;
+    choose.id = "insp_composure";
+    buyer.specialist_request(choose);
+    run(5.5);
+    CHECK(fan && fan->inspiration.id == "insp_composure" && fan->inspiration.remaining > 50 &&
+          fan->inspiration.remaining < 70);
+    CHECK(buyer.specialist().inspiration_choice == "insp_composure");
+    CHECK(vet_client.player_status().credits == before_tips + 2 * performance_tips(100, 1));  // two pulses, one watching
     run(0.6);  // its cooldown
     use("ent_perform", 0, {});
     run(2.1);
@@ -415,6 +447,9 @@ void test_server(const std::filesystem::path& root, const SpecialistBook& book, 
     CHECK(saved && !store.get_extra(saved->id, "datapad").empty());
     const auto saved_buyer = store.find_by_name("Buyer");
     CHECK(saved_buyer && store.get_extra(saved_buyer->id, "bounty_flag") == "1");
+    // Its Inspiration is kept, counting down only while it played.
+    const auto kept = saved_buyer ? parse_inspiration(store.get_extra(saved_buyer->id, "inspiration")) : std::nullopt;
+    CHECK(kept && kept->id == "insp_composure" && kept->remaining > 20 && kept->remaining < 70);
 }
 
 // Crafting orders at an artisan terminal (docs/PROFESSIONS.md): a Doctor
@@ -536,6 +571,7 @@ void test_match(const SpecialistBook& book, const ProfessionBook& professions) {
     kit.abilities = {"rg_cloak", "sl_beacon", "sl_rally", "rg_track"};
     kit.specialist_levels = {{"ranger", 100}, {"squad_leader", 100}, {"creature_handler", 60}};
     kit.companion = format_companion({7, "womp_rat", "Biter", "tamed", 0.5, 1, 1, 1, 0, {}, false});
+    kit.inspiration = format_inspiration({"insp_endurance", 600, 1.0});  // built in the hub
     server.set_player_loadouts(ea, {kit});
     a.request_spawn(0, 0);
     b.request_spawn(0, 2);
@@ -547,6 +583,11 @@ void test_match(const SpecialistBook& book, const ProfessionBook& professions) {
                            [&](const net::AbilityStatus& s) { return s.id == id; });
     };
     CHECK(in_kit("rg_cloak") && in_kit("sl_beacon") && !in_kit("rg_track"));  // tracking is world-only
+    const auto inspired = [&] {
+        const SpecialistState* s = server.specialist_state(ea);
+        return s != nullptr && s->inspiration.id == "insp_endurance" && has_effect_flag(s->effects, effect_flag::inspired);
+    };
+    CHECK(inspired());  // the hub's Inspiration came along
     const auto sees = [&](GameClient& c, uint32_t e) {
         return std::any_of(c.remotes().begin(), c.remotes().end(), [&](const GameClient::Remote& r) { return r.id == e; });
     };
@@ -588,6 +629,7 @@ void test_match(const SpecialistBook& book, const ProfessionBook& professions) {
     run(1.0);
     const MoveState* back = server.state_of(ea);
     CHECK(server.alive(ea) && back && std::hypot(back->position.x - beacon.x, back->position.z - beacon.z) < 3);
+    CHECK(inspired());  // a death in a match doesn't end it
     // A bantha is too big for a battle.
     kit.companion = format_companion({8, "bantha", "Big", "tamed", 0.5, 1, 1, 1, 0, {}, false});
     server.set_player_loadouts(ea, {kit});

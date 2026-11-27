@@ -225,10 +225,22 @@ void GameServer::load_specialist_data(Client& client) {
     spec.samples = parse_samples(store_->get_extra(client.character, "dna"));
     for (const DnaSample& s : spec.samples) spec.next_sample_id = std::max(spec.next_sample_id, s.id + 1);
     spec.bounty_flag = store_->get_extra(client.character, "bounty_flag") == "1";
+    spec.inspiration = parse_inspiration(store_->get_extra(client.character, "inspiration")).value_or(Inspiration{});
+    spec.saved_inspiration = format_inspiration(spec.inspiration);
 }
 
 void GameServer::save_specialist_data(const Client& client) const {
-    if (store_ == nullptr || client.character == 0 || !client.spec.dirty) return;
+    if (store_ == nullptr || client.character == 0) return;
+    // Inspiration, as it stands (it counts down only while its character plays).
+    if (const std::string insp = format_inspiration(client.spec.inspiration); insp != client.spec.saved_inspiration) {
+        try {
+            store_->set_extra(client.character, "inspiration", insp);
+            client.spec.saved_inspiration = insp;
+        } catch (const std::exception& error) {
+            say(std::format("inspiration save error for {}: {}", client.name, error.what()));
+        }
+    }
+    if (!client.spec.dirty) return;
     try {
         std::string datapad;
         for (const CompanionRecord& r : client.spec.companions) datapad += format_companion(r) + "\n";
@@ -271,6 +283,7 @@ void GameServer::fill_specialist_loadout(const Client& client, const CharacterLo
         }
     }
     apply_slices(client, cl, loadout);
+    loadout.inspiration = format_inspiration(client.spec.inspiration);
 }
 
 void GameServer::apply_slices(const Client& client, const CharacterLoadout& cl, Loadout& loadout) const {
@@ -372,6 +385,67 @@ void GameServer::give_effect(Client& client, TimedEffect effect) {
     if (add_effect(client.spec.effects, std::move(effect))) refresh_effect_gear(client);
     ++client.spec.revision;
     client.spec.sync_tick = 0;
+}
+
+ProfessionStanding GameServer::entertainer_standing(const Client& client) const {
+    if (config_.professions == nullptr) return {};
+    return profession_standing(*config_.professions, client.professions, "entertainer");
+}
+
+bool GameServer::inspire(Client& listener, const ProfessionStanding& performer, double gain) {
+    const SpecialistBook* book = config_.specialists;
+    if (book == nullptr || performer.trained < 1 || gain <= 0 || listener.life != Life::alive) return false;
+    SpecialistState& spec = listener.spec;
+    const auto offered = [&](const std::string& id) -> const InspirationDef* {
+        const InspirationDef* d = book->inspiration(id);
+        return d != nullptr && d->level <= performer.trained ? d : nullptr;
+    };
+    // The listener's choice, if this performer offers it; else more of what
+    // it has; else (having none) the first this performer offers. One it
+    // doesn't offer is never written over.
+    const InspirationDef* def = offered(spec.inspiration_choice);
+    if (def == nullptr) def = offered(spec.inspiration.id);
+    if (def == nullptr && !spec.inspiration.id.empty()) return false;
+    for (const InspirationDef& d : book->inspirations()) {
+        if (def == nullptr && d.level <= performer.trained) def = &d;
+    }
+    if (def == nullptr) return false;
+    Inspiration& insp = spec.inspiration;
+    const double strength = inspiration_strength(performer.level);
+    if (insp.id != def->id) {
+        insp = Inspiration{def->id, 0, strength};
+    } else {
+        insp.strength = std::max(insp.strength, strength);
+    }
+    const double cap = performer.trained >= 100 ? virtuoso_inspiration_cap : inspiration_cap;
+    insp.remaining = std::max(insp.remaining, std::min(cap, insp.remaining + gain));
+    std::erase_if(spec.effects, [](const TimedEffect& e) { return e.id == "inspiration"; });
+    sync_inspiration(listener);
+    return true;
+}
+
+void GameServer::sync_inspiration(Client& client) {
+    SpecialistState& spec = client.spec;
+    if (store_ == nullptr && !spec.inspiration_carried && client.life == Life::alive) {
+        spec.inspiration_carried = true;  // a match: what the hub's loadout brought
+        spec.inspiration = parse_inspiration(loadout_of(client).inspiration).value_or(Inspiration{});
+    }
+    const auto it = std::find_if(spec.effects.begin(), spec.effects.end(),
+                                 [](const TimedEffect& e) { return e.id == "inspiration"; });
+    const InspirationDef* def = config_.specialists ? config_.specialists->inspiration(spec.inspiration.id) : nullptr;
+    if (def == nullptr || spec.inspiration.remaining <= 0) {
+        if (it != spec.effects.end()) {
+            spec.effects.erase(it);
+            refresh_effect_gear(client);
+            ++spec.revision;
+            spec.sync_tick = 0;
+        }
+        return;
+    }
+    if (client.life != Life::alive) return;
+    if (it != spec.effects.end() && std::abs(it->remaining - spec.inspiration.remaining) < 2) return;
+    if (it != spec.effects.end()) spec.effects.erase(it);
+    give_effect(client, inspiration_effect(*def, spec.inspiration));
 }
 
 void GameServer::give_hit_effect(const WeaponDef& weapon, uint32_t attacker, Client& victim) {
@@ -881,6 +955,10 @@ bool GameServer::use_ability(Client& client, const AbilityDef& a, uint32_t targe
         return true;
     }
     case AbilityEffect::perform:
+        if (!client.spec.performing && in_combat(client)) {
+            notify(client.entity, "Not in a fight: performances are for when it's over");
+            return false;
+        }
         client.spec.performing = !client.spec.performing;
         client.spec.perform_pulse = 1.0;
         notify(client.entity, client.spec.performing ? "You begin to perform" : "You stop performing");
@@ -1349,6 +1427,13 @@ void GameServer::update_effects(Client& client, double dt) {
     update_perks(client);   // (triggered perks' held conditions)
     update_charge(client);  // (a perk's shoulder charge)
     SpecialistState& spec = client.spec;
+    // Inspiration counts down while its character plays; a death in the open
+    // world ends it, one in a match doesn't (docs/PROFESSIONS.md).
+    if (!spec.inspiration.id.empty()) {
+        spec.inspiration.remaining -= dt;
+        if (spec.inspiration.remaining <= 0 || (!conquest_ && client.life == Life::dead)) spec.inspiration = {};
+    }
+    sync_inspiration(client);
     if (client.life != Life::alive) {
         if (!spec.effects.empty()) {
             const bool had_stats = effects_gear(spec.effects).has_value();
@@ -1455,7 +1540,8 @@ void GameServer::update_specialists(double dt) {
         if (spec.dirty && tick_ % 150 == client.entity % 150) save_specialist_data(client);
     }
 
-    // Performances: every few seconds, Inspiration for the audience.
+    // Performances: every pulse, the audience builds Inspiration (a band of
+    // performers, and a flourish, faster); a gig counts with an audience.
     for (Client& performer : clients_) {
         if (!performer.spec.performing || performer.life != Life::alive) continue;
         performer.spec.perform_pulse -= dt;
@@ -1465,18 +1551,25 @@ void GameServer::update_specialists(double dt) {
         for (const Client& other : clients_) {
             if (other.spec.performing && flat_distance(other.state.position, performer.state.position) <= band_radius) ++band;
         }
-        const int level = specialist_level(performer, "entertainer");
+        const ProfessionStanding st = entertainer_standing(performer);
+        const bool flourish = std::any_of(performer.spec.effects.begin(), performer.spec.effects.end(),
+                                          [](const TimedEffect& e) { return e.id == "ent_flourish"; });
+        const double gain = inspiration_gain(performance_pulse, band, st.trained >= 75, flourish);
         int audience = 0;
         for (Client& listener : clients_) {
-            if (listener.life != Life::alive || flat_distance(listener.state.position, performer.state.position) > performance_radius) {
+            if (&listener == &performer || listener.spec.performing || listener.life != Life::alive ||
+                flat_distance(listener.state.position, performer.state.position) > performance_radius) {
                 continue;
             }
-            give_effect(listener, inspiration(level, band, performer.entity));
-            if (&listener != &performer && !listener.spec.performing) ++audience;
+            if (inspire(listener, st, gain)) ++audience;
         }
         earn_specialist_xp(performer, "entertainer", 6 + 6 * std::min(audience, 8) + 3 * (band - 1));
+        if (st.trained >= 1) {  // tips, even to an empty room
+            performer.credits += performance_tips(st.level, audience);
+            save_economy(performer);
+        }
         for (Contract& c : performer.spec.contracts) {
-            if (c.kind == ContractKind::gig && flat_distance(performer.state.position, c.waypoint) <= c.radius) {
+            if (c.kind == ContractKind::gig && audience > 0 && flat_distance(performer.state.position, c.waypoint) <= c.radius) {
                 c.progress += performance_pulse;
             }
         }
@@ -1537,14 +1630,21 @@ void GameServer::update_specialists(double dt) {
             break;
         }
         case DeployKind::buff_aura:
+            // A holo-emitter: its owner's performance, recorded: anyone near
+            // builds Inspiration from it at half speed.
             if (d.pulse <= 0) {
-                d.pulse = 2.0;
-                const AbilityDef* a = book->ability(d.ability);
-                const int level = specialist_level(*owner, a ? a->profession : "entertainer");
+                d.pulse = performance_pulse;
+                const ProfessionStanding st = entertainer_standing(*owner);
+                const double gain = inspiration_gain(performance_pulse, 1, false, false) * 0.5;
+                int audience = 0;
                 for (Client& c : clients_) {
-                    if (c.life == Life::alive && friendly(c) && flat_distance(c.state.position, d.position) <= d.radius) {
-                        give_effect(c, inspiration(level, 1, d.owner));
+                    if (c.life == Life::alive && !c.spec.performing && friendly(c) &&
+                        flat_distance(c.state.position, d.position) <= d.radius && inspire(c, st, gain)) {
+                        ++audience;
                     }
+                }
+                if (Client* o = find(d.owner); o != nullptr && audience > 0) {
+                    earn_specialist_xp(*o, "entertainer", 2 * std::min(audience, 8));
                 }
             }
             break;
@@ -1763,8 +1863,8 @@ void GameServer::offer_contracts(Client& client, size_t terminal) {
             c.target_name = venues[k].first;
             c.waypoint = venues[k].second;
             c.radius = 15;
-            c.needed = 60;
-            c.title = std::format("Gig: perform by {} for a minute", venues[k].first);
+            c.needed = 180;  // with an audience
+            c.title = std::format("Gig: perform by {} for three minutes, to an audience", venues[k].first);
             c.reward = contract_reward(c.kind, 1, 0);
             c.xp = 200;
             spec.offers.push_back(dressed(c));
@@ -2410,6 +2510,12 @@ void GameServer::datapad_action(Client& client, const net::SpecialistRequest& re
         earn_specialist_xp(client, "smuggler", 60 + slice->level);
         return;
     }
+    case R::choose_inspiration:
+        // What to build in a performer's audience ("" whatever they offer).
+        if (!request.id.empty() && (config_.specialists == nullptr || !config_.specialists->inspiration(request.id))) return;
+        spec.inspiration_choice = request.id;
+        changed();
+        return;
     case R::bounty_flag:
         if (conquest_) return;
         spec.bounty_flag = request.amount == 1;
@@ -2437,7 +2543,7 @@ void GameServer::datapad_action(Client& client, const net::SpecialistRequest& re
         const int64_t value = std::max<int64_t>(10, def->sell_value);
         if (!consume(item->id)) return;
         client.credits += value * 3 / 2;
-        client.faction_points += std::max<int64_t>(1, value / 10);
+        client.faction_points += int64_t(std::llround(double(std::max<int64_t>(1, value / 10)) * client.stats.faction_gain));
         save_economy(client);
         notify(client.entity, std::format("Supplied {} with {} (+{} credits, +{} FP)", qm->name, def->display_name, value * 3 / 2,
                                           std::max<int64_t>(1, value / 10)));
@@ -2563,6 +2669,7 @@ void GameServer::send_specialist_sync(Client& client) {
     }
     sync.prices = spec.bazaar_prices;
     sync.performing = spec.performing;
+    sync.inspiration_choice = spec.inspiration_choice;
     sync.bounty_flag = spec.bounty_flag;
     sync.channel = spec.channel;
     sync.channel_remaining = float(spec.channel_remaining);

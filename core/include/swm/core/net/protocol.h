@@ -20,7 +20,7 @@ namespace swm::core::net {
 // Every packet starts with a magic number, the protocol version and a message
 // type. Peers drop packets with another version. Bump it on any wire change.
 inline constexpr uint16_t protocol_magic = 0x4D53;  // "SM"
-inline constexpr uint16_t protocol_version = 48;
+inline constexpr uint16_t protocol_version = 49;
 // BoltState/Impact::weapon: a placed trap's shot, from that weapon slot
 // (drawn from the trap, not its owner's gun).
 inline constexpr uint8_t trap_shot_flag = 0x40;
@@ -649,6 +649,7 @@ struct SpecialistRequest {
         supply_contract = 24,   // `item_id`: supplied to the quartermaster you stand at
         set_companion_slot = 25,  // `amount`: a datapad id (0: none) for the active loadout
         cancel_channel = 26,
+        choose_inspiration = 27,  // `id`: the Inspiration to build in a performer's audience ("": theirs)
     };
     uint8_t action = 0;
     std::string id;
@@ -697,6 +698,7 @@ struct SpecialistSync {
     std::vector<std::pair<std::string, PriceStats>> prices;  // Market Analytics: by item def
     bool performing = false;
     bool bounty_flag = false;
+    std::string inspiration_choice;  // what it builds in an audience (empty: the performer's)
     std::string channel;            // an ability being channeled (empty: none)
     float channel_remaining = 0;
 

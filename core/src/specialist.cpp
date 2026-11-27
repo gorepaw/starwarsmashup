@@ -323,6 +323,22 @@ void SpecialistBook::parse(const Ini& ini, const std::string& where) {
                 if (same(key, "Modifier")) sl.modifiers.push_back(parse_stat_modifier(value, here));
             }
             slices_.push_back(std::move(sl));
+        } else if (same(s.name, "inspiration")) {
+            InspirationDef in;
+            in.id = s.get("Id").value_or("");
+            in.name = s.get("Name").value_or(in.id);
+            in.description = s.get("Description").value_or("");
+            if (in.id.empty()) throw std::runtime_error(here + ": an inspiration needs Id");
+            in.kind = lower(s.get("Kind").value_or("combat"));
+            if (in.kind != "combat" && in.kind != "progression") {
+                throw std::runtime_error(here + ": Kind is combat or progression");
+            }
+            in.level = std::clamp(int(s.number("Level", 1)), 1, profession_max_level);
+            for (const auto& [key, value] : s.values) {
+                if (same(key, "Modifier")) in.modifiers.push_back(parse_stat_modifier(value, here));
+            }
+            if (in.modifiers.empty()) throw std::runtime_error(here + ": an inspiration needs a Modifier");
+            inspirations_.push_back(std::move(in));
         }
     }
     for (const CompanionTemplate& c : companions_) {
@@ -363,6 +379,13 @@ const DroidModule* SpecialistBook::module(std::string_view id) const {
 const SliceDef* SpecialistBook::slice(std::string_view id) const {
     for (const SliceDef& s : slices_) {
         if (s.id == id) return &s;
+    }
+    return nullptr;
+}
+
+const InspirationDef* SpecialistBook::inspiration(std::string_view id) const {
+    for (const InspirationDef& i : inspirations_) {
+        if (i.id == id) return &i;
     }
     return nullptr;
 }
@@ -602,7 +625,7 @@ int64_t contract_reward(ContractKind kind, int tier, double distance) {
     case ContractKind::pvp_mark: return 1000;
     case ContractKind::contraband: return int64_t(100 + d * 0.8);
     case ContractKind::track: return int64_t(80 + d * 0.4);
-    case ContractKind::gig: return 120;
+    case ContractKind::gig: return 300;
     case ContractKind::craft_order: return int64_t(60 * std::max(1, tier));
     }
     return 0;
@@ -764,18 +787,46 @@ void apply_slice(Gear& gear, const SliceDef& s) {
 // ---------------------------------------------------------------------------
 // Entertainer
 
-TimedEffect inspiration(int entertainer_level, int band_size, uint32_t source) {
-    const double level = std::clamp(entertainer_level, 0, profession_max_level);
-    const double band = std::clamp(band_size, 1, 4) - 1;
+double inspiration_strength(int entertainer_level) {
+    return 0.6 + 0.4 * double(std::clamp(entertainer_level, 1, profession_max_level)) / profession_max_level;
+}
+
+int64_t performance_tips(int entertainer_level, int audience) {
+    return 1 + std::clamp(entertainer_level, 0, profession_max_level) / 50 + std::clamp(audience, 0, 8);
+}
+
+double inspiration_gain(double seconds, int band_size, bool band_leader, bool flourish) {
+    // Each performer past the first a quarter more (a Band Leader's a half), up to a band of four.
+    const double band = double(std::clamp(band_size, 1, 4) - 1) * (band_leader ? 0.5 : 0.25);
+    return std::max(0.0, seconds) * inspiration_per_second * (1 + band) * (flourish ? 2 : 1);
+}
+
+std::string format_inspiration(const Inspiration& insp) {
+    if (insp.id.empty() || insp.remaining <= 0) return {};
+    return std::format("{} {:.0f} {:.3f}", insp.id, insp.remaining, insp.strength);
+}
+
+std::optional<Inspiration> parse_inspiration(std::string_view text) {
+    std::istringstream in{std::string(text)};
+    Inspiration insp;
+    if (!(in >> insp.id >> insp.remaining >> insp.strength) || insp.id.empty() || insp.remaining <= 0) {
+        return std::nullopt;
+    }
+    insp.strength = std::clamp(insp.strength, 0.0, 1.0);
+    return insp;
+}
+
+TimedEffect inspiration_effect(const InspirationDef& def, const Inspiration& insp) {
     TimedEffect e;
-    e.id = "inspired";
-    e.name = band > 0 ? "Inspired (band)" : "Inspired";
-    e.source = source;
-    // 15 s from a novice, 30 s from a master (docs/PROFESSIONS.md).
-    e.remaining = e.duration = 15 + level * 0.15;
+    e.id = "inspiration";
+    e.name = "Inspired: " + def.name;
+    e.remaining = e.duration = std::max(0.0, insp.remaining);
     e.flags = effect_flag::inspired;
-    e.modifiers.push_back({Stat::energy_restore, 0, 1.05 + level * 0.001 + band * 0.02});
-    e.modifiers.push_back({Stat::max_energy, 0, 1.02 + level * 0.0005 + band * 0.01});
+    for (StatModifier m : def.modifiers) {
+        m.add *= insp.strength;
+        m.multiply = 1 + (m.multiply - 1) * insp.strength;
+        e.modifiers.push_back(m);
+    }
     return e;
 }
 

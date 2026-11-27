@@ -1026,9 +1026,11 @@ void Hub::start_battle(const QueueKey& key) {
         }
     };
     // Leaving before the end (Leave Match, quitting): the ammo spent is spent.
-    b->server->on_left_match = [this, b](const std::string& name, int std_ammo, int hvy_ammo) {
+    b->server->on_left_match = [this, b](const std::string& name, int std_ammo, int hvy_ammo,
+                                         const std::string& inspiration) {
         if (std::any_of(b->tickets.begin(), b->tickets.end(), [&](const auto& t) { return t.second.first == name; })) {
             server_.apply_match_ammo_consumption(name, std_ammo, hvy_ammo);
+            server_.apply_match_inspiration(name, inspiration);
         }
     };
     b->server->on_match_ended = [this, b](const MatchResult& result) {
@@ -1041,13 +1043,17 @@ void Hub::start_battle(const QueueKey& key) {
                 continue;  // a bot
             }
             const char* outcome = result.winner < 0 ? "Draw" : result.winner == player.team ? "Victory" : "Defeat";
-            const BattleReward reward = compute_battle_reward(
+            BattleReward reward = compute_battle_reward(
                 result.winner == player.team, result.winner < 0, player.kills, player.captures);
+            // Progression Inspirations (docs/PROFESSIONS.md).
+            reward.xp = int64_t(std::llround(double(reward.xp) * std::max(0.0, player.xp_gain)));
+            reward.faction_points = int64_t(std::llround(double(reward.faction_points) * std::max(0.0, player.faction_gain)));
             const std::string fought_faction =
                 (player.team == 0 || player.team == 1) ? b->field.field.teams[size_t(player.team)].name : std::string();
             server_.award_battle_rewards(player.name, fought_faction, reward);
             server_.award_profession_xp(player.name, player.profession_xp, reward.xp);
             server_.apply_match_ammo_consumption(player.name, player.remaining_std_ammo, player.remaining_hvy_ammo);
+            server_.apply_match_inspiration(player.name, player.inspiration);
             const auto count = [](int n, const char* one, const char* many) {
                 return std::format("{} {}", n, n == 1 ? one : many);
             };

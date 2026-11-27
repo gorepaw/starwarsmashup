@@ -37,7 +37,8 @@ func _initialize() -> void:
 	var spec := {
 		"revision": 3,
 		"abilities": [{"id": "doc_heal_dart", "cooldown": 2.5}, {"id": "ch_tame", "cooldown": 0.0}],
-		"effects": [{"id": "inspired", "name": "Inspired", "remaining": 12.0, "duration": 20.0, "flags": 8}],
+		"effects": [{"id": "inspiration", "name": "Inspired: Second Wind", "remaining": 1800.0, "duration": 3600.0, "flags": 8}],
+		"inspiration_choice": "insp_second_wind",
 		"companions": [{"id": 1, "template": "womp_rat", "name": "Biter", "origin": "tamed", "quality": 0.6,
 				"health": 1.1, "damage": 1.0, "speed": 1.0, "modules": PackedStringArray(), "mount": false},
 				{"id": 2, "template": "droid_battle", "name": "B1", "origin": "assembled", "quality": 0.7,

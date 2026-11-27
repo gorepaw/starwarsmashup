@@ -177,6 +177,19 @@ struct SliceDef {
     std::vector<StatModifier> modifiers;  // armor's
 };
 
+// An Inspiration on an Entertainer's menu (docs/PROFESSIONS.md): the long
+// buff an audience builds by watching. `kind` is combat (small stats, perk
+// sized) or progression (xp_gain, faction_gain); `level` is the performer's
+// Entertainer level it needs; `modifiers` are at full strength.
+struct InspirationDef {
+    std::string id;
+    std::string name;
+    std::string description;
+    std::string kind = "combat";
+    int level = 1;
+    std::vector<StatModifier> modifiers;
+};
+
 class SpecialistBook {
 public:
     // Throws std::runtime_error if the file can't be read or makes no sense.
@@ -187,18 +200,21 @@ public:
     const std::vector<CompanionTemplate>& companions() const { return companions_; }
     const std::vector<DroidModule>& modules() const { return modules_; }
     const std::vector<SliceDef>& slices() const { return slices_; }
+    const std::vector<InspirationDef>& inspirations() const { return inspirations_; }
     const AbilityDef* ability(std::string_view id) const;
     const CompanionTemplate* companion(std::string_view id) const;
     // The creature companion a wild creature (by its look) becomes.
     const CompanionTemplate* companion_for_look(std::string_view look) const;
     const DroidModule* module(std::string_view id) const;
     const SliceDef* slice(std::string_view id) const;
+    const InspirationDef* inspiration(std::string_view id) const;
 
 private:
     std::vector<AbilityDef> abilities_;
     std::vector<CompanionTemplate> companions_;
     std::vector<DroidModule> modules_;
     std::vector<SliceDef> slices_;
+    std::vector<InspirationDef> inspirations_;
 };
 
 // A profession's level and the highest milestone learned for it.
@@ -436,12 +452,40 @@ void apply_slice(Gear& gear, const SliceDef& slice);
 // ---------------------------------------------------------------------------
 // Entertainer
 
-// The Inspired buff an audience gets: stronger from a better performer and a
-// bigger band (performers within `band_radius`), lasting `inspiration_time`.
+// Inspiration: one long buff, built by watching a performance (every pulse
+// in the audience adds `inspiration_per_second` of it per second watched,
+// more with a band of performers within `band_radius`), up to a cap (a
+// Virtuoso's longer). Its modifiers' strength is its performer's (0.6 at
+// level 1, full at 100). Kept with the character, it counts down only while
+// they play: into matches with the loadout, where a death doesn't end it; in
+// the open world, a death does.
 inline constexpr double performance_radius = 14;
 inline constexpr double band_radius = 10;
-inline constexpr double performance_pulse = 5;  // seconds between buffs
-TimedEffect inspiration(int entertainer_level, int band_size, uint32_t source);
+inline constexpr double performance_pulse = 5;          // seconds between pulses
+inline constexpr double inspiration_per_second = 12;    // 5 minutes watched: an hour
+inline constexpr double inspiration_cap = 3600;
+inline constexpr double virtuoso_inspiration_cap = 5400;
+
+struct Inspiration {
+    std::string id;        // an InspirationDef's ("" none)
+    double remaining = 0;  // seconds of play left
+    double strength = 1;   // the share of its full modifiers, by its performer's level
+
+    friend bool operator==(const Inspiration&, const Inspiration&) = default;
+};
+double inspiration_strength(int entertainer_level);
+// A performer's tips each pulse, an audience or not (so performing pays
+// while there are few players): 1 credit, 2 from level 50, 3 at 100, and
+// 1 more for each of up to 8 watching.
+int64_t performance_tips(int entertainer_level, int audience);
+// Its buff for this many seconds watched, from a band of `band_size`
+// (a Band Leader's band counts double), a flourish doubling it.
+double inspiration_gain(double seconds, int band_size, bool band_leader, bool flourish);
+// "id remaining strength" (empty: none), as saved and carried into matches.
+std::string format_inspiration(const Inspiration& insp);
+std::optional<Inspiration> parse_inspiration(std::string_view text);
+// The effect it shows as: id "inspiration", flag inspired, its modifiers at its strength.
+TimedEffect inspiration_effect(const InspirationDef& def, const Inspiration& insp);
 
 
 // ---------------------------------------------------------------------------
@@ -518,6 +562,13 @@ struct SpecialistState {
     std::string offer_source;
     bool performing = false;
     double perform_pulse = 0;
+    // Inspiration (docs/PROFESSIONS.md): what's built, what the character
+    // chose to build from a performer's menu, what was last saved, and (a
+    // match) whether the loadout's has been taken up.
+    Inspiration inspiration;
+    std::string inspiration_choice;
+    mutable std::string saved_inspiration;
+    bool inspiration_carried = false;
     bool bounty_flag = false;  // opted in to being hunted
     // A channel under way (taming, sampling): its ability, target, time left, where it began.
     std::string channel;

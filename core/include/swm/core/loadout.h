@@ -59,8 +59,11 @@ enum class Stat : uint8_t {
     roll_chain,         // rolls that can follow a roll at once
     charge,             // s: sprinting into an enemy staggers them this long (0: doesn't)
     radar_quiet,        // over 0: its shots don't show it on enemies' radar
+    // An Entertainer's progression Inspirations' (docs/PROFESSIONS.md):
+    xp_gain,            // times the profession experience earned
+    faction_gain,       // times the faction points earned
 };
-inline constexpr Stat last_stat = Stat::radar_quiet;
+inline constexpr Stat last_stat = Stat::faction_gain;
 
 std::optional<Stat> stat_from_name(std::string_view name);
 std::string_view stat_name(Stat stat);
@@ -100,6 +103,8 @@ struct CharacterStats {
     double notice = 1;
     double charge = 0;
     double radar_quiet = 0;
+    double xp_gain = 1;
+    double faction_gain = 1;
 };
 
 // The most of any damage mitigation can absorb.
@@ -456,6 +461,9 @@ struct Loadout {
     std::vector<std::string> abilities;
     std::map<std::string, int> specialist_levels;
     std::string companion;
+    // An Entertainer's Inspiration it carries into a match (format_inspiration;
+    // empty: none). The server's alone: clients see it as an effect.
+    std::string inspiration;
     // Its triggered perks (from the character's trainer perks), at most
     // max_perk_timers: each one's timer is MoveState::perk_time[its index].
     std::vector<TriggeredPerk> triggered;

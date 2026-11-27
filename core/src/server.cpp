@@ -189,6 +189,21 @@ bool apply_ammo_quantities(CharacterStore* store, PersistentId char_id, std::vec
 
 } // namespace
 
+void GameServer::apply_match_inspiration(const std::string& name, const std::string& inspiration) {
+    if (store_ == nullptr) return;
+    try {
+        for (Client& c : clients_) {
+            if (c.name == name && c.character != 0) {
+                c.spec.inspiration = parse_inspiration(inspiration).value_or(Inspiration{});
+                return;
+            }
+        }
+        if (const auto saved = store_->find_by_name(name)) store_->set_extra(saved->id, "inspiration", inspiration);
+    } catch (const std::exception& error) {
+        say(std::format("inspiration save error for {}: {}", name, error.what()));
+    }
+}
+
 void GameServer::apply_match_ammo_consumption(const std::string& name, int remaining_std_ammo,
                                               int remaining_hvy_ammo) {
     if (store_ == nullptr || (remaining_std_ammo < 0 && remaining_hvy_ammo < 0)) {
@@ -1970,7 +1985,9 @@ void GameServer::run_match() {
                 result.players.push_back({client.name, client.team, client.kills, client.deaths, client.captures,
                                           client.battle_profession_xp,
                                           remaining_unified_ammo(own, lo, AmmoClass::standard),
-                                          remaining_unified_ammo(own, lo, AmmoClass::heavy)});
+                                          remaining_unified_ammo(own, lo, AmmoClass::heavy),
+                                          format_inspiration(client.spec.inspiration), client.stats.xp_gain,
+                                          client.stats.faction_gain});
                 if (const WeaponDef* primary = weapon_in_slot(lo, 0)) {
                     result.players.back().primary_weapon = primary->name;
                 }
@@ -3261,6 +3278,13 @@ void GameServer::damage(Client& victim, double raw, DamageType type, uint32_t at
     if (perks) {
         amount = perk_incoming(victim, amount, type);
     }
+    victim.last_hurt_at = perk_clock();
+    if (victim.spec.performing) {  // (an Entertainer never performs in a fight)
+        victim.spec.performing = false;
+        ++victim.spec.revision;
+        victim.spec.sync_tick = 0;
+        notify(victim.entity, "You stop performing");
+    }
     if (victim.switching_to >= 0) {
         victim.switching_to = -1;
         victim.switch_remaining = 0.0;
@@ -3483,7 +3507,7 @@ void GameServer::report_left_match(const Client& client) {
     const Loadout& lo = loadout_of(client);
     const CombatState own = soldier_combat(client);
     on_left_match(client.name, remaining_unified_ammo(own, lo, AmmoClass::standard),
-                  remaining_unified_ammo(own, lo, AmmoClass::heavy));
+                  remaining_unified_ammo(own, lo, AmmoClass::heavy), format_inspiration(client.spec.inspiration));
 }
 
 CombatState GameServer::soldier_combat(const Client& client) {

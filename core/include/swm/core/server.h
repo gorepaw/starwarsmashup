@@ -111,6 +111,10 @@ struct PlayerResult {
     std::map<std::string, int64_t> profession_xp;  // earned in the match, by profession
     int remaining_std_ammo = -1;
     int remaining_hvy_ammo = -1;
+    // Its Inspiration left (format_inspiration), and what its progression
+    // Inspirations multiply the battle's rewards by.
+    std::string inspiration;
+    double xp_gain = 1, faction_gain = 1;
     // Stage 11 telemetry: the loadout's primary weapon, and kills by weapon.
     std::string primary_weapon;
     std::map<std::string, uint16_t> weapon_kills;
@@ -225,6 +229,8 @@ public:
     void award_battle_rewards(const std::string& name, const std::string& faction, const BattleReward& reward);
     // Syncs remaining unified ammo quantities back from a finished battle to the player's equipped stacks.
     void apply_match_ammo_consumption(const std::string& name, int remaining_std_ammo, int remaining_hvy_ammo);
+    // A match's Inspiration left, kept with the character (empty: none left).
+    void apply_match_inspiration(const std::string& name, const std::string& inspiration);
     // Professions: experience a player earned in a match (by profession), and
     // `routed` more for the professions their active loadout routes it to
     // (routed_professions); saved, and shown if they're here.
@@ -382,7 +388,9 @@ public:
     // A player leaving a match before it ends (Leave Match, quitting, timing
     // out), with the ammo they had left (-1: none of that class): what the
     // hub keeps of it, as it does for those there at the end (MatchResult).
-    std::function<void(const std::string& name, int remaining_std_ammo, int remaining_hvy_ammo)> on_left_match;
+    std::function<void(const std::string& name, int remaining_std_ammo, int remaining_hvy_ammo,
+                       const std::string& inspiration)>
+        on_left_match;
 
 private:
     // What a character's triggered perks remember (server_perks.cpp).
@@ -435,6 +443,7 @@ private:
         std::map<std::string, int64_t> reputation;
         std::vector<ItemInstance> items;
         std::vector<CharacterLoadout> char_loadouts;
+        double last_hurt_at = -1e9;  // perk_clock() of the last damage taken (in_combat)
         std::vector<Loadout> custom_loadouts;
         std::vector<std::string> worn_per_loadout;
         uint32_t inventory_rev = 0;
@@ -743,6 +752,12 @@ private:
     bool use_ability(Client& client, const AbilityDef& ability, uint32_t target, Vec3 at);
     void finish_channel(Client& client);
     void give_effect(Client& client, TimedEffect effect);
+    // Inspiration (docs/PROFESSIONS.md): `gain` seconds of it from a
+    // performer of this standing, built toward the listener's choice;
+    // whether any was. Its effect kept in step with what's built.
+    bool inspire(Client& listener, const ProfessionStanding& performer, double gain);
+    void sync_inspiration(Client& client);
+    ProfessionStanding entertainer_standing(const Client& client) const;
 
     // Triggered perks (server_perks.cpp, docs/PERKS.md).
     double perk_clock() const;

@@ -1515,6 +1515,7 @@ struct Encoder {
         }
         out.put(uint8_t(m.performing));
         out.put(uint8_t(m.bounty_flag));
+        out.put_string(m.inspiration_choice);
         out.put_string(m.channel);
         out.put(m.channel_remaining);
     }
@@ -2134,7 +2135,7 @@ Message decode(std::span<const uint8_t> packet) {
     case Type::specialist_request: {
         SpecialistRequest m;
         m.action = in.get<uint8_t>();
-        if (m.action > uint8_t(SpecialistRequest::cancel_channel)) throw PacketError("bad specialist action");
+        if (m.action > uint8_t(SpecialistRequest::choose_inspiration)) throw PacketError("bad specialist action");
         m.id = in.get_string();
         m.target = in.get<uint32_t>();
         m.position = get_vec3(in);
@@ -2210,6 +2211,7 @@ Message decode(std::span<const uint8_t> packet) {
         }
         m.performing = in.get<uint8_t>() != 0;
         m.bounty_flag = in.get<uint8_t>() != 0;
+        m.inspiration_choice = in.get_string();
         m.channel = in.get_string();
         m.channel_remaining = in.get<float>();
         message = std::move(m);
