@@ -1606,11 +1606,14 @@ int cmd_export_items(const std::vector<std::string>& args) {
         }
     }
 
-    // Worn things (armor, clothing): every catalog item naming its Galaxies
+    // Worn things: every catalog armor or clothing item naming its Galaxies
     // objects (Template, comma-separated, one for each model its Model lists:
-    // biceps and bracers name both sides), each exported for both genders,
-    // fitted to the human body, to its Model path ({g}: m or f). Galaxies
-    // names one gender's model; the other is the same name, _m and _f swapped.
+    // biceps and bracers name both sides), fitted to the human body; and
+    // every [species_armor] piece, fitted to its species' (a Wookiee's, an
+    // Ithorian's). Each exported for both genders to its Model path ({g}: m
+    // or f). Galaxies names one gender's model; the other is the same name,
+    // _m and _f swapped. --only takes an item id, or a species set's folder
+    // (kashyyykian_hunting).
     size_t wearable_count = 0;
     std::ostringstream dummy_log;
     const auto split = [](const std::string& list) {
@@ -1624,29 +1627,46 @@ int cmd_export_items(const std::vector<std::string>& args) {
         }
         return out;
     };
+    struct WornJob {
+        std::string label;       // an item id, or a species set's folder
+        std::string templates;
+        std::string models;
+        std::string body;        // the body's appearance prefix: hum, wke, ith
+    };
+    std::vector<WornJob> jobs;
     for (const swm::core::ItemDef& item : catalog.all()) {
-        if (item.swg_template.empty() ||
-            (item.kind != swm::core::ItemKind::armor && item.kind != swm::core::ItemKind::clothing)) {
-            continue;
+        if (!item.swg_template.empty() &&
+            (item.kind == swm::core::ItemKind::armor || item.kind == swm::core::ItemKind::clothing)) {
+            jobs.push_back({item.id, item.swg_template, item.model_path, "hum"});
         }
-        if (!only.empty() && std::find(only.begin(), only.end(), item.id) == only.end()) continue;
-        const std::vector<std::string> tpls = split(item.swg_template);
-        const std::vector<std::string> models = split(item.model_path);
+    }
+    for (const swm::core::SpeciesArmorLook& look : catalog.species_looks()) {
+        if (look.swg_template.empty()) continue;
+        const std::string body = look.species == swm::core::Species::wookiee    ? "wke"
+                                 : look.species == swm::core::Species::ithorian ? "ith"
+                                                                                : "hum";
+        jobs.push_back({std::filesystem::path(split(look.model_path).front()).parent_path().filename().string(),
+                        look.swg_template, look.model_path, body});
+    }
+    for (const WornJob& job : jobs) {
+        if (!only.empty() && std::find(only.begin(), only.end(), job.label) == only.end()) continue;
+        const std::vector<std::string> tpls = split(job.templates);
+        const std::vector<std::string> models = split(job.models);
         if (tpls.size() != models.size()) {
-            std::cerr << "skipping " << item.id << ": " << tpls.size() << " Template(s) for " << models.size()
+            std::cerr << "skipping " << job.label << ": " << tpls.size() << " Template(s) for " << models.size()
                       << " Model(s)\n";
             continue;
         }
         for (size_t i = 0; i < tpls.size(); ++i) {
             if (!lib.contains(tpls[i])) {
-                std::cerr << "skipping " << item.id << ": no " << tpls[i] << "\n";
+                std::cerr << "skipping " << job.label << ": no " << tpls[i] << "\n";
                 continue;
             }
             std::string named;
             try {
                 named = templates.shared(tpls[i]).appearance;
             } catch (const std::exception& e) {
-                std::cerr << "skipping " << item.id << ": " << e.what() << "\n";
+                std::cerr << "skipping " << job.label << ": " << e.what() << "\n";
                 continue;
             }
             for (int g = 0; g < 2; ++g) {
@@ -1658,12 +1678,12 @@ int cmd_export_items(const std::vector<std::string>& args) {
                     sat[sat.size() - 5] = gc;
                     if (!lib.contains(sat)) sat = named;
                 }
-                const char* base_sat = g == 0 ? "appearance/hum_m.sat" : "appearance/hum_f.sat";
+                const std::string base_sat = "appearance/" + job.body + "_" + gc + ".sat";
                 std::string out_rel = models[i];
                 for (size_t at; (at = out_rel.find("{g}")) != std::string::npos;) out_rel.replace(at, 3, 1, gc);
                 const std::filesystem::path out_path(out_rel);
                 if (!lib.contains(sat) || !lib.contains(base_sat)) {
-                    std::cerr << "skipping " << item.id << " " << out_rel << ": no " << sat << "\n";
+                    std::cerr << "skipping " << job.label << " " << out_rel << ": no " << sat << "\n";
                     continue;
                 }
                 try {
@@ -1675,10 +1695,10 @@ int cmd_export_items(const std::vector<std::string>& args) {
                     req.meshes = app.mesh_generators;
                     req.export_appearance_meshes = false;
                     export_character(lib, req, out_root / out_path.parent_path(), dummy_log);
-                    std::cout << std::format("{:28} {:44} {}\n", item.id, out_rel, sat);
+                    std::cout << std::format("{:28} {:44} {}\n", job.label, out_rel, sat);
                     ++wearable_count;
                 } catch (const std::exception& e) {
-                    std::cerr << "skipping " << item.id << " " << out_rel << ": " << e.what() << "\n";
+                    std::cerr << "skipping " << job.label << " " << out_rel << ": " << e.what() << "\n";
                 }
             }
         }

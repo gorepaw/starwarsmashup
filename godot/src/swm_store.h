@@ -55,6 +55,10 @@ public:
     godot::Dictionary mark_requirement(const godot::String& def_id, int64_t mark) const;
     godot::Dictionary compute_loadout_stats(const godot::String& species, const godot::Dictionary& loadout,
                                               const godot::Array& items, bool apply_quality = true) const;
+    // What a loadout shows on this species and gender: core resolve_worn_models
+    // (its gear, its cosmetic override, a bodysuit, a species' own armor).
+    godot::String worn_models(const godot::String& species, const godot::String& gender,
+                              const godot::Dictionary& loadout, const godot::Array& items) const;
 
     // The profession roster, for the planner: load it, then its professions
     // (each with its milestones and what their perks do, in words), and where

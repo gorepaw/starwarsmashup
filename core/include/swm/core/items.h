@@ -241,6 +241,19 @@ double sidegrade_budget(const ItemDef& def);
 inline constexpr double sidegrade_tolerance = 0.06;
 inline constexpr double species_weapon_bonus = 0.10;
 
+// How a species whose body doesn't show the standard armor (a Wookiee, an
+// Ithorian) looks armored (docs/ARMOR.md, Species sets): its own set's piece
+// for a worn slot and an armor class, shown in place of a piece of that class
+// worn there. Not an item: a catalog [species_armor] section.
+struct SpeciesArmorLook {
+    Species species = Species::human;
+    std::string armor_class;   // light, medium or heavy
+    std::string slot;          // a worn slot
+    std::string set_name;      // "Kashyyykian Hunting"
+    std::string model_path;    // like an item's: {g}, comma-separated (a pair of bracers)
+    std::string swg_template;  // its Galaxies objects, one a model, for the exporter
+};
+
 // One of a character's up to 5 saved loadouts.
 struct CharacterLoadout {
     int slot_index = 0;
@@ -267,6 +280,9 @@ public:
     // A [hit_effect] section's effect by its Id; nullptr if there's none.
     const HitEffect* hit_effect(std::string_view id) const;
     const std::vector<HitEffect>& hit_effects() const { return hit_effects_; }
+    const std::vector<SpeciesArmorLook>& species_looks() const { return species_looks_; }
+    // A species' own piece for a slot and an armor class; nullptr if it has none.
+    const SpeciesArmorLook* species_look(Species species, std::string_view armor_class, std::string_view slot) const;
 
     WeaponDef resolve_weapon(const ItemDef& def, double quality = 0.5, bool apply_quality = true, int mark = 0) const;
     Gear resolve_gear(const ItemDef& def, double quality = 0.5, bool apply_quality = true, int mark = 0) const;
@@ -277,14 +293,16 @@ private:
     std::vector<ItemDef> items_;
     std::map<std::string, size_t, std::less<>> index_;
     std::vector<HitEffect> hit_effects_;
+    std::vector<SpeciesArmorLook> species_looks_;
     std::map<std::string, WeaponDef, std::less<>> bf2_bases_;
 };
 
 // The models a loadout shows (comma-separated, game/imported_assets/-relative;
 // "override:<path>" for a bodysuit): its gear's worn slots, each shown as
 // what its cosmetic override has there instead, if anything; or the
-// override's bodysuit, in place of all of them. A slot this species doesn't
-// show is left out.
+// override's bodysuit, in place of all of them. In a slot this species
+// doesn't show, its own piece of the worn piece's armor class
+// (species_look), if it has one; else nothing.
 std::string resolve_worn_models(const ItemCatalog& catalog, const CharacterLoadout& cl,
                                 std::span<const ItemInstance> inventory, Species species, Gender gender);
 

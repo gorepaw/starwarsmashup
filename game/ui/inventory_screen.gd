@@ -241,10 +241,13 @@ func _sync_stage() -> void:
 	if _stage == null:
 		return
 	var lo := _current_loadout()
-	var gear_layer := _worn_layer(lo.get("gear_ids", {}), false)
-	var look_layer := _worn_layer(lo.get("appearance_ids", {}), true)
-	# A bodysuit replaces the whole body (as core resolve_worn_models).
-	var ov_rel := str(look_layer.get("full_body", ""))
+	# What it shows, as the world shows it (core resolve_worn_models): its
+	# gear and cosmetic override, a bodysuit in place of everything, a
+	# Wookiee's or Ithorian's own armor.
+	var worn_csv := ""
+	if store != null and store.has_method("worn_models"):
+		worn_csv = str(store.worn_models(species, gender, lo, inventory))
+	var ov_rel := worn_csv.trim_prefix("override:") if worn_csv.begins_with("override:") else ""
 	var key := "%s|%s|%s|%s" % [species, gender, appearance_json, ov_rel]
 	if key != _stage_key:
 		_stage_key = key
@@ -262,7 +265,7 @@ func _sync_stage() -> void:
 				_stage.set_hair("hairs/" + hair_id + ".gltf", app.get("colors", {}))
 		_stage_worn_key = ""
 
-	var worn := [] if ov_rel != "" else _resolve_stage_worn(gear_layer, look_layer)
+	var worn: Array = [] if ov_rel != "" else Array(worn_csv.split(",", false))
 	var weapon_model := ""
 	var prim := _inst_by_id(int(lo.get("primary_id", 0)))
 	if not prim.is_empty():
@@ -272,37 +275,6 @@ func _sync_stage() -> void:
 	if wkey != _stage_worn_key:
 		_stage_worn_key = wkey
 		_stage.set_worn_models(worn, weapon_model)
-
-
-# A layer's (gear's or cosmetic override's) worn models by slot, for this
-# gender: only worn things, in the slot they fit.
-func _worn_layer(ids: Dictionary, is_app: bool) -> Dictionary:
-	var by_slot := {}
-	var gen_code := "f" if gender == "female" else "m"
-	for slot: String in ids:
-		if not WORN_SLOTS.has(slot) and slot != "full_body":
-			continue
-		var inst := _inst_by_id(int(ids[slot]))
-		if inst.is_empty():
-			continue
-		var def: Dictionary = _def_by_id.get(str(inst.get("def_id", "")), {})
-		var mp := str(def.get("model", "")).replace("{g}", gen_code)
-		if mp != "" and _is_compatible(def, slot, is_app):
-			by_slot[slot] = mp
-	return by_slot
-
-
-# The pieces shown: the gear's, each slot as the override has it instead; a
-# slot this species doesn't show left out.
-func _resolve_stage_worn(gear_layer: Dictionary, look_layer: Dictionary) -> Array:
-	var by_slot := gear_layer.duplicate()
-	by_slot.merge(look_layer, true)
-	by_slot.erase("full_body")
-	var out: Array = []
-	for s: String in by_slot:
-		if not _hidden_slots.has(s):
-			out.append_array((by_slot[s] as String).split(",", false))  # (a pair of arms is two models)
-	return out
 
 
 func _gui_input(event: InputEvent) -> void:

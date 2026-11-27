@@ -784,6 +784,32 @@ godot::Dictionary SwmCharacterStore::compute_loadout_stats(const godot::String& 
     return out;
 }
 
+godot::String SwmCharacterStore::worn_models(const godot::String& species, const godot::String& gender,
+                                             const godot::Dictionary& loadout, const godot::Array& items) const {
+    core::CharacterLoadout cl;
+    for (const char* key : {"gear_ids", "appearance_ids"}) {
+        if (!loadout.has(key)) continue;
+        godot::Dictionary ids = loadout[key];
+        godot::Array keys = ids.keys();
+        auto& into = std::string_view(key) == "gear_ids" ? cl.gear_ids : cl.appearance_ids;
+        for (int i = 0; i < keys.size(); ++i) {
+            into[to_std(keys[i])] = uint64_t(int64_t(ids[keys[i]]));
+        }
+    }
+    std::vector<core::ItemInstance> inv;
+    inv.reserve(size_t(items.size()));
+    for (int i = 0; i < items.size(); ++i) {
+        godot::Dictionary d = items[i];
+        core::ItemInstance inst;
+        inst.id = d.has("id") ? uint64_t(int64_t(d["id"])) : 0;
+        inst.def_id = d.has("def_id") ? to_std(d["def_id"]) : "";
+        inv.push_back(std::move(inst));
+    }
+    const core::Species sp = core::species_from_name(to_std(species)).value_or(core::Species::human);
+    const core::Gender g = to_std(gender) == "female" ? core::Gender::female : core::Gender::male;
+    return godot::String::utf8(core::resolve_worn_models(catalog_, cl, inv, sp, g).c_str());
+}
+
 godot::Dictionary SwmCharacterStore::buy_item(int64_t char_id, const godot::String& def_id,
                                               bool use_faction_points) {
     last_error_.clear();
@@ -925,6 +951,8 @@ void SwmCharacterStore::_bind_methods() {
     ClassDB::bind_method(D_METHOD("mark_requirement", "def_id", "mark"), &SwmCharacterStore::mark_requirement);
     ClassDB::bind_method(D_METHOD("compute_loadout_stats", "species", "loadout", "items", "apply_quality"),
                          &SwmCharacterStore::compute_loadout_stats, DEFVAL(true));
+    ClassDB::bind_method(D_METHOD("worn_models", "species", "gender", "loadout", "items"),
+                         &SwmCharacterStore::worn_models);
     ClassDB::bind_method(D_METHOD("load_professions", "path"), &SwmCharacterStore::load_professions);
     ClassDB::bind_method(D_METHOD("get_professions"), &SwmCharacterStore::get_professions);
     ClassDB::bind_method(D_METHOD("profession_level", "xp"), &SwmCharacterStore::profession_level);

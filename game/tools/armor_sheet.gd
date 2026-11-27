@@ -3,12 +3,15 @@
 # floats, or is missing for a gender before it reaches the game. Each set is
 # worn whole six times: a human man and woman from the front and the back, a
 # Wookiee and a Trandoshan (who don't show some slots: check they're hidden).
-# The bodysuits are their own sheets, each on a human; the clothing another.
+# The bodysuits are their own sheets, each on a human; the clothing another;
+# and "species", a Wookiee and an Ithorian in a light, a medium and a heavy
+# set, to check their own sets show in its place. Figures are dressed the way
+# the world dresses them (core resolve_worn_models).
 #
 #   godot --path game --script res://tools/armor_sheet.gd -- <output_prefix> [set | item id]...
 #
 # Writes <output_prefix><set>.png. A set is its models' folder (ubese,
-# stormtrooper ...), or "bodysuits" or "clothing"; all of them by default. Item
+# stormtrooper ...), or "bodysuits", "clothing" or "species"; all of them by default. Item
 # ids instead put just those, worn together, on one sheet,
 # <output_prefix>items.png. Needs a real window.
 extends SceneTree
@@ -25,7 +28,11 @@ var _frames := 0
 var _cast: Array = []  # [character, position, yaw, label]
 var _camera: Camera3D
 var _prefix := ""
-var _hidden := {}  # species -> PackedStringArray of slots it doesn't show
+var _store: Object
+# The species page: who wears which set (a light, a medium and a heavy one).
+const SPECIES_PAGE := [["wookiee", "ubese", "light"], ["wookiee", "stormtrooper", "medium"],
+		["wookiee", "composite", "heavy"], ["ithorian", "ubese", "light"], ["ithorian", "stormtrooper", "medium"],
+		["ithorian", "composite", "heavy"]]
 
 
 func _initialize() -> void:
@@ -38,13 +45,12 @@ func _initialize() -> void:
 	_prefix = args[0]
 	var wanted: Array = Array(args.slice(1))
 	var store: Object = ClassDB.instantiate("SwmCharacterStore")
+	_store = store
 	if store.load_catalog(ProjectSettings.globalize_path("res://items/swg_catalog.ini"),
 			ProjectSettings.globalize_path("res://imported_assets/items")) != OK:
 		printerr("catalog: ", store.get_last_error())
 		quit(1)
 		return
-	for sp: Dictionary in SwmCharacterStore.get_species_list():
-		_hidden[str(sp.get("id", ""))] = sp.get("hidden_slots", PackedStringArray())
 
 	var sets := {}  # name -> [def]
 	var order: Array = []
@@ -77,10 +83,14 @@ func _initialize() -> void:
 					figures.append({"species": "human", "gender": "male", "back": false, "worn": [def],
 							"label": str(def.get("id", "")).trim_prefix("suit_")})
 				_pages.append(["bodysuits_%d" % (p + 1), figures])
-		elif set_name == "clothing":
-			_pages.append([set_name, _wearers(defs)])
 		else:
 			_pages.append([set_name, _wearers(defs)])
+	if (wanted.is_empty() or wanted.has("species")) and picked.is_empty():
+		var figures: Array = []
+		for w: Array in SPECIES_PAGE:
+			figures.append({"species": w[0], "gender": "male", "back": false, "worn": sets.get(w[1], []),
+					"label": "%s %s" % [w[0], w[2]]})
+		_pages.append(["species", figures])
 
 	var environment := Environment.new()
 	environment.background_mode = Environment.BG_COLOR
@@ -127,24 +137,26 @@ func _next_page() -> void:
 	var figures: Array = _pages[_page][1]
 	for i in figures.size():
 		var fig: Dictionary = figures[i]
-		var species: String = fig["species"]
-		var g := "f" if fig["gender"] == "female" else "m"
-		var override_rel := ""
-		var by_slot := {}
+		# A loadout of the set: worn in the gear, a bodysuit in the override
+		# (the last of a slot's: clothing shares them).
+		var items: Array = []
+		var gear := {}
+		var looks := {}
 		for def: Dictionary in fig["worn"]:
+			items.append({"id": items.size() + 1, "def_id": str(def.get("id", ""))})
 			var slot := str(def.get("slot", ""))
-			var model := str(def.get("model", "")).replace("{g}", g)
-			if slot == "full_body":
-				override_rel = model
-			elif not (_hidden.get(species, PackedStringArray()) as PackedStringArray).has(slot):
-				by_slot[slot] = model  # (the last of a slot's: clothing shares them)
-		var character := PlayerAppearance.load_character(species, fig["gender"], '{"height":0.5}', "", override_rel)
+			if str(def.get("kind", "")) == "bodysuit":
+				looks[slot] = items.size()
+			else:
+				gear[slot] = items.size()
+		var worn := str(_store.worn_models(fig["species"], fig["gender"],
+				{"gear_ids": gear, "appearance_ids": looks}, items))
+		var override_rel := worn.trim_prefix("override:") if worn.begins_with("override:") else ""
+		var character := PlayerAppearance.load_character(fig["species"], fig["gender"], '{"height":0.5}', "",
+				override_rel)
 		root.add_child(character["model"])
 		if override_rel == "":
-			var paths: Array = []
-			for slot: String in by_slot:
-				paths.append(by_slot[slot])
-			PlayerAppearance.set_worn_models(character, ",".join(paths))
+			PlayerAppearance.set_worn_models(character, worn)
 		var position := Vector3(1.4 * ((figures.size() - 1) * 0.5 - i), 0, 0)
 		var label := Label3D.new()
 		label.text = fig["label"]

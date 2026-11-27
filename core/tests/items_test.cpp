@@ -393,6 +393,37 @@ int main() {
                   !item_fits_slot(*b1, "full_body", false) && !item_fits_slot(*helm, "full_body", true));
         }
 
+        // Species armor (docs/ARMOR.md): a Wookiee or an Ithorian shows its
+        // own set's piece of the class of what it wears; nothing for clothing,
+        // or where its species has no piece (a Wookiee's helmet).
+        {
+            size_t wookiee = 0, ithorian = 0;
+            for (const SpeciesArmorLook& l : real.species_looks()) {
+                (l.species == Species::wookiee ? wookiee : ithorian) += 1;
+            }
+            CHECK(wookiee == 9 && ithorian == 21);
+            const std::vector<ItemInstance> worn{{1, 1, "armor_composite_chest"}, {2, 1, "armor_ubese_helmet"},
+                                                 {3, 1, "cloth_pants_cargo"}, {4, 1, "armor_stormtrooper_bracers"}};
+            CharacterLoadout wl;
+            wl.gear_ids = {{"chest", 1}, {"helmet", 2}, {"leggings", 3}, {"bracers", 4}};
+            CHECK(resolve_worn_models(real, wl, worn, Species::wookiee, Gender::male) ==
+                  "armor/kashyyykian_black_mountain/bracer_l_m.gltf,armor/kashyyykian_black_mountain/bracer_r_m.gltf,"
+                  "armor/kashyyykian_hunting/chest_m.gltf");
+            CHECK(resolve_worn_models(real, wl, worn, Species::ithorian, Gender::female) ==
+                  "armor/ithorian_guardian/bracer_l_f.gltf,armor/ithorian_guardian/bracer_r_f.gltf,"
+                  "armor/ithorian_defender/chest_f.gltf,armor/ithorian_sentinel/helmet_f.gltf");
+            // The cosmetic override's piece decides, as it shows in place of the gear's.
+            CharacterLoadout ol = wl;
+            ol.appearance_ids = {{"chest", 2}};  // (a helmet: doesn't fit the chest, so no change)
+            CHECK(resolve_worn_models(real, ol, worn, Species::wookiee, Gender::male) ==
+                  resolve_worn_models(real, wl, worn, Species::wookiee, Gender::male));
+            ol.appearance_ids = {{"chest", 5}};
+            std::vector<ItemInstance> both = worn;
+            both.push_back({5, 1, "armor_ubese_shirt"});
+            CHECK(resolve_worn_models(real, ol, both, Species::wookiee, Gender::male).ends_with(
+                "armor/kashyyykian_ceremonial/chest_m.gltf"));
+        }
+
         // A species weapon works only in its species' hands.
         ItemCatalog sp_cat;
         {

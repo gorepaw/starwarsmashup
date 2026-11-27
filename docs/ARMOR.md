@@ -67,18 +67,18 @@ The class each set is in comes from our armor professions where they name it, an
 | Mandalorian ✅ | `armor_mandalorian_*` | 10, with shoes for boots | |
 | Marauder (warlord) ✅ | `armor_marauder_s01_*` | 10 | ASSUMPTION: heavy, the third of the three marauder sets |
 
-### Species sets (6)
+### Species sets (6) ✅
 
-Galaxies gives Wookiees and Ithorians, whose bodies can't show the standard armor, their own sets: three each, one per class.
+Galaxies gives Wookiees and Ithorians, whose bodies can't show the standard armor, their own sets: three each, one per class. They aren't items: each piece is a catalog `[species_armor]` section (species, class, slot, model), exported on its species' own body.
 
 | Set | Species | Class | Pieces |
 |---|---|---|---|
 | Kashyyykian Ceremonial | Wookiee | Light ("some protective value") | chest, leggings, bracers |
 | Kashyyykian Black Mountain | Wookiee | Medium ("moderate") | chest, leggings, bracers |
 | Kashyyykian Hunting | Wookiee | Heavy ("a high level of protection") | chest, leggings, bracers |
-| Ithorian Sentinel | Ithorian | Light (ASSUMPTION) | 9 |
-| Ithorian Guardian | Ithorian | Medium (ASSUMPTION) | 9 |
-| Ithorian Defender | Ithorian | Heavy (ASSUMPTION) | 9 |
+| Ithorian Sentinel | Ithorian | Light (ASSUMPTION) | 7: no belt; biceps and bracers a pair each |
+| Ithorian Guardian | Ithorian | Medium (ASSUMPTION) | 7 |
+| Ithorian Defender | Ithorian | Heavy (ASSUMPTION) | 7 |
 
 ### Bodysuits (10)
 
@@ -92,7 +92,7 @@ Battlefront II's soldiers, worn whole, as looks (above), from their faction's qu
 ## Rules
 
 - **Classes are sidegrades, as weapon archetypes are.** Heavier armor protects more and moves slower; no class is better. Within a class, every full set has the same budget; sets differ in which damage types they resist and in a small perk of their own.
-- **Species sets are how their species looks armored.** A Wookiee or Ithorian wearing armor of any class shows their own species' set of that class (a Wookiee in heavy armor looks like Kashyyykian Hunting armor), on the slots that set has. Gearing stays the same for every species, and Wookiees and Ithorians finally look armored.
+- **Species sets are how their species looks armored.** A Wookiee or Ithorian wearing armor of any class shows their own species' set of that class (a Wookiee in heavy armor looks like Kashyyykian Hunting armor), on the slots that set has. Gearing stays the same for every species, and Wookiees and Ithorians finally look armored. It goes piece by piece: each slot shows the species' piece of the class of what's worn there (or of what the Cosmetic Override has there), so mixed classes show mixed sets; clothing, and a slot the species' sets don't have (a Wookiee's helmet), show nothing. Where a Galaxies piece leaves the wearer's skin showing (a `skin_body` surface: the Ceremonial leggings), it's drawn with the wearer's own skin.
 - **Faction sets** (Stormtrooper, Scout Trooper, Shock Trooper; Rebel Battle and Assault, the Rebel marine chest), and the bodysuits, sell from their faction's quartermaster, for Faction Points. The Katarn's three paint schemes are one item, painted by faction.
 - **One item per model.** Crafted, quest, reinforced and insulated variants become Mk tiers and quality, as weapon variants did.
 - **Any piece can be worn as a look:** owning it, you can put it in the Cosmetic Override, so you can wear Mandalorian looks over light-armor statistics.
@@ -126,6 +126,6 @@ As for weapons: each armor item names its Galaxies template (`Template = object/
 
 ### 3. The budget, then the sets
 
-The class budgets and set identities first, rebalancing the four sets we have ✅; then light, medium and heavy sets ✅ (128 new items, and the pieces the first four sets were missing); then the species sets, still to come: they need exporting on Wookiee and Ithorian bodies, and showing in place of whatever armor a Wookiee or Ithorian wears.
+The class budgets and set identities first, rebalancing the four sets we have ✅; then light, medium and heavy sets ✅ (128 new items, and the pieces the first four sets were missing); then the species sets ✅ (30 pieces; the contact sheet's "species" page shows a Wookiee and an Ithorian in a light, a medium and a heavy set).
 
 Each set's resistances and perk are in the catalog; ASSUMPTION: the ones not named above (Tantel laser and electro, Bone melee and bio, Mabari laser and ballistic with a little acceleration, Marine ballistic and laser, Katarn laser and explosive, the Marauders ballistic and laser, melee and ballistic, melee and ballistic, R.I.S. laser, electro and bio, the Rebel sets laser with ballistic or explosive, Shock Trooper explosive and laser). Scout Trooper boots make sprinting a little cheaper until there's stealth for quieter footsteps.

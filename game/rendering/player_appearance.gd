@@ -317,6 +317,20 @@ static func set_worn_models(character: Dictionary, worn_csv: String) -> void:
 			if bname in ["blend_muscle", "blend_fat", "blend_skinny"]:
 				body_blends[bname] = mi.get_blend_shape_value(i)
 
+	# The body's own material: a worn piece's "skin_body" surface (a Wookiee's
+	# Ceremonial leggings leave some fur showing) is the wearer's skin, as in
+	# Galaxies.
+	var body_material: Material = null
+	for n: Node in (model as Node3D).find_children("*", "MeshInstance3D", true, false):
+		var mi := n as MeshInstance3D
+		if mi.mesh == null or body_material != null:
+			continue
+		for surface in mi.mesh.get_surface_count():
+			var source := mi.mesh.surface_get_material(surface)
+			if source != null and source.resource_name.ends_with("_body"):
+				body_material = mi.get_active_material(surface)
+				break
+
 	var holder := Node3D.new()
 	holder.name = "WornEquipment"
 	skeleton.add_child(holder)
@@ -349,6 +363,11 @@ static func set_worn_models(character: Dictionary, worn_csv: String) -> void:
 			mi.owner = null
 			holder.add_child(mi)
 			mi.skeleton = NodePath("../..")
+			if mi.mesh != null and body_material != null:
+				for surface in mi.mesh.get_surface_count():
+					var worn_mat := mi.mesh.surface_get_material(surface)
+					if worn_mat != null and worn_mat.resource_name.begins_with("skin_body"):
+						mi.set_surface_override_material(surface, body_material)
 			if mi.mesh != null and not body_blends.is_empty():
 				for i in mi.mesh.get_blend_shape_count():
 					var bname := String(mi.mesh.get_blend_shape_name(i))

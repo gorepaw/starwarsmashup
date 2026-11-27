@@ -475,11 +475,33 @@ void ItemCatalog::load(const std::filesystem::path& catalog_ini, const std::file
     index_.clear();
     bf2_bases_.clear();
     hit_effects_.clear();
+    species_looks_.clear();
 
     const Ini ini = Ini::load(catalog_ini);
     const std::string where = catalog_ini.string();
 
     for (const Ini::Section& s : ini.sections()) {
+        if (s.name == "species_armor") {
+            SpeciesArmorLook look;
+            const std::string sp = s.get("Species").value_or("");
+            const auto species = species_from_name(sp);
+            look.armor_class = s.get("ArmorClass").value_or("");
+            look.slot = s.get("Slot").value_or("");
+            look.set_name = s.get("Name").value_or("");
+            look.model_path = s.get("Model").value_or("");
+            look.swg_template = s.get("Template").value_or("");
+            if (!species ||
+                (look.armor_class != "light" && look.armor_class != "medium" && look.armor_class != "heavy") ||
+                !is_worn_slot(look.slot) ||
+                look.model_path.empty()) {
+                throw std::runtime_error(where + ": [species_armor] " + look.set_name + " " + look.slot +
+                                         " needs a Species, an ArmorClass (light, medium or heavy), a worn Slot "
+                                         "and a Model");
+            }
+            look.species = *species;
+            species_looks_.push_back(std::move(look));
+            continue;
+        }
         if (s.name == "hit_effect") {
             HitEffect e;
             e.id = s.get("Id").value_or("");
@@ -1035,17 +1057,16 @@ std::string substitute_gender(std::string path, Gender gender) {
 
 std::string resolve_worn_models(const ItemCatalog& catalog, const CharacterLoadout& cl,
                                 std::span<const ItemInstance> inventory, Species species, Gender gender) {
-    // A layer's worn models by slot: only what fits there and has a model (a
-    // mount's model is the vehicle it summons; it isn't worn).
+    // A layer's worn things by slot: only what fits there (a mount's model is
+    // the vehicle it summons; it isn't worn).
     const auto layer = [&](const std::map<std::string, uint64_t>& ids, bool appearance) {
-        std::map<std::string, std::string> by_slot;
+        std::map<std::string, const ItemDef*> by_slot;
         for (const auto& [slot, item_id] : ids) {
             if (item_id == 0 || (!is_worn_slot(slot) && slot != full_body_slot)) continue;
             for (const ItemInstance& inst : inventory) {
                 if (inst.id != item_id) continue;
-                if (const ItemDef* def = catalog.find(inst.def_id);
-                    def && !def->model_path.empty() && item_fits_slot(*def, slot, appearance)) {
-                    by_slot[slot] = substitute_gender(def->model_path, gender);
+                if (const ItemDef* def = catalog.find(inst.def_id); def && item_fits_slot(*def, slot, appearance)) {
+                    by_slot[slot] = def;
                 }
                 break;
             }
@@ -1056,17 +1077,34 @@ std::string resolve_worn_models(const ItemCatalog& catalog, const CharacterLoado
     const auto look = layer(cl.appearance_ids, true);
 
     // A bodysuit shows in place of everything.
-    if (const auto it = look.find(std::string(full_body_slot)); it != look.end()) return "override:" + it->second;
+    if (const auto it = look.find(std::string(full_body_slot)); it != look.end() && !it->second->model_path.empty()) {
+        return "override:" + substitute_gender(it->second->model_path, gender);
+    }
 
-    std::map<std::string, std::string> shown = gear;
-    for (const auto& [slot, path] : look) shown[slot] = path;
+    std::map<std::string, const ItemDef*> shown = gear;
+    for (const auto& [slot, def] : look) shown[slot] = def;
     std::string out;
-    for (const auto& [slot, path] : shown) {
-        if (path.empty() || !species_shows_slot(species, slot)) continue;
+    for (const auto& [slot, def] : shown) {
+        std::string path = def->model_path;
+        // A body that doesn't show the piece: its species' own of its class.
+        if (!species_shows_slot(species, slot)) {
+            const SpeciesArmorLook* own =
+                def->kind == ItemKind::armor ? catalog.species_look(species, def->armor_class, slot) : nullptr;
+            path = own ? own->model_path : "";
+        }
+        if (path.empty()) continue;
         if (!out.empty()) out += ',';
-        out += path;
+        out += substitute_gender(path, gender);
     }
     return out;
+}
+
+const SpeciesArmorLook* ItemCatalog::species_look(Species species, std::string_view armor_class,
+                                                  std::string_view slot) const {
+    for (const SpeciesArmorLook& look : species_looks_) {
+        if (look.species == species && look.armor_class == armor_class && look.slot == slot) return &look;
+    }
+    return nullptr;
 }
 
 std::string plain_clothes(const ItemCatalog& catalog, Gender gender) {
