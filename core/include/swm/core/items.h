@@ -155,6 +155,12 @@ struct ItemDef {
     // share of the class budget (armor_budget) to `modifiers`.
     std::vector<std::pair<DamageType, double>> resist;
     std::vector<StatModifier> perks;
+    // Paint schemes ("Paint = empire: index_color_1=1, index_texture_1=0"):
+    // the customization values its model is drawn with, by scheme, a
+    // faction's or "neutral" (the default). An owned piece's scheme is its
+    // color_json's "paint" (painted_color_json). Kept as a query string,
+    // "index_color_1=1&index_texture_1=0".
+    std::map<std::string, std::string> paints;
 
     // Stat modifiers for armor, deflector shields, or weapon carry penalties.
     std::vector<StatModifier> modifiers;
@@ -189,6 +195,13 @@ double armor_slot_share(std::string_view slot);
 // armor or clothing goes in either; weapons, shields, ammo and mounts only
 // in the gear; a bodysuit only in the override's full_body.
 bool item_fits_slot(const ItemDef& def, std::string_view slot, bool appearance);
+
+// An owned item's paint scheme: its color_json's "paint" ("" if none).
+struct ItemInstance;
+std::string item_paint(const ItemInstance& inst);
+// A new item's color_json, painted in a faction's scheme if it has one
+// (a Katarn from the Imperial quartermaster), else "{}".
+std::string painted_color_json(const ItemDef& def, std::string_view faction);
 
 // An item owned by a character (persisted in SQLite).
 struct ItemInstance {
@@ -302,7 +315,9 @@ private:
 // what its cosmetic override has there instead, if anything; or the
 // override's bodysuit, in place of all of them. In a slot this species
 // doesn't show, its own piece of the worn piece's armor class
-// (species_look), if it has one; else nothing.
+// (species_look), if it has one; else nothing. A painted piece's models carry
+// its paint as a query ("armor/katarn/chest_m.gltf?index_color_1=1&..."): its
+// own scheme, else its "neutral" one.
 std::string resolve_worn_models(const ItemCatalog& catalog, const CharacterLoadout& cl,
                                 std::span<const ItemInstance> inventory, Species species, Gender gender);
 

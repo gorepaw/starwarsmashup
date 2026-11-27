@@ -211,12 +211,23 @@ func set_worn_models(worn_paths: Array, weapon_model: String) -> void:
 				var bname := String(mi.mesh.get_blend_shape_name(i))
 				if bname in ["blend_muscle", "blend_fat", "blend_skinny"]:
 					body_blends[bname] = mi.get_blend_shape_value(i)
+		# The body's own material, for a worn piece's skin (as player_appearance).
+		var body_material: Material = null
+		for mi: MeshInstance3D in _meshes:
+			if mi.mesh == null or body_material != null:
+				continue
+			for surface in mi.mesh.get_surface_count():
+				var src := mi.mesh.surface_get_material(surface)
+				if src != null and src.resource_name.ends_with("_body"):
+					body_material = mi.get_active_material(surface)
+					break
 		var holder := Node3D.new()
 		holder.name = "StageWorn"
 		_skeleton.add_child(holder)
 		worn_node = holder
 		for raw_rel: Variant in worn_paths:
-			var rel := str(raw_rel).strip_edges()
+			var painted := SwgColors.split_painted(str(raw_rel).strip_edges())  # (a painted piece's paint)
+			var rel: String = painted[0]
 			if rel == "":
 				continue
 			var gltf_path := "res://imported_assets/" + rel
@@ -231,7 +242,7 @@ func set_worn_models(worn_paths: Array, weapon_model: String) -> void:
 				continue
 			var cdata := SwgColors.load_colors(ProjectSettings.globalize_path(gltf_path))
 			if not cdata.is_empty():
-				SwgColors.apply(scene, cdata, 0)
+				SwgColors.apply_custom(scene, cdata, painted[1])
 			SwgOcclusion.tag(scene, gltf_path)
 			if rel.contains("helmet"):
 				has_helmet = true
@@ -241,6 +252,11 @@ func set_worn_models(worn_paths: Array, weapon_model: String) -> void:
 				mi.owner = null
 				holder.add_child(mi)
 				mi.skeleton = NodePath("../..")
+				if mi.mesh != null and body_material != null:
+					for surface in mi.mesh.get_surface_count():
+						var worn_mat := mi.mesh.surface_get_material(surface)
+						if worn_mat != null and worn_mat.resource_name.begins_with("skin_body"):
+							mi.set_surface_override_material(surface, body_material)
 				if mi.mesh != null and not body_blends.is_empty():
 					for i in mi.mesh.get_blend_shape_count():
 						var bname := String(mi.mesh.get_blend_shape_name(i))

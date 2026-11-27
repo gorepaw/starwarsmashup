@@ -148,6 +148,35 @@ ShaderCustomization parse_shader_customization(std::span<const uint8_t> bytes) {
     // CSHD / <version> / TFAC / PAL: variable name, the shared byte, the
     // factor's tag, the palette's path, the default index.
     for (const IffNode& version : root.children) {
+        // TXTR / DATA: a count (u16), then that many texture paths; TXTR /
+        // CUST / TX1D: the texture's tag, the first and the count of its
+        // choices among them (u16s), the variable's name, a private byte, the
+        // default index (u16).
+        if (const IffNode* swaps = version.form ? version.child("TXTR") : nullptr) {
+            std::vector<std::string> paths;
+            if (const IffNode* data = swaps->child("DATA")) {
+                IffReader r(data->data);
+                const uint16_t count = r.u16();
+                for (uint16_t i = 0; i < count; ++i) paths.push_back(normalize_path(r.cstring()));
+            }
+            if (const IffNode* cust = swaps->child("CUST")) {
+                for (const IffNode* tx : cust->children_with("TX1D")) {
+                    IffReader r(tx->data);
+                    const uint32_t tag = r.u32();
+                    TextureSwap swap;
+                    swap.factor = factor_tag(std::span(reinterpret_cast<const uint8_t*>(&tag), 4));
+                    const uint16_t first = r.u16();
+                    const uint16_t count = r.u16();
+                    swap.variable = r.cstring();
+                    r.u8();
+                    swap.default_index = r.u16();
+                    for (size_t i = first; i < size_t(first) + count && i < paths.size(); ++i) {
+                        swap.textures.push_back(paths[i]);
+                    }
+                    if (!swap.textures.empty()) result.textures.push_back(std::move(swap));
+                }
+            }
+        }
         const IffNode* factors = version.form ? version.child("TFAC") : nullptr;
         if (!factors) {
             continue;

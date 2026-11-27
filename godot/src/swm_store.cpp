@@ -810,6 +810,7 @@ godot::String SwmCharacterStore::worn_models(const godot::String& species, const
     return godot::String::utf8(core::resolve_worn_models(catalog_, cl, inv, sp, g).c_str());
 }
 
+        if (d.has("color_json")) inst.color_json = to_std(d["color_json"]);  // (its paint)
 godot::Dictionary SwmCharacterStore::buy_item(int64_t char_id, const godot::String& def_id,
                                               bool use_faction_points) {
     last_error_.clear();

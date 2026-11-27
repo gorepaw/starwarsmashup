@@ -41,7 +41,16 @@ int GltfAssets::material_for(const std::string& shader_path) {
             log_ << "  warning: " << shader_path << ": no shader for its owner's '" << customization.owner_proxy
                  << "'\n";
         }
-        const std::string texture = shader_main_texture(bytes);
+        std::string texture = shader_main_texture(bytes);
+        // A texture swap's default choice is the main texture as Galaxies
+        // draws it unpainted; each choice is exported for the client to swap.
+        for (const TextureSwap& swap : customization.textures) {
+            if (swap.factor != "MAIN") continue;
+            texture = swap.textures[size_t(std::clamp(swap.default_index, 0, int(swap.textures.size()) - 1))];
+            if (colors_mode_ == Colors::describe) {
+                for (const std::string& choice : swap.textures) texture_file(choice);
+            }
+        }
         const std::string effect = shader_effect(bytes);
         const EffectBlend blend = effect.empty() ? EffectBlend::opaque : blend_of(effect);
         if (blend == EffectBlend::alpha) {
@@ -54,6 +63,9 @@ int GltfAssets::material_for(const std::string& shader_path) {
             material.alpha_mode = "BLEND";
             material.additive = true;
             material.unlit = true;
+        }
+        if (colors_mode_ == Colors::describe && customization.colors.empty() && !customization.textures.empty()) {
+            colors_[material.name] = customization;  // (a swap with no colors of its own)
         }
         if (!customization.colors.empty()) {
             const std::array<uint8_t, 3> main = default_color(customization, "MAIN");

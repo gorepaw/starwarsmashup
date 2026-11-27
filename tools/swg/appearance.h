@@ -42,8 +42,18 @@ struct PaletteColor {
     std::string palette;  // palette/....pal
     int default_index = 0;
 };
+// A customizable shader's texture swap (CSHD's TXTR / CUST / TX1D): a
+// texture tag's texture chosen from a list by a customization variable (a
+// Katarn's plain or patterned plates).
+struct TextureSwap {
+    std::string variable;               // e.g. "index_texture_1"
+    std::string factor;                 // the texture's tag, "MAIN"
+    std::vector<std::string> textures;  // texture/....dds, by index
+    int default_index = 0;
+};
 struct ShaderCustomization {
     std::vector<PaletteColor> colors;
+    std::vector<TextureSwap> textures;
     // The shader's texture factors' values when no palette sets them (TFNS:
     // factor -> 0xAARRGGBB), e.g. HUEB on a color2 shader with only MAIN.
     std::vector<std::pair<std::string, uint32_t>> factor_defaults;

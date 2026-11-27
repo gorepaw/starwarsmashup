@@ -211,7 +211,7 @@ BotProfileEntry build_entry(std::string name, std::string faction, Species speci
         const auto add_item = [&](const char* id) -> uint64_t {
             if (id == nullptr || catalog->find(id) == nullptr) return 0;
             const double jitter = std::clamp(base_quality + (rand_unit(rng) - 0.5) * 0.14, 0.25, 0.95);
-            inv.push_back({next_id, 1, id, jitter, "", "{}", 1});
+            inv.push_back({next_id, 1, id, jitter, "", painted_color_json(*catalog->find(id), out.faction), 1});
             return next_id++;
         };
 

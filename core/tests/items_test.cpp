@@ -424,6 +424,33 @@ int main() {
                 "armor/kashyyykian_ceremonial/chest_m.gltf"));
         }
 
+        // Paint (docs/ARMOR.md): a Katarn piece is drawn in its owner's
+        // scheme, from its color_json (a quartermaster's faction's), else
+        // its neutral one; an item without schemes takes none.
+        {
+            const ItemDef* chest = real.find("armor_katarn_chest");
+            CHECK(chest && chest->paints.size() == 3);
+            CHECK(painted_color_json(*chest, "Imperial") == R"({"paint":"empire"})" &&
+                  painted_color_json(*chest, "republic") == "{}" &&
+                  painted_color_json(*real.find("armor_ubese_helmet"), "empire") == "{}");
+            std::vector<ItemInstance> kit{{1, 1, "armor_katarn_chest", 0.5, "", painted_color_json(*chest, "empire")},
+                                          {2, 1, "armor_katarn_chest"}};
+            CHECK(item_paint(kit[0]) == "empire" && item_paint(kit[1]).empty());
+            CharacterLoadout pl;
+            pl.gear_ids["chest"] = 1;
+            CHECK(resolve_worn_models(real, pl, kit, Species::human, Gender::male) ==
+                  "armor/katarn/chest_m.gltf?index_color_1=1&index_color_2=5&index_texture_1=0");
+            pl.gear_ids["chest"] = 2;
+            CHECK(resolve_worn_models(real, pl, kit, Species::human, Gender::male) ==
+                  "armor/katarn/chest_m.gltf?index_color_1=0&index_color_2=4&index_texture_1=0");
+            const std::vector<ItemInstance> arms{{1, 1, "armor_katarn_biceps", 0.5, "", R"({"paint":"rebellion"})"}};
+            CharacterLoadout al;
+            al.gear_ids["biceps"] = 1;
+            CHECK(resolve_worn_models(real, al, arms, Species::human, Gender::female) ==
+                  "armor/katarn/bicep_l_f.gltf?index_color_1=0&index_color_2=6&index_texture_1=1,"
+                  "armor/katarn/bicep_r_f.gltf?index_color_1=0&index_color_2=6&index_texture_1=1");
+        }
+
         // A species weapon works only in its species' hands.
         ItemCatalog sp_cat;
         {

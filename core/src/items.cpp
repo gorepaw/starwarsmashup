@@ -662,6 +662,30 @@ void ItemCatalog::load(const std::filesystem::path& catalog_ini, const std::file
                 def.modifiers.push_back(parse_catalog_modifier(v, where + " (" + def.id + ")"));
             }
         }
+        for (const auto& [k, v] : s.values) {
+            if (k != "Paint") continue;
+            // "<scheme>: <variable>=<index>, ...", kept as a query string.
+            const size_t colon = v.find(':');
+            std::string scheme = v.substr(0, colon == std::string::npos ? 0 : colon);
+            scheme.erase(0, scheme.find_first_not_of(" \t"));
+            scheme.erase(scheme.find_last_not_of(" \t") + 1);
+            std::string query;
+            std::stringstream parts(colon == std::string::npos ? "" : v.substr(colon + 1));
+            std::string part;
+            while (std::getline(parts, part, ',')) {
+                part.erase(0, part.find_first_not_of(" \t"));
+                part.erase(part.find_last_not_of(" \t") + 1);
+                if (part.empty()) continue;
+                if (part.find('=') == std::string::npos) {
+                    throw std::runtime_error(where + " (" + def.id + "): Paint is '<scheme>: <variable>=<index>, ...'");
+                }
+                query += (query.empty() ? "" : "&") + part;
+            }
+            if (scheme.empty() || query.empty()) {
+                throw std::runtime_error(where + " (" + def.id + "): Paint is '<scheme>: <variable>=<index>, ...'");
+            }
+            def.paints[normalize_faction(scheme)] = query;  // a faction's, or "neutral"
+        }
         if (def.kind == ItemKind::armor) {
             // Its perk is what it lists; its slot's share of its class's
             // budget comes on top, the typed part spread as Resist says.
@@ -774,6 +798,20 @@ double armor_slot_share(std::string_view slot) {
     double all = 0;
     for (const std::string_view s : worn_slots) all += defense_mark_weight(s);
     return defense_mark_weight(slot) / all;
+}
+
+std::string item_paint(const ItemInstance& inst) {
+    const std::string& json = inst.color_json;
+    const size_t key = json.find("\"paint\"");
+    if (key == std::string::npos) return {};
+    const size_t open = json.find('"', json.find(':', key + 7) + 1);
+    const size_t close = open == std::string::npos ? std::string::npos : json.find('"', open + 1);
+    return close == std::string::npos ? std::string() : json.substr(open + 1, close - open - 1);
+}
+
+std::string painted_color_json(const ItemDef& def, std::string_view faction) {
+    const std::string scheme = normalize_faction(faction);
+    return def.paints.contains(scheme) ? "{\"paint\":\"" + scheme + "\"}" : "{}";
 }
 
 bool item_fits_slot(const ItemDef& def, std::string_view slot, bool appearance) {
@@ -1059,14 +1097,18 @@ std::string resolve_worn_models(const ItemCatalog& catalog, const CharacterLoado
                                 std::span<const ItemInstance> inventory, Species species, Gender gender) {
     // A layer's worn things by slot: only what fits there (a mount's model is
     // the vehicle it summons; it isn't worn).
+    struct Worn {
+        const ItemDef* def;
+        const ItemInstance* inst;
+    };
     const auto layer = [&](const std::map<std::string, uint64_t>& ids, bool appearance) {
-        std::map<std::string, const ItemDef*> by_slot;
+        std::map<std::string, Worn> by_slot;
         for (const auto& [slot, item_id] : ids) {
             if (item_id == 0 || (!is_worn_slot(slot) && slot != full_body_slot)) continue;
             for (const ItemInstance& inst : inventory) {
                 if (inst.id != item_id) continue;
                 if (const ItemDef* def = catalog.find(inst.def_id); def && item_fits_slot(*def, slot, appearance)) {
-                    by_slot[slot] = def;
+                    by_slot[slot] = {def, &inst};
                 }
                 break;
             }
@@ -1077,24 +1119,37 @@ std::string resolve_worn_models(const ItemCatalog& catalog, const CharacterLoado
     const auto look = layer(cl.appearance_ids, true);
 
     // A bodysuit shows in place of everything.
-    if (const auto it = look.find(std::string(full_body_slot)); it != look.end() && !it->second->model_path.empty()) {
-        return "override:" + substitute_gender(it->second->model_path, gender);
+    if (const auto it = look.find(std::string(full_body_slot));
+        it != look.end() && !it->second.def->model_path.empty()) {
+        return "override:" + substitute_gender(it->second.def->model_path, gender);
     }
 
-    std::map<std::string, const ItemDef*> shown = gear;
-    for (const auto& [slot, def] : look) shown[slot] = def;
+    std::map<std::string, Worn> shown = gear;
+    for (const auto& [slot, worn] : look) shown[slot] = worn;
     std::string out;
-    for (const auto& [slot, def] : shown) {
+    for (const auto& [slot, worn] : shown) {
+        const ItemDef* def = worn.def;
         std::string path = def->model_path;
+        // Its paint: its own scheme, else its neutral one, on each model.
+        std::string paint;
+        if (const auto own = def->paints.find(item_paint(*worn.inst)); own != def->paints.end()) {
+            paint = own->second;
+        } else if (const auto neutral = def->paints.find("neutral"); neutral != def->paints.end()) {
+            paint = neutral->second;
+        }
         // A body that doesn't show the piece: its species' own of its class.
         if (!species_shows_slot(species, slot)) {
             const SpeciesArmorLook* own =
                 def->kind == ItemKind::armor ? catalog.species_look(species, def->armor_class, slot) : nullptr;
             path = own ? own->model_path : "";
+            paint.clear();
         }
         if (path.empty()) continue;
-        if (!out.empty()) out += ',';
-        out += substitute_gender(path, gender);
+        std::stringstream models(substitute_gender(path, gender));
+        for (std::string model; std::getline(models, model, ',');) {
+            if (!out.empty()) out += ',';
+            out += paint.empty() ? model : model + "?" + paint;
+        }
     }
     return out;
 }

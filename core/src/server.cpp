@@ -1003,7 +1003,8 @@ void GameServer::handle(const net::Endpoint& from, const net::Datagram& datagram
                             client->faction_points -= def->cost_faction_points;
                             store_->update_economy(client->character, client->credits, client->faction_points,
                                                    client->experience, int(client->loadout));
-                            store_->grant_item({0, client->character, def->id, 0.5, "", "{}", 1});
+                            // In its quartermaster's faction's paint, if it has one (a Katarn).
+                            store_->grant_item({0, client->character, def->id, 0.5, "", painted_color_json(*def, qf), 1});
                             client->items = store_->list_items(client->character);
                             ++client->inventory_rev;
                             client->last_sync_tick = 0;

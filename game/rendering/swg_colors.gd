@@ -27,6 +27,21 @@ const SMALLEST_VARIED := 8   # smaller palettes keep their defaults
 # draws them. Grown along their normals, hard-edged armor split at its seams.)
 
 
+# A worn model's path and its paint: core resolve_worn_models writes a
+# painted piece as "<path>?index_color_1=1&index_texture_1=0" (its scheme's
+# customization values). Returns [path, {variable: index}].
+static func split_painted(rel: String) -> Array:
+	var at := rel.find("?")
+	if at < 0:
+		return [rel, {}]
+	var paint := {}
+	for pair: String in rel.substr(at + 1).split("&", false):
+		var kv := pair.split("=")
+		if kv.size() == 2:
+			paint[kv[0].strip_edges()] = int(kv[1])
+	return [rel.substr(0, at), paint]
+
+
 # The colors exported with a character's model (its .gltf's path); empty if
 # there are none.
 static func load_colors(model_path: String) -> Dictionary:
@@ -85,7 +100,16 @@ static func _apply_impl(model: Node, colors: Dictionary, seed: int, overrides: D
 				material.shader = ALPHA_SHADER
 			elif original.transparency == BaseMaterial3D.TRANSPARENCY_ALPHA_SCISSOR:
 				material.shader = CUTOUT_SHADER
-			material.set_shader_parameter("albedo_texture", original.albedo_texture)
+			var albedo: Texture2D = original.albedo_texture
+			if entry.has("swap"):  # a texture swap: its variable's choice among its files
+				var swap: Dictionary = entry["swap"]
+				var files: Array = swap["files"]
+				var pick := int(overrides.get(str(swap["variable"]), swap["index"]))
+				if not files.is_empty():
+					var chosen := _texture(colors, str(files[clampi(pick, 0, files.size() - 1)]))
+					if chosen != null:
+						albedo = chosen
+			material.set_shader_parameter("albedo_texture", albedo)
 			material.set_shader_parameter("roughness", original.roughness)
 			material.set_shader_parameter("metallic", original.metallic)
 			material.set_shader_parameter("main_color", _color(entry.get("MAIN", "ffffff"), item, seed, palettes, overrides))

@@ -53,7 +53,7 @@ The class each set is in comes from our armor professions where they name it, an
 | Marine ✅ | `armor_marine_*` | 9, plus a backpack | A Rebel chest plate too (`armor_marine_chest_plate_rebel`) |
 | Rebel Battle ✅ | `armor_rebel_s02_*` | 9: no belt | Rebellion |
 | Bounty Hunter ✅ | `armor_bounty_hunter_*` | 10 | Crafted variants reuse the models |
-| Katarn (clone commando) ✅ | `armor_clonetrooper_*` | 10 | Clone Wars. Three paint schemes in Galaxies (Imperial, Rebel, neutral) on one model; ASSUMPTION: medium |
+| Katarn (clone commando) ✅ | `armor_clonetrooper_*` | 10 | Clone Wars. Three paint schemes (Imperial, Rebel, neutral) on one model, below; ASSUMPTION: medium |
 | Marauder (raider) ✅ | `armor_marauder_s03_*` | 9, plus a double bandolier | ASSUMPTION: medium |
 | R.I.S. ✅ | `armor_ris_s01_*` | 9: no belt | A high-end crafted set. ASSUMPTION: medium |
 
@@ -93,9 +93,17 @@ Battlefront II's soldiers, worn whole, as looks (above), from their faction's qu
 
 - **Classes are sidegrades, as weapon archetypes are.** Heavier armor protects more and moves slower; no class is better. Within a class, every full set has the same budget; sets differ in which damage types they resist and in a small perk of their own.
 - **Species sets are how their species looks armored.** A Wookiee or Ithorian wearing armor of any class shows their own species' set of that class (a Wookiee in heavy armor looks like Kashyyykian Hunting armor), on the slots that set has. Gearing stays the same for every species, and Wookiees and Ithorians finally look armored. It goes piece by piece: each slot shows the species' piece of the class of what's worn there (or of what the Cosmetic Override has there), so mixed classes show mixed sets; clothing, and a slot the species' sets don't have (a Wookiee's helmet), show nothing. Where a Galaxies piece leaves the wearer's skin showing (a `skin_body` surface: the Ceremonial leggings), it's drawn with the wearer's own skin.
-- **Faction sets** (Stormtrooper, Scout Trooper, Shock Trooper; Rebel Battle and Assault, the Rebel marine chest), and the bodysuits, sell from their faction's quartermaster, for Faction Points. The Katarn's three paint schemes are one item, painted by faction.
+- **Faction sets** (Stormtrooper, Scout Trooper, Shock Trooper; Rebel Battle and Assault, the Rebel marine chest), and the bodysuits, sell from their faction's quartermaster, for Faction Points. The Katarn's three paint schemes are one item, painted by faction (below).
 - **One item per model.** Crafted, quest, reinforced and insulated variants become Mk tiers and quality, as weapon variants did.
 - **Any piece can be worn as a look:** owning it, you can put it in the Cosmetic Override, so you can wear Mandalorian looks over light-armor statistics.
+
+## Paint ✅
+
+A piece can come in paint schemes: Galaxies' own customization values for its model (palette colors, and a texture swap: a Katarn's plain or patterned plates). The catalog lists them by scheme, a faction's or `neutral`: `Paint = empire: index_color_1=1, index_color_2=5, index_texture_1=0`. An owned piece's scheme is in its `color_json` (`"paint":"empire"`); one with none, or one not listed, is drawn in its `neutral` scheme.
+
+The Katarn is the only painted set: its Imperial, Rebel and neutral variants in Galaxies are one model with different values (each piece's own, from its variant's client data). One item: the Imperial and Rebel quartermasters sell it in their paint, for Faction Points; a gear vendor, in neutral, for Credits; the Republic's and Separatists' quartermasters, in neutral. A bot wears its faction's. Players have no faction of their own, so a piece keeps the paint it came in (repainting is for later: a Tailor's or Armorsmith's job).
+
+How it gets drawn: the exporter reads a shader's texture swap (`TXTR`) and exports every choice, listing them in the model's `.colors.json` (`"swap"`); `resolve_worn_models` writes a painted piece's model as `<path>?<values>`, and the client draws it with those values. The contact sheet's "paint" page shows all three.
 
 ## Balance: the armor budget ✅
 

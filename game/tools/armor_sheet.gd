@@ -5,13 +5,14 @@
 # Wookiee and a Trandoshan (who don't show some slots: check they're hidden).
 # The bodysuits are their own sheets, each on a human; the clothing another;
 # and "species", a Wookiee and an Ithorian in a light, a medium and a heavy
-# set, to check their own sets show in its place. Figures are dressed the way
+# set, to check their own sets show in its place; and "paint", the Katarn in
+# each of its paint schemes, front and back. Figures are dressed the way
 # the world dresses them (core resolve_worn_models).
 #
 #   godot --path game --script res://tools/armor_sheet.gd -- <output_prefix> [set | item id]...
 #
 # Writes <output_prefix><set>.png. A set is its models' folder (ubese,
-# stormtrooper ...), or "bodysuits", "clothing" or "species"; all of them by default. Item
+# stormtrooper ...), or "bodysuits", "clothing", "species" or "paint"; all of them by default. Item
 # ids instead put just those, worn together, on one sheet,
 # <output_prefix>items.png. Needs a real window.
 extends SceneTree
@@ -91,6 +92,13 @@ func _initialize() -> void:
 			figures.append({"species": w[0], "gender": "male", "back": false, "worn": sets.get(w[1], []),
 					"label": "%s %s" % [w[0], w[2]]})
 		_pages.append(["species", figures])
+	if (wanted.is_empty() or wanted.has("paint")) and picked.is_empty() and sets.has("katarn"):
+		var figures: Array = []
+		for scheme: String in ["neutral", "empire", "rebellion"]:
+			for back: bool in [false, true]:
+				figures.append({"species": "human", "gender": "male", "back": back, "worn": sets["katarn"],
+						"paint": scheme, "label": scheme + (" back" if back else "")})
+		_pages.append(["paint", figures])
 
 	var environment := Environment.new()
 	environment.background_mode = Environment.BG_COLOR
@@ -143,7 +151,8 @@ func _next_page() -> void:
 		var gear := {}
 		var looks := {}
 		for def: Dictionary in fig["worn"]:
-			items.append({"id": items.size() + 1, "def_id": str(def.get("id", ""))})
+			items.append({"id": items.size() + 1, "def_id": str(def.get("id", "")),
+					"color_json": '{"paint":"%s"}' % fig["paint"] if fig.has("paint") else "{}"})
 			var slot := str(def.get("slot", ""))
 			if str(def.get("kind", "")) == "bodysuit":
 				looks[slot] = items.size()

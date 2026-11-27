@@ -339,7 +339,9 @@ static func set_worn_models(character: Dictionary, worn_csv: String) -> void:
 	var fp := character.has("soldier") and character["soldier"] != null and (character["soldier"] as Soldier).first_person
 
 	for raw_rel: String in paths:
-		var rel := raw_rel.strip_edges()
+		var painted := SwgColors.split_painted(raw_rel.strip_edges())  # (a painted piece's paint)
+		var rel: String = painted[0]
+		var paint: Dictionary = painted[1]
 		if rel == "":
 			continue
 		var gltf_path := "res://imported_assets/" + rel
@@ -354,7 +356,7 @@ static func set_worn_models(character: Dictionary, worn_csv: String) -> void:
 			continue
 		var colors := _load_gltf_colors(gltf_path)
 		if not colors.is_empty():
-			SwgColors.apply(scene, colors, 0)
+			SwgColors.apply_custom(scene, colors, paint)
 		SwgOcclusion.tag(scene, gltf_path)
 		var is_helmet := rel.contains("helmet")
 		for m: Node in scene.find_children("*", "MeshInstance3D", true, false):

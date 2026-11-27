@@ -383,6 +383,17 @@ private:
                 }
                 add(name, std::format(R"("{}":{})", factor, value));
             }
+            // A texture swap: its variable picks the main texture among its
+            // files (exported next to the model), defaulting to its index.
+            for (const TextureSwap& swap : customization.textures) {
+                if (swap.factor != "MAIN") continue;
+                std::string files;
+                for (const std::string& texture : swap.textures) {
+                    files += (files.empty() ? "\"" : ",\"") + assets_.texture_file(texture) + "\"";
+                }
+                add(name, std::format(R"("swap":{{"variable":"{}","files":[{}],"index":{}}})", swap.variable, files,
+                                      swap.default_index));
+            }
         }
         for (const auto& [name, renderer_path] : renderers_) {
             try {
