@@ -65,6 +65,7 @@ var map_markers: Array = []  # [{position: Vector2 (game x, z), color, kind: "po
 var map_structures: Array = []  # [PackedVector2Array]: buildings' outlines (game x, z) near the player, drawn on the radar
 var map_player := {}      # {position: Vector2, yaw}
 var messages: Array = []  # [{text, color, age}], newest last
+var perks: Array = []     # triggered perks to show (docs/PERKS.md): [{name, time (s left; < 0 held), flash (1..0)}]
 # Our adjustments to Battlefront's placements: element name -> offset, in
 # the 4:3 frame's units (x of 4/3 of the screen height, y of its height).
 var nudges := {}
@@ -138,6 +139,8 @@ func _draw() -> void:
 	draw_set_transform_matrix(Transform2D())
 	if shield_fraction >= 0.0:
 		_draw_shield_bar(screen)
+	if not perks.is_empty():
+		_draw_perks(screen)
 
 
 # The Deflector Shield's charge: a thin bar just above the health bar, as
@@ -156,6 +159,26 @@ func _draw_shield_bar(_screen: Vector2) -> void:
 		var fill := Rect2(bar.position + Vector2(1, 1), Vector2((bar.size.x - 2) * frac, bar.size.y - 2))
 		draw_rect(fill, Color(0.28, 0.85, 1.0, 0.96))
 	draw_rect(bar.grow(1.0), Color(0.03, 0.05, 0.08, 0.98), false, 1.5)
+
+
+# Active and just-fired perks: a short list stacked up from above the health
+# bar (and the shield's), a fired one bright, then settling.
+func _draw_perks(screen: Vector2) -> void:
+	var health := _health_rect
+	var font := "gamefont_small"
+	if health.size.x <= 0.0 or art == null or not art.has_font(font):
+		return
+	var scale := screen.y / FONT_REFERENCE
+	var step: float = art.line_height(font, scale)
+	var bottom := health.position.y - health.size.y * (2.6 if shield_fraction >= 0.0 else 1.0)
+	for i in perks.size():
+		var p: Dictionary = perks[perks.size() - 1 - i]
+		var text := str(p["name"])
+		if float(p["time"]) > 0.0:
+			text += "  %.1f" % float(p["time"])
+		var flash := clampf(float(p["flash"]), 0.0, 1.0)
+		var color := Color(0.75, 0.9, 1.0, 0.9).lerp(Color(1.0, 0.92, 0.45, 1.0), flash)
+		art.draw_text(self, font, text, Vector2(health.position.x, bottom - (i + 1) * step), scale, "Left", color, true)
 
 
 # --- the tree ---------------------------------------------------------------

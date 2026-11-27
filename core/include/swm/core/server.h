@@ -743,6 +743,8 @@ private:
     // A sprinting character's shoulder charge (a perk's: Shoulder Charge), each tick.
     void update_charge(Client& client);
     void perk_hit(Client& shooter, int slot, const PerkTarget& target);
+    // Tells its client (and the HUD) a perk the server fired: CombatEvent::perk.
+    void perk_fired(const Client& client, size_t index);
     void perk_kill(Client& killer, int slot, bool headshot);
     // Damage a character takes after mitigation, as its perks leave it; and
     // the hit's other triggers (hit_by, unhit).

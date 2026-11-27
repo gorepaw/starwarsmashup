@@ -263,6 +263,7 @@ void ProfessionBook::parse(const Ini& ini, const std::string& where) {
                 }
                 TriggeredPerk t;
                 t.id = perk.id;
+                t.name = perk.name;
                 t.trigger = *trigger;
                 t.after = s.number("After", 0);
                 t.below = s.number("Below", 0);

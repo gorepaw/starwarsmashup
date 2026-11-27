@@ -184,7 +184,7 @@ void put_remote_state(ByteWriter& out, const MoveState& state) {
     out.put(state.pitch);
     out.put(uint8_t(uint8_t(state.grounded) | (uint8_t(state.sprinting) << 1) | (uint8_t(state.crouched) << 2) |
                     (uint8_t(state.crouch_held) << 3) | (uint8_t(state.blocking) << 4) |
-                    (uint8_t(state.combat.reload > 0) << 5)));
+                    (uint8_t(state.combat.reload > 0) << 5) | (uint8_t(state.slide > 0) << 6)));
     out.put(state.roll);
     out.put(state.roll_yaw);
     out.put(state.stagger);
@@ -210,6 +210,7 @@ MoveState get_remote_state(ByteReader& in) {
     state.crouch_held = (bits & 8) != 0;
     state.blocking = (bits & 16) != 0;
     state.combat.reload = (bits & 32) != 0 ? 1.0 : 0.0;
+    state.slide = (bits & 64) != 0 ? 1.0f : 0.0f;  // (sliding; how long, not drawn)
     state.roll = in.get<float>();
     state.roll_yaw = in.get<float>();
     state.stagger = in.get<float>();
@@ -447,6 +448,7 @@ void put_triggered(ByteWriter& out, const std::vector<TriggeredPerk>& perks) {
     for (size_t i = 0; i < perks.size() && i < size_t(max_perk_timers); ++i) {
         const TriggeredPerk& p = perks[i];
         out.put_string(p.id);
+        out.put_string(p.name);
         out.put(uint8_t(p.trigger));
         for (const double v : {p.after, p.below, p.within, p.chain, p.chance, p.duration, p.cooldown, p.stamina,
                                p.shield, p.cool, p.cloak, p.mark, p.target_duration, p.damage_taken, p.resist}) {
@@ -472,6 +474,7 @@ std::vector<TriggeredPerk> get_triggered(ByteReader& in) {
     for (size_t i = 0; i < n; ++i) {
         TriggeredPerk p;
         p.id = in.get_string();
+        p.name = in.get_string();
         const uint8_t trigger = in.get<uint8_t>();
         if (trigger > uint8_t(PerkTrigger::hit_by)) throw PacketError("bad perk trigger");
         p.trigger = PerkTrigger(trigger);
@@ -1703,7 +1706,7 @@ Message decode(std::span<const uint8_t> packet) {
         for (size_t i = 0; i < events; ++i) {
             CombatEvent event;
             const uint8_t kind = in.get<uint8_t>();
-            if (kind < CombatEvent::hit || kind > CombatEvent::shielded) {
+            if (kind < CombatEvent::hit || kind > CombatEvent::perk) {
                 throw PacketError("unknown combat event");
             }
             event.kind = CombatEvent::Kind(kind);

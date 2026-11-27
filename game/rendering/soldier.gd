@@ -550,6 +550,14 @@ func pose(state: Dictionary, delta: float) -> void:
 	_tree.set("parameters/crouch_move/blend_position", blend)
 	_tree.set("parameters/crouch_speed/scale", clampf(speed / CROUCH_WALK_SPEED, 0.6, 1.5) if speed > 0.5 else 1.0)
 	_crouch = move_toward(_crouch, 1.0 if bool(state.get("crouched", false)) else 0.0, CROUCH_BLEND * delta)
+	# A slide (a perk's): down at once, gliding on a crouch, legs still and
+	# turned the way it goes (no crouch walk).
+	if float(state.get("slide", 0.0)) > 0.0:
+		_crouch = 1.0
+		_tree.set("parameters/crouch_move/blend_position", 0.0)
+		_tree.set("parameters/crouch_speed/scale", 1.0)
+		if speed > 0.5:
+			_leg_yaw = clampf(_signed_angle(facing, flat), -MAX_LEG_TURN, MAX_LEG_TURN)
 	for blend_node: String in ["posture", "shoot_posture", "reload_clip"]:
 		_tree.set("parameters/%s/blend_amount" % blend_node, _crouch)
 	if _can_swim:
@@ -698,6 +706,10 @@ func fire() -> void:
 		_swing = _swing_time()
 	if _tree != null:
 		_tree.set("parameters/shoot_seek/seek_request", 0.0)
+		# Firing out of a roll (a perk's: Roll Shot, Teras Kasi Master): the
+		# roll gives way to the shot, crouched, for the rest of it.
+		if _rolling and bool(_tree.get("parameters/roll/active")):
+			_tree.set("parameters/roll/request", AnimationNodeOneShot.ONE_SHOT_REQUEST_FADE_OUT)
 
 
 func _swing_time() -> float:

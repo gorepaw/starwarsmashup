@@ -1494,6 +1494,8 @@ func _update_events() -> void:
 							_camera.global_position)
 		if event["kind"] == "shielded" and mine:
 			_battle_ui.note_shielded()
+		if event["kind"] == "perk" and mine:
+			_battle_ui.note_perk_fired(int(event["victim"]))  # (docs/PERKS.md: the HUD flashes its name)
 		if event["kind"] == "hit" and mine:
 			_hits += 1
 			_battle_ui.note_hit()

@@ -397,6 +397,7 @@ bool is_stance(PerkTrigger trigger);
 
 struct TriggeredPerk {
     std::string id;
+    std::string name;  // as the trainer teaches it (the HUD names it when it fires)
     PerkTrigger trigger = PerkTrigger::kill;
     double after = 0;     // seconds: crouched_still, paused, unhit
     double below = 0;     // a share of health: low_health, target_low_health

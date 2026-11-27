@@ -333,6 +333,9 @@ struct CombatEvent {
         hit = 1, kill = 2, captured = 3, neutralized = 4,
         flag_taken = 5, flag_dropped = 6, flag_returned = 7, flag_captured = 8,
         shielded = 9,
+        // A triggered perk the server fired (docs/PERKS.md): attacker = its
+        // character, victim = its index in the loadout's triggered perks.
+        perk = 10,
     };
     Kind kind = hit;
     uint32_t attacker = 0;

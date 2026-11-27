@@ -1164,6 +1164,7 @@ void test_server_mechanics() {
     {
         TriggeredPerk spot;
         spot.id = "rifles_spotter";
+        spot.name = "Spotter";
         spot.trigger = PerkTrigger::hit;
         spot.aimed = true;
         spot.mark = 4;
@@ -1178,8 +1179,16 @@ void test_server_mechanics() {
         };
         fire_once(yaw, -0.05);
         CHECK(health(spotted) < 100 && !marked());  // from the hip: no
+        client.take_events();
         fire_once(yaw, -0.05, true);
         CHECK(marked());
+        // The HUD's: the perk's name with the loadout, and the server's word that it fired.
+        CHECK(!client.custom_loadouts().empty() && client.custom_loadouts()[0].triggered.size() == 1 &&
+              client.custom_loadouts()[0].triggered[0].name == "Spotter");
+        const auto events = client.take_events();
+        CHECK(std::any_of(events.begin(), events.end(), [&](const net::CombatEvent& e) {
+            return e.kind == net::CombatEvent::perk && e.attacker == me && e.victim == 0;
+        }));
     }
     // Low Profile: snapshots say its shots don't show on radar. Quiet Step:
     // creatures notice it from closer.
@@ -1188,6 +1197,169 @@ void test_server_mechanics() {
     arm(gun);
     CHECK(server.describe(me) && !server.describe(me)->quiet && server.notice_of(me) == 1);
     client.disconnect();
+    run(0.1);
+}
+
+// The melee perks between two players: a block's leak and cost (Iron Guard),
+// a blow through a block (Sweeping Blows), a parry's riposte (Riposte),
+// stagger shrugged off (Steady Stance, Juggernaut), and a slow (Juggernaut).
+void test_server_melee() {
+    Heightfield ground{201, 2.0, -200, -200, std::vector<float>(201 * 201, 0.0f)};
+    World world{ground};
+    net::LoopbackHub links;
+    net::Endpoint server_ep{1, 1};
+    net::LoopbackLink srv_link{links, server_ep};
+    net::LoopbackLink a_link{links, {2, 1}};
+    net::LoopbackLink b_link{links, {3, 1}};
+    ServerConfig config;
+    config.pvp_enabled = true;
+    config.spawn = {0, 0, 0};
+    GameServer server(srv_link, world, config);
+    GameClient attacker(a_link, world, ClientConfig{.server = server_ep, .name = "Attacker"});
+    GameClient defender(b_link, world, ClientConfig{.server = server_ep, .name = "Defender"});
+    double now = 0;
+    const auto run = [&](double seconds) {
+        for (const double end = now + seconds; now < end; now += 1.0 / 30.0) {
+            server.update(now);
+            attacker.update(now);
+            defender.update(now);
+        }
+    };
+    run(0.6);
+    CHECK(attacker.status() == GameClient::Status::connected && defender.status() == GameClient::Status::connected);
+    const uint32_t a = attacker.entity_id(), b = defender.entity_id();
+    WeaponDef staff;
+    staff.archetype = "melee";
+    staff.projectile = Projectile::melee;
+    staff.damage = 100;
+    staff.shot_delay = 0.5;
+    staff.melee_lunge = 0;
+    const auto arm = [&](uint32_t who, const WeaponDef& weapon, std::vector<StatModifier> perks = {}) {
+        Loadout lo;
+        lo.name = "Melee";
+        lo.weapons[primary_slot] = weapon;
+        if (!perks.empty()) lo.gear.push_back({"perks", "", std::move(perks)});
+        server.set_player_loadouts(who, {lo});
+    };
+    // Face to face, 1.5 m apart, fresh.
+    const auto square_off = [&] {
+        for (const uint32_t who : {a, b}) {
+            MoveState st = *server.state_of(who);
+            st.position = who == a ? Vec3{0, 0, 0} : Vec3{0, 0, -1.5};
+            st.velocity = {};
+            st.yaw = who == a ? 0.0f : float(std::numbers::pi);
+            st.stagger = 0;
+            st.energy = 100;
+            server.set_state(who, st);
+        }
+        run(0.2);
+    };
+    GameClient::Controls a_rest, a_swing, b_rest, b_guard;
+    a_swing.fire = true;
+    b_rest.yaw = b_guard.yaw = std::numbers::pi;
+    b_guard.block = true;
+    const auto swing = [&] {
+        attacker.set_input(a_swing);
+        run(2.0 / 30.0);
+        attacker.set_input(a_rest);
+        run(0.5);
+    };
+    const auto lost = [&](uint32_t who, auto&& what) {
+        const double before = server.health_of(who);
+        what();
+        return before - server.health_of(who);
+    };
+
+    // Iron Guard: a block lets 30% through, for half the stamina.
+    WeaponDef guard = staff;
+    guard.block_leak = 0.3;
+    guard.block_cost = 0.5;
+    guard.riposte = true;
+    arm(a, staff);
+    arm(b, guard);
+    square_off();
+    defender.set_input(b_guard);
+    run(0.5);  // (past the parry window)
+    const double energy_before = server.state_of(b)->energy;
+    CHECK(near(lost(b, swing), 30, 1e-6));
+    // A swing's 15 stamina, halved, and the block's own drain (4/s) over the swing's 0.57 s.
+    CHECK(near(energy_before - server.state_of(b)->energy, 7.5 + 4.0 * (2.0 / 30.0 + 0.5), 0.3));
+    // Sweeping Blows: through the block.
+    WeaponDef sweeping = staff;
+    sweeping.unblockable = true;
+    sweeping.knockback = 6;
+    arm(a, sweeping);
+    square_off();
+    defender.set_input(b_guard);
+    run(0.5);
+    CHECK(near(lost(b, swing), 100, 1e-6));
+    defender.set_input(b_rest);
+    run(0.5);
+
+    // Riposte: a parry staggers the attacker, and the parrier's next blow crits.
+    arm(a, staff);
+    arm(b, guard);
+    square_off();
+    defender.set_input(b_guard);
+    run(2.0 / 30.0);  // (inside the parry window)
+    CHECK(server.state_of(b)->parry_window > 0);
+    float parried = 0;
+    for (int i = 0; i < 5; ++i) {  // (the swing lands a tick or two on)
+        attacker.set_input(i < 2 ? a_swing : a_rest);
+        run(1.0 / 30.0);
+        parried = std::max(parried, server.state_of(a)->stagger);
+    }
+    CHECK(parried > 0.4f);
+    GameClient::Controls b_strike = b_rest;
+    b_strike.fire = true;
+    defender.set_input(b_strike);
+    const double a_before = server.health_of(a);
+    run(2.0 / 30.0);
+    defender.set_input(b_rest);
+    run(0.3);
+    CHECK(near(a_before - server.health_of(a), 100 * staff.crit_multiplier, 1e-6));
+
+    // Steady Stance and Juggernaut: a blow staggers less, or not at all.
+    const auto stagger_from_blow = [&](std::vector<StatModifier> perks) {
+        arm(b, staff, std::move(perks));
+        arm(a, staff);
+        square_off();
+        defender.set_input(b_rest);
+        attacker.set_input(a_swing);
+        run(2.0 / 30.0);
+        attacker.set_input(a_rest);
+        const float st = server.state_of(b)->stagger;
+        run(0.6);
+        return st;
+    };
+    CHECK(stagger_from_blow({}) > 0.25f);
+    const float steady = stagger_from_blow({{Stat::stagger_resist, 0.5, 1}});
+    CHECK(steady > 0.1f && steady < 0.2f);
+    CHECK(stagger_from_blow({{Stat::stagger_resist, 1, 1}}) == 0);
+
+    // Juggernaut: a slow (a blow's hit effect) doesn't slow it.
+    WeaponDef slowing = staff;
+    slowing.damage = 1;
+    slowing.hit_effect = HitEffect{"slowed", "Slowed", 1, 5, 0, DamageType::melee, {{Stat::run_speed, 0, 0.5}}};
+    const auto run_after_slow = [&](std::vector<StatModifier> perks) {
+        arm(b, staff, std::move(perks));
+        arm(a, slowing);
+        square_off();
+        swing();
+        const Vec3 from = server.state_of(b)->position;
+        GameClient::Controls go = b_rest;
+        go.forward = 1;
+        defender.set_input(go);
+        run(0.5);
+        defender.set_input(b_rest);
+        const Vec3 to = server.state_of(b)->position;
+        run(5.5);  // (the slow wears off)
+        return std::hypot(to.x - from.x, to.z - from.z);
+    };
+    CHECK(run_after_slow({}) < 2.2);
+    CHECK(run_after_slow({{Stat::slow_resist, 1, 1}}) > 2.9);
+    attacker.disconnect();
+    defender.disconnect();
     run(0.1);
 }
 
@@ -1340,6 +1512,7 @@ int main() {
         test_server_triggers();
         test_mechanics();
         test_server_mechanics();
+        test_server_melee();
         test_server_professions();
     } catch (const std::exception& error) {
         std::printf("FAIL: %s\n", error.what());

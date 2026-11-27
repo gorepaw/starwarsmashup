@@ -19,6 +19,7 @@ const TARGET_CONE := 0.035
 const TARGET_RANGE := 150.0
 const SHOT_TARGET_TIME := 3.0  # s the HUD keeps showing what you last hit
 const SEEN_FIRING := 2.0
+const PERK_FLASH := 1.5  # s a perk's name flashes when it fires
 const FRIEND_COLOR := Color(0.35, 0.6, 1.0)
 const ENEMY_COLOR := Color(1.0, 0.3, 0.25)
 const NEUTRAL_COLOR := Color(0.9, 0.9, 0.9)
@@ -54,6 +55,8 @@ var _flag_view := BattleFlags.new()
 var _cone_shader: Shader
 var _team_tags: TeamTags
 var _fired := {}
+var _perk_flash := {}       # a triggered perk's index -> seconds its name still flashes
+var _perk_was_active := {}  # ...and whether it was active last frame (a roll's, an overheat's: seen here)
 var _hit_flash := 0.0
 var _shield_flash := 0.0       # a capital ship's shield took our shot
 var _shield_notice := 0.0      # until we're told again
@@ -303,6 +306,34 @@ func forget_team_tag(id: int) -> void:
 func update_team_tags(camera: Camera3D, delta: float, raycast: Callable) -> void:
 	if _team_tags != null:
 		_team_tags.update(camera, delta, raycast)
+
+
+# A triggered perk the server fired (its index in the loadout's), flashed on
+# the HUD (docs/PERKS.md).
+func note_perk_fired(index: int) -> void:
+	_perk_flash[index] = PERK_FLASH
+
+
+# The HUD's perk lines: those active (a held one's name, a timed one's
+# seconds left), and any that just fired, flashed for a moment. A roll's or
+# an overheat's the client sees at once; the server's come as events.
+func _perk_lines(client: Object, delta: float) -> Array:
+	var out: Array = []
+	var perks: Array = client.get_perks()
+	for i in perks.size():
+		var p: Dictionary = perks[i]
+		var active := bool(p["active"])
+		if str(p["where"]) == "simulation" and active and not bool(_perk_was_active.get(i, false)):
+			_perk_flash[i] = PERK_FLASH
+		_perk_was_active[i] = active
+		var flash := float(_perk_flash.get(i, 0.0))
+		_perk_flash[i] = maxf(0.0, flash - delta)
+		if not active and flash <= 0.0:
+			continue
+		var held := str(p["where"]) == "stance" or str(p["trigger"]) in ["unhit", "low_health"]
+		var time := float(p["time"]) if active and not held and not bool(p["cooldown"]) else -1.0
+		out.append({"name": str(p["name"]), "time": time, "flash": flash / PERK_FLASH})
+	return out
 
 
 func note_fired(entity_id: int) -> void:
@@ -583,6 +614,7 @@ func _update_bf2_hud(client: Object, weapons: Array, max_health: float, delta: f
 	var team := int(own["team"])
 	var game: Dictionary = client.get_match()
 	var alive := bool(own["alive"]) and str(own.get("life", "alive")) == "alive"
+	_bf2_hud.perks = _perk_lines(client, delta) if alive else []
 	if alive:
 		b["player1.weaponsEnable"] = true
 		b["player1.weapon1.reticule.position"] = true

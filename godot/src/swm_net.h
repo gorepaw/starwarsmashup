@@ -97,6 +97,9 @@ public:
     // Explosions since the last call: [{position, normal, radius, owner, effect,
     // light_color, light_radius}].
     godot::Array take_explosions();
+    // The own loadout's triggered perks (docs/PERKS.md): {id, name, trigger,
+    // where ("stance", "simulation", "server"), active, time, cooldown}.
+    godot::Array get_perks() const;
     // Bolt impacts since the last call (for sparks and scorch marks):
     // [{position, normal, hit_character, effect, color}].
     godot::Array take_impacts();

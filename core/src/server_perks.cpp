@@ -117,6 +117,7 @@ void GameServer::perk_hit(Client& shooter, int slot, const PerkTarget& target) {
         if (p.chain > 0 && !(same_target && now - mine.last_hit <= p.chain)) continue;
         if (p.chance < 1 && random_unit() >= p.chance) continue;  // Stun Rounds
         if (!start_perk(lo, shooter.state, i)) continue;
+        perk_fired(shooter, i);
         perk_act(shooter, p, slot);
         if (p.mark > 0 && !target.killed) {  // Spotter: marked for the shooter's side
             mark_entity(target.entity, conquest_ ? shooter.team : -1, shooter.entity, p.mark, net::FieldMark::marked);
@@ -156,6 +157,10 @@ void GameServer::perk_hit(Client& shooter, int slot, const PerkTarget& target) {
     if (target.killed) perk_kill(shooter, slot, target.headshot);
 }
 
+void GameServer::perk_fired(const Client& client, size_t index) {
+    events_.push_back({net::CombatEvent::perk, client.entity, uint32_t(index), 0});
+}
+
 void GameServer::perk_kill(Client& killer, int slot, bool headshot) {
     const Loadout& lo = loadout_of(killer);
     const double now = perk_clock();
@@ -165,7 +170,10 @@ void GameServer::perk_kill(Client& killer, int slot, bool headshot) {
         if (!fits || !for_slot(p, slot)) continue;
         // Chain: only a kill soon after the last (Chain Breach).
         if (p.chain > 0 && now - killer.perks.last_kill > p.chain) continue;
-        if (start_perk(lo, killer.state, i)) perk_act(killer, p, slot);
+        if (start_perk(lo, killer.state, i)) {
+            perk_fired(killer, i);
+            perk_act(killer, p, slot);
+        }
     }
     killer.perks.last_kill = now;
 }
@@ -189,6 +197,7 @@ double GameServer::perk_incoming(Client& victim, double amount, DamageType type)
         if (p.trigger == PerkTrigger::unhit) {
             victim.state.perk_time[i] = 0;
         } else if (p.trigger == PerkTrigger::hit_by && start_perk(lo, victim.state, i)) {
+            perk_fired(victim, i);
             victim.perks.resist_type = type;
             perk_act(victim, p, -1);
         }
@@ -200,7 +209,10 @@ void GameServer::perk_shield_broken(Client& victim) {
     const Loadout& lo = loadout_of(victim);
     for (size_t i = 0; i < lo.triggered.size(); ++i) {
         const TriggeredPerk& p = lo.triggered[i];
-        if (p.trigger == PerkTrigger::shield_broken && start_perk(lo, victim.state, i)) perk_act(victim, p, -1);
+        if (p.trigger == PerkTrigger::shield_broken && start_perk(lo, victim.state, i)) {
+            perk_fired(victim, i);
+            perk_act(victim, p, -1);
+        }
     }
 }
 
@@ -212,8 +224,8 @@ bool GameServer::perk_lethal(Client& victim) {
         if (!start_perk(lo, victim.state, i)) continue;
         victim.perks.second_chance_used = victim.perks.second_chance_used || p.once_per_life;
         victim.health = 1;
+        perk_fired(victim, i);
         perk_act(victim, p, -1);
-        notify(victim.entity, "Second Chance!");
         return true;
     }
     return false;

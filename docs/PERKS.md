@@ -178,6 +178,8 @@ The **N** perks are ini lines too, on new fields ([`professions.ini`](../game/pr
 | Low Profile, Quiet Step | `radar_quiet + 1`; `notice * 0.6` | snapshots say its shots don't ping radar (`EntityState::quiet`); creatures and outlaws scan for it at 60% of their range |
 | Ammo Webbing | `ammo_capacity * 1.25` | an ammunition stack grows to 1,248 standard rounds (123 heavy) while it's worn; a stack is never cut back, so giving it up loses nothing |
 
+**Feedback.** The HUD lists active perks above the health bar (a held one by name, a timed one with its seconds left) and flashes a perk's name when it fires: a roll's or an overheat's as the client sees it, the server's by a `CombatEvent::perk` (its character, its index). A slide draws as a crouch gliding without stepping; a shot out of a roll cuts the roll clip short for the shooting pose.
+
 Everything a client predicts with travels in full precision (the weapons and stat modifiers of its resolved loadouts, protocol 45), so its simulation matches the server's exactly.
 
 ## Data

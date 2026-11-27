@@ -38,6 +38,7 @@ godot::Dictionary to_dictionary(const core::MoveState& state) {
     out["crouched"] = state.crouched;
     out["roll"] = double(state.roll);          // seconds of rolling left (0: not rolling)
     out["roll_yaw"] = double(state.roll_yaw);  // the way it rolls
+    out["slide"] = double(state.slide);        // seconds of sliding left (a perk's; others': 1 while sliding)
     out["blocking"] = state.blocking;
     out["stagger"] = double(state.stagger);
     out["vehicle"] = int64_t(state.vehicle);    // the vehicle class it rides in; -1 on foot
@@ -1697,6 +1698,9 @@ godot::Array SwmClient::take_events() {
             case core::net::CombatEvent::shielded:
                 entry["kind"] = "shielded";
                 break;
+            case core::net::CombatEvent::perk:  // attacker = the character, victim = the perk's index
+                entry["kind"] = "perk";
+                break;
             case core::net::CombatEvent::kill:
                 entry["kind"] = "kill";
                 break;
@@ -1725,6 +1729,32 @@ godot::Array SwmClient::take_events() {
             entry["damage"] = double(event.damage);
             out.push_back(entry);
         }
+    }
+    return out;
+}
+
+godot::Array SwmClient::get_perks() const {
+    godot::Array out;
+    if (!client() || client()->custom_loadouts().empty()) return out;
+    const core::Loadout& lo = client()->loadout();
+    const core::MoveState& state = client()->predicted();
+    for (size_t i = 0; i < lo.triggered.size(); ++i) {
+        const core::TriggeredPerk& p = lo.triggered[i];
+        godot::Dictionary entry;
+        entry["id"] = godot::String::utf8(p.id.c_str());
+        entry["name"] = godot::String::utf8((p.name.empty() ? p.id : p.name).c_str());
+        entry["trigger"] = godot::String::utf8(std::string(core::perk_trigger_name(p.trigger)).c_str());
+        // Where it fires: "stance" (held while it holds), "simulation" (a
+        // roll, an overheat: seen here at once), or "server" (an event).
+        entry["where"] = core::is_stance(p.trigger) ? "stance"
+                         : p.trigger == core::PerkTrigger::roll || p.trigger == core::PerkTrigger::overheat
+                             ? "simulation"
+                             : "server";
+        entry["active"] = core::perk_active(lo, state, i);
+        // Seconds on its timer: what's left of it, or of its cooldown.
+        entry["time"] = i < state.perk_time.size() ? double(state.perk_time[i]) : 0.0;
+        entry["cooldown"] = p.timer_is_cooldown();
+        out.push_back(entry);
     }
     return out;
 }
@@ -2106,6 +2136,7 @@ void SwmClient::_bind_methods() {
     ClassDB::bind_method(D_METHOD("get_character_id"), &SwmClient::get_character_id);
     ClassDB::bind_method(D_METHOD("get_refusal"), &SwmClient::get_refusal);
     ClassDB::bind_method(D_METHOD("get_presented"), &SwmClient::get_presented);
+    ClassDB::bind_method(D_METHOD("get_perks"), &SwmClient::get_perks);
     ClassDB::bind_method(D_METHOD("get_remotes"), &SwmClient::get_remotes);
     ClassDB::bind_method(D_METHOD("get_looks"), &SwmClient::get_looks);
     ClassDB::bind_method(D_METHOD("get_stats"), &SwmClient::get_stats);
