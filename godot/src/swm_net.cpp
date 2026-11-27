@@ -83,6 +83,7 @@ void describe(godot::Dictionary& out, const core::net::EntityState& entity) {
     out["pose"] = int64_t(entity.pose);  // 0 on their feet, 1 sitting, 2 attacking
     out["actor_kind"] = int64_t(entity.actor_kind);  // 0 player/bot, 1 citizen, 2 creature, 3 bandit
     out["passive"] = entity.passive;
+    out["quiet"] = entity.quiet;
     out["colors"] = int64_t(entity.colors);  // 0: the look's own colors; else a seed to vary them by
     out["species"] = godot::String::utf8(core::species_def(core::Species(entity.species)).id.c_str());
     out["gender"] = godot::String::utf8(entity.gender == 1 ? "female" : "male");
@@ -500,11 +501,6 @@ godot::Array SwmClient::get_character_loadouts() const {
             }
             entry["gear_ids"] = gear;
             entry["appearance_ids"] = app;
-            godot::Array specializations;
-            for (const std::string& id : lo.specializations) {
-                specializations.push_back(godot::String::utf8(id.c_str()));
-            }
-            entry["specializations"] = specializations;
             entry["companion"] = godot::String::utf8(lo.companion.c_str());
             out.push_back(entry);
         }
@@ -555,12 +551,6 @@ void SwmClient::save_loadout(int64_t slot_index, const godot::Dictionary& loadou
         godot::Array keys = app.keys();
         for (int i = 0; i < keys.size(); ++i) {
             lo.appearance_ids[to_std(keys[i])] = uint64_t(int64_t(app[keys[i]]));
-        }
-    }
-    if (loadout.has("specializations")) {
-        const godot::Array ids = loadout["specializations"];
-        for (int i = 0; i < ids.size(); ++i) {
-            lo.specializations.push_back(to_std(ids[i]));
         }
     }
     if (loadout.has("companion")) {
@@ -690,6 +680,12 @@ godot::Array SwmClient::get_professions() const {
             entry["id"] = godot::String::utf8(p.id.c_str());
             entry["xp"] = p.xp;
             entry["trained"] = int64_t(p.trained);
+            entry["paid"] = int64_t(p.paid);
+            godot::Array perks, paid_perks;
+            for (const std::string& id : p.perks) perks.push_back(godot::String::utf8(id.c_str()));
+            for (const std::string& id : p.paid_perks) paid_perks.push_back(godot::String::utf8(id.c_str()));
+            entry["perks"] = perks;
+            entry["paid_perks"] = paid_perks;
             out.push_back(entry);
         }
     }
@@ -857,8 +853,6 @@ godot::Dictionary SwmClient::get_specialist() const {
     out["prices"] = prices;
     out["performing"] = s.performing;
     out["bounty_flag"] = s.bounty_flag;
-    out["design_from"] = godot::String::utf8(s.design_from.c_str());
-    out["design_appearance"] = godot::String::utf8(s.design_appearance.c_str());
     out["channel"] = godot::String::utf8(s.channel.c_str());
     out["channel_remaining"] = double(s.channel_remaining);
     return out;
@@ -1534,6 +1528,7 @@ void SwmClient::set_input(const godot::Dictionary& c) {
     controls.crouch = bool(c.get("crouch", false));
     controls.use = bool(c.get("use", false));
     controls.block = bool(c.get("block", false));
+    controls.aim = bool(c.get("aim", false));
     controls.weapon = int(int64_t(c.get("weapon", 0)));
     client()->set_input(controls);
 }

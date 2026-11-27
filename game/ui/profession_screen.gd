@@ -1,18 +1,19 @@
-# Professions in Battlefront II's frames, fonts and colors (docs/PROFESSIONS.md):
-# the planner. Each profession's level and experience, what earns it more,
-# its milestones (reached ones marked) and what their perks do; and each
-# loadout's Active Specialization Slots, which say whose combat perks it
-# fights with, and its Companion Slot.
+# Professions in Battlefront II's frames, fonts and colors (docs/PROFESSIONS.md,
+# docs/PERKS.md): the planner. Each profession's level and experience, what
+# earns it more, and what it teaches: a weapon or armor profession's perks (an
+# A or a B at each of 5/25/45/65/85), any other's milestones in order. What a
+# character knows works in every loadout; they may know at most `cap` perks
+# and milestones in all, learned and given up at trainers.
 # `professions` are SwmCharacterStore.get_professions()'s; `progress` is
-# id -> experience (SwmClient.get_professions()); `loadouts` are
-# SwmClient.get_character_loadouts()'s.
+# id -> experience, `trained` id -> the highest milestone learned and `known`
+# id -> the perks learned (SwmClient.get_professions()).
 extends "res://ui/bf2_screen.gd"
 
-signal loadout_saved(slot: int, loadout: Dictionary)
 signal closed
 
 const DONE_COLOR := Color(0.45, 0.85, 0.5)
 const LOCKED_COLOR := Color(0.42, 0.46, 0.55)
+const WAIT_COLOR := Color(0.75, 0.62, 0.35)
 const BAR_BACK := Color(0.08, 0.1, 0.14, 0.9)
 const BAR_FILL := Color(0.95, 0.72, 0.25, 0.9)
 const TABS := [
@@ -27,20 +28,17 @@ const ROWS := 9
 var professions: Array = []
 var progress: Dictionary = {}
 var trained: Dictionary = {}     # profession id -> the highest milestone level learned from a trainer
-var loadouts: Array = []
-var active_loadout := 0
+var known: Dictionary = {}       # profession id -> [perk ids learned]
 var store: Object            # SwmCharacterStore: the level curve
-var slots := 3               # Active Specialization Slots per loadout
+var cap := 10                # perks and milestones a character may know at once
 
 var _tab := "combat"
 var _selected := 0
 var _scroll := 0
 var _detail_scroll := 0
-var _loadout := 0            # whose slots are shown
 
 
 func open_screen() -> void:
-	_loadout = clampi(active_loadout, 0, 4)
 	_selected = 0
 	_scroll = 0
 	_detail_scroll = 0
@@ -73,15 +71,19 @@ func _profession(id: String) -> Dictionary:
 	return {}
 
 
-func _loadout_dict(slot: int) -> Dictionary:
-	for lo: Dictionary in loadouts:
-		if int(lo.get("slot_index", -1)) == slot:
-			return lo
-	return {}
-
-
-func _slotted(slot: int) -> Array:
-	return Array(_loadout_dict(slot).get("specializations", []))
+# What a character knows, in order: [{name, profession}] (a perk, or a milestone).
+func _learned() -> Array:
+	var out: Array = []
+	for p: Dictionary in professions:
+		var id := str(p.get("id", ""))
+		var mine: Array = known.get(id, [])
+		for perk: Dictionary in p.get("perks", []):
+			if str(perk.get("id", "")) in mine:
+				out.append({"name": str(perk.get("name", "")), "profession": str(p.get("name", id))})
+		for m: Dictionary in p.get("milestones", []):
+			if int(m.get("level", 0)) <= int(trained.get(id, 0)):
+				out.append({"name": str(m.get("name", "")), "profession": str(p.get("name", id))})
+	return out
 
 
 # Words laid into lines no wider than `width` pixels.
@@ -136,8 +138,8 @@ func _paint() -> void:
 
 	var list := _list()
 	_selected = clampi(_selected, 0, maxi(0, list.size() - 1))
-	var slots_h := 92.0 * u
-	var list_rect := Rect2(x, y, 260 * u, box.end.y - y - slots_h - 26 * u)
+	var known_h := 92.0 * u
+	var list_rect := Rect2(x, y, 260 * u, box.end.y - y - known_h - 26 * u)
 	draw_rect(list_rect, Color(0.04, 0.06, 0.09, 0.6))
 	var row_h := (list_rect.size.y - 8 * u) / ROWS
 	for i in range(_scroll, mini(list.size(), _scroll + ROWS)):
@@ -167,7 +169,7 @@ func _paint() -> void:
 	var detail := Rect2(list_rect.end.x + 16 * u, y, box.end.x - list_rect.end.x - 34 * u, list_rect.size.y)
 	if not list.is_empty():
 		_paint_detail(list[_selected], detail)
-	_paint_slots(Rect2(x, list_rect.end.y + 12 * u, box.size.x - 36 * u, slots_h))
+	_paint_known(Rect2(x, list_rect.end.y + 12 * u, box.size.x - 36 * u, known_h))
 
 
 func _paint_detail(p: Dictionary, rect: Rect2) -> void:
@@ -193,101 +195,77 @@ func _paint_detail(p: Dictionary, rect: Rect2) -> void:
 	var line_h: float = art.line_height("gamefont_tiny", u) + 2 * u
 	var lines := PackedStringArray()
 	var colors: Array = []
-	for line in _wrap("gamefont_tiny", str(p.get("description", "")), rect.size.x):
+	var add := func(line: String, color: Color) -> void:
 		lines.append(line)
-		colors.append(TEXT)
+		colors.append(color)
+	for line in _wrap("gamefont_tiny", str(p.get("description", "")), rect.size.x):
+		add.call(line, TEXT)
 	var earns := str(p.get("earns", ""))
 	if earns != "":
 		for line in _wrap("gamefont_tiny", "Experience: " + earns, rect.size.x):
-			lines.append(line)
-			colors.append(DIM)
-	if bool(p.get("slotted", false)):
-		lines.append("Its perks apply from a loadout's specialization slot" +
-				(" while wearing its armor." if str(p.get("category", "")) == "armor" else "."))
-		colors.append(DIM)
-	var rank: Array = p.get("rank", [])
-	if not rank.is_empty() and int(p.get("rank_every", 0)) > 0:
-		var every := int(p.get("rank_every", 0))
-		lines.append("Every %d levels: %s  (x%d now)" % [every, ", ".join(PackedStringArray(rank)), level / every])
-		colors.append(DIM)
-	lines.append("")
-	colors.append(TEXT)
+			add.call(line, DIM)
+	var perks: Array = p.get("perks", [])
+	if not perks.is_empty():
+		var armor := str(p.get("category", "")) == "armor"
+		add.call("Choose one perk at each level; " + ("they work while you wear its armor." if armor
+				else "they work with its weapons."), DIM)
+	elif not p.get("milestones", []).is_empty():
+		add.call("Milestones are learned in order. The first lets you do what it's about at all.", DIM)
+	add.call("", TEXT)
+	var mine: Array = known.get(id, [])
+	for perk: Dictionary in perks:
+		var at := int(perk.get("level", 0))
+		var reached := available and at <= level
+		var learned := str(perk.get("id", "")) in mine
+		var waits := str(perk.get("needs", "")) != ""
+		var head := "%s Lv %d %s  %s%s" % ["[x]" if learned else "[ ]", at, str(perk.get("choice", "")),
+				str(perk.get("name", "")), "   (not working yet)" if waits else ""]
+		add.call(head, DONE_COLOR if learned else (TEXT if reached else (ACCENT if available else LOCKED_COLOR)))
+		for line in _wrap("gamefont_tiny", str(perk.get("description", "")), rect.size.x - 18 * u):
+			add.call("      " + line, WAIT_COLOR if waits else (TEXT if available else LOCKED_COLOR))
 	for m: Dictionary in p.get("milestones", []):
 		var reached := available and int(m.get("level", 0)) <= level
 		var learned := reached and int(m.get("level", 0)) <= int(trained.get(id, 0))
 		var head := "%s Lv %d  %s%s" % ["[x]" if learned else "[ ]", int(m.get("level", 0)), str(m.get("name", "")),
 				"   (reached: a trainer teaches it)" if reached and not learned else ""]
-		lines.append(head)
-		colors.append(DONE_COLOR if reached else (ACCENT if available else LOCKED_COLOR))
+		add.call(head, DONE_COLOR if reached else (ACCENT if available else LOCKED_COLOR))
 		var body := str(m.get("description", ""))
-		var perks: Array = m.get("perks", [])
-		if not perks.is_empty():
-			body += "  (" + ", ".join(PackedStringArray(perks)) + ")"
+		var effects: Array = m.get("perks", [])
+		if not effects.is_empty():
+			body += "  (" + ", ".join(PackedStringArray(effects)) + ")"
 		for line in _wrap("gamefont_tiny", body, rect.size.x - 18 * u):
-			lines.append("      " + line)
-			colors.append(TEXT if reached or available else LOCKED_COLOR)
-	var room := int((rect.end.y - 40 * u - y) / line_h)
+			add.call("      " + line, TEXT if reached or available else LOCKED_COLOR)
+	var room := int((rect.end.y - 10 * u - y) / line_h)
 	_detail_scroll = clampi(_detail_scroll, 0, maxi(0, lines.size() - room))
 	for i in range(_detail_scroll, mini(lines.size(), _detail_scroll + room)):
 		text("gamefont_tiny", lines[i], Vector2(x, y), "Left", colors[i])
 		y += line_h
 
-	var slotted := _slotted(_loadout)
-	var buttons_y := rect.end.y - 30 * u
-	if bool(p.get("slotted", false)) and available:
-		var lo_name := str(_loadout_dict(_loadout).get("name", "Loadout %d" % (_loadout + 1)))
-		if id in slotted:
-			button(Rect2(rect.end.x - 240 * u, buttons_y, 240 * u, 30 * u), "Unslot from " + lo_name, "unslot:" + id)
-		else:
-			var free := slotted.size() < slots and not _loadout_dict(_loadout).is_empty()
-			button(Rect2(rect.end.x - 240 * u, buttons_y, 240 * u, 30 * u), "Slot in " + lo_name, "slot:" + id,
-					false, true, free)
 
-
-func _paint_slots(rect: Rect2) -> void:
+# What the character knows, against the cap.
+func _paint_known(rect: Rect2) -> void:
 	draw_rect(rect, Color(0.04, 0.06, 0.09, 0.6))
 	var x := rect.position.x + 10 * u
 	var y := rect.position.y + 8 * u
-	text("gamefont_small", "Specializations", Vector2(x, y), "Left", ACCENT)
-	var tab_x := x + 150 * u
-	for slot in 5:
-		var lo := _loadout_dict(slot)
-		var label := "L%d: %s" % [slot + 1, str(lo.get("name", "Loadout %d" % (slot + 1)))]
-		if slot == active_loadout:
-			label += " *"
-		button(Rect2(tab_x, y - 2 * u, 134 * u, 24 * u), label, "loadout:%d" % slot, _loadout == slot, false,
-				not lo.is_empty())
-		tab_x += 138 * u
-	y += 30 * u
-	var slotted := _slotted(_loadout)
-	var w := (rect.size.x - 20 * u - (slots) * 8 * u) / (slots + 1)
-	for i in slots:
-		var cell := Rect2(x + i * (w + 8 * u), y, w, 44 * u)
-		frame(cell, "border_3_pieces", Color(1, 1, 1, 0.8))
-		if i < slotted.size():
-			var id := str(slotted[i])
-			var p := _profession(id)
-			text("gamefont_tiny", str(p.get("name", id)), cell.position + Vector2(10, 6) * u, "Left", TEXT)
-			text("gamefont_tiny", "Lv %d   (click to unslot)" % int(_level(id)["level"]),
-					cell.position + Vector2(10, 22) * u, "Left", DIM)
-			region(cell, "unslot:" + id)
-		else:
-			text("gamefont_tiny", "Empty slot", cell.position + Vector2(10, 14) * u, "Left", DIM)
-	var companion := Rect2(x + slots * (w + 8 * u), y, w, 44 * u)
-	frame(companion, "border_3_pieces", Color(1, 1, 1, 0.5))
-	text("gamefont_tiny", "Companion", companion.position + Vector2(10, 6) * u, "Left", LOCKED_COLOR)
-	text("gamefont_tiny", "None yet (Wave 7C)", companion.position + Vector2(10, 22) * u, "Left", LOCKED_COLOR)
-
-
-func _save_slots(slot: int, ids: Array) -> void:
-	var lo := _loadout_dict(slot).duplicate(true)
-	if lo.is_empty():
+	var learned := _learned()
+	text("gamefont_small", "Known  %d / %d" % [learned.size(), cap], Vector2(x, y), "Left",
+			ACCENT if learned.size() < cap else Color(0.95, 0.55, 0.35))
+	text("gamefont_tiny", "Learned and given up at trainers; giving up is free, and so is learning again.",
+			Vector2(rect.end.x - 10 * u, y + 3 * u), "Right", DIM)
+	y += 28 * u
+	if learned.is_empty():
+		text("gamefont_tiny", "Nothing yet: a trainer teaches what your levels have earned.", Vector2(x, y + 6 * u),
+				"Left", DIM)
 		return
-	lo["specializations"] = ids
-	for i in loadouts.size():
-		if int((loadouts[i] as Dictionary).get("slot_index", -1)) == slot:
-			loadouts[i] = lo  # shown at once; the server's answer replaces it
-	loadout_saved.emit(slot, lo)
+	var columns := 5
+	var w := (rect.size.x - 20 * u) / columns
+	for i in mini(learned.size(), columns * 2):
+		var cell := Vector2(x + (i % columns) * w, y + (i / columns) * 22 * u)
+		var entry: Dictionary = learned[i]
+		text("gamefont_tiny", "%s (%s)" % [entry["name"], entry["profession"]], cell, "Left", TEXT)
+	if learned.size() > columns * 2:
+		text("gamefont_tiny", "+%d more" % (learned.size() - columns * 2), Vector2(rect.end.x - 10 * u, y + 22 * u),
+				"Right", DIM)
 
 
 func _on_click(id: String, _at: Vector2) -> void:
@@ -301,17 +279,4 @@ func _on_click(id: String, _at: Vector2) -> void:
 	elif id.begins_with("row:"):
 		_selected = int(id.substr(4))
 		_detail_scroll = 0
-	elif id.begins_with("loadout:"):
-		_loadout = int(id.substr(8))
-	elif id.begins_with("slot:"):
-		var ids := _slotted(_loadout)
-		var p := _profession(id.substr(5))
-		if ids.size() < slots and not id.substr(5) in ids and bool(p.get("slotted", false)) \
-				and bool(p.get("available", true)):
-			ids.append(id.substr(5))
-			_save_slots(_loadout, ids)
-	elif id.begins_with("unslot:"):
-		var ids := _slotted(_loadout)
-		ids.erase(id.substr(7))
-		_save_slots(_loadout, ids)
 	queue_redraw()

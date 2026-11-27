@@ -264,7 +264,7 @@ void test_tatooine_quests() {
             next = v.detail.find(',', at);
             if (next == std::string::npos) next = v.detail.size();
             const ProfessionDef* def = professions.find(v.detail.substr(at, next - at));
-            CHECK(def != nullptr && def->available && !def->milestones.empty());
+            CHECK(def != nullptr && def->available && (!def->milestones.empty() || def->chooses()));
         }
     }
     CHECK(trainers >= 5 && banks >= 4 && clones >= 1 && clinics >= 1);

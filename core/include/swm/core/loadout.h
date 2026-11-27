@@ -5,6 +5,7 @@
 #include <filesystem>
 #include <map>
 #include <optional>
+#include <span>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -45,7 +46,21 @@ enum class Stat : uint8_t {
     healing_received,   // times every heal taken (1: as given)
     ability_cooldown,   // times every ability's cooldown (below 1: sooner)
     effect_resistance,  // share of a hostile effect's (a debuff's) time shrugged off
+    roll_cost,          // the stamina a roll takes
+    // Trainer perks' (docs/PERKS.md):
+    ammo_capacity,      // times the ammunition carried
+    self_blast,         // times the damage of its own blasts
+    stagger_resist,     // share of a stagger (and a shoulder charge's) shrugged off; 1: immune
+    slow_resist,        // share of a hostile slow shrugged off; 1: immune
+    blast_shield,       // share of explosive damage taken that refills the shield
+    shield_overcharge,  // a full recharge goes this share over capacity, and the extra drains away
+    notice,             // times how far creatures and outlaws notice it from
+    slide_time,         // s: crouching out of a sprint slides this long instead of rolling (0: rolls)
+    roll_chain,         // rolls that can follow a roll at once
+    charge,             // s: sprinting into an enemy staggers them this long (0: doesn't)
+    radar_quiet,        // over 0: its shots don't show it on enemies' radar
 };
+inline constexpr Stat last_stat = Stat::radar_quiet;
 
 std::optional<Stat> stat_from_name(std::string_view name);
 std::string_view stat_name(Stat stat);
@@ -75,10 +90,22 @@ struct CharacterStats {
     double healing_received = 1;
     double ability_cooldown = 1;
     double effect_resistance = 0;  // 0..max_mitigation
+    // Trainer perks' (Stat's comments).
+    double ammo_capacity = 1;
+    double self_blast = 1;
+    double stagger_resist = 0;  // 0..1
+    double slow_resist = 0;     // 0..1
+    double blast_shield = 0;
+    double shield_overcharge = 0;
+    double notice = 1;
+    double charge = 0;
+    double radar_quiet = 0;
 };
 
 // The most of any damage mitigation can absorb.
 inline constexpr double max_mitigation = 0.9;
+// The most ammunition a character can carry, times the standard (ammo_capacity).
+inline constexpr double max_ammo_capacity = 2.0;
 
 // Damage after the target's mitigation, general and by type.
 double mitigated_damage(const CharacterStats& stats, double amount, DamageType type);
@@ -244,6 +271,38 @@ struct WeaponDef {
     double recoil = 0;
     // How fast it's brought up to aim down (zoomed): times the standard.
     double aim_speed = 1;
+    // Trainer perks' (docs/PERKS.md). A hit anywhere but the head does
+    // `body_multiplier` times the damage, and from behind its target
+    // `flank_multiplier` times. Holstered, its heat drains `holster_cooling`
+    // times as fast, and with `holster_reload` its clip reloads itself (over
+    // its reload time). `reload_sprinting`: a reload carries on while
+    // sprinting (else it waits). `fire_rolling`: it fires (or swings) while
+    // rolling. Its bolts bounce off `ricochets` walls and go through `pierces`
+    // bodies; a missile bursts passing within `proximity_fuse` m of an enemy.
+    double body_multiplier = 1;
+    double flank_multiplier = 1;
+    double holster_cooling = 1;
+    bool holster_reload = false;
+    bool reload_sprinting = false;
+    bool fire_rolling = false;
+    int ricochets = 0;
+    int pierces = 0;
+    double proximity_fuse = 0;
+    // Melee: a block lets `block_leak` of a blow through and costs
+    // `block_cost` times the stamina; with `deflect`, it turns aside bolts
+    // from the front for that much stamina each. The parry window is
+    // `parry_window` times the standard, and after a parry with `riposte` the
+    // next hit crits. The third hit in a row on one target staggers
+    // `combo_stagger` times as long. Hits throw their target back at
+    // `knockback` m/s, and `unblockable` ones go through a block.
+    double block_leak = 0.45;
+    double block_cost = 1;
+    double deflect = 0;
+    double parry_window = 1;
+    bool riposte = false;
+    double combo_stagger = 1;
+    double knockback = 0;
+    bool unblockable = false;
     // What its hits leave on their target, if anything (its ammo's).
     std::optional<HitEffect> hit_effect;
     // Looks only (clients draw bolts, models and effects however their settings allow).
@@ -293,6 +352,87 @@ inline constexpr int secondary_slot = 2;
 inline constexpr int hand_slots = 2;
 inline constexpr int weapon_slots = 3;
 
+// A handling change to a weapon (a profession's perk's), written
+// "spread * 0.97": spread (the cone and its bloom per shot), bloom (only its
+// growth per shot), heat (per shot), reload (its time), recovery (how fast
+// bloom settles, larger is faster), range (how far bolts carry before their
+// damage falls off), body (a hit not in the head), blast (an explosion's
+// radii), blast_damage (its damage), effect (how long its hit effect lasts),
+// carry (its movement penalties), holster_cool (heat drained holstered),
+// guard (what a block lets through), block (a block's stamina), parry (the
+// window), combo (the third hit's stagger), and the rest by their names. From
+// ricochet on they're added, "ricochet + 1": ricochet and pierce (counts),
+// proximity (m), deflect (stamina a bolt), knockback (m/s), and the rest are
+// switches (+ 1): sprint_reload, roll_fire, holster_reload, riposte,
+// unblockable (WeaponDef's fields of those names).
+struct WeaponModifier {
+    enum Field : uint8_t { spread, heat, reload, recovery, range, speed, lunge, disrupt,
+                           velocity, headshot, crit, vehicle, shield, swap, recoil, aim, reach, bloom,
+                           body, blast, blast_damage, effect, carry, holster_cool, flank, guard, block, parry, combo,
+                           ricochet, pierce, proximity, deflect, knockback,
+                           sprint_reload, roll_fire, holster_reload, riposte, unblockable };
+    static constexpr Field last_field = unblockable;
+    static constexpr bool additive(Field f) { return f >= ricochet; }
+    Field field = spread;
+    double multiply = 1;  // the multiplier, or for an additive field the amount added
+
+    friend bool operator==(const WeaponModifier&, const WeaponModifier&) = default;
+};
+void apply_weapon_modifier(WeaponDef& weapon, const WeaponModifier& modifier);
+
+// Triggered perks (docs/PERKS.md, Triggers): a trainer perk that works only
+// on something. Stances the shared simulation sees (crouched, crouched and
+// still, a pause in firing, rolling) hold while they last; events (a roll
+// begun, an overheat; and on the server a kill, a hit, a shield broken, low
+// health, a while unhurt, a killing blow, a hit of some type) start its
+// timer or do something at once.
+enum class PerkTrigger : uint8_t {
+    crouched, crouched_still, paused, rolling,  // stances
+    roll, overheat,                             // events the simulation sees
+    kill, headshot_kill, hit, target_low_health, shield_broken, unhit, low_health, lethal, hit_by,  // the server's
+};
+std::optional<PerkTrigger> perk_trigger_from_name(std::string_view name);
+std::string_view perk_trigger_name(PerkTrigger trigger);
+bool is_stance(PerkTrigger trigger);
+
+struct TriggeredPerk {
+    std::string id;
+    PerkTrigger trigger = PerkTrigger::kill;
+    double after = 0;     // seconds: crouched_still, paused, unhit
+    double below = 0;     // a share of health: low_health, target_low_health
+    double within = 0;    // m: a hit this near (0: any)
+    double chain = 0;     // s: a kill only this soon after the last
+    double chance = 1;    // of each time it would trigger (Stun Rounds)
+    bool aimed = false;   // a hit: only from a shot fired aimed down the sights (Spotter)
+    double duration = 0;  // s its modifiers last once triggered (its timer)
+    double cooldown = 0;  // s before it can trigger again (its timer, when it has no duration)
+    std::vector<StatModifier> stats;      // while active
+    std::vector<WeaponModifier> weapons;  // while active, on its weapons
+    // The weapon slots it's for (a bit each): its handling's, and those whose
+    // hits and kills trigger it. 0: an armor perk.
+    uint8_t slots = 0;
+    // What it does at once.
+    double stamina = 0;       // given back
+    double shield = 0;        // a share of the Deflector Shield's capacity restored
+    double cool = 0;          // a share of full heat taken off the weapon
+    bool reload = false;      // the weapon's clip refilled
+    bool recharge = false;    // the shield starts recharging now
+    double cloak = 0;         // s cloaked
+    double mark = 0;          // s the target is marked for its side (Spotter)
+    bool crit = false;        // the hit is a critical hit
+    std::vector<StatModifier> target;  // a debuff on what's hit...
+    double target_duration = 0;        // ...for this long
+    // While active, on the server: damage taken times this; resistance to
+    // the type of the hit that triggered it; ended by the next hit taken.
+    double damage_taken = 1;
+    double resist = 0;
+    bool one_hit = false;
+    bool once_per_life = false;
+
+    // Whether its timer counts a cooldown rather than an active spell.
+    bool timer_is_cooldown() const { return duration <= 0 && cooldown > 0; }
+};
+
 // What a character brings into a fight: weapons and gear. There are no
 // character classes: what a character can do, and how much damage it takes,
 // comes from what it carries. The default is an E-11 alone.
@@ -310,6 +450,9 @@ struct Loadout {
     std::vector<std::string> abilities;
     std::map<std::string, int> specialist_levels;
     std::string companion;
+    // Its triggered perks (from the character's trainer perks), at most
+    // max_perk_timers: each one's timer is MoveState::perk_time[its index].
+    std::vector<TriggeredPerk> triggered;
     // Unified ammo inventory reserves (-1 = legacy BF2 per-weapon reserves).
     int unified_standard_ammo = -1;
     int unified_heavy_ammo = -1;
@@ -331,6 +474,8 @@ const WeaponDef* weapon_in_slot(const Loadout& loadout, int slot);
 // The base statistics with every weapon's and gear's modifiers applied:
 // each statistic plus all additions, times all multipliers.
 CharacterStats stats_for(const Loadout& loadout, const CharacterStats& base = {});
+// Statistics with more modifiers applied on top, the same way.
+CharacterStats with_modifiers(const CharacterStats& stats, std::span<const StatModifier> modifiers);
 
 // "run_speed * 0.9", "mitigation_laser + 0.15", "max_health - 50"; throws
 // std::runtime_error naming `where` if it isn't one.

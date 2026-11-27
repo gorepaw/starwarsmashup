@@ -52,7 +52,7 @@ Galaxies has hundreds of weapons and dozens of armor sets. Battlefront has about
 - **Five loadouts:** each character keeps up to five, each a full kit. In a match they're the classes you choose from when you spawn. In the world, switching between them takes several seconds.
 - **Overheating** from Battlefront stays.
 - **Damage types:** ballistic, laser, electro, bio, explosive and melee.
-- **Gear slots, not classes:** a loadout is a primary weapon, a sidearm, a secondary (throwables and gadgets, used with their own button), armor, a universal **Deflector Shield (PSG)**, active profession specialization slots, and an optional companion slot, filled from the player's inventory and roster.
+- **Gear slots, not classes:** a loadout is a primary weapon, a sidearm, a secondary (throwables and gadgets, used with their own button), armor, a universal **Deflector Shield (PSG)**, and an optional companion slot, filled from the player's inventory and roster. What the character has learned from trainers applies to every loadout.
 - **Any gear can change any character statistic.** Armor mostly sets general damage mitigation, mitigation per damage type, movement speed and health; a heavy weapon could slow its carrier too. Gear can also change healing received, ability cooldowns, and resistance to debuffs.
 - **What a weapon can vary:** damage and type, rate of fire, heat, spread, range and falloff, clip and reload, bolt speed, headshot multiplier, critical hit chance and multiplier, damage to vehicles and to Deflector Shields, swap time, recoil, aim-down-sights speed, and an on-hit effect. The keys are listed in `core/include/swm/core/items.h`.
 - **Ammo carries effects:** burning (damage over time), chilled (slowed) and ionized (no shield recharge) come from the ammo equipped in a loadout's ammo slot; every gun firing that ammo applies its effect. An effect refreshes rather than stacks, and debuff resistance shortens it. Later, a weapon or profession ability could treat standard ammo as an effect ammo.
@@ -61,8 +61,8 @@ Galaxies has hundreds of weapons and dozens of armor sets. Battlefront has about
 
 ## Professions and skills
 
-- **1–100 per profession:** Every profession levels 1–100 with milestone unlocks at 1 / 25 / 50 / 75 / 100 instead of SWG's 4×4 box grids and fragmented XP pools. See [Professions](PROFESSIONS.md).
-- **Uncapped leveling, loadout-scoped power:** One character can level every profession to 100; each loadout carries a fixed number of Active Specialization Slots so combat builds stay balanced.
+- **1–100 per profession:** Every profession levels 1–100 instead of SWG's 4×4 box grids and fragmented XP pools. Weapon and armor professions offer a choice of two perks at 5 / 25 / 45 / 65 / 85; the rest teach milestones at 1 / 25 / 50 / 75 / 100. See [Professions](PROFESSIONS.md) and [Perks](PERKS.md).
+- **Uncapped leveling, capped learning:** One character can level every profession to 100, but knows at most 10 perks and milestones at once, across every profession, like mastering two trees in Galaxies. Giving one up at its trainer is free, and so is learning it again; the trips between trainers keep rebuilds slow.
 - **Decoupled armor:** Four armor professions (Unarmored, Light/Recon, Medium/Battle, Heavy/Assault) are completely separate from weapons and specialist professions, while everyone shares a universal Deflector Shield slot.
 - Combat, crafting, gathering, companion, social/entertainment, and economy professions are all first-class.
 - **Less opaque than the original:** every milestone shows exactly what it grants, and an in-game planner shows full loadout builds before you commit.

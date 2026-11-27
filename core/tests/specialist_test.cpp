@@ -1,7 +1,7 @@
 // Stage 12: the Wave 7B and 7C professions. The shipped data (abilities,
 // companions, modules, slices), the rules (effects, taming, eggs, droids,
 // the bazaar, slicing), the wire, and a server playing them: abilities from
-// slotted and unslotted professions, a bio grenade, a performance, taming and
+// what's learned, a bio grenade, a performance, taming and
 // fielding a companion, DNA and eggs, the bazaar between two players.
 
 #include <algorithm>
@@ -50,7 +50,7 @@ void test_shipped_data(const SpecialistBook& book, const ProfessionBook& profess
         CHECK(std::any_of(def->milestones.begin(), def->milestones.end(),
                           [&](const ProfessionMilestone& m) { return m.level == a.level; }));
     }
-    // All 14 Wave 7B/7C professions are live; 31 professions in all.
+    // All 13 Wave 7B/7C professions are live (Image Designer is gone); 30 in all.
     int live = 0;
     for (const ProfessionDef& def : professions.all()) {
         if (def.wave == "7B" || def.wave == "7C") {
@@ -58,8 +58,8 @@ void test_shipped_data(const SpecialistBook& book, const ProfessionBook& profess
             ++live;
         }
     }
-    CHECK(live == 14);
-    CHECK(professions.all().size() == 31);
+    CHECK(live == 13);
+    CHECK(professions.all().size() == 30);
     // Companions: creatures by their wildlife look, droids with bays; mounts with items in the catalog.
     const CompanionTemplate* dewback = book.companion_for_look("object/mobile/shared_dewback.iff");
     CHECK(dewback && dewback->id == "dewback" && dewback->mountable && !dewback->tactical());
@@ -76,19 +76,16 @@ void test_shipped_data(const SpecialistBook& book, const ProfessionBook& profess
 }
 
 void test_rules(const SpecialistBook& book, const ProfessionBook& professions) {
-    // Abilities: slotted professions' only from a slot, unslotted always; milestones must be trained.
+    // Abilities: every profession's in every loadout (no slots), each once its
+    // milestone is learned (docs/PERKS.md).
     const int64_t master = professions.xp_for_level(100);
     std::vector<ProfessionProgress> progress{{"bounty_hunter", master, 100}, {"entertainer", master, 25},
                                              {"doctor", master, 0}};
-    const std::vector<std::string> none;
-    auto world = unlocked_abilities(book, professions, none, progress, false);
+    auto world = unlocked_abilities(book, professions, progress, false);
     CHECK(has(world, "ent_perform") && has(world, "ent_flourish") && !has(world, "ent_holo_emitter"));
-    CHECK(!has(world, "bh_bolas") && !has(world, "doc_medpack"));
-    const std::vector<std::string> slots{"bounty_hunter", "doctor"};
-    world = unlocked_abilities(book, professions, slots, progress, false);
     CHECK(has(world, "bh_bolas") && has(world, "bh_seeker_probe") && !has(world, "bh_recon_probe"));
-    CHECK(!has(world, "doc_medpack"));  // not trained
-    auto match = unlocked_abilities(book, professions, slots, progress, true);
+    CHECK(!has(world, "doc_medpack"));  // not learned
+    auto match = unlocked_abilities(book, professions, progress, true);
     CHECK(has(match, "bh_recon_probe") && has(match, "bh_hvt") && !has(match, "bh_seeker_probe") && !has(match, "ent_perform"));
 
     // Effects: the same id refreshes; modifiers become gear; time runs out.
@@ -174,7 +171,6 @@ void test_rules(const SpecialistBook& book, const ProfessionBook& professions) {
     // Entertainers: 15 s from a novice, 30 s from a master; bands are stronger.
     CHECK(near(inspiration(0, 1, 1).duration, 15) && near(inspiration(100, 1, 1).duration, 30));
     CHECK(inspiration(50, 3, 1).modifiers[0].multiply > inspiration(50, 1, 1).modifiers[0].multiply);
-    CHECK(valid_appearance("{\"hair\":\"braids\"}") && !valid_appearance("{\"a\":[}") && !valid_appearance("nope"));
 }
 
 void test_wire() {
@@ -193,15 +189,13 @@ void test_wire() {
     c.reward = 120;
     sync.contracts = {c};
     sync.prices = {{"wp_rifle_e11", PriceStats{2, 100, 300, 200, 300}}};
-    sync.design_from = "Stylist";
-    sync.design_appearance = "{\"hair\":1}";
     sync.performing = true;
     const auto decoded = std::get<net::SpecialistSync>(net::decode(net::encode(sync)));
     CHECK(decoded.revision == 9 && decoded.abilities == sync.abilities && decoded.effects == sync.effects);
     CHECK(decoded.companions.size() == 1 && decoded.companions[0].name == "Biter");
     CHECK(decoded.contracts.size() == 1 && decoded.contracts[0].kind == ContractKind::track && decoded.contracts[0].reward == 120);
     CHECK(decoded.prices.size() == 1 && decoded.prices[0].second.average == 200);
-    CHECK(decoded.design_appearance == sync.design_appearance && decoded.performing);
+    CHECK(decoded.performing);
 
     net::SpecialistRequest request;
     request.action = net::SpecialistRequest::bazaar_list;
@@ -291,18 +285,15 @@ void test_server(const std::filesystem::path& root, const SpecialistBook& book, 
         who.specialist_request(r);
     };
 
-    // Unslotted professions' kits are there from the start; slotted ones once slotted.
+    // What's learned is there from the start, in every loadout (no slots).
     run(1.0);
     const auto& kit = vet_client.specialist().abilities;
     const auto in_kit = [&](std::string_view id) {
         return std::any_of(kit.begin(), kit.end(), [&](const net::AbilityStatus& a) { return a.id == id; });
     };
-    CHECK(in_kit("ent_perform") && in_kit("bio_sample") && !in_kit("cm_bio_grenade") && !in_kit("ch_tame"));
-    CharacterLoadout lo = vet_client.char_loadouts().at(0);
-    lo.specializations = {"combat_medic", "creature_handler"};
-    vet_client.save_loadout(lo);
-    run(1.0);
-    CHECK(in_kit("cm_bio_grenade") && in_kit("ch_tame") && in_kit("ch_tranq_dart"));
+    CHECK(in_kit("ent_perform") && in_kit("bio_sample") && in_kit("cm_bio_grenade") && in_kit("ch_tame") &&
+          in_kit("ch_tranq_dart"));
+    CHECK(!in_kit("doc_medpack") && !in_kit("bh_bolas"));  // never learned
 
     // A bio grenade: a cloud that hurts the creature, not us.
     use("cm_bio_grenade", 0, {-12, 0, 0});

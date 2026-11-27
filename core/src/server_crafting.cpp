@@ -84,6 +84,7 @@ void GameServer::handle_gather_request(Client& client, const net::GatherRequest&
             return;
         }
         const ResourceCategory cat = ResourceCategory(req.category);
+        if (!require_licence(client, cat == ResourceCategory::flora ? "foraging" : "surveying")) return;
         if (client.has_extracted) {
             const Vec3 d = client.state.position - client.last_extract_site;
             const double apart = std::hypot(d.x, d.z);
@@ -119,6 +120,7 @@ void GameServer::handle_gather_request(Client& client, const net::GatherRequest&
             notify(client.entity, "Move closer to harvest.");
             return;
         }
+        if (!require_licence(client, is_bandit_name(it->name) ? "salvaging" : "foraging")) return;
         harvested_corpses_.insert(corpse_id);
         it->harvested = true;
 
@@ -148,6 +150,7 @@ void GameServer::handle_gather_request(Client& client, const net::GatherRequest&
 
     if (req.action == net::GatherRequest::salvage_item) {
         if (config_.catalog == nullptr || store_ == nullptr || client.character == 0) return;
+        if (!require_licence(client, "salvaging")) return;
         const uint64_t item_id = req.target_id;
         if (item_equipped_in_loadouts(client.char_loadouts, item_id)) {
             notify(client.entity, "Unequip that item before salvaging it.");
@@ -256,7 +259,7 @@ void GameServer::handle_craft_request(Client& client, const net::CraftRequest& r
     if (req.action == net::CraftRequest::fulfill_order) {
         if (store_ == nullptr || client.character == 0 || config_.catalog == nullptr) return;
         const WorkOrder* order = book.find_work_order(req.order_id);
-        if (order == nullptr) return;
+        if (order == nullptr || !require_licence(client, order->profession)) return;
         std::vector<uint64_t> matching_ids;
         for (const ItemInstance& inst : client.items) {
             if (inst.def_id == order->output_item && !item_equipped_in_loadouts(client.char_loadouts, inst.id)) {
@@ -305,6 +308,7 @@ void GameServer::handle_craft_request(Client& client, const net::CraftRequest& r
                 return;
             }
         }
+        if (!require_licence(client, sch->profession)) return;
         const int lv = profession_level(config_.professions, client.professions, sch->profession);
         if (lv < sch->required_level) {
             notify(client.entity, std::format("Requires {} level {}.", sch->profession, sch->required_level));

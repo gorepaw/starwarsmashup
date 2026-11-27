@@ -1039,7 +1039,8 @@ Loadout ItemCatalog::build_loadout(const CharacterLoadout& cl, std::span<const I
         if (inst == nullptr) return;
         const ItemDef* adef = find(inst->def_id);
         if (adef == nullptr || adef->kind != ItemKind::ammo || adef->ammo_class != expected_ac) return;
-        out.set_unified_ammo(expected_ac, std::clamp(inst->quantity, 0, max_ammo_for(expected_ac)));
+        out.set_unified_ammo(expected_ac,
+                             std::clamp(inst->quantity, 0, int(max_ammo_for(expected_ac) * max_ammo_capacity)));
         for (auto& opt_w : out.weapons) {
             if (!opt_w || opt_w->ammo_class != expected_ac) continue;
             opt_w->damage *= adef->damage_mult;

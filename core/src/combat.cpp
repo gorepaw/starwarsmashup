@@ -45,13 +45,79 @@ std::optional<double> ballistic_pitch(double speed, double gravity, double dx, d
     return std::atan((v2 - std::sqrt(root)) / (gravity * dx));
 }
 
+bool perk_active(const Loadout& loadout, const MoveState& state, size_t index) {
+    if (index >= loadout.triggered.size() || index >= state.perk_time.size()) return false;
+    const TriggeredPerk& p = loadout.triggered[index];
+    switch (p.trigger) {
+    case PerkTrigger::crouched: return state.crouched && !state.rolling();
+    case PerkTrigger::crouched_still: return state.crouched && state.still >= p.after;
+    case PerkTrigger::paused: return state.combat.idle >= p.after;
+    case PerkTrigger::rolling: return state.rolling();
+    default: return !p.timer_is_cooldown() && state.perk_time[index] > 0;
+    }
+}
+
+bool start_perk(const Loadout& loadout, MoveState& state, size_t index) {
+    if (index >= loadout.triggered.size() || index >= state.perk_time.size()) return false;
+    const TriggeredPerk& p = loadout.triggered[index];
+    float& timer = state.perk_time[index];
+    if (p.timer_is_cooldown()) {
+        if (timer > 0) return false;
+        timer = float(p.cooldown);
+    } else if (p.duration > 0) {
+        timer = float(p.duration);
+    }
+    return true;
+}
+
+CharacterStats perk_stats(const CharacterStats& stats, const Loadout& loadout, const MoveState& state) {
+    std::vector<StatModifier> mods;
+    for (size_t i = 0; i < loadout.triggered.size(); ++i) {
+        if (!loadout.triggered[i].stats.empty() && perk_active(loadout, state, i)) {
+            mods.insert(mods.end(), loadout.triggered[i].stats.begin(), loadout.triggered[i].stats.end());
+        }
+    }
+    return mods.empty() ? stats : with_modifiers(stats, mods);
+}
+
+PerkHandling perk_handling(const Loadout& loadout, const MoveState& state, int slot) {
+    PerkHandling h;
+    for (size_t i = 0; i < loadout.triggered.size(); ++i) {
+        const TriggeredPerk& p = loadout.triggered[i];
+        // (An armor perk, without slots, is for every weapon.)
+        if (p.weapons.empty() || slot < 0 || (p.slots != 0 && (p.slots & (1u << slot)) == 0) ||
+            !perk_active(loadout, state, i)) {
+            continue;
+        }
+        for (const WeaponModifier& m : p.weapons) {
+            switch (m.field) {
+            case WeaponModifier::spread: h.spread *= m.multiply; break;
+            case WeaponModifier::bloom: h.bloom *= m.multiply; break;
+            case WeaponModifier::heat: h.heat *= m.multiply; break;
+            case WeaponModifier::reload: h.reload *= m.multiply; break;
+            case WeaponModifier::recovery: h.recovery *= m.multiply; break;
+            case WeaponModifier::speed: h.speed *= m.multiply; break;
+            case WeaponModifier::swap: h.swap *= m.multiply; break;
+            default: break;  // (what a bolt carries isn't triggered)
+            }
+        }
+    }
+    return h;
+}
+
 void reset_loadout(MoveState& state, const Loadout& loadout, const CharacterStats& stats) {
     state.combat = {};
+    state.perk_time = {};
+    state.still = 0;
+    state.slide = 0;
+    state.rolls = 0;
     state.combat.weapon = uint8_t(weapon_in_slot(loadout, primary_slot) ? primary_slot : sidearm_slot);
+    // (A stack carried may be bigger than the standard: ammo_capacity lets it
+    // grow so; it's never cut back here, which would lose rounds.)
     int pools[3] = {-1, loadout.unified_standard_ammo, loadout.unified_heavy_ammo};
     for (int i = 1; i <= 2; ++i) {
         if (pools[i] >= 0) {
-            pools[i] = std::min(pools[i], max_ammo_for(AmmoClass(i)));
+            pools[i] = std::min(pools[i], int(max_ammo_for(AmmoClass(i)) * max_ammo_capacity));
         }
     }
     for (int slot = 0; slot < weapon_slots; ++slot) {
@@ -68,7 +134,10 @@ void reset_loadout(MoveState& state, const Loadout& loadout, const CharacterStat
                 }
             } else {
                 w.rounds = int16_t(def->rounds_per_clip);
-                w.reserve = def->ammo > 0 ? int16_t((def->ammo - 1) * def->rounds_per_clip) : int16_t(-1);
+                // Its clips, more with a perk's capacity (Ammo Webbing).
+                const int carried = int(std::lround(def->ammo * def->rounds_per_clip * stats.ammo_capacity));
+                w.reserve = def->ammo > 0 ? int16_t(std::clamp(carried - def->rounds_per_clip, 0, 32000))
+                                          : int16_t(-1);
             }
         }
     }
@@ -106,6 +175,19 @@ void refill(WeaponState& w, const WeaponDef& def) {
     }
 }
 
+} // namespace
+
+void reload_now(MoveState& state, const Loadout& loadout, int slot) {
+    const WeaponDef* def = weapon_in_slot(loadout, slot);
+    if (def == nullptr || def->rounds_per_clip <= 0) return;
+    WeaponState& w = state.combat.weapons[size_t(slot)];
+    refill(w, *def);
+    sync_unified_pool(state.combat, loadout, def->ammo_class, w.reserve);
+    if (state.combat.weapon == slot) state.combat.reload = 0;
+}
+
+namespace {
+
 bool add_ammo(MoveState& state, const Loadout& loadout, auto amount_for) {
     bool changed = false;
     for (int slot = 0; slot < weapon_slots; ++slot) {
@@ -124,6 +206,9 @@ bool add_ammo(MoveState& state, const Loadout& loadout, auto amount_for) {
         }
         // Clip and spare together, up to the full load.
         const int full = def->ammo * def->rounds_per_clip;
+        if (w.rounds + w.reserve >= full) {
+            continue;  // full (or more: a perk's capacity), never cut back
+        }
         const int total = std::min(full, w.rounds + w.reserve + given);
         // Grenades go straight into the hand; a gun's come as spare rounds.
         const int rounds = slot == secondary_slot ? std::min(def->rounds_per_clip, total) : int(w.rounds);
@@ -205,32 +290,60 @@ int remaining_unified_ammo(const CombatState& combat, const Loadout& loadout, Am
 }
 
 std::optional<Shot> simulate_weapons(MoveState& state, const MoveInput& pressed, const Loadout& loadout, double dt) {
-    // Rolling, staggered, or blocking: cannot fire, throw or reload.
+    // Rolling, staggered, or blocking: cannot fire, throw or reload (a
+    // perk's weapon fires while rolling: Roll Shot, Teras Kasi Master).
     MoveInput input = pressed;
-    if (state.rolling() || state.stagger > 0 || state.blocking) {
-        input.buttons &= uint8_t(~(MoveInput::fire | MoveInput::secondary | MoveInput::reload));
-    }
     CombatState& c = state.combat;
+    if (state.stagger > 0 || state.blocking) {
+        input.buttons &= uint8_t(~(MoveInput::fire | MoveInput::secondary | MoveInput::reload));
+    } else if (state.rolling()) {
+        const WeaponDef* in_hand = weapon_in_slot(loadout, c.weapon);
+        const bool fires = in_hand != nullptr && in_hand->fire_rolling;
+        input.buttons &= uint8_t(~(MoveInput::secondary | MoveInput::reload | (fires ? 0 : MoveInput::fire)));
+    }
     c.cooldown = std::max(0.0, c.cooldown - dt);
+    c.idle = std::min(60.0f, c.idle + float(dt));
     for (int i = 0; i < weapon_slots; ++i) {
         const WeaponDef* def = weapon_in_slot(loadout, i);
         WeaponState& w = c.weapons[size_t(i)];
         if (def == nullptr) {
             continue;
         }
-        w.heat = float(std::max(0.0, w.heat - def->heat_recover_rate * dt));
+        // Holstered: a perk's weapon cools faster (Cool Holster), or reloads
+        // itself (Tactical Swap).
+        const bool holstered = i < hand_slots && i != c.weapon;
+        const double cooling = holstered ? def->holster_cooling : 1.0;
+        w.heat = float(std::max(0.0, w.heat - def->heat_recover_rate * cooling * dt));
         if (w.overheated && w.heat <= def->heat_threshold) {
             w.overheated = false;
+        }
+        if (holstered && w.reload > 0) {
+            w.reload = float(std::max(0.0, double(w.reload) - dt));
+            if (w.reload <= 0) {
+                refill(w, *def);
+                sync_unified_pool(c, loadout, def->ammo_class, w.reserve);
+            }
         }
     }
 
     // Switching between the held weapons (to one the loadout has) cancels a
-    // reload and takes a moment: the weapon brought up's swap time.
+    // reload and takes a moment: the weapon brought up's swap time. (One
+    // that reloads itself holstered goes on reloading there, and finishes
+    // in the hand if it's brought back first.)
     const uint8_t wanted = uint8_t(input.weapon);
     if (wanted != c.weapon && wanted < hand_slots && weapon_in_slot(loadout, wanted)) {
+        if (const WeaponDef* old = weapon_in_slot(loadout, c.weapon); old != nullptr && old->holster_reload) {
+            WeaponState& was = c.weapons[c.weapon];
+            if (old->rounds_per_clip > 0 && was.rounds < old->rounds_per_clip && was.reserve != 0) {
+                was.reload = float(c.reload > 0 ? c.reload : old->reload_time);
+            }
+        }
         c.weapon = wanted;
-        c.reload = 0;
-        c.cooldown = std::max(c.cooldown, weapon_in_slot(loadout, wanted)->swap_time);
+        WeaponState& brought = c.weapons[wanted];
+        c.reload = brought.reload > 0 ? double(brought.reload) : 0.0;
+        brought.reload = 0;
+        c.cooldown = std::max(c.cooldown, weapon_in_slot(loadout, wanted)->swap_time *
+                                              perk_handling(loadout, state, wanted).swap);
     }
 
     // The secondary (a throwable) is used instead of firing, when ready.
@@ -255,9 +368,11 @@ std::optional<Shot> simulate_weapons(MoveState& state, const MoveInput& pressed,
     }
     const WeaponDef& def = *held;
     WeaponState& weapon = c.weapons[c.weapon];
-    c.spread = std::max(0.0, c.spread - def.spread_recover_rate * dt);
+    const PerkHandling perk = perk_handling(loadout, state, c.weapon);
+    c.spread = std::max(0.0, c.spread - def.spread_recover_rate * perk.recovery * dt);
 
-    if (c.reload > 0) {
+    // Sprinting holds a reload where it is (a perk's weapon carries on: Combat Reload).
+    if (c.reload > 0 && !(state.sprinting && !def.reload_sprinting)) {
         c.reload -= dt;
         if (c.reload <= 0) {
             c.reload = 0;
@@ -269,7 +384,7 @@ std::optional<Shot> simulate_weapons(MoveState& state, const MoveInput& pressed,
     const bool uses_unified = def.ammo_class != AmmoClass::none && loadout.unified_ammo(def.ammo_class) >= 0;
     const bool can_reload = uses_clip && weapon.rounds < def.rounds_per_clip && weapon.reserve != 0;
     if (can_reload && c.reload == 0 && input.held(MoveInput::reload)) {
-        c.reload = def.reload_time;
+        c.reload = def.reload_time * perk.reload;
     }
 
     if (!input.held(MoveInput::fire) || c.cooldown > 0 || c.reload > 0) {
@@ -277,7 +392,7 @@ std::optional<Shot> simulate_weapons(MoveState& state, const MoveInput& pressed,
     }
     if (uses_clip && weapon.rounds <= 0) {
         if (can_reload) {
-            c.reload = def.reload_time;  // pulling the trigger on an empty clip reloads
+            c.reload = def.reload_time * perk.reload;  // pulling the trigger on an empty clip reloads
         }
         return std::nullopt;
     }
@@ -289,7 +404,9 @@ std::optional<Shot> simulate_weapons(MoveState& state, const MoveInput& pressed,
     }
 
     // Fire: melee swings lunge forward and sweep; ranged shots fire pellets.
-    c.cooldown += def.shot_delay;
+    // (A "paused" perk saw the pause first: its handling is this shot's.)
+    c.cooldown += def.shot_delay * perk.speed;
+    c.idle = 0;
     if (def.projectile == Projectile::melee) {
         if (def.melee_lunge > 0) {
             const Vec3 fwd{-std::sin(double(input.yaw)), 0, -std::cos(double(input.yaw))};
@@ -302,7 +419,8 @@ std::optional<Shot> simulate_weapons(MoveState& state, const MoveInput& pressed,
                 state.velocity.z *= cap / horiz;
             }
         }
-        return Shot{state.position + Vec3{0, eye_height_of(state), 0}, {aim_direction(input.yaw, input.pitch)}, c.weapon};
+        return Shot{state.position + Vec3{0, eye_height_of(state), 0}, {aim_direction(input.yaw, input.pitch)}, c.weapon,
+                    input.aiming};
     }
     const int pellets = uses_clip
         ? std::min<int>(def.shots_per_salvo, weapon.rounds)
@@ -314,24 +432,37 @@ std::optional<Shot> simulate_weapons(MoveState& state, const MoveInput& pressed,
         sync_unified_pool(c, loadout, def.ammo_class, weapon.reserve);
     }
     if (def.heat_per_shot > 0) {
-        weapon.heat = float(std::min(1.0, weapon.heat + def.heat_per_shot));
+        weapon.heat = float(std::min(1.0, weapon.heat + def.heat_per_shot * perk.heat));
         weapon.overheated = weapon.heat >= 1;
+        // An overheat triggers perks (Overclock: it vents at once).
+        for (size_t i = 0; weapon.overheated && i < loadout.triggered.size(); ++i) {
+            const TriggeredPerk& p = loadout.triggered[i];
+            if (p.trigger == PerkTrigger::overheat && (p.slots == 0 || (p.slots & (1u << c.weapon)) != 0) &&
+                start_perk(loadout, state, i)) {
+                weapon.heat = float(std::max(0.0, weapon.heat - p.cool));
+                weapon.overheated = weapon.heat >= 1;
+            }
+        }
     }
-    Shot shot{state.position + Vec3{0, eye_height_of(state), 0}, {}, c.weapon};
+    Shot shot{state.position + Vec3{0, eye_height_of(state), 0}, {}, c.weapon, input.aiming};
     for (int i = 0; i < pellets; ++i) {
         const auto [u, v] = random_pair(input.sequence ^ (uint64_t(i) << 32));
         const double aim = state.crouched ? 1 / crouch_aim_factor : 1.0;  // steadier crouched
-        const double yaw = input.yaw + u * (def.yaw_spread + c.spread) * aim * degrees;
-        const double pitch = input.pitch + def.shot_elevate + v * (def.pitch_spread + c.spread) * aim * degrees;
+        const double yaw = input.yaw + u * (def.yaw_spread * perk.spread + c.spread) * aim * degrees;
+        const double pitch =
+            input.pitch + def.shot_elevate + v * (def.pitch_spread * perk.spread + c.spread) * aim * degrees;
         shot.directions.push_back(aim_direction(yaw, pitch));
     }
-    c.spread = std::min(def.spread_limit, c.spread + def.spread_per_shot);
+    c.spread = std::min(def.spread_limit, c.spread + def.spread_per_shot * perk.spread * perk.bloom);
     return shot;
 }
 
 std::optional<Shot> simulate_character(MoveState& state, const MoveInput& input, bool alive, const World& world,
                                        const Loadout& loadout, const CharacterStats& stats, double dt,
                                        std::span<const VehicleClass> vehicles, const Battlefield* field) {
+    for (float& t : state.perk_time) {
+        t = std::max(0.0f, t - float(dt));
+    }
     if (state.vehicle >= 0 && size_t(state.vehicle) < vehicles.size() && state.seat > 0) {
         // A gunner: carried, its guns turned within the seat's limits.
         const VehicleSeat* seat = vehicle_seat(vehicles[size_t(state.vehicle)], state.seat);
@@ -397,7 +528,24 @@ std::optional<Shot> simulate_character(MoveState& state, const MoveInput& input,
     if (active_w == nullptr || active_w->projectile != Projectile::melee) {
         char_input.buttons &= uint8_t(~MoveInput::block);
     }
-    state = simulate_move(state, char_input, world, stats.move, dt);
+    // Active perks change how it moves (Pathfinder, Ghost Step...); a melee
+    // weapon how it blocks and parries (Iron Guard, Riposte).
+    const bool was_rolling = state.rolling();
+    MoveParams params = loadout.triggered.empty() ? stats.move : perk_stats(stats, loadout, state).move;
+    if (active_w != nullptr && active_w->projectile == Projectile::melee) {
+        params.block_cost = active_w->block_cost;
+        params.parry_window *= active_w->parry_window;
+    }
+    state = simulate_move(state, char_input, world, params, dt);
+    if (!loadout.triggered.empty()) {
+        const bool still = state.crouched && state.grounded && std::hypot(state.velocity.x, state.velocity.z) < 0.25;
+        state.still = still ? std::min(60.0f, state.still + float(dt)) : 0.0f;
+        if (!was_rolling && state.rolling()) {
+            for (size_t i = 0; i < loadout.triggered.size(); ++i) {
+                if (loadout.triggered[i].trigger == PerkTrigger::roll) start_perk(loadout, state, i);
+            }
+        }
+    }
     return simulate_weapons(state, char_input, loadout, dt);
 }
 
@@ -524,7 +672,7 @@ ShieldHitResult apply_shield_damage(double& shield, double mitigated_amount, Dam
 }
 
 double hit_damage(const WeaponDef& weapon, double base, bool headshot, double roll) {
-    double amount = base * (headshot ? weapon.headshot_multiplier : 1.0);
+    double amount = base * (headshot ? weapon.headshot_multiplier : weapon.body_multiplier);
     if (weapon.crit_chance > 0 && roll < weapon.crit_chance) {
         amount *= weapon.crit_multiplier;
     }

@@ -61,12 +61,12 @@ public:
                               const godot::Dictionary& loadout, const godot::Array& items) const;
 
     // The profession roster, for the planner: load it, then its professions
-    // (each with its milestones and what their perks do, in words), and where
+    // (each with its milestones or perks and what they do, in words), and where
     // an amount of experience stands on the curve: {level, into, needed}.
     godot::Error load_professions(const godot::String& path);
     godot::Array get_professions() const;
     godot::Dictionary profession_level(int64_t xp) const;
-    int64_t get_specialization_slots() const { return core::specialization_slots; }
+    int64_t get_perk_cap() const { return core::perk_cap; }
 
     // Gathering & crafting data + deterministic scanner/preview helpers.
     godot::Error load_crafting(const godot::String& resources_path, const godot::String& schematics_path);

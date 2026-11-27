@@ -367,16 +367,6 @@ func _fill_datapad(client: Object) -> void:
 	var terminal := _near(at, client.get_mission_terminals())
 	_datapad.terminal = terminal
 	_datapad.at_quartermaster = not _near(at, client.get_quartermasters()).is_empty()
-	_datapad.own = {"entity": client.get_entity_id(), "name": str(own.get("name", "")), "appearance": str(own.get("appearance", ""))}
-	var best := 8.0
-	_datapad.designee = {}
-	for r: Dictionary in client.get_remotes():
-		if int(r.get("actor_kind", 0)) != 0 or str(r.get("name", "")) == "":
-			continue
-		var d := (r["position"] as Vector3).distance_to(at)
-		if d <= best:
-			best = d
-			_datapad.designee = {"entity": int(r["id"]), "name": str(r["name"]), "appearance": str(r.get("appearance", ""))}
 
 
 func _fill_bazaar(client: Object) -> void:

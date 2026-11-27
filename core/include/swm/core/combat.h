@@ -49,6 +49,7 @@ struct Shot {
     Vec3 origin;
     std::vector<Vec3> directions;  // unit; one per pellet (ShotsPerSalvo)
     int weapon = 0;                // the slot
+    bool aimed = false;            // fired aimed down the sights (a perk's condition)
 };
 
 // Advances a character's weapons by one tick: cooldown, reloading, heat,
@@ -56,6 +57,25 @@ struct Shot {
 // Like simulate_move, deterministic: spread comes from the input's sequence
 // number, so the server and the client agree.
 std::optional<Shot> simulate_weapons(MoveState& state, const MoveInput& input, const Loadout& loadout, double dt);
+
+// Triggered perks (docs/PERKS.md, Triggers), the same on the server and the
+// client. Whether a loadout's perk (`index`, its timer's) is active now: a
+// stance while it holds, anything else while its timer runs.
+bool perk_active(const Loadout& loadout, const MoveState& state, size_t index);
+// Triggers a perk: starts its timer (its duration, or its cooldown). False
+// if it's cooling down.
+bool start_perk(const Loadout& loadout, MoveState& state, size_t index);
+// Statistics with a loadout's active perks' modifiers on top.
+CharacterStats perk_stats(const CharacterStats& stats, const Loadout& loadout, const MoveState& state);
+// What active perks make of a weapon slot's handling (times each).
+struct PerkHandling {
+    double spread = 1, bloom = 1, heat = 1, reload = 1, recovery = 1, speed = 1, swap = 1;
+};
+PerkHandling perk_handling(const Loadout& loadout, const MoveState& state, int slot);
+
+// A weapon's clip refilled from what's carried at once, as a reload finishing
+// does (a perk's: Bombardment).
+void reload_now(MoveState& state, const Loadout& loadout, int slot);
 
 // A fresh character's weapons and energy: full clips and carried ammo, cold,
 // rested, holding its primary (or its sidearm, without one).

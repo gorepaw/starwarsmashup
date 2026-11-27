@@ -64,9 +64,9 @@ MoveState simulate_move(const MoveState& state, const MoveInput& input, const Wo
     if (can_block) {
         next.blocking = true;
         if (!state.blocking) {
-            next.parry_window = 0.25f;
+            next.parry_window = float(params.parry_window);
         }
-        next.energy = std::max(0.0, state.energy - 8.0 * dt);
+        next.energy = std::max(0.0, state.energy - 8.0 * params.block_cost * dt);
     } else {
         next.blocking = false;
         next.parry_window = 0;
@@ -83,23 +83,47 @@ MoveState simulate_move(const MoveState& state, const MoveInput& input, const Wo
     const bool pressed = input.held(MoveInput::crouch) && !state.crouch_held;
     next.crouch_held = input.held(MoveInput::crouch);
     next.roll = float(std::max(0.0, double(state.roll) - dt));
+    next.slide = float(std::max(0.0, double(state.slide) - dt));
     bool jump = input.held(MoveInput::jump) && !state.rolling() && next.stagger <= 0 && !swimming;
+    // A perk lets a roll follow a roll at once, in its second half (roll_chain).
+    const bool chained = state.rolling() && state.roll <= params.roll_time * 0.5 &&
+                         double(state.rolls) < 1 + params.roll_chain;
     if (swimming) {
         next.crouched = false;
-    } else if (pressed && state.grounded && !state.rolling() && next.stagger <= 0) {
-        if (f * f + r * r > 0.09 && state.energy >= params.energy_cost_roll) {
+        next.slide = 0;
+    } else if (pressed && state.grounded && (!state.rolling() || chained) && state.slide <= 0 && next.stagger <= 0) {
+        if (params.slide_time > 0 && state.sprinting && f > 0 && state.energy >= params.energy_cost_roll * 0.5) {
+            // A slide (a perk's) instead of a roll: on at sprinting speed,
+            // crouched, the way it was going, and able to shoot.
+            next.slide = float(params.slide_time);
+            next.roll_yaw = float(std::atan2(-(forward * f + right * r).x, -(forward * f + right * r).z));
+            next.energy = std::max(0.0, next.energy - params.energy_cost_roll * 0.5);
+            next.crouched = true;
+        } else if (f * f + r * r > 0.09 && state.energy >= params.energy_cost_roll) {
             const Vec3 way = forward * f + right * r;
             next.roll = float(params.roll_time);
             next.roll_yaw = float(std::atan2(-way.x, -way.z));
+            next.rolls = uint8_t(state.rolling() ? state.rolls + 1 : 1);
             next.energy = std::max(0.0, next.energy - params.energy_cost_roll);
             next.crouched = false;
             next.blocking = false;
             next.parry_window = 0;
-        } else {
+        } else if (!state.rolling()) {
             next.crouched = !state.crouched;
         }
     }
-    if (next.crouched && (jump || next.sprinting)) {
+    if (!next.rolling()) {
+        next.rolls = 0;
+    }
+    if (next.slide > 0 && (jump || next.stagger > 0 || !next.grounded)) {
+        next.slide = 0;  // a jump (or a stagger, or a drop) ends a slide
+    }
+    if (next.slide > 0) {
+        next.crouched = true;
+        next.sprinting = false;
+        next.blocking = false;
+        next.parry_window = 0;
+    } else if (next.crouched && (jump || next.sprinting)) {
         next.crouched = false;
         jump = false;
     }
@@ -130,6 +154,12 @@ MoveState simulate_move(const MoveState& state, const MoveInput& input, const Wo
         side_speed *= params.swim_factor;
     }
     Vec3 target = forward * (f * forward_speed) + right * (r * side_speed);
+    if (next.slide > 0 && params.slide_time > 0) {
+        // Sliding: from sprinting speed to a crouch's, the way it started.
+        const double left = next.slide / params.slide_time;
+        const double from = params.run_speed * params.sprint_factor, to = params.run_speed * params.crouch_factor;
+        target = Vec3{-std::sin(double(next.roll_yaw)), 0, -std::cos(double(next.roll_yaw))} * (to + (from - to) * left);
+    }
     if (next.rolling()) {
         // Rolling: the way it started, slowing; no steering.
         const double left = next.roll / params.roll_time;
@@ -139,8 +169,9 @@ MoveState simulate_move(const MoveState& state, const MoveInput& input, const Wo
 
     if (state.grounded) {
         // A roll starts at full speed at once.
-        next.velocity = next.rolling() && !state.rolling() ? target
-                                                           : approach(state.velocity, target, params.ground_accel * dt);
+        const bool began = (next.rolling() && (!state.rolling() || next.rolls != state.rolls)) ||
+                           (next.slide > 0 && state.slide <= 0);
+        next.velocity = began ? target : approach(state.velocity, target, params.ground_accel * dt);
         next.velocity.y = 0;
         if (jump) {
             next.velocity.y = params.jump_speed;

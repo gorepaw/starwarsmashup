@@ -1,5 +1,6 @@
 #pragma once
 
+#include <array>
 #include <cstdint>
 #include <filesystem>
 #include <optional>
@@ -15,9 +16,9 @@
 namespace swm::core {
 
 // Professions (docs/PROFESSIONS.md): Galaxies' professions as 1-100 lines a
-// character levels by doing what they're about. There are no classes: a
-// loadout's Active Specialization Slots say which professions' combat perks
-// it fights with.
+// character levels by doing what they're about. There are no classes: what a
+// character has learned from trainers (docs/PERKS.md), at most perk_cap
+// perks and milestones in all, is what it fights and works with.
 
 enum class ProfessionCategory : uint8_t { armor, weapon, gathering, crafting, specialist, companion };
 
@@ -25,22 +26,13 @@ std::optional<ProfessionCategory> profession_category_from_name(std::string_view
 std::string_view profession_category_name(ProfessionCategory category);
 
 inline constexpr int profession_max_level = 100;
-// Active Specialization Slots in each loadout (ASSUMPTION: three, enough for
-// a weapon, an armor and one more).
-inline constexpr int specialization_slots = 3;
+// How many perks and milestones a character may know at once, across every
+// profession (like mastering two trees in Galaxies).
+inline constexpr int perk_cap = 10;
+// The levels a weapon or armor profession offers its perks at, two at each.
+inline constexpr std::array<int, 5> perk_levels{5, 25, 45, 65, 85};
 
-// A handling change a weapon profession makes to its own weapons, written
-// "spread * 0.97": spread (the cone and its bloom per shot), heat (per shot),
-// reload (its time), recovery (how fast bloom settles, larger is faster) or
-// range (how far bolts carry before their damage falls off).
-struct WeaponModifier {
-    enum Field : uint8_t { spread, heat, reload, recovery, range, speed, lunge, disrupt,
-                           velocity, headshot, crit, vehicle, shield, swap, recoil, aim };
-    Field field = spread;
-    double multiply = 1;
-
-    friend bool operator==(const WeaponModifier&, const WeaponModifier&) = default;
-};
+// (WeaponModifier, a handling change, is in loadout.h.)
 
 // What a milestone or a rank gives: character statistics, and handling for
 // the profession's own weapons.
@@ -51,12 +43,32 @@ struct ProfessionPerk {
     bool empty() const { return stats.empty() && weapons.empty(); }
 };
 
-// A major unlock (at 1, 25, 50, 75 and 100).
+// A major unlock (at 1, 25, 50, 75 and 100) of a profession without perks:
+// learned in order, and the level-1 one is its licence (docs/PERKS.md).
 struct ProfessionMilestone {
     int level = 1;
     std::string name;
     std::string description;
     ProfessionPerk perk;
+};
+
+// A weapon or armor profession's perk: one of the two (A or B) at its level.
+struct ProfessionPerkDef {
+    std::string id;
+    int level = 5;
+    char choice = 'A';
+    std::string name;
+    std::string description;
+    // What it waits for ("trigger", "mechanic"): it can be learned, but does
+    // nothing yet. Empty: it works.
+    std::string needs;
+    // The profession's weapons its handling is for; empty: all of them.
+    std::vector<std::string> archetypes;
+    // Its Modifier and Weapon lines: always, or while its trigger holds.
+    ProfessionPerk perk;
+    // Working only on something (Trigger = ...): what, and what it does.
+    // Its slots and modifiers are filled in for a loadout.
+    std::optional<TriggeredPerk> trigger;
 };
 
 struct ProfessionDef {
@@ -65,11 +77,9 @@ struct ProfessionDef {
     std::string description;
     ProfessionCategory category = ProfessionCategory::weapon;
     std::string wave = "7A";
-    // False while what it's about isn't in the game yet (gathering, crafting,
-    // most specialists): shown in the planner, but it can't be slotted or levelled.
+    // False while what it's about isn't in the game yet: shown in the
+    // planner, but it can't be learned or levelled.
     bool available = true;
-    // Its combat perks apply only from an Active Specialization Slot.
-    bool slotted = false;
     std::vector<std::string> archetypes;  // a weapon profession's weapons (WeaponArchetypeInfo::id)
     std::string armor_class;              // an armor profession's: none, light, medium or heavy
     std::string earns;                    // what earns it experience, for the planner
@@ -77,6 +87,10 @@ struct ProfessionDef {
     int rank_every = 0;
     ProfessionPerk rank;
     std::vector<ProfessionMilestone> milestones;  // by level
+    std::vector<ProfessionPerkDef> perks;         // by level, A before B (weapon and armor professions)
+
+    // Whether it teaches perks to choose from rather than milestones in order.
+    bool chooses() const { return !perks.empty(); }
 };
 
 // A character's experience in one profession.
@@ -84,6 +98,9 @@ struct ProfessionProgress {
     std::string id;
     int64_t xp = 0;
     int trained = 0;  // the highest milestone level learned from a trainer (0: none): milestones count only once learned
+    int paid = 0;     // the highest milestone ever paid for: learning it again is free
+    std::vector<std::string> perks;       // the perks learned (a profession that chooses)
+    std::vector<std::string> paid_perks;  // every perk ever paid for
 
     friend bool operator==(const ProfessionProgress&, const ProfessionProgress&) = default;
 };
@@ -98,6 +115,8 @@ public:
 
     const std::vector<ProfessionDef>& all() const { return professions_; }
     const ProfessionDef* find(std::string_view id) const;
+    // A perk by its id, and the profession it's in (`owner`); nullptr if none.
+    const ProfessionPerkDef* find_perk(std::string_view id, const ProfessionDef** owner = nullptr) const;
     // The profession a weapon of this archetype levels (by its id); nullptr if none.
     const ProfessionDef* for_archetype(std::string_view archetype) const;
     // The armor profession for an armor class ("none" is Unarmored).
@@ -118,10 +137,36 @@ int64_t profession_xp(std::span<const ProfessionProgress> progress, std::string_
 // Adds experience; returns the new total.
 int64_t add_profession_xp(std::vector<ProfessionProgress>& progress, std::string_view id, int64_t xp);
 
-// Whether a profession may sit in an Active Specialization Slot.
-bool can_specialize(const ProfessionBook& book, std::string_view id);
-// A loadout's slots made sound: known, slottable professions, each once, at most specialization_slots.
-std::vector<std::string> clean_specializations(const ProfessionBook& book, std::span<const std::string> ids);
+const ProfessionProgress* find_progress(std::span<const ProfessionProgress> progress, std::string_view id);
+ProfessionProgress& progress_for(std::vector<ProfessionProgress>& progress, std::string_view id);
+
+// How many of perk_cap one profession's learning takes: its perks, or its
+// milestones learned.
+int learned_count(const ProfessionDef& def, const ProfessionProgress& progress);
+// How many a character has learned in all.
+int perks_learned(const ProfessionBook& book, std::span<const ProfessionProgress> progress);
+// Whether a character may do what a profession is about (gather, craft,
+// heal, tame, perform): its level-1 milestone learned. Weapons and armor
+// need no licence: anyone can fight in anything.
+bool licensed(const ProfessionBook& book, std::span<const ProfessionProgress> progress, std::string_view id);
+
+// A trainer's answer: whether it happened, what it cost and what to tell them.
+struct TrainResult {
+    bool ok = false;
+    int64_t cost = 0;
+    std::string message;
+};
+// Learns a perk (by id): its profession's level reached, the other perk at
+// its level not known, room under perk_cap and the credits (milestone_cost
+// at its level, nothing if it was paid for before).
+TrainResult learn_perk(const ProfessionBook& book, std::vector<ProfessionProgress>& progress, std::string_view perk_id,
+                       int64_t credits);
+// Learns a profession's next milestone, which must be at `level`.
+TrainResult learn_milestone(const ProfessionBook& book, std::vector<ProfessionProgress>& progress,
+                            std::string_view profession_id, int level, int64_t credits);
+// Gives up a perk (by its id) or a profession's last milestone learned (by
+// the profession's id). Always free.
+TrainResult forget(const ProfessionBook& book, std::vector<ProfessionProgress>& progress, std::string_view id);
 
 // The professions experience for something done in a loadout goes to when
 // it isn't any one profession's (quests, missions, battles): the equipped
@@ -147,18 +192,20 @@ bool can_use_mark(const ProfessionBook& book, const ItemDef& def, int mark,
 // their while: its giver is shown grey.
 inline constexpr int quest_trivial_gap = 10;
 
-// A slotted profession's perks at its character's level: its ranks and
-// milestones reached. An armor profession's apply only to armor of its class.
-ProfessionPerk profession_perks(const ProfessionDef& def, int level, int trained = 100);
+// What a character has of a profession at its level: its ranks, and its
+// perks or milestones learned (perks that wait for something left out). An
+// armor profession's apply only to armor of its class.
+ProfessionPerk profession_perks(const ProfessionDef& def, const ProfessionProgress& progress, int level);
 
-// What a trainer asks for learning the milestone at `level`: the first is free.
+// What a trainer asks for learning a milestone or perk at `level`: a
+// milestone at level 1 is free.
 int64_t milestone_cost(int level);
 
-// Applies a loadout's slotted professions at the character's levels: their
-// statistics as one more piece of gear (slot "specialization", so clients
-// predict with them), their weapon handling to the weapons they cover.
-void apply_specializations(Loadout& loadout, const ProfessionBook& book, std::span<const std::string> specializations,
-                           std::span<const ProfessionProgress> progress);
+// Applies what a character has learned at its levels: statistics as one more
+// piece of gear (slot "specialization", so clients predict with them), weapon
+// handling to the weapons each profession covers. An armor profession's only
+// while the loadout's armor is its class.
+void apply_profession_perks(Loadout& loadout, const ProfessionBook& book, std::span<const ProfessionProgress> progress);
 
 // What an armor's pieces make it: the class most of them are, the heavier on
 // a tie; "none" without armor.

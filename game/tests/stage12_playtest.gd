@@ -2,7 +2,7 @@
 # database (SWM_PHASE):
 #   create  a new character spawns in Mos Eisley, then leaves (the database
 #           is kept for seeding: professions, a datapad, a mount item).
-#   play    the seeded character slots Creature Handler, fields a bantha and
+#   play    the seeded character (Creature Handler learned) fields a bantha and
 #           then an R2 unit (their models drawn), rides the bantha mount, and
 #           opens the datapad. Screenshots go to SWM_SHOTS (<path>NN.png).
 #
@@ -72,15 +72,12 @@ func _process(_delta: float) -> bool:
 			if (spec.get("companions", []) as Array).size() >= 3:
 				print("play: %d companions, %d abilities: %s" % [(spec["companions"] as Array).size(),
 						(spec.get("abilities", []) as Array).size(), _ids(spec.get("abilities", []))])
-				var lo: Dictionary = (client.get_character_loadouts()[0] as Dictionary).duplicate(true)
-				lo["specializations"] = ["creature_handler", "bounty_hunter"]
-				client.save_loadout(int(lo["slot_index"]), lo)
 				_next()
 			elif waited > 600:
 				_fail("no seeded datapad arrived: %s" % [spec.keys()])
 		1:
 			if "ch_tame" in _ids(spec.get("abilities", [])):
-				print("play: slotted; abilities now %s" % [_ids(spec.get("abilities", []))])
+				print("play: learned; abilities %s" % [_ids(spec.get("abilities", []))])
 				_summon(client, spec, "bantha")
 				_next()
 			elif waited > 300:

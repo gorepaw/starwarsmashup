@@ -820,6 +820,7 @@ func _controls() -> Dictionary:
 			"crouch": Input.is_action_pressed("crouch"),
 			"use": Input.is_action_pressed("interact"),  # in or out of a vehicle (in the world, one's own)
 			"block": blocking,
+			"aim": _zoom_step > 0,  # aimed down the sights (a perk's condition: Spotter)
 			"weapon": _weapon}
 
 
@@ -1050,6 +1051,7 @@ func _update_remotes(own_team: int) -> void:
 		if int(remote["team"]) != NATIVES_TEAM:
 			PlayerAppearance.set_worn_models(_remotes[id], str(remote.get("worn", "")))
 		_pose(_remotes[id], remote, id)
+		_remotes[id]["quiet"] = bool(remote.get("quiet", false))  # (Low Profile: firing doesn't show on radar)
 		var tag: Label3D = _remotes[id]["tag"]
 		var friend: bool = own_team >= 0 and _client.is_allied(own_team, int(remote["team"]))
 		# Natives' holograms over their own heads (soldiers': the usual height).
@@ -1645,7 +1647,8 @@ func _bolt_start(bolt: Dictionary) -> Dictionary:
 	var soldier := _soldier_of(owner_id)
 	if soldier == null or not soldier.model.visible:
 		return {"origin": bolt["position"], "offset": Vector3.ZERO}
-	_battle_ui.note_fired(owner_id)
+	if not (_remotes.has(owner_id) and bool(_remotes[owner_id].get("quiet", false))):
+		_battle_ui.note_fired(owner_id)  # (on enemies' radar; not a quiet shooter: Low Profile)
 	if owner_id != _client.get_entity_id():
 		if bolt["kind"] == "grenade" or int(bolt["weapon"]) >= 2:
 			soldier.throw(str(bolt.get("archetype", "")), str(bolt.get("held_model", "")))

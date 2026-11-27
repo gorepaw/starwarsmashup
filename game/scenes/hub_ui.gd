@@ -92,7 +92,6 @@ var _trained_by := ""              # the trainer (their name) whose screen is op
 var map_title := "Map"         # the map's title (the session sets it: the planet and the town)
 var map_planet := {}           # the radar's picture of the planet, for the map's widest view
 var _scanner: MultiScanner3D
-var _shown_loadouts: Array = []    # the loadouts the profession screen was last given
 var _settings: Settings
 var _world_root: Node3D
 var _recruiter_nodes: Array = []
@@ -186,7 +185,6 @@ func setup(layer: CanvasLayer, world_root: Node3D, art: RefCounted, settings: Se
 
 	_profession_screen = ProfessionScreen.new(art)
 	_profession_screen.visible = false
-	_profession_screen.loadout_saved.connect(func(slot: int, lo: Dictionary) -> void: loadout_saved.emit(slot, lo))
 	_profession_screen.closed.connect(close_all_screens)
 	layer.add_child(_profession_screen)
 
@@ -209,8 +207,8 @@ func setup(layer: CanvasLayer, world_root: Node3D, art: RefCounted, settings: Se
 
 	_trainer_screen = TrainerScreen.new(art)
 	_trainer_screen.visible = false
-	_trainer_screen.train_requested.connect(func(profession: String, level: int) -> void:
-		service_requested.emit(0, profession, level, 0))
+	_trainer_screen.service_requested.connect(func(action: int, id: String, amount: int) -> void:
+		service_requested.emit(action, id, amount, 0))
 	_trainer_screen.closed.connect(close_all_screens)
 	layer.add_child(_trainer_screen)
 
@@ -279,7 +277,9 @@ func set_professions(professions: Array, store: Object) -> void:
 	if _profession_screen != null:
 		_profession_screen.professions = professions
 		_profession_screen.store = store
-		_profession_screen.slots = int(store.get_specialization_slots())
+		_profession_screen.cap = int(store.get_perk_cap())
+	if _trainer_screen != null:
+		_trainer_screen.cap = int(store.get_perk_cap())
 
 
 func has_ui() -> bool:
@@ -452,7 +452,6 @@ func toggle_professions(client: Object) -> bool:
 		close_all_screens()
 		return false
 	close_all_screens()
-	_shown_loadouts = []
 	_sync_screen_data(client)
 	_profession_screen.open_screen()
 	return true
@@ -1293,16 +1292,14 @@ func _sync_screen_data(client: Object) -> void:
 	if _profession_screen != null:
 		var progress := {}
 		var taught := {}
+		var known := {}
 		for p: Dictionary in client.get_professions():
 			progress[str(p["id"])] = int(p["xp"])
 			taught[str(p["id"])] = int(p.get("trained", 0))
+			known[str(p["id"])] = p.get("perks", [])
 		_profession_screen.progress = progress
 		_profession_screen.trained = taught
-		_profession_screen.active_loadout = active
-		# What the server last said; the screen keeps its own change until the answer.
-		if los != _shown_loadouts:
-			_shown_loadouts = los
-			_profession_screen.loadouts = los.duplicate(true)
+		_profession_screen.known = known
 		if _profession_screen.visible:
 			_profession_screen.queue_redraw()
 	if _trainer_screen != null:
@@ -1310,8 +1307,10 @@ func _sync_screen_data(client: Object) -> void:
 		for p: Dictionary in client.get_professions():
 			var xp := int(p["xp"])
 			var level := int(_store.profession_level(xp)["level"]) if _store != null else 1
-			learned[str(p["id"])] = {"xp": xp, "level": level, "trained": int(p.get("trained", 0))}
+			learned[str(p["id"])] = {"xp": xp, "level": level, "trained": int(p.get("trained", 0)),
+					"paid": int(p.get("paid", 0)), "perks": p.get("perks", []), "paid_perks": p.get("paid_perks", [])}
 		_trainer_screen.progress = learned
+		_trainer_screen.known_count = _known_count(client)
 		_trainer_screen.credits = int(status.get("credits", 0))
 		if _trainer_screen.visible:
 			_trainer_screen.professions = _professions_of(_trainer_detail(client))
@@ -1336,6 +1335,22 @@ func _sync_screen_data(client: Object) -> void:
 		_workbench_screen.professions = prof_xp
 		if _workbench_screen.visible:
 			_workbench_screen.queue_redraw()
+
+
+# How many perks and milestones the character knows, across every profession
+# (docs/PERKS.md: at most the store's perk cap).
+func _known_count(client: Object) -> int:
+	var count := 0
+	for p: Dictionary in client.get_professions():
+		var id := str(p["id"])
+		count += (p.get("perks", []) as Array).size()
+		for def: Dictionary in _professions:
+			if str(def.get("id", "")) != id:
+				continue
+			for m: Dictionary in def.get("milestones", []):
+				if int(m.get("level", 0)) <= int(p.get("trained", 0)):
+					count += 1
+	return count
 
 
 # What the trainer whose screen is open teaches (their `detail`).

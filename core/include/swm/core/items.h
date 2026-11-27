@@ -276,9 +276,7 @@ struct CharacterLoadout {
     uint64_t secondary_id = 0;
     std::map<std::string, uint64_t> gear_ids;        // worn slots, deflector_shield, ammo, mount
     std::map<std::string, uint64_t> appearance_ids;  // the cosmetic override: worn slots, shown over the gear
-    // Its Active Specialization Slots: profession ids, at most
-    // specialization_slots (profession.h), and its Companion Slot (none yet).
-    std::vector<std::string> specializations;
+    // Its Companion Slot: a companion from the datapad (its id), or none.
     std::string companion;
 
     friend bool operator==(const CharacterLoadout&, const CharacterLoadout&) = default;

@@ -295,7 +295,7 @@ public:
     // Loads the item catalog for hub inventory, quartermasters, and loadouts.
     godot::Error set_catalog(const godot::String& catalog_ini, const godot::String& bf2_items_dir);
     // Loads the profession roster (game/professions/professions.ini): players
-    // earn experience and their loadouts' specialization slots apply.
+    // earn experience and what they've learned from trainers applies.
     godot::Error set_professions(const godot::String& path);
     // The world's vehicle classes (game/vehicles/), for a server without a
     // battlefield: players call them from their items.

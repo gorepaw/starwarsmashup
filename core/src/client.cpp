@@ -235,6 +235,7 @@ void GameClient::set_input(const Controls& c) {
                                   (c.crouch ? MoveInput::crouch : 0) | (c.use ? MoveInput::use : 0) |
                                   (c.block ? MoveInput::block : 0));
     next_input_.weapon = uint8_t(std::clamp(c.weapon, 0, hand_slots - 1));
+    next_input_.aiming = c.aim;
 }
 
 std::vector<net::BoltState> GameClient::bolts(double now) const {

@@ -83,11 +83,28 @@ void test_protocol() {
     Loadout rl;
     rl.name = "Heavy";
     rl.gear.push_back({"psg_mark1", "deflector_shield", {{Stat::mitigation_laser, 0.08, 1.0}}});
+    rl.gear.push_back({"perks", "", {{Stat::run_speed, 0.0, 1.0 / 3.0}}});
+    WeaponDef rifle;
+    rifle.name = "E-11";
+    rifle.shot_delay = 0.1 * 0.93;  // not a float: the client predicts with exactly the server's values
+    rifle.spread_recover_rate = 7.0 / 3.0;
+    rifle.heat_per_shot = 0.07 * 1.15;
+    rifle.modifiers = {{Stat::sprint_factor, 0.0, 0.85 * 1.1}};
+    rl.weapons[0] = rifle;
     isync.resolved_loadouts.push_back(rl);
     const Message decoded_sync = decode(encode(isync));
     const auto* ds = std::get_if<InventorySync>(&decoded_sync);
     CHECK(ds != nullptr && ds->revision == 4 && ds->items.size() == 1 && ds->loadouts.size() == 1 &&
           ds->resolved_loadouts.size() == 1 && ds->resolved_loadouts[0].name == "Heavy");
+    if (ds != nullptr && ds->resolved_loadouts.size() == 1) {
+        const Loadout& got = ds->resolved_loadouts[0];
+        CHECK(got.gear.size() == 2 && got.gear[0].modifiers[0].add == 0.08 &&
+              got.gear[1].modifiers[0].multiply == 1.0 / 3.0);
+        CHECK(got.weapons[0].has_value() && got.weapons[0]->shot_delay == rifle.shot_delay &&
+              got.weapons[0]->spread_recover_rate == rifle.spread_recover_rate &&
+              got.weapons[0]->heat_per_shot == rifle.heat_per_shot &&
+              got.weapons[0]->modifiers.size() == 1 && got.weapons[0]->modifiers[0].multiply == 0.85 * 1.1);
+    }
 
     CHECK(std::get<InventoryAck>(decode(encode(InventoryAck{4}))).revision == 4);
     CHECK(std::get<SwitchLoadoutRequest>(decode(encode(SwitchLoadoutRequest{2}))).slot == 2);

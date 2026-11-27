@@ -168,6 +168,19 @@ void test_server_client_crafting_loopback() {
         CHECK(station_makes("structure", "architect") && station_makes("general", "chef"));
         CHECK(station_name(station_for("chef")) == "Food & Chemical Crafting Station");
 
+        // Nothing is free (docs/PERKS.md): without Surveying learned, no extracting.
+        client.gather_extract(ResourceCategory::mineral);
+        run(0.5);
+        CHECK(client.crafting().materials.empty());
+        CHECK(client.player_status().notice.find("Learn Surveying") != std::string::npos);
+        // The licences, from trainers: each level-1 milestone is free.
+        server.set_vendors({{"Survey Trainer", "trainer", {0, 0, 0}, 4, "surveying,salvaging"},
+                            {"Weaponsmith Trainer", "trainer", {0, 0, 0}, 4, "weaponsmith"}});
+        for (const char* id : {"surveying", "salvaging", "weaponsmith"}) {
+            client.service(net::ServiceRequest::train, id, 1, 0);
+            run(0.3);
+        }
+
         // Extract mineral + gas twice so we have plenty for a batch of 2 + 1 spare D-18 pistols.
         for (int i = 0; i < 3; ++i) {
             run(1.6);

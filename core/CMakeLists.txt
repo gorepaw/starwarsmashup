@@ -29,6 +29,7 @@ add_library(swm_core STATIC
   src/server_tow.cpp
   src/server_quests.cpp
   src/server_specialists.cpp
+  src/server_perks.cpp
   src/server_vehicles.cpp
   src/specialist.cpp
   src/species.cpp

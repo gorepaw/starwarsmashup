@@ -1,12 +1,18 @@
-// Stage 7 professions: the shipped roster and its level curve, slotting,
-// perks applied to a loadout, armor classes, and experience earned through a
-// server (weapon kills, hits taken, quests) and saved with the character.
+// Professions: the shipped roster and its level curve, trainer perks and
+// milestones under the cap (docs/PERKS.md), perks applied to a loadout, armor
+// classes, and experience earned through a server (weapon kills, hits taken,
+// quests) and saved with the character.
 
 #include <algorithm>
+#include <cmath>
 #include <filesystem>
+#include <numbers>
 #include <vector>
 
 #include "swm/core/client.h"
+#include "swm/core/combat.h"
+#include "swm/core/net/protocol.h"
+#include "swm/core/persistence.h"
 #include "swm/core/heightfield.h"
 #include "swm/core/items.h"
 #include "swm/core/net/link.h"
@@ -47,33 +53,54 @@ double stat_after(const Loadout& lo, Stat stat) {
 void test_roster() {
     ProfessionBook book;
     book.load(repo_root() / "game" / "professions" / "professions.ini");
-    CHECK(book.all().size() == 31);
+    CHECK(book.all().size() == 30);  // Image Designer is gone (an NPC one day)
+    CHECK(book.find("image_designer") == nullptr);
     const auto in_wave = [&](const char* wave) {
         return std::count_if(book.all().begin(), book.all().end(), [&](const ProfessionDef& d) { return d.wave == wave; });
     };
     CHECK(in_wave("7A") == 17);
-    CHECK(in_wave("7B") == 10);
+    CHECK(in_wave("7B") == 9);
     CHECK(in_wave("7C") == 4);
+    int perks = 0, waiting = 0, triggered = 0;
     for (const ProfessionDef& def : book.all()) {
-        CHECK(def.available);  // all 31 are in play since Stage 12
-        // Major unlocks at 1, 25, 50, 75 and 100.
-        std::vector<int> levels;
-        for (const ProfessionMilestone& m : def.milestones) levels.push_back(m.level);
-        CHECK((levels == std::vector<int>{1, 25, 50, 75, 100}));
+        CHECK(def.available);  // all of them are in play since Stage 12
         CHECK(!def.name.empty() && !def.description.empty());
+        const bool combat = def.category == ProfessionCategory::weapon || def.category == ProfessionCategory::armor;
+        // Weapons and armor teach perks, two at each of 5/25/45/65/85; the
+        // rest milestones at 1, 25, 50, 75 and 100.
+        CHECK(def.chooses() == combat);
+        if (combat) {
+            CHECK(def.perks.size() == 10 && def.milestones.empty() && def.rank_every == 0);
+            for (size_t i = 0; i < def.perks.size(); ++i) {
+                const ProfessionPerkDef& perk = def.perks[i];
+                CHECK(perk.level == perk_levels[i / 2] && perk.choice == (i % 2 == 0 ? 'A' : 'B'));
+                CHECK(!perk.name.empty() && !perk.description.empty());
+                // One that works changes something, always or on its trigger;
+                // one that waits (for a new mechanic) changes nothing yet.
+                if (perk.needs.empty()) {
+                    CHECK(!perk.perk.empty() || perk.trigger.has_value());
+                } else {
+                    CHECK(perk.perk.empty() && !perk.trigger && perk.needs == "mechanic");
+                }
+                triggered += perk.trigger ? 1 : 0;
+                ++perks;
+                waiting += perk.needs.empty() ? 0 : 1;
+            }
+        } else {
+            std::vector<int> levels;
+            for (const ProfessionMilestone& m : def.milestones) levels.push_back(m.level);
+            CHECK((levels == std::vector<int>{1, 25, 50, 75, 100}));
+        }
     }
-    // All 4 armors and 5 weapon lines (including Melee) are in play.
-    for (const char* id : {"unarmored", "light_armor", "medium_armor", "heavy_armor", "pistols", "carbines", "rifles",
-                           "heavy_weapons", "melee"}) {
-        CHECK(can_specialize(book, id));
-    }
-    CHECK(can_specialize(book, "bounty_hunter"));  // Stage 12: a slotted Wave 7B specialist
-    CHECK(!can_specialize(book, "entertainer"));   // unslotted: always on
-    CHECK(!can_specialize(book, "weaponsmith"));    // nor crafting
-    CHECK(!can_specialize(book, "nobody"));
-    for (const auto& a : {"pistol", "carbine_burst", "scatter", "rifle_auto", "sniper", "heavy_launcher", "grenade",
-                          "melee"}) {
+    CHECK(perks == 90);
+    CHECK(triggered == 31);
+    CHECK(waiting == 0);  // every perk works (step 3 built the last of the mechanics)
+    for (const auto& a : {"pistol", "carbine_burst", "scatter", "rifle_auto", "sniper", "heavy_launcher", "melee"}) {
         CHECK(book.for_archetype(a) != nullptr);
+    }
+    // Tacticals level no profession (their perks come with the advanced trees).
+    for (const auto& a : {"grenade", "placed", "utility"}) {
+        CHECK(book.for_archetype(a) == nullptr);
     }
     CHECK(book.for_archetype("pistol") && book.for_archetype("pistol")->id == "pistols");
     CHECK(book.for_armor("none") && book.for_armor("none")->id == "unarmored");
@@ -93,9 +120,73 @@ void test_roster() {
     CHECK(book.level_for(10'000'000) == 100);
     CHECK(book.xp_to_next(100) == 0);
 
-    // Slots: known, slottable, once each, three at most.
-    const std::vector<std::string> asked{"rifles", "bounty_hunter", "rifles", "bogus", "light_armor", "pistols", "carbines"};
-    CHECK((clean_specializations(book, asked) == std::vector<std::string>{"rifles", "bounty_hunter", "light_armor"}));
+}
+
+// Trainers: perks to choose, milestones in order, ten in all, giving up free
+// and learning again free (docs/PERKS.md).
+void test_training() {
+    ProfessionBook book;
+    book.load(repo_root() / "game" / "professions" / "professions.ini");
+    std::vector<ProfessionProgress> me{{"rifles", book.xp_for_level(30)}, {"pistols", book.xp_for_level(4)}};
+
+    // A perk needs its level, and credits.
+    CHECK(!learn_perk(book, me, "pistols_quick_draw", 10'000).ok);       // Pistols 4: not yet
+    CHECK(!learn_perk(book, me, "rifles_long_barrel", 100).ok);          // 500 Cr
+    CHECK(!learn_perk(book, me, "nothing", 10'000).ok);
+    TrainResult r = learn_perk(book, me, "rifles_long_barrel", 1000);
+    CHECK(r.ok && r.cost == milestone_cost(5) && r.cost == 500);
+    CHECK(!learn_perk(book, me, "rifles_long_barrel", 1000).ok);         // known already
+    // A or B: the other at its level must be given up first.
+    CHECK(!learn_perk(book, me, "rifles_quick_scope", 1000).ok);
+    r = forget(book, me, "rifles_long_barrel");
+    CHECK(r.ok && r.cost == 0);
+    CHECK(learn_perk(book, me, "rifles_quick_scope", 1000).ok);
+    CHECK(forget(book, me, "rifles_quick_scope").ok);
+    // Paid for once: free again.
+    r = learn_perk(book, me, "rifles_long_barrel", 0);
+    CHECK(r.ok && r.cost == 0);
+    CHECK(!forget(book, me, "rifles_quick_scope").ok);  // not known
+    CHECK(learn_perk(book, me, "rifles_braced", 10'000).ok);  // level 25, waits for triggers: learnable all the same
+    CHECK(!learn_perk(book, me, "rifles_spotter", 10'000).ok);  // level 45
+    CHECK(perks_learned(book, me) == 2);
+
+    // Milestones: in order; the level-1 one is the licence.
+    me.push_back({"doctor", book.xp_for_level(60)});
+    CHECK(!licensed(book, me, "doctor"));
+    CHECK(licensed(book, me, "rifles") && licensed(book, me, "heavy_armor"));  // fighting needs none
+    CHECK(!learn_milestone(book, me, "doctor", 25, 10'000).ok);  // the one before first
+    r = learn_milestone(book, me, "doctor", 1, 0);
+    CHECK(r.ok && r.cost == 0);
+    CHECK(licensed(book, me, "doctor"));
+    CHECK(learn_milestone(book, me, "doctor", 25, 500).ok);
+    CHECK(learn_milestone(book, me, "doctor", 50, 2500).ok);
+    CHECK(!learn_milestone(book, me, "doctor", 75, 10'000).ok);  // Doctor 60
+    CHECK(!learn_milestone(book, me, "rifles", 1, 0).ok);        // rifles teach perks
+    CHECK(perks_learned(book, me) == 5);
+    // Giving one up takes the last learned; learning it again is free.
+    CHECK(forget(book, me, "doctor").ok);
+    CHECK(find_progress(me, "doctor")->trained == 25 && perks_learned(book, me) == 4);
+    r = learn_milestone(book, me, "doctor", 50, 0);
+    CHECK(r.ok && r.cost == 0);
+
+    // Ten at most, across every profession.
+    me.push_back({"pilot", book.xp_for_level(100)});
+    for (const int level : {1, 25, 50, 75, 100}) {
+        CHECK(learn_milestone(book, me, "pilot", level, 100'000).ok);
+    }
+    CHECK(perks_learned(book, me) == 10);
+    r = learn_perk(book, me, "rifles_spotter", 100'000);
+    CHECK(!r.ok);
+    me[0].xp = book.xp_for_level(100);
+    r = learn_perk(book, me, "rifles_spotter", 100'000);
+    CHECK(!r.ok && r.message.find("give one up") != std::string::npos);
+    CHECK(!learn_milestone(book, me, "doctor", 75, 100'000).ok);
+    CHECK(forget(book, me, "pilot").ok);
+    CHECK(learn_perk(book, me, "rifles_spotter", 100'000).ok);
+    CHECK(perks_learned(book, me) == 10);
+    // Giving up every milestone of a profession takes its licence too.
+    for (int i = 0; i < 3; ++i) CHECK(forget(book, me, "doctor").ok);
+    CHECK(!licensed(book, me, "doctor") && !forget(book, me, "doctor").ok);
 }
 
 void test_perks() {
@@ -111,22 +202,52 @@ void test_perks() {
     rifle.yaw_spread = 1.0;
     lo.weapons = {rifle, pistol, std::nullopt};
     lo.armor_class = "light";
-    const std::vector<ProfessionProgress> progress{{"pistols", book.xp_for_level(25), 100}, {"light_armor", 0, 100},
-                                                   {"heavy_armor", book.xp_for_level(100), 100}};
-    // Pistols at 25 (two ranks, Sidearm Certification, Steady Hand), light
-    // armor at 1, heavy armor's not worn: nothing from it.
-    const std::vector<std::string> slots{"pistols", "light_armor", "heavy_armor"};
-    apply_specializations(lo, book, slots, progress);
-    CHECK(near(lo.weapons[1]->yaw_spread, 0.99 * 0.99 * 0.95));
-    CHECK(near(lo.weapons[1]->reload_time, 2.0 * 0.95));
-    CHECK(near(lo.weapons[0]->yaw_spread, 1.0));  // the rifle isn't a pistol
+    const auto known = [](const char* id, int64_t xp, std::vector<std::string> perks) {
+        ProfessionProgress p{id, xp};
+        p.perks = std::move(perks);
+        return p;
+    };
+    // Pistols 25 with Quick Draw and Snap Shot (which waits for triggers),
+    // Light Armor 5 with Insulated Weave, Heavy Armor's Blast Padding (not
+    // worn: nothing from it), and no slots: what's learned is what applies.
+    const double swap = pistol.swap_time;
+    const std::vector<ProfessionProgress> progress{
+        known("pistols", book.xp_for_level(25), {"pistols_quick_draw", "pistols_snap_shot"}),
+        known("light_armor", book.xp_for_level(5), {"light_insulated_weave"}),
+        known("heavy_armor", book.xp_for_level(100), {"heavy_blast_padding"})};
+    apply_profession_perks(lo, book, progress);
+    CHECK(near(lo.weapons[1]->swap_time, swap * 0.6));
+    CHECK(near(lo.weapons[1]->yaw_spread, 1.0));        // no ranks, and Snap Shot does nothing yet
+    CHECK(near(lo.weapons[1]->reload_time, 2.0));       // no certification
+    CHECK(near(lo.weapons[0]->swap_time, swap));        // the rifle isn't a pistol
     CHECK(lo.gear.size() == 1 && lo.gear[0].slot == "specialization");
-    CHECK(near(stat_after(lo, Stat::mitigation_electro), 0.02));
+    CHECK(near(stat_after(lo, Stat::mitigation_electro), 0.05));
     CHECK(near(stat_after(lo, Stat::mitigation_explosive), 0.0));
-    // Nothing slotted, nothing applied.
+    // A perk for some of its profession's weapons: Tight Choke tightens
+    // scatter guns, not burst carbines.
+    {
+        Loadout guns;
+        WeaponDef scatter;
+        scatter.archetype = "scatter";
+        scatter.yaw_spread = 1.0;
+        WeaponDef burst;
+        burst.archetype = "carbine_burst";
+        burst.yaw_spread = 1.0;
+        guns.weapons = {scatter, burst, std::nullopt};
+        const std::vector<ProfessionProgress> carbines{known("carbines", book.xp_for_level(5), {"carbines_tight_choke"})};
+        apply_profession_perks(guns, book, carbines);
+        CHECK(near(guns.weapons[0]->yaw_spread, 0.85) && near(guns.weapons[1]->yaw_spread, 1.0));
+    }
+    // Nothing learned, nothing applied; a level lost (it can't be, but a
+    // perk above the level) doesn't apply.
     Loadout plain;
-    apply_specializations(plain, book, {}, progress);
+    apply_profession_perks(plain, book, {});
     CHECK(plain.gear.empty());
+    Loadout under;
+    under.armor_class = "light";
+    const std::vector<ProfessionProgress> low{known("light_armor", book.xp_for_level(4), {"light_insulated_weave"})};
+    apply_profession_perks(under, book, low);
+    CHECK(under.gear.empty());
 
     // Routed experience: the weapon's and the armor's, slotted or not.
     CHECK((routed_professions(book, lo) == std::vector<std::string>{"rifles", "light_armor"}));
@@ -187,6 +308,889 @@ void test_perks() {
     CHECK(catalog.build_loadout(CharacterLoadout{}, inventory, Species::human).armor_class == "none");
 }
 
+// Triggered perks (docs/PERKS.md, Triggers) in the shared simulation: what a
+// loadout carries, stances, a roll and an overheat starting timers, and
+// active perks' statistics; and on the wire.
+void test_triggers() {
+    ProfessionBook book;
+    book.load(repo_root() / "game" / "professions" / "professions.ini");
+    const auto known = [](const char* id, int64_t xp, std::vector<std::string> perks) {
+        ProfessionProgress p{id, xp};
+        p.perks = std::move(perks);
+        return p;
+    };
+    const int64_t master = book.xp_for_level(100);
+    WeaponDef rifle;
+    rifle.archetype = "rifle_auto";
+    rifle.yaw_spread = rifle.pitch_spread = 1.0;
+    rifle.spread_per_shot = 0.5;
+    rifle.heat_per_shot = 0.1;
+    rifle.rounds_per_clip = 0;
+    WeaponDef pistol;
+    pistol.archetype = "pistol";
+    pistol.shot_delay = 0.3;
+    pistol.yaw_spread = pistol.pitch_spread = 0.5;
+    Loadout lo;
+    lo.weapons = {rifle, pistol, std::nullopt};
+    lo.armor_class = "light";
+    const std::vector<ProfessionProgress> progress{
+        known("rifles", master, {"rifles_braced", "rifles_rhythm", "rifles_overwatch", "rifles_one_shot"}),
+        known("pistols", master, {"pistols_snap_shot", "pistols_fan_the_hammer", "pistols_execution", "pistols_deadeye"}),
+        known("light_armor", master, {"light_pathfinder"}),
+        known("heavy_armor", master, {"heavy_anchor"}),      // not worn
+        known("carbines", master, {"carbines_overclock"})};  // none carried
+    apply_profession_perks(lo, book, progress);
+    const auto index = [&](std::string_view id) -> int {
+        for (size_t i = 0; i < lo.triggered.size(); ++i) {
+            if (lo.triggered[i].id == id) return int(i);
+        }
+        return -1;
+    };
+    // One Shot is a sniper's (an automatic rifle is carried); Anchor heavy
+    // armor's; Overclock a carbine's.
+    CHECK(lo.triggered.size() == 8);
+    CHECK(index("rifles_one_shot") < 0 && index("heavy_anchor") < 0 && index("carbines_overclock") < 0);
+    const int braced = index("rifles_braced"), overwatch = index("rifles_overwatch"), snap = index("pistols_snap_shot");
+    const int fan = index("pistols_fan_the_hammer"), pathfinder = index("light_pathfinder");
+    CHECK(braced >= 0 && overwatch >= 0 && snap >= 0 && fan >= 0 && pathfinder >= 0);
+    CHECK(lo.triggered[size_t(braced)].slots == 1 && lo.triggered[size_t(snap)].slots == 2);
+    CHECK(lo.triggered[size_t(pathfinder)].slots == 0);  // armor: every weapon
+    // Triggered perks' modifiers aren't always on: nothing in the gear for Pathfinder.
+    CHECK(stats_for(lo).move.run_speed == CharacterStats{}.move.run_speed);
+
+    // Stances: Braced crouched (the rifle only), Overwatch after 2 s crouched
+    // and still, Snap Shot after a second's pause.
+    MoveState st;
+    CHECK(near(perk_handling(lo, st, 0).spread, 1.0));
+    st.crouched = true;
+    CHECK(near(perk_handling(lo, st, 0).spread, 0.78) && near(perk_handling(lo, st, 1).spread, 1.0));
+    CHECK(near(perk_handling(lo, st, 0).heat, 1.0));
+    st.still = 2.5f;
+    CHECK(near(perk_handling(lo, st, 0).heat, 0.7) && near(perk_handling(lo, st, 0).bloom, 0.0));
+    st = {};
+    CHECK(near(perk_handling(lo, st, 1).spread, 1.0));
+    st.combat.idle = 1.5f;
+    CHECK(near(perk_handling(lo, st, 1).spread, 0.0));
+
+    Heightfield ground{101, 2.0, -100, -100, std::vector<float>(101 * 101, 0.0f)};
+    World world{ground};
+    const CharacterStats base;
+    uint32_t seq = 0;
+    const auto tick = [&](MoveState& s, MoveInput in) {
+        in.sequence = ++seq;
+        return simulate_character(s, in, true, world, lo, base, 1.0 / 30.0);
+    };
+    // Crouched and still: the simulation counts it.
+    MoveState sim;
+    reset_loadout(sim, lo, base);
+    MoveInput crouch;
+    crouch.buttons = MoveInput::crouch;
+    tick(sim, crouch);
+    for (int i = 0; i < 70; ++i) tick(sim, MoveInput{});
+    CHECK(sim.crouched && sim.still > 2.0f && perk_active(lo, sim, size_t(overwatch)));
+    // A paused pistol fires its first shot true; the next has its spread again.
+    reset_loadout(sim, lo, base);
+    MoveInput fire;
+    fire.buttons = MoveInput::fire;
+    fire.weapon = 1;
+    MoveInput hold_pistol;
+    hold_pistol.weapon = 1;
+    for (int i = 0; i < 45; ++i) tick(sim, hold_pistol);
+    CHECK(sim.combat.weapon == 1 && sim.combat.idle >= 1.0f);
+    const auto first = tick(sim, fire);
+    CHECK(first.has_value() && first->directions.size() == 1);
+    CHECK(first && near(first->directions[0].x, aim_direction(0, 0).x, 1e-9) &&
+          near(first->directions[0].y, aim_direction(0, 0).y, 1e-9));
+    CHECK(sim.combat.idle == 0.0f && !perk_active(lo, sim, size_t(snap)));
+
+    // A roll starts Fan the Hammer and Pathfinder: faster shots, faster feet.
+    reset_loadout(sim, lo, base);
+    MoveInput run;
+    run.forward = 127;
+    for (int i = 0; i < 20; ++i) tick(sim, run);
+    MoveInput roll = run;
+    roll.buttons = MoveInput::crouch;
+    tick(sim, roll);
+    CHECK(sim.rolling());
+    CHECK(sim.perk_time[size_t(fan)] > 3.5f && sim.perk_time[size_t(pathfinder)] > 2.5f);
+    CHECK(near(perk_handling(lo, sim, 1).speed, 0.77) && near(perk_handling(lo, sim, 0).speed, 1.0));
+    CHECK(near(perk_stats(base, lo, sim).move.run_speed, base.move.run_speed * 1.2));
+    for (int i = 0; i < 120; ++i) tick(sim, MoveInput{});
+    CHECK(!perk_active(lo, sim, size_t(fan)) && near(perk_stats(base, lo, sim).move.run_speed, base.move.run_speed));
+
+    // Overclock: an overheat vents at once, then not again for 20 s.
+    {
+        WeaponDef carbine;
+        carbine.archetype = "carbine_burst";
+        carbine.rounds_per_clip = 0;
+        carbine.heat_per_shot = 0.6;
+        carbine.heat_recover_rate = 0;
+        carbine.heat_threshold = 0.2;
+        carbine.shot_delay = 0.1;
+        Loadout hot;
+        hot.weapons = {carbine, std::nullopt, std::nullopt};
+        apply_profession_perks(hot, book, std::vector<ProfessionProgress>{known("carbines", master, {"carbines_overclock"})});
+        CHECK(hot.triggered.size() == 1 && hot.triggered[0].timer_is_cooldown());
+        MoveState h;
+        reset_loadout(h, hot, base);
+        MoveInput shoot;
+        shoot.buttons = MoveInput::fire;
+        for (int i = 0; i < 9; ++i) {
+            shoot.sequence = ++seq;
+            simulate_weapons(h, shoot, hot, 1.0 / 30.0);
+        }
+        CHECK(!h.combat.weapons[0].overheated && h.perk_time[0] > 19.0f);  // vented on the second shot
+        for (int i = 0; i < 9; ++i) {
+            shoot.sequence = ++seq;
+            simulate_weapons(h, shoot, hot, 1.0 / 30.0);
+        }
+        CHECK(h.combat.weapons[0].overheated);  // cooling down: no vent
+    }
+
+    // On the wire: the timers with the character's state, the perks with its loadouts.
+    {
+        net::Snapshot snap_msg;
+        net::EntityState self{7, sim};
+        self.state.perk_time[2] = 1.25f;
+        self.state.still = 0.5f;
+        self.state.combat.idle = 3.0f;
+        snap_msg.entities.push_back(self);
+        const auto decoded = std::get<net::Snapshot>(net::decode(net::encode(snap_msg)));
+        CHECK(decoded.entities.size() == 1 && decoded.entities[0].state == self.state);
+        net::InventorySync sync;
+        sync.resolved_loadouts = {lo};
+        const auto inv = std::get<net::InventorySync>(net::decode(net::encode(sync)));
+        CHECK(inv.resolved_loadouts.size() == 1 && inv.resolved_loadouts[0].triggered.size() == lo.triggered.size());
+        if (inv.resolved_loadouts.size() == 1 && inv.resolved_loadouts[0].triggered.size() == lo.triggered.size()) {
+            for (size_t i = 0; i < lo.triggered.size(); ++i) {
+                const TriggeredPerk& a = lo.triggered[i];
+                const TriggeredPerk& b = inv.resolved_loadouts[0].triggered[i];
+                CHECK(a.id == b.id && a.trigger == b.trigger && a.slots == b.slots && a.weapons == b.weapons &&
+                      near(a.duration, b.duration, 1e-6) && a.stats.size() == b.stats.size());
+            }
+        }
+    }
+}
+
+// Triggered perks on a server: a while unhurt (held), a shield broken, a
+// killing blow, and kills in a chain with a carbine.
+void test_server_triggers() {
+    const auto root = repo_root();
+    const auto db_path = std::filesystem::temp_directory_path() / "swm_perk_trigger_test.sqlite";
+    std::filesystem::remove(db_path);
+    ItemCatalog catalog;
+    catalog.load(root / "game" / "items" / "swg_catalog.ini");
+    ProfessionBook book;
+    book.load(root / "game" / "professions" / "professions.ini");
+    Heightfield ground{201, 2.0, -200, -200, std::vector<float>(201 * 201, 0.0f)};
+    World world{ground};
+    SqliteCharacterStore store(db_path);
+    // A veteran: unarmored (the starter clothes) with Untouchable and Ghost
+    // Step, a carbine with Chain Breach, and Second Chance (medium armor's:
+    // not worn, so it won't save them).
+    const CharacterRecord vet = store.create("Veteran", {0, 0, 0}, 0);
+    ensure_starter_kit(store, vet.id);
+    const int64_t master = book.xp_for_level(100);
+    const std::vector<ProfessionProgress> levels{{"unarmored", master}, {"carbines", master}, {"medium_armor", master}};
+    store.save_professions(vet.id, levels);
+    store.set_extra(vet.id, "perks:unarmored", "unarmored_untouchable,unarmored_ghost_step");
+    store.set_extra(vet.id, "perks:carbines", "carbines_chain_breach");
+    store.set_extra(vet.id, "perks:medium_armor", "medium_second_chance");
+    const ItemInstance carbine = store.grant_item({0, vet.id, "wp_carbine_dh17", 0.5, "", "{}"});
+    std::vector<CharacterLoadout> los = store.list_loadouts(vet.id);
+    CHECK(!los.empty());
+    if (los.empty()) return;
+    los[0].primary_id = carbine.id;
+    store.save_loadout(vet.id, los[0]);
+
+    net::LoopbackHub links;
+    net::Endpoint server_ep{1, 1}, client_ep{2, 1};
+    net::LoopbackLink srv_link{links, server_ep};
+    net::LoopbackLink cli_link{links, client_ep};
+    ServerConfig config;
+    config.catalog = &catalog;
+    config.professions = &book;
+    config.pvp_enabled = false;
+    config.spawn = {0, 0, 0};
+    GameServer server(srv_link, world, config, &store);
+    server.set_looks({"object/mobile/shared_womp_rat.iff"});
+    GameServer::NpcCombatSpec frail;
+    frail.actor_kind = 2;
+    frail.passive = true;
+    frail.max_health = 1;
+    const uint32_t rat = server.add_combat_npc("Womp Rat", {30, 0, 30}, 0, 0, frail);
+    GameClient client(cli_link, world, ClientConfig{.server = server_ep, .name = "Veteran"});
+    double now = 0;
+    const auto run = [&](double seconds) {
+        for (const double end = now + seconds; now < end; now += 1.0 / 30.0) {
+            server.update(now);
+            client.update(now);
+        }
+    };
+    run(0.6);
+    CHECK(client.status() == GameClient::Status::connected);
+    const uint32_t me = client.entity_id();
+    const auto& lo = client.custom_loadouts();
+    CHECK(!lo.empty() && lo[0].triggered.size() == 3);  // Second Chance isn't this armor's
+    const auto index = [&](std::string_view id) -> int {
+        if (lo.empty()) return -1;
+        for (size_t i = 0; i < lo[0].triggered.size(); ++i) {
+            if (lo[0].triggered[i].id == id) return int(i);
+        }
+        return -1;
+    };
+    const int untouchable = index("unarmored_untouchable"), ghost = index("unarmored_ghost_step");
+    const int chain = index("carbines_chain_breach");
+    CHECK(untouchable >= 0 && ghost >= 0 && chain >= 0);
+    if (untouchable < 0 || ghost < 0 || chain < 0) return;
+    const auto timer = [&](int i) {
+        const MoveState* s = server.state_of(me);
+        return s ? s->perk_time[size_t(i)] : -1.0f;
+    };
+
+    // Untouchable: four seconds unhurt, and it holds (on the client too) until a hit.
+    run(4.5);
+    CHECK(timer(untouchable) > 0);
+    CHECK(client.predicted().perk_time[size_t(untouchable)] > 0);
+    const double shield = server.shield_of(me);
+    CHECK(shield > 0);
+    server.npc_melee(rat, me, 10, DamageType::laser);
+    run(0.05);
+    CHECK(timer(untouchable) == 0);
+    CHECK(timer(ghost) == 0);  // the shield held
+    // A shield broken: Ghost Step for 2 s.
+    server.npc_melee(rat, me, shield + 20, DamageType::laser);
+    run(0.05);
+    CHECK(server.shield_of(me) == 0 && timer(ghost) > 1.8f);
+    // A killing blow: Second Chance isn't worn, so it doesn't save them.
+    // (Below, after the chain.)
+
+    // Chain Breach: the second of two kills within 5 s restores 15% of the shield.
+    const double capacity = shield;  // (it was full)
+    CHECK(capacity > 0);
+    const uint32_t first = server.add_combat_npc("Womp Rat", {0, 0, -6}, 0, 0, frail);
+    const uint32_t second = server.add_combat_npc("Womp Rat", {0, 0, -9}, 0, 0, frail);
+    GameClient::Controls aim;
+    aim.yaw = 0;  // facing -Z
+    aim.pitch = -0.05;
+    aim.fire = true;
+    double shield_after_first = -1;
+    const auto npc_alive = [&](uint32_t id) { const auto info = server.npc_info(id); return info && info->life == Life::alive; };
+    for (int i = 0; i < 90 && npc_alive(second); ++i) {
+        client.set_input(aim);
+        run(1.0 / 30.0);
+        if (shield_after_first < 0 && !npc_alive(first)) {
+            shield_after_first = server.shield_of(me);
+        }
+    }
+    client.set_input({});
+    CHECK(!npc_alive(first) && !npc_alive(second));
+    CHECK(shield_after_first >= 0 && near(server.shield_of(me), shield_after_first + 0.15 * capacity, 1.0));
+
+    // A killing blow without Second Chance worn: dead.
+    server.npc_melee(rat, me, 5000, DamageType::laser);
+    run(0.05);
+    CHECK(!server.alive(me));
+    client.disconnect();
+    run(0.1);
+
+    // A guard in padded (medium) armor: Adaptive Plating and Second Chance.
+    const CharacterRecord guard = store.create("Guard", {0, 0, 0}, 0);
+    ensure_starter_kit(store, guard.id);
+    const std::vector<ProfessionProgress> guard_levels{{"medium_armor", master}};
+    store.save_professions(guard.id, guard_levels);
+    store.set_extra(guard.id, "perks:medium_armor", "medium_adaptive_plating,medium_second_chance");
+    std::vector<CharacterLoadout> guard_los = store.list_loadouts(guard.id);
+    CHECK(!guard_los.empty());
+    if (guard_los.empty()) return;
+    for (const char* piece : {"chest", "leggings", "boots", "helmet"}) {
+        const ItemInstance item = store.grant_item({0, guard.id, std::string("armor_padded_") + piece, 0.5, "", "{}"});
+        guard_los[0].gear_ids[piece] = item.id;
+    }
+    store.save_loadout(guard.id, guard_los[0]);
+    net::LoopbackLink guard_link{links, {3, 1}};
+    GameClient guard_client(guard_link, world, ClientConfig{.server = server_ep, .name = "Guard"});
+    const auto run_guard = [&](double seconds) {
+        for (const double end = now + seconds; now < end; now += 1.0 / 30.0) {
+            server.update(now);
+            guard_client.update(now);
+        }
+    };
+    run_guard(0.6);
+    CHECK(guard_client.status() == GameClient::Status::connected);
+    const uint32_t g = guard_client.entity_id();
+    CHECK(!guard_client.custom_loadouts().empty() && guard_client.custom_loadouts()[0].armor_class == "medium" &&
+          guard_client.custom_loadouts()[0].triggered.size() == 2);
+    const auto taken = [&](double raw) {
+        const double before = server.health_of(g) + server.shield_of(g);
+        server.npc_melee(rat, g, raw, DamageType::laser);
+        return before - (server.health_of(g) + server.shield_of(g));
+    };
+    // Adaptive Plating: struck by lasers, 10% more resistance to them for 6 s.
+    const double first_hit = taken(40);
+    const double second_hit = taken(40);
+    CHECK(first_hit > 0 && second_hit < first_hit * 0.95);
+    // Second Chance: once a life, a killing blow leaves them at 1 health.
+    server.npc_melee(rat, g, 5000, DamageType::laser);
+    run_guard(0.05);
+    CHECK(server.alive(g) && near(server.health_of(g), 1.0, 1e-9));
+    run_guard(1.5);
+    server.npc_melee(rat, g, 5000, DamageType::laser);
+    run_guard(0.05);
+    CHECK(!server.alive(g));
+    guard_client.disconnect();
+    run_guard(0.1);
+}
+
+// Step 3's mechanics (docs/PERKS.md) without a server: the data, the weapon
+// fields, the wire, and the shared simulation's (a slide, a second roll,
+// firing while rolling, a reload held up by sprinting, holstered cooling and
+// reloading, a block's cost and parry window, ammunition carried).
+void test_mechanics() {
+    const auto root = repo_root();
+    ProfessionBook book;
+    book.load(root / "game" / "professions" / "professions.ini");
+    const auto perk_of = [&](const char* profession, std::string_view id) -> const ProfessionPerkDef* {
+        const ProfessionDef* def = book.find(profession);
+        if (def == nullptr) return nullptr;
+        for (const ProfessionPerkDef& p : def->perks) {
+            if (p.id == id) return &p;
+        }
+        return nullptr;
+    };
+    const ProfessionPerkDef* piercing = perk_of("rifles", "rifles_piercing_round");
+    CHECK(piercing != nullptr && piercing->archetypes == std::vector<std::string>{"sniper"} &&
+          piercing->perk.weapons.size() == 1 && piercing->perk.weapons[0].field == WeaponModifier::pierce &&
+          piercing->perk.weapons[0].multiply == 1);
+    const ProfessionPerkDef* stun = perk_of("pistols", "pistols_stun_rounds");
+    CHECK(stun != nullptr && stun->trigger && stun->trigger->chance == 0.15 && stun->trigger->target.size() == 2);
+    const ProfessionPerkDef* spotter = perk_of("rifles", "rifles_spotter");
+    CHECK(spotter != nullptr && spotter->trigger && spotter->trigger->aimed && spotter->trigger->mark == 4);
+
+    // The weapon fields.
+    WeaponDef w;
+    w.explosion_inner = 2;
+    w.explosion_outer = 5;
+    w.push_inner = 1;
+    w.push_outer = 4;
+    w.explosion_damage = 100;
+    w.hit_effect = HitEffect{"burning", "Burning", 1, 4, 10, DamageType::bio, {}};
+    w.modifiers = {{Stat::run_speed, 0, 0.8}, {Stat::sprint_factor, -0.2, 1}, {Stat::mitigation_laser, 0.1, 1}};
+    for (const WeaponModifier& m : std::vector<WeaponModifier>{
+             {WeaponModifier::blast, 1.2}, {WeaponModifier::blast_damage, 0.9}, {WeaponModifier::effect, 1.5},
+             {WeaponModifier::carry, 0.5}, {WeaponModifier::ricochet, 1}, {WeaponModifier::guard, 0.6667},
+             {WeaponModifier::sprint_reload, 1}, {WeaponModifier::body, 0.9}}) {
+        apply_weapon_modifier(w, m);
+    }
+    CHECK(near(w.explosion_outer, 6.0, 1e-9) && near(w.push_inner, 1.2, 1e-9) && near(w.explosion_damage, 90, 1e-9));
+    CHECK(near(w.hit_effect->duration, 6, 1e-9));
+    // Heavy Lifter: its movement penalties halved, nothing else.
+    CHECK(near(w.modifiers[0].multiply, 0.9, 1e-9) && near(w.modifiers[1].add, -0.1, 1e-9) &&
+          near(w.modifiers[2].add, 0.1, 1e-9));
+    CHECK(w.ricochets == 1 && w.reload_sprinting && near(w.block_leak, 0.3, 1e-3));
+    // Headhunter's body shots.
+    CHECK(near(hit_damage(w, 100, false, 1.0), 90, 1e-9) && near(hit_damage(w, 100, true, 1.0), 200, 1e-9));
+
+    // On the wire: the weapon's perk fields, the state's, the input's aim.
+    {
+        net::InventorySync sync;
+        Loadout wired;
+        WeaponDef sent;
+        sent.pierces = 2;
+        sent.ricochets = 1;
+        sent.deflect = 10;
+        sent.riposte = true;
+        sent.unblockable = true;
+        sent.parry_window = 1.6;
+        sent.body_multiplier = 0.9;
+        sent.holster_cooling = 2;
+        wired.weapons[0] = sent;
+        sync.resolved_loadouts = {wired};
+        const auto got = std::get<net::InventorySync>(net::decode(net::encode(sync)));
+        CHECK(got.resolved_loadouts.size() == 1 && got.resolved_loadouts[0].weapons[0].has_value());
+        if (got.resolved_loadouts.size() == 1 && got.resolved_loadouts[0].weapons[0]) {
+            const WeaponDef& g = *got.resolved_loadouts[0].weapons[0];
+            CHECK(g.pierces == 2 && g.ricochets == 1 && g.deflect == 10 && g.riposte && g.unblockable && !g.fire_rolling &&
+                  g.parry_window == 1.6 && g.body_multiplier == 0.9 && g.holster_cooling == 2);
+        }
+        net::InputBatch batch;
+        MoveInput aimed;
+        aimed.weapon = 1;
+        aimed.aiming = true;
+        batch.inputs = {aimed};
+        const auto inputs = std::get<net::InputBatch>(net::decode(net::encode(batch)));
+        CHECK(inputs.inputs.size() == 1 && inputs.inputs[0].weapon == 1 && inputs.inputs[0].aiming);
+    }
+
+    // The simulation.
+    Heightfield ground{101, 2.0, -100, -100, std::vector<float>(101 * 101, 0.0f)};
+    World world{ground};
+    constexpr double dt = 1.0 / 30.0;
+    WeaponDef pistol;
+    pistol.archetype = "pistol";
+    pistol.rounds_per_clip = 10;
+    pistol.ammo = 4;
+    pistol.reload_time = 1.0;
+    pistol.shot_delay = 0.1;
+    pistol.yaw_spread = pistol.pitch_spread = pistol.spread_per_shot = 0;
+    pistol.swap_time = 0.1;
+    WeaponDef rifle = pistol;
+    rifle.heat_recover_rate = 0.5;
+    rifle.holster_cooling = 2;
+    Loadout lo;
+    lo.weapons[primary_slot] = pistol;
+    lo.weapons[sidearm_slot] = rifle;
+    const CharacterStats stats;
+    MoveState st;
+    reset_loadout(st, lo, stats);
+    uint32_t seq = 0;
+    const auto step = [&](MoveInput in, int ticks, const CharacterStats& with) {
+        int shots = 0;
+        for (int i = 0; i < ticks; ++i) {
+            in.sequence = ++seq;
+            if (simulate_character(st, in, true, world, lo, with, dt)) ++shots;
+        }
+        return shots;
+    };
+    MoveInput run;
+    run.forward = 127;
+    const auto with = [&](uint8_t buttons, uint8_t weapon = 0) {
+        MoveInput in = run;
+        in.buttons = buttons;
+        in.weapon = weapon;
+        return in;
+    };
+
+    // Slide: crouching out of a sprint slides, low and fast, still shooting.
+    CharacterStats slider = stats;
+    slider.move.slide_time = 0.8;
+    step(with(MoveInput::sprint), 10, slider);
+    CHECK(st.sprinting);
+    step(with(MoveInput::sprint | MoveInput::crouch), 1, slider);
+    CHECK(st.slide > 0 && st.crouched && !st.rolling() && std::hypot(st.velocity.x, st.velocity.z) > 9.0);
+    CHECK(step(with(MoveInput::sprint | MoveInput::crouch | MoveInput::fire), 1, slider) == 1);
+    step(run, 30, slider);
+    CHECK(st.slide == 0);
+    // Without it, the same is a roll.
+    step(with(MoveInput::sprint), 10, stats);
+    step(with(MoveInput::sprint | MoveInput::crouch), 1, stats);
+    CHECK(st.rolling() && st.slide == 0);
+    step(run, 30, stats);
+
+    // Double Roll: a roll can follow a roll, once, in its second half.
+    CharacterStats roller = stats;
+    roller.move.roll_chain = 1;
+    st.energy = 100;
+    step(with(MoveInput::crouch), 1, roller);
+    CHECK(st.rolling() && st.rolls == 1);
+    step(run, 12, roller);
+    CHECK(st.rolling() && st.roll < 0.375f);
+    step(with(MoveInput::crouch), 1, roller);
+    CHECK(st.rolling() && st.rolls == 2 && st.roll > 0.7f);
+    step(run, 12, roller);
+    step(with(MoveInput::crouch), 1, roller);
+    CHECK(st.rolls == 2 && st.roll < 0.375f);  // only the one
+    step(run, 30, roller);
+    CHECK(!st.rolling() && st.rolls == 0);
+    st.energy = 100;
+    step(with(MoveInput::crouch), 1, stats);
+    step(run, 12, stats);
+    step(with(MoveInput::crouch), 1, stats);
+    CHECK(st.rolls == 1 && st.roll < 0.375f);  // without it: none
+    step(run, 30, stats);
+
+    // Roll Shot: only a weapon that may fires while rolling.
+    st.energy = 100;
+    step(with(MoveInput::crouch), 1, stats);
+    CHECK(st.rolling() && step(with(MoveInput::fire), 5, stats) == 0);
+    step(run, 30, stats);
+    lo.weapons[primary_slot]->fire_rolling = true;
+    st.energy = 100;
+    step(with(MoveInput::crouch), 1, stats);
+    CHECK(st.rolling() && step(with(MoveInput::fire), 5, stats) >= 1);
+    step(run, 30, stats);
+    lo.weapons[primary_slot]->fire_rolling = false;
+
+    // Sprinting holds a reload where it is (Combat Reload: it carries on).
+    st.energy = 100;
+    step(with(MoveInput::sprint | MoveInput::reload), 1, stats);
+    const double started = st.combat.reload;
+    CHECK(started > 0 && st.sprinting);
+    step(with(MoveInput::sprint), 10, stats);
+    CHECK(st.sprinting && near(st.combat.reload, started, 1e-9));
+    lo.weapons[primary_slot]->reload_sprinting = true;
+    step(with(MoveInput::sprint), 10, stats);
+    CHECK(st.combat.reload < started - 0.3);
+    lo.weapons[primary_slot]->reload_sprinting = false;
+    step(run, 40, stats);
+    CHECK(st.combat.reload == 0 && st.combat.weapons[primary_slot].rounds == 10);
+
+    // Cool Holster: holstered, it cools twice as fast.
+    st.combat.weapons[sidearm_slot].heat = 0.8f;
+    step(run, 6, stats);
+    CHECK(near(st.combat.weapons[sidearm_slot].heat, 0.8 - 0.5 * 2 * 0.2, 1e-4));
+
+    // Tactical Swap: holstered, it reloads itself; brought back first, it
+    // finishes in the hand.
+    lo.weapons[primary_slot]->holster_reload = true;
+    step(with(MoveInput::fire), 6, stats);
+    CHECK(st.combat.weapons[primary_slot].rounds < 10);
+    step(with(0, sidearm_slot), 1, stats);
+    CHECK(st.combat.weapon == sidearm_slot && near(st.combat.weapons[primary_slot].reload, 1.0, 1e-4));
+    step(with(0, sidearm_slot), 33, stats);
+    CHECK(st.combat.weapons[primary_slot].rounds == 10 && st.combat.weapons[primary_slot].reload == 0);
+    step(run, 6, stats);
+    step(with(MoveInput::fire), 3, stats);
+    CHECK(st.combat.weapon == primary_slot && st.combat.weapons[primary_slot].rounds < 10);
+    step(with(0, sidearm_slot), 15, stats);
+    step(run, 1, stats);
+    CHECK(st.combat.weapon == primary_slot && st.combat.reload > 0.4 && st.combat.reload < 0.6 &&
+          st.combat.weapons[primary_slot].reload == 0);
+
+    // Iron Guard and Riposte: a block's cost and parry window are the held
+    // melee weapon's.
+    WeaponDef staff;
+    staff.projectile = Projectile::melee;
+    staff.archetype = "melee";
+    staff.block_cost = 0.5;
+    staff.parry_window = 1.6;
+    Loadout melee;
+    melee.weapons[primary_slot] = staff;
+    MoveState guard;
+    reset_loadout(guard, melee, stats);
+    MoveInput block;
+    block.buttons = MoveInput::block;
+    simulate_character(guard, block, true, world, melee, stats, dt);
+    CHECK(guard.blocking && near(guard.parry_window, 0.4, 1e-5));
+    const double rested = guard.energy;
+    simulate_character(guard, block, true, world, melee, stats, dt);
+    CHECK(near(rested - guard.energy, 8.0 * 0.5 * dt, 1e-6));
+
+    // Ammo Webbing: a quarter more carried.
+    CharacterStats webbed = stats;
+    webbed.ammo_capacity = 1.25;
+    MoveState full;
+    reset_loadout(full, lo, webbed);
+    CHECK(full.combat.weapons[primary_slot].reserve == 40);  // 4 clips of 10, a quarter more, less the one loaded
+    reset_loadout(full, lo, stats);
+    CHECK(full.combat.weapons[primary_slot].reserve == 30);
+}
+
+// Step 3's mechanics on a live server: bolts that go through bodies,
+// ricochet off the ground and burst near enemies; hits from behind; one's
+// own blast; a block that turns bolts aside; a combo's stagger and a
+// knockback; a shoulder charge; an overcharged shield; a blast that refills
+// it; Spotter's mark; Low Profile; Quiet Step.
+void test_server_mechanics() {
+    Heightfield ground{201, 2.0, -200, -200, std::vector<float>(201 * 201, 0.0f)};
+    World world{ground};
+    net::LoopbackHub links;
+    net::Endpoint server_ep{1, 1}, client_ep{2, 1};
+    net::LoopbackLink srv_link{links, server_ep};
+    net::LoopbackLink cli_link{links, client_ep};
+    ServerConfig config;
+    config.pvp_enabled = false;
+    config.spawn = {0, 0, 0};
+    GameServer server(srv_link, world, config);
+    server.set_looks({"object/mobile/shared_womp_rat.iff"});
+    GameClient client(cli_link, world, ClientConfig{.server = server_ep, .name = "Tester"});
+    double now = 0;
+    const auto run = [&](double seconds) {
+        for (const double end = now + seconds; now < end; now += 1.0 / 30.0) {
+            server.update(now);
+            client.update(now);
+        }
+    };
+    run(0.6);
+    CHECK(client.status() == GameClient::Status::connected);
+    const uint32_t me = client.entity_id();
+    const auto health = [&](uint32_t npc) {
+        const auto info = server.npc_info(npc);
+        return info ? info->health : -1.0;
+    };
+    GameServer::NpcCombatSpec dummy;
+    dummy.actor_kind = 2;
+    dummy.passive = true;
+    dummy.max_health = 100;
+    // Where a target stands `distance` m from the player along a yaw (0: -Z).
+    const auto along = [&](double yaw, double distance, double aside = 0) {
+        const Vec3 at = server.state_of(me)->position;
+        return Vec3{at.x - std::sin(yaw) * distance + std::cos(yaw) * aside, at.y,
+                    at.z - std::cos(yaw) * distance - std::sin(yaw) * aside};
+    };
+    // One shot at a yaw and pitch, then a pause.
+    const auto fire_once = [&](double yaw, double pitch, bool aimed = false) {
+        GameClient::Controls c;
+        c.yaw = yaw;
+        c.pitch = pitch;
+        c.fire = true;
+        c.aim = aimed;
+        client.set_input(c);
+        run(2.0 / 30.0);
+        GameClient::Controls rest;
+        rest.yaw = yaw;
+        client.set_input(rest);
+        run(1.0);  // (the gun's shot delay)
+    };
+    WeaponDef gun;
+    gun.archetype = "rifle_auto";
+    gun.damage = 30;
+    gun.shot_delay = 1.0;
+    gun.yaw_spread = gun.pitch_spread = gun.spread_per_shot = 0;
+    gun.bolt_gravity = 0;
+    const auto arm = [&](const WeaponDef& weapon, std::vector<StatModifier> perks = {},
+                         std::vector<TriggeredPerk> triggered = {}) {
+        Loadout lo;
+        lo.name = "Test";
+        lo.weapons[primary_slot] = weapon;
+        if (!perks.empty()) lo.gear.push_back({"perks", "", std::move(perks)});
+        lo.triggered = std::move(triggered);
+        server.set_player_loadouts(me, {lo});
+        run(0.2);
+    };
+
+    // Piercing Round: through the first body into the second.
+    {
+        WeaponDef piercing = gun;
+        piercing.pierces = 1;
+        arm(piercing);
+        const double yaw = 0.5;
+        const uint32_t a = server.add_combat_npc("Front", along(yaw, 6), 0, 0, dummy);
+        const uint32_t b = server.add_combat_npc("Back", along(yaw, 9), 0, 0, dummy);
+        fire_once(yaw, -0.05);
+        CHECK(near(health(a), 70, 1e-6) && near(health(b), 70, 1e-6));
+        arm(gun);
+        fire_once(yaw, -0.05);
+        CHECK(near(health(a), 40, 1e-6) && near(health(b), 70, 1e-6));  // without it, only the first
+    }
+    // Flanker: harder from behind (a creature faces -Z unless steered).
+    {
+        WeaponDef flanking = gun;
+        flanking.flank_multiplier = 1.5;
+        arm(flanking);
+        const double yaw = -0.4;
+        const uint32_t back = server.add_combat_npc("Turned", along(yaw, 6), 0, 0, dummy);
+        fire_once(yaw, -0.05);
+        CHECK(near(health(back), 55, 1e-6));
+        MoveInput face;
+        face.yaw = float(std::numbers::pi);
+        server.steer_npc(back, face);
+        run(0.1);
+        fire_once(yaw, -0.05);
+        CHECK(near(health(back), 25, 1e-6));  // from the front: the usual
+    }
+    // Ricochet: off the ground into what's beyond.
+    {
+        const double yaw = 1.2;
+        const uint32_t past = server.add_combat_npc("Past", along(yaw, 8), 0, 0, dummy);
+        arm(gun);
+        fire_once(yaw, -0.3);
+        CHECK(near(health(past), 100, 1e-6));  // into the ground
+        WeaponDef bouncing = gun;
+        bouncing.ricochets = 1;
+        arm(bouncing);
+        fire_once(yaw, -0.3);
+        CHECK(near(health(past), 70, 1e-6));
+    }
+    // Proximity Fuse: a rocket bursts passing near an enemy.
+    {
+        WeaponDef rocket = gun;
+        rocket.archetype = "heavy_launcher";
+        rocket.projectile = Projectile::missile;
+        rocket.damage = 100;
+        rocket.explosion_damage = 50;
+        rocket.explosion_inner = 0.5;
+        rocket.explosion_outer = 2.0;
+        rocket.bolt_speed = 60;
+        rocket.bolt_life = 1.0;
+        const double yaw = -1.2;
+        const uint32_t near_miss = server.add_combat_npc("Near Miss", along(yaw, 10, 1.2), 0, 0, dummy);
+        arm(rocket);
+        fire_once(yaw, 0);
+        CHECK(near(health(near_miss), 100, 1e-6));  // it flies by
+        rocket.proximity_fuse = 1.5;
+        arm(rocket);
+        fire_once(yaw, 0);
+        CHECK(health(near_miss) < 80 && health(near_miss) > 0);
+
+        // Danger Close: its own blast, 60% less.
+        rocket.proximity_fuse = 0;
+        rocket.explosion_damage = 100;
+        rocket.explosion_inner = 2.0;
+        rocket.explosion_outer = 4.0;
+        arm(rocket);
+        const double whole = server.health_of(me);
+        fire_once(0, -1.2);
+        const double taken = whole - server.health_of(me);
+        CHECK(near(taken, 100, 1.0));
+        arm(rocket, {{Stat::self_blast, 0, 0.4}});
+        const double before = server.health_of(me);
+        fire_once(0, -1.2);
+        CHECK(near(before - server.health_of(me), 40, 1.0));
+    }
+    // Teras Kasi Master: the third blow in a row staggers twice as long
+    // (creatures only stagger then); Sweeping Blows' knockback.
+    {
+        WeaponDef staff;
+        staff.archetype = "melee";
+        staff.projectile = Projectile::melee;
+        staff.damage = 1;
+        staff.shot_delay = 0.5;
+        staff.melee_lunge = 0;
+        staff.combo_stagger = 2;
+        arm(staff);
+        GameServer::NpcCombatSpec tough = dummy;
+        tough.max_health = 1000;
+        const double yaw = 2.4;
+        const uint32_t sparring = server.add_combat_npc("Sparring", along(yaw, 1.8), 0, 0, tough);
+        GameClient::Controls swing;
+        swing.yaw = yaw;
+        swing.fire = true;
+        float most = 0;
+        int blows = 0;
+        double last = health(sparring);
+        float before_third = 0;
+        for (int i = 0; i < 50; ++i) {
+            client.set_input(swing);
+            run(1.0 / 30.0);
+            if (health(sparring) < last) {
+                ++blows;
+                last = health(sparring);
+            }
+            const auto info = server.npc_info(sparring);
+            const float stagger = info ? info->state.stagger : 0.0f;
+            if (blows < 3) before_third = std::max(before_third, stagger);
+            most = std::max(most, stagger);
+        }
+        GameClient::Controls rest;
+        rest.yaw = yaw;
+        client.set_input(rest);
+        run(0.6);
+        CHECK(blows >= 3 && before_third == 0 && most > 0.6f);
+        staff.knockback = 6;
+        arm(staff);
+        const Vec3 from = server.npc_info(sparring)->state.position;
+        client.set_input(swing);
+        run(2.0 / 30.0);
+        client.set_input(rest);
+        run(0.5);
+        const Vec3 to = server.npc_info(sparring)->state.position;
+        CHECK(std::hypot(to.x - from.x, to.z - from.z) > 0.5);
+    }
+    // Shoulder Charge: sprinting into a creature staggers it.
+    {
+        const double yaw = -2.4;
+        const uint32_t charged = server.add_combat_npc("Charged", along(yaw, 3), 0, 0, dummy);
+        arm(gun, {{Stat::charge, 0.8, 1}});
+        GameClient::Controls dash;
+        dash.yaw = yaw;
+        dash.forward = 1;
+        dash.sprint = true;
+        float most = 0;
+        for (int i = 0; i < 15; ++i) {
+            client.set_input(dash);
+            run(1.0 / 30.0);
+            const auto info = server.npc_info(charged);
+            most = std::max(most, info ? info->state.stagger : 0.0f);
+        }
+        GameClient::Controls rest;
+        rest.yaw = yaw;
+        client.set_input(rest);
+        run(0.5);
+        CHECK(most > 0.7f);
+    }
+    // Deflect: a block turns an outlaw's bolts aside from the front, for stamina.
+    {
+        WeaponDef staff;
+        staff.archetype = "melee";
+        staff.projectile = Projectile::melee;
+        staff.deflect = 10;
+        arm(staff);
+        GameServer::NpcCombatSpec outlaw;
+        outlaw.actor_kind = 3;
+        outlaw.max_health = 1000;
+        WeaponDef blaster = gun;
+        blaster.damage = 20;
+        blaster.shot_delay = 0.5;
+        outlaw.loadout.weapons[primary_slot] = blaster;
+        const Vec3 me_at = server.state_of(me)->position;
+        const uint32_t shooter = server.add_combat_npc("Outlaw", me_at + Vec3{0, 0, 8}, 0, 0, outlaw);
+        GameClient::Controls guard;
+        guard.yaw = std::numbers::pi;  // facing +Z, at the outlaw
+        guard.block = true;
+        client.set_input(guard);
+        run(0.4);
+        const double whole = server.health_of(me);
+        MoveInput shoot;
+        shoot.yaw = 0;  // at the player
+        shoot.buttons = MoveInput::fire;
+        server.steer_npc(shooter, shoot);
+        double least_energy = 1e9;
+        for (int i = 0; i < 36; ++i) {
+            client.set_input(guard);
+            run(1.0 / 30.0);
+            least_energy = std::min(least_energy, server.state_of(me)->energy);
+        }
+        server.steer_npc(shooter, MoveInput{});
+        CHECK(near(server.health_of(me), whole, 1e-6));
+        CHECK(least_energy < 100 - 8.0 * 1.2 - 15);  // a block's drain, and at least two bolts turned aside
+        client.set_input({});
+        run(0.6);
+        server.remove_npc(shooter);
+    }
+    // Overcharge: a full recharge goes 20% over, then drains back.
+    {
+        arm(gun, {{Stat::shield_capacity, 100, 1}, {Stat::shield_recharge, 50, 1}, {Stat::shield_delay, 0, 0.2},
+                  {Stat::shield_overcharge, 0.2, 1}});
+        const uint32_t brute = server.add_combat_npc("Brute", along(3.0, 30), 0, 0, dummy);
+        run(8);  // (it starts empty: recharged, over, and back)
+        CHECK(near(server.shield_of(me), 100, 1e-6));
+        server.npc_melee(brute, me, 50, DamageType::laser);
+        double most = 0;
+        for (int i = 0; i < 90; ++i) {
+            run(1.0 / 30.0);
+            most = std::max(most, server.shield_of(me));
+        }
+        CHECK(most > 119 && most <= 120 + 1e-6);
+        run(6.5);
+        CHECK(near(server.shield_of(me), 100, 1e-6));
+        // Reactive Plating: a quarter of a blast refills it.
+        arm(gun, {{Stat::shield_capacity, 100, 1}, {Stat::blast_shield, 0.25, 1}});
+        run(0.1);
+        server.npc_melee(brute, me, 200, DamageType::explosive);
+        CHECK(near(server.shield_of(me), 50, 1e-6));
+    }
+    // Spotter: a hit from a shot aimed down the sights marks the target.
+    {
+        TriggeredPerk spot;
+        spot.id = "rifles_spotter";
+        spot.trigger = PerkTrigger::hit;
+        spot.aimed = true;
+        spot.mark = 4;
+        spot.slots = 1;
+        arm(gun, {}, {spot});
+        const double yaw = -0.8;
+        const uint32_t spotted = server.add_combat_npc("Spotted", along(yaw, 6), 0, 0, dummy);
+        const auto marked = [&] {
+            const net::FieldState field = server.field_state_for(me);
+            return std::any_of(field.marks.begin(), field.marks.end(),
+                               [&](const net::FieldMark& m) { return m.entity == spotted; });
+        };
+        fire_once(yaw, -0.05);
+        CHECK(health(spotted) < 100 && !marked());  // from the hip: no
+        fire_once(yaw, -0.05, true);
+        CHECK(marked());
+    }
+    // Low Profile: snapshots say its shots don't show on radar. Quiet Step:
+    // creatures notice it from closer.
+    arm(gun, {{Stat::radar_quiet, 1, 1}, {Stat::notice, 0, 0.6}});
+    CHECK(server.describe(me) && server.describe(me)->quiet && near(server.notice_of(me), 0.6, 1e-9));
+    arm(gun);
+    CHECK(server.describe(me) && !server.describe(me)->quiet && server.notice_of(me) == 1);
+    client.disconnect();
+    run(0.1);
+}
+
 void test_server_professions() {
     const auto root = repo_root();
     const auto db_path = std::filesystem::temp_directory_path() / "swm_profession_test.sqlite";
@@ -238,40 +1242,61 @@ void test_server_professions() {
         run(0.2);
         CHECK(mine && profession_xp(*mine, "unarmored") == 11);
 
-        // Slots: only slottable professions are kept; the perks come with them.
+        // The Companion Slot keeps only a companion from their datapad.
         CharacterLoadout lo = client.char_loadouts().at(0);
-        lo.specializations = {"rifles", "bounty_hunter", "bogus", "rifles"};
         lo.companion = "a rancor";
         client.save_loadout(lo);
         run(0.3);
-        CHECK((client.char_loadouts().size() == 1 &&
-               client.char_loadouts()[0].specializations == std::vector<std::string>{"rifles", "bounty_hunter"}));
-        CHECK(client.char_loadouts().size() == 1 && client.char_loadouts()[0].companion.empty());  // not in their datapad
+        CHECK(client.char_loadouts().size() == 1 && client.char_loadouts()[0].companion.empty());
         const auto& resolved = client.custom_loadouts();
         CHECK(!resolved.empty() && resolved[0].weapons[0] && resolved[0].weapons[0]->archetype == "rifle_auto");
-        const double slotted_spread = resolved.empty() || !resolved[0].weapons[0] ? 0 : resolved[0].weapons[0]->yaw_spread;
         const WeaponDef e11 = catalog.resolve_weapon(*catalog.find("wp_rifle_e11"));
-        CHECK(near(slotted_spread, e11.yaw_spread * 0.97 / 0.97, 1e-4));  // not learned yet: no certification
+        const auto aim_now = [&] {
+            return client.custom_loadouts().empty() || !client.custom_loadouts()[0].weapons[0]
+                       ? -1.0 : client.custom_loadouts()[0].weapons[0]->aim_speed;
+        };
+        CHECK(near(aim_now(), e11.aim_speed, 1e-6));  // nothing learned yet
 
-        // A trainer teaches the milestone (the first is free); it counts from then.
+        // A trainer teaches a perk, for its level and credits; it counts from then.
         server.set_vendors({{"Rifle Trainer", "trainer", {0, 0, 0}, 4, "rifles"}});
-        client.service(net::ServiceRequest::train, "rifles", 2, 0);  // not the next one to learn
+        client.service(net::ServiceRequest::learn_perk, "rifles_quick_scope", 0, 0);  // Rifles 2: not yet
         run(0.3);
-        CHECK(client.professions().professions.size() >= 1 && client.professions().professions[0].trained == 0);
-        client.service(net::ServiceRequest::train, "rifles", 1, 0);
+        CHECK(client.professions().professions[0].perks.empty());
+        server.award_xp(me, 400);  // Rifles 5
+        server.award_credits(me, 600);
+        run(0.3);
+        const int64_t credits = client.player_status().credits;
+        CHECK(credits >= 500);
+        client.service(net::ServiceRequest::learn_perk, "pistols_quick_draw", 0, 0);  // not this trainer's
+        client.service(net::ServiceRequest::learn_perk, "rifles_quick_scope", 0, 0);
         run(0.4);
-        bool learned = false;
-        for (const ProfessionProgress& p : client.professions().professions) learned = learned || (p.id == "rifles" && p.trained == 1);
-        CHECK(learned);
-        const double trained_spread = client.custom_loadouts().empty() || !client.custom_loadouts()[0].weapons[0]
-                                          ? 0 : client.custom_loadouts()[0].weapons[0]->yaw_spread;
-        CHECK(near(trained_spread, e11.yaw_spread * 0.97, 1e-4));  // Rifle Certification, level 2
+        const auto rifles_progress = [&]() -> ProfessionProgress {
+            for (const ProfessionProgress& p : client.professions().professions) {
+                if (p.id == "rifles") return p;
+            }
+            return {};
+        };
+        CHECK((rifles_progress().perks == std::vector<std::string>{"rifles_quick_scope"}));
+        CHECK(client.player_status().credits == credits - 500);
+        CHECK(near(aim_now(), e11.aim_speed * 1.3, 1e-6));  // Quick Scope
+        // Given up for free, and learned again for free.
+        client.service(net::ServiceRequest::forget, "rifles_quick_scope", 0, 0);
+        run(0.4);
+        CHECK(rifles_progress().perks.empty() && near(aim_now(), e11.aim_speed, 1e-6));
+        client.service(net::ServiceRequest::learn_perk, "rifles_quick_scope", 0, 0);
+        run(0.4);
+        CHECK(rifles_progress().perks.size() == 1 && client.player_status().credits == credits - 500);
+
+        // Not licensed: no gathering, and none of its experience.
+        server.award_profession_xp("Trainee", {{"foraging", 50}}, 0);
+        run(0.2);
+        CHECK(mine && profession_xp(*mine, "foraging") == 0);
 
         // Quest and mission experience goes to the carried weapon's and the worn armor's professions.
         server.award_profession_xp("Trainee", {{"pistols", 40}}, 60);
         run(0.3);
         CHECK(mine && profession_xp(*mine, "pistols") == 40);
-        CHECK(mine && profession_xp(*mine, "rifles") == 180);
+        CHECK(mine && profession_xp(*mine, "rifles") == 580);
         CHECK(mine && profession_xp(*mine, "unarmored") == 41);
         client.disconnect();
         run(0.1);
@@ -281,12 +1306,11 @@ void test_server_professions() {
         const auto saved = store.find_by_name("Trainee");
         CHECK(saved.has_value());
         const auto progress = saved ? store.list_professions(saved->id) : std::vector<ProfessionProgress>{};
-        CHECK(profession_xp(progress, "rifles") == 180);
-        CHECK(saved && store.get_extra(saved->id, "trained:rifles") == "1");
+        CHECK(profession_xp(progress, "rifles") == 580);
+        CHECK(saved && store.get_extra(saved->id, "perks:rifles") == "rifles_quick_scope");
+        CHECK(saved && store.get_extra(saved->id, "paid_perks:rifles") == "rifles_quick_scope");
         CHECK(profession_xp(progress, "unarmored") == 41);
         CHECK(profession_xp(progress, "pistols") == 40);
-        const auto loadouts = saved ? store.list_loadouts(saved->id) : std::vector<CharacterLoadout>{};
-        CHECK((loadouts.size() == 1 && loadouts[0].specializations == std::vector<std::string>{"rifles", "bounty_hunter"}));
 
         // Rewarded while away (on a battle's server): saved for when they're back.
         net::LoopbackHub links;
@@ -299,7 +1323,7 @@ void test_server_professions() {
         const auto later = saved ? store.list_professions(saved->id) : std::vector<ProfessionProgress>{};
         CHECK(profession_xp(later, "carbines") == 25);
         CHECK(profession_xp(later, "bounty_hunter") == 99);  // in the game since Stage 12
-        CHECK(profession_xp(later, "rifles") == 195);
+        CHECK(profession_xp(later, "rifles") == 595);
         CHECK(profession_xp(later, "unarmored") == 56);
     }
     std::filesystem::remove(db_path);
@@ -310,7 +1334,12 @@ void test_server_professions() {
 int main() {
     try {
         test_roster();
+        test_training();
         test_perks();
+        test_triggers();
+        test_server_triggers();
+        test_mechanics();
+        test_server_mechanics();
         test_server_professions();
     } catch (const std::exception& error) {
         std::printf("FAIL: %s\n", error.what());

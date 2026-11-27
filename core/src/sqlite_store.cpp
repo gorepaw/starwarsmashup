@@ -125,7 +125,7 @@ SqliteCharacterStore::SqliteCharacterStore(const std::filesystem::path& path) {
                  " secondary_id INTEGER NOT NULL DEFAULT 0,"
                  " gear_json TEXT NOT NULL DEFAULT '{}',"
                  " appearance_json TEXT NOT NULL DEFAULT '{}',"
-                 " specializations TEXT NOT NULL DEFAULT '',"
+                 " specializations TEXT NOT NULL DEFAULT '',"  // unused since docs/PERKS.md (no slots)
                  " companion TEXT NOT NULL DEFAULT '',"
                  " PRIMARY KEY (owner_id, slot_index)"
                  ") STRICT");
@@ -345,14 +345,14 @@ SqliteCharacterStore::SqliteCharacterStore(const std::filesystem::path& path) {
         update_item_quantity_ = prepare(db_, "UPDATE items SET quantity = ? WHERE id = ?");
         remove_items_by_owner_ = prepare(db_, "DELETE FROM items WHERE owner_id = ?");
         list_loadouts_ = prepare(db_, "SELECT slot_index, name, primary_id, sidearm_id, secondary_id, gear_json, appearance_json, "
-                                      "specializations, companion FROM loadouts WHERE owner_id = ? ORDER BY slot_index ASC");
+                                      "companion FROM loadouts WHERE owner_id = ? ORDER BY slot_index ASC");
         save_loadout_ = prepare(db_, "INSERT INTO loadouts (owner_id, slot_index, name, primary_id, sidearm_id, secondary_id, gear_json, "
-                                     "appearance_json, specializations, companion) "
-                                     "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
+                                     "appearance_json, companion) "
+                                     "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) "
                                      "ON CONFLICT(owner_id, slot_index) DO UPDATE SET "
                                      "name = excluded.name, primary_id = excluded.primary_id, sidearm_id = excluded.sidearm_id, "
                                      "secondary_id = excluded.secondary_id, gear_json = excluded.gear_json, appearance_json = excluded.appearance_json, "
-                                     "specializations = excluded.specializations, companion = excluded.companion");
+                                     "companion = excluded.companion");
         remove_loadouts_by_owner_ = prepare(db_, "DELETE FROM loadouts WHERE owner_id = ?");
         update_economy_ = prepare(db_, "UPDATE characters SET credits = ?, faction_points = ?, experience = ?, active_loadout = ? WHERE id = ?");
         list_quests_ = prepare(db_, "SELECT quest_id, step, count, done FROM quests WHERE owner_id = ? ORDER BY rowid ASC");
@@ -713,17 +713,7 @@ std::vector<CharacterLoadout> SqliteCharacterStore::list_loadouts(PersistentId o
         lo.secondary_id = PersistentId(sqlite3_column_int64(list_loadouts_, 4));
         lo.gear_ids = decode_id_map(col_str(5));
         lo.appearance_ids = decode_id_map(col_str(6));
-        std::string item;
-        for (const char c : col_str(7)) {
-            if (c == ',') {
-                if (!item.empty()) lo.specializations.push_back(std::move(item));
-                item.clear();
-            } else {
-                item += c;
-            }
-        }
-        if (!item.empty()) lo.specializations.push_back(std::move(item));
-        lo.companion = col_str(8);
+        lo.companion = col_str(7);
         out.push_back(std::move(lo));
     }
     return out;
@@ -732,11 +722,6 @@ std::vector<CharacterLoadout> SqliteCharacterStore::list_loadouts(PersistentId o
 void SqliteCharacterStore::save_loadout(PersistentId owner_id, const CharacterLoadout& loadout) {
     const std::string gear_json = encode_id_map(loadout.gear_ids);
     const std::string app_json = encode_id_map(loadout.appearance_ids);
-    std::string specializations;
-    for (const std::string& id : loadout.specializations) {
-        if (!specializations.empty()) specializations += ',';
-        specializations += id;
-    }
     Reset reset{save_loadout_};
     sqlite3_bind_int64(save_loadout_, 1, sqlite3_int64(owner_id));
     sqlite3_bind_int(save_loadout_, 2, loadout.slot_index);
@@ -746,8 +731,7 @@ void SqliteCharacterStore::save_loadout(PersistentId owner_id, const CharacterLo
     sqlite3_bind_int64(save_loadout_, 6, sqlite3_int64(loadout.secondary_id));
     sqlite3_bind_text(save_loadout_, 7, gear_json.c_str(), int(gear_json.size()), SQLITE_TRANSIENT);
     sqlite3_bind_text(save_loadout_, 8, app_json.c_str(), int(app_json.size()), SQLITE_TRANSIENT);
-    sqlite3_bind_text(save_loadout_, 9, specializations.c_str(), int(specializations.size()), SQLITE_TRANSIENT);
-    sqlite3_bind_text(save_loadout_, 10, loadout.companion.c_str(), int(loadout.companion.size()), SQLITE_TRANSIENT);
+    sqlite3_bind_text(save_loadout_, 9, loadout.companion.c_str(), int(loadout.companion.size()), SQLITE_TRANSIENT);
     if (sqlite3_step(save_loadout_) != SQLITE_DONE) {
         fail(db_, "save_loadout");
     }

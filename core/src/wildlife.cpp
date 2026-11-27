@@ -439,7 +439,7 @@ void WorldPopulation::update(double now) {
     for (const uint32_t id : server_.entities()) {
         if (server_.alive(id) && !server_.cloaked(id)) {  // Stage 12: a cloak hides you from the wild too
             if (const MoveState* st = server_.state_of(id)) {
-                players_.push_back({id, st->position, st->velocity});
+                players_.push_back({id, st->position, st->velocity, server_.notice_of(id)});
             }
         }
     }
@@ -570,7 +570,8 @@ void WorldPopulation::update_creatures(double now) {
             double best = scan;
             for (const PlayerPos& p : players) {
                 const double d = horiz_dist(pos, p.pos);
-                if (d < best && !world_.raycast(pos + Vec3{0, arch.height * 0.7, 0}, p.pos + Vec3{0, 1.2, 0})) {
+                if (d < best && d < scan * p.notice &&
+                    !world_.raycast(pos + Vec3{0, arch.height * 0.7, 0}, p.pos + Vec3{0, 1.2, 0})) {
                     best = d;
                     mob.target = p.entity;
                 }
@@ -703,7 +704,8 @@ void WorldPopulation::update_bandits(double now) {
             double best = arch.aggro_radius;
             for (const PlayerPos& p : players) {
                 const double d = horiz_dist(pos, p.pos);
-                if (d < best && !world_.raycast(pos + Vec3{0, 1.6, 0}, p.pos + Vec3{0, 1.2, 0})) {
+                if (d < best && d < arch.aggro_radius * p.notice &&
+                    !world_.raycast(pos + Vec3{0, 1.6, 0}, p.pos + Vec3{0, 1.2, 0})) {
                     best = d;
                     mob.target = p.entity;
                     mob.lost_target_at = 0;

@@ -1,6 +1,5 @@
-// Professions on the server (docs/PROFESSIONS.md): experience from what
-// players do, levels and their milestones, and the perks their loadouts'
-// Active Specialization Slots give.
+// Professions on the server (docs/PROFESSIONS.md, docs/PERKS.md): experience
+// from what players do, levels, and the perks and milestones they've learned.
 #include <algorithm>
 #include <format>
 
@@ -45,6 +44,9 @@ void GameServer::earn_profession_xp(Client& client, const std::string& id, int64
         client.battle_profession_xp[id] += xp;
         return;
     }
+    if (!licensed(*book, client.professions, id)) {
+        return;  // only a licence holder levels it (docs/PERKS.md)
+    }
     const int before = book->level_for(profession_xp(client.professions, id));
     const int after = book->level_for(add_profession_xp(client.professions, id, xp));
     ++client.profession_rev;
@@ -55,18 +57,18 @@ void GameServer::earn_profession_xp(Client& client, const std::string& id, int64
     std::string text = std::format("{} reached level {}", def->name, after);
     for (const ProfessionMilestone& m : def->milestones) {
         if (m.level > before && m.level <= after) {
-            text += std::format(": {} unlocked", m.name);
+            text += std::format(": a trainer can teach you {}", m.name);
+        }
+    }
+    for (const int level : perk_levels) {
+        if (def->chooses() && level > before && level <= after) {
+            text += std::format(": a trainer can teach you a level-{} perk", level);
         }
     }
     notify(client.entity, text);
     save_professions(client);
-    // Its perks grew: loadouts it's slotted in are rebuilt.
-    const bool slotted = std::any_of(client.char_loadouts.begin(), client.char_loadouts.end(),
-                                     [&](const CharacterLoadout& cl) {
-                                         return std::find(cl.specializations.begin(), cl.specializations.end(), id) !=
-                                                cl.specializations.end();
-                                     });
-    if (slotted) {
+    // Ranks grow with the level (none now; kept for data that has them).
+    if (def->rank_every > 0) {
         rebuild_client_loadouts(client);
         ++client.inventory_rev;
         client.last_sync_tick = 0;
@@ -166,7 +168,7 @@ void GameServer::award_profession_xp(const std::string& name, const std::map<std
 
 void GameServer::apply_professions(const Client& client, const CharacterLoadout& cl, Loadout& loadout) const {
     if (config_.professions != nullptr) {
-        apply_specializations(loadout, *config_.professions, cl.specializations, client.professions);
+        apply_profession_perks(loadout, *config_.professions, client.professions);
     }
     // Stage 12: its abilities, specialist levels, Companion Slot and slices.
     fill_specialist_loadout(client, cl, loadout);

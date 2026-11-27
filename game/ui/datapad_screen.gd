@@ -1,8 +1,7 @@
 # Stage 12: the datapad, in Battlefront II's frame. Everything the Wave 7B
 # and 7C professions keep that isn't a button on the HUD:
 #
-#   Kit         the active loadout's abilities, being open to bounty hunters,
-#               and a design someone offers you
+#   Kit         the active loadout's abilities and being open to bounty hunters
 #   Companions  tamed, hatched and registered creatures and droids: field or
 #               store one, put it in the loadout's Companion Slot, train a
 #               mount, rename, release
@@ -11,7 +10,6 @@
 #   Droids      assemble a chassis with modules from the Material Vault
 #   Contracts   bounties, contraband runs, tracking jobs and gigs
 #   Slicing     a Smuggler's permanent sidegrades on weapons and armor
-#   Design      an Image Designer restyling someone nearby (or themselves)
 #
 # The controller (SpecialistUI) sets the data; requests go out as `request`.
 extends "res://ui/bf2_screen.gd"
@@ -37,14 +35,12 @@ const REGISTER := 11
 const CONTRACTS := 12
 const ACCEPT := 13
 const ABANDON := 14
-const DESIGN_OFFER := 19
-const DESIGN_ANSWER := 20
 const SLICE := 21
 const BOUNTY_FLAG := 23
 const SUPPLY := 24
 const COMPANION_SLOT := 25
 
-const TABS := ["Kit", "Companions", "Lab", "Droids", "Contracts", "Slicing", "Design"]
+const TABS := ["Kit", "Companions", "Lab", "Droids", "Contracts", "Slicing"]
 const ROWS := 8
 
 var spec := {}             # SwmClient.get_specialist()
@@ -54,8 +50,6 @@ var catalog: Array = []    # item defs, for names
 var levels := {}           # profession id -> level
 var terminal := {}         # a mission terminal in reach: {index, kind, name}; empty: none
 var at_quartermaster := false
-var designee := {}         # the nearest player in reach: {entity, name, appearance}; empty: none
-var own := {}              # {entity, name, appearance}
 var feedback := ""
 var key_names := {}        # action -> key label
 var bar_ids: Array = []    # the ability on each of the bar's six keys now ("" empty)
@@ -68,8 +62,6 @@ var _chassis := ""
 var _modules: Array = []
 var _slice_item := -1
 var _slice := ""
-var _design := {}          # the appearance being edited (a Dictionary)
-var _design_for := -1      # whose: an entity (own entity for yourself)
 var _confirm_release := -1
 var _defs := {}
 var _name_edit: LineEdit
@@ -161,20 +153,12 @@ func _paint() -> void:
 		3: _paint_droids(body)
 		4: _paint_contracts(body)
 		5: _paint_slicing(body)
-		6: _paint_design(body)
 	if feedback != "":
 		text("gamefont_small", feedback, Vector2(box.get_center().x, box.end.y - 30 * u), "Center", ACCENT)
 
 
 func _paint_kit(body: Rect2) -> void:
 	var y := body.position.y
-	if str(spec.get("design_from", "")) != "":
-		var banner := Rect2(body.position.x, y, body.size.x, 34 * u)
-		draw_rect(banner, Color(0.25, 0.2, 0.05, 0.6))
-		text("gamefont_small", "%s offers you a new look." % str(spec["design_from"]), Vector2(banner.position.x + 10 * u, y + 8 * u), "Left", ACCENT)
-		button(Rect2(banner.end.x - 220 * u, y + 4 * u, 100 * u, 26 * u), "Accept", "design_yes")
-		button(Rect2(banner.end.x - 112 * u, y + 4 * u, 100 * u, 26 * u), "Decline", "design_no")
-		y += 42 * u
 	var abilities: Dictionary = book.get("abilities", {})
 	var kit: Array = spec.get("abilities", [])
 	text("gamefont_medium", "This loadout's kit", Vector2(body.position.x, y), "Left", TEXT)
@@ -186,7 +170,7 @@ func _paint_kit(body: Rect2) -> void:
 			Vector2(body.end.x - 410 * u, y + 3 * u), "Right", DIM, 0.9)
 	y += 30 * u
 	if kit.is_empty():
-		text("gamefont_small", "No abilities: slot a specialist profession (K) or train an unslotted one.",
+		text("gamefont_small", "No abilities: a specialist's trainer teaches them.",
 				Vector2(body.get_center().x, y + 30 * u), "Center", DIM)
 		return
 	_scroll = clampi(_scroll, 0, maxi(0, kit.size() - ROWS))
@@ -430,54 +414,6 @@ func _paint_slicing(body: Rect2) -> void:
 				"supply", false, false, _slice_item >= 0)
 
 
-func _paint_design(body: Rect2) -> void:
-	var x := body.position.x
-	var y := body.position.y
-	text("gamefont_small", "Image Designer %d" % _level("image_designer"), Vector2(x, y), "Left", TEXT)
-	button(Rect2(body.end.x - 200 * u, y - 2 * u, 200 * u, 26 * u), "Restyle yourself", "design_self", _design_for == int(own.get("entity", -2)))
-	if not designee.is_empty():
-		button(Rect2(body.end.x - 410 * u, y - 2 * u, 200 * u, 26 * u), "Design for %s" % str(designee.get("name", "")),
-				"design_them", _design_for == int(designee.get("entity", -2)))
-	y += 34 * u
-	if _design_for < 0:
-		text("gamefont_small", "Stand by someone (within 8 m) to design for them, or restyle yourself.",
-				Vector2(body.get_center().x, y + 40 * u), "Center", DIM)
-		return
-	var keys := _design.keys()
-	keys.sort()
-	var shown := 0
-	for k: Variant in keys:
-		var v: Variant = _design[k]
-		if not (v is float or v is int):
-			continue
-		if shown >= 16:
-			break
-		var col := shown % 2
-		var row := shown / 2
-		var rect := Rect2(x + col * (body.size.x * 0.5), y + row * 32 * u, body.size.x * 0.5 - 10 * u, 28 * u)
-		_row(rect, "")
-		text("gamefont_tiny", "%s  %.2f" % [str(k), float(v)], Vector2(rect.position.x + 8 * u, rect.position.y + 7 * u), "Left", TEXT)
-		button(Rect2(rect.end.x - 92 * u, rect.position.y + 1 * u, 42 * u, 26 * u), "-", "dz:-:" + str(k))
-		button(Rect2(rect.end.x - 46 * u, rect.position.y + 1 * u, 42 * u, 26 * u), "+", "dz:+:" + str(k))
-		shown += 1
-	if shown == 0:
-		text("gamefont_tiny", "Nothing in this look to adjust.", Vector2(x, y), "Left", DIM)
-	var strings := []
-	for k: Variant in keys:
-		if _design[k] is String and str(_design[k]) != "":
-			strings.append("%s: %s" % [str(k), str(_design[k])])
-	if not strings.is_empty():
-		text("gamefont_tiny", "  ·  ".join(strings), Vector2(x, body.end.y - 56 * u), "Left", DIM, 0.85)
-	button(Rect2(body.end.x - 200 * u, body.end.y - 30 * u, 200 * u, 28 * u),
-			"Offer this design" if _design_for != int(own.get("entity", -2)) else "Apply", "design_send")
-
-
-func _begin_design(entity: int, appearance: String) -> void:
-	_design_for = entity
-	var parsed: Variant = JSON.parse_string(appearance) if appearance != "" else {}
-	_design = parsed if parsed is Dictionary else {}
-
-
 func _on_click(id: String, _at: Vector2) -> void:
 	feedback = ""
 	if id == "close":
@@ -495,10 +431,6 @@ func _on_click(id: String, _at: Vector2) -> void:
 		var parts := id.split(":")
 		var slot := int(parts[2])
 		bar_edit.emit(parts[1], -1 if bar_ids.size() > slot and bar_ids[slot] == parts[1] else slot)
-	elif id == "design_yes":
-		_send(DESIGN_ANSWER, 1)
-	elif id == "design_no":
-		_send(DESIGN_ANSWER, 0)
 	elif id.begins_with("field:"):
 		_send(SUMMON, int(id.substr(6)))
 	elif id.begins_with("store:"):
@@ -567,18 +499,6 @@ func _on_click(id: String, _at: Vector2) -> void:
 	elif id == "supply":
 		_send(SUPPLY, 0, _slice_item)
 		_slice_item = -1
-	elif id == "design_self":
-		_begin_design(int(own.get("entity", 0)), str(own.get("appearance", "")))
-	elif id == "design_them":
-		_begin_design(int(designee.get("entity", 0)), str(designee.get("appearance", "")))
-	elif id.begins_with("dz:"):
-		var parts := id.split(":", true, 2)
-		var k := parts[2]
-		var step := 0.05 if parts[1] == "+" else -0.05
-		_design[k] = clampf(float(_design.get(k, 0.0)) + step, -1.0, 2.0)
-	elif id == "design_send":
-		_send(DESIGN_OFFER, 0, 0, "", JSON.stringify(_design), _design_for)
-		feedback = "Design sent"
 	queue_redraw()
 
 

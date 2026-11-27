@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <array>
 #include <cctype>
+#include <format>
 #include <sstream>
 #include <stdexcept>
 
@@ -39,32 +40,60 @@ std::vector<std::string> split_list(std::string_view text) {
 }
 
 WeaponModifier parse_weapon_modifier(const std::string& text, const std::string& where) {
+    static constexpr std::array<std::pair<std::string_view, WeaponModifier::Field>, size_t(WeaponModifier::last_field) + 1>
+        fields_by_name{{
+            {"spread", WeaponModifier::spread},
+            {"heat", WeaponModifier::heat},
+            {"reload", WeaponModifier::reload},
+            {"recovery", WeaponModifier::recovery},
+            {"range", WeaponModifier::range},
+            {"speed", WeaponModifier::speed},
+            {"lunge", WeaponModifier::lunge},
+            {"disrupt", WeaponModifier::disrupt},
+            {"velocity", WeaponModifier::velocity},
+            {"headshot", WeaponModifier::headshot},
+            {"crit", WeaponModifier::crit},
+            {"vehicle", WeaponModifier::vehicle},
+            {"shield", WeaponModifier::shield},
+            {"swap", WeaponModifier::swap},
+            {"recoil", WeaponModifier::recoil},
+            {"aim", WeaponModifier::aim},
+            {"reach", WeaponModifier::reach},
+            {"bloom", WeaponModifier::bloom},
+            {"body", WeaponModifier::body},
+            {"blast", WeaponModifier::blast},
+            {"blast_damage", WeaponModifier::blast_damage},
+            {"effect", WeaponModifier::effect},
+            {"carry", WeaponModifier::carry},
+            {"holster_cool", WeaponModifier::holster_cool},
+            {"flank", WeaponModifier::flank},
+            {"guard", WeaponModifier::guard},
+            {"block", WeaponModifier::block},
+            {"parry", WeaponModifier::parry},
+            {"combo", WeaponModifier::combo},
+            {"ricochet", WeaponModifier::ricochet},
+            {"pierce", WeaponModifier::pierce},
+            {"proximity", WeaponModifier::proximity},
+            {"deflect", WeaponModifier::deflect},
+            {"knockback", WeaponModifier::knockback},
+            {"sprint_reload", WeaponModifier::sprint_reload},
+            {"roll_fire", WeaponModifier::roll_fire},
+            {"holster_reload", WeaponModifier::holster_reload},
+            {"riposte", WeaponModifier::riposte},
+            {"unblockable", WeaponModifier::unblockable},
+        }};
     std::istringstream fields(text);
     std::string name, op;
     double value = 0;
-    if (!(fields >> name >> op >> value) || op != "*") {
-        throw std::runtime_error(where + ": Weapon is \"<spread|heat|reload|recovery|range|speed|lunge|disrupt|velocity|headshot|crit|vehicle|shield|swap|recoil|aim> * <n>\", not \"" + text + "\"");
+    if (!(fields >> name >> op >> value) || (op != "*" && op != "+")) {
+        throw std::runtime_error(where + ": Weapon is \"<field> * <n>\" (or \"<field> + <n>\" for ricochet, pierce, proximity, deflect, knockback and the switches), not \"" + text + "\"");
     }
-    static constexpr std::array<std::pair<std::string_view, WeaponModifier::Field>, 16> fields_by_name{{
-        {"spread", WeaponModifier::spread},
-        {"heat", WeaponModifier::heat},
-        {"reload", WeaponModifier::reload},
-        {"recovery", WeaponModifier::recovery},
-        {"range", WeaponModifier::range},
-        {"speed", WeaponModifier::speed},
-        {"lunge", WeaponModifier::lunge},
-        {"disrupt", WeaponModifier::disrupt},
-        {"velocity", WeaponModifier::velocity},
-        {"headshot", WeaponModifier::headshot},
-        {"crit", WeaponModifier::crit},
-        {"vehicle", WeaponModifier::vehicle},
-        {"shield", WeaponModifier::shield},
-        {"swap", WeaponModifier::swap},
-        {"recoil", WeaponModifier::recoil},
-        {"aim", WeaponModifier::aim},
-    }};
     for (const auto& [n, f] : fields_by_name) {
         if (same(n, name)) {
+            if (WeaponModifier::additive(f) != (op == "+")) {
+                throw std::runtime_error(where + ": weapon handling " + name + " is " +
+                                         (WeaponModifier::additive(f) ? "added (+)" : "multiplied (*)"));
+            }
             return {f, value};
         }
     }
@@ -91,66 +120,6 @@ void add_perk(ProfessionPerk& to, const ProfessionPerk& from, int times = 1) {
     for (int i = 0; i < times; ++i) {
         to.stats.insert(to.stats.end(), from.stats.begin(), from.stats.end());
         to.weapons.insert(to.weapons.end(), from.weapons.begin(), from.weapons.end());
-    }
-}
-
-void apply_weapon(WeaponDef& w, const WeaponModifier& m) {
-    switch (m.field) {
-    case WeaponModifier::spread:
-        w.yaw_spread *= m.multiply;
-        w.pitch_spread *= m.multiply;
-        w.spread_per_shot *= m.multiply;
-        break;
-    case WeaponModifier::heat:
-        w.heat_per_shot *= m.multiply;
-        break;
-    case WeaponModifier::reload:
-        w.reload_time *= m.multiply;
-        break;
-    case WeaponModifier::recovery:
-        w.spread_recover_rate *= m.multiply;
-        break;
-    case WeaponModifier::range:
-        w.damage_transition_delay *= m.multiply;
-        break;
-    case WeaponModifier::speed:
-        w.shot_delay *= m.multiply;
-        break;
-    case WeaponModifier::lunge:
-        w.melee_lunge *= m.multiply;
-        break;
-    case WeaponModifier::disrupt:
-        w.shield_disrupt *= m.multiply;
-        break;
-    case WeaponModifier::velocity:  // faster bolts, as far
-        if (w.projectile == Projectile::bolt || w.projectile == Projectile::missile) {
-            w.bolt_speed *= m.multiply;
-            w.bolt_life /= std::max(0.1, m.multiply);
-            w.damage_transition_delay /= std::max(0.1, m.multiply);
-        }
-        break;
-    case WeaponModifier::headshot:
-        w.headshot_multiplier *= m.multiply;
-        break;
-    case WeaponModifier::crit:  // the chance
-        w.crit_chance = std::clamp(w.crit_chance * m.multiply, 0.0, 1.0);
-        break;
-    case WeaponModifier::vehicle:
-        w.vehicle_factor *= m.multiply;
-        w.explosion_vehicle_factor *= m.multiply;
-        break;
-    case WeaponModifier::shield:
-        w.shield_factor *= m.multiply;
-        break;
-    case WeaponModifier::swap:
-        w.swap_time *= m.multiply;
-        break;
-    case WeaponModifier::recoil:
-        w.recoil *= m.multiply;
-        break;
-    case WeaponModifier::aim:
-        w.aim_speed *= m.multiply;
-        break;
     }
 }
 
@@ -212,7 +181,6 @@ void ProfessionBook::parse(const Ini& ini, const std::string& where) {
             def.category = *cat;
             def.wave = s.get("Wave").value_or("7A");
             def.available = truthy(s.get("Available").value_or("true"));
-            def.slotted = truthy(s.get("Slotted").value_or("false"));
             if (const auto a = s.get("Archetypes")) {
                 def.archetypes = split_list(*a);
                 for (const std::string& id : def.archetypes) {
@@ -247,6 +215,102 @@ void ProfessionBook::parse(const Ini& ini, const std::string& where) {
             m.description = s.get("Description").value_or("");
             read_perk(s, "", m.perk, where + " (" + def.id + ")");
             def.milestones.push_back(std::move(m));
+        } else if (same(s.name, "perk")) {
+            if (professions_.empty()) {
+                throw std::runtime_error(where + ": a [perk] before any [profession]");
+            }
+            ProfessionDef& def = professions_.back();
+            const std::string at = where + " (" + def.id + ")";
+            ProfessionPerkDef perk;
+            perk.id = s.get("Id").value_or("");
+            if (perk.id.empty()) {
+                throw std::runtime_error(at + ": a [perk] without an Id");
+            }
+            if (find_perk(perk.id) != nullptr) {
+                throw std::runtime_error(at + ": perk " + perk.id + " twice");
+            }
+            perk.level = int(s.number("Level", 0));
+            if (std::find(perk_levels.begin(), perk_levels.end(), perk.level) == perk_levels.end()) {
+                throw std::runtime_error(at + ": perk " + perk.id + "'s Level is 5, 25, 45, 65 or 85");
+            }
+            const std::string choice = s.get("Choice").value_or("");
+            if (choice != "A" && choice != "B") {
+                throw std::runtime_error(at + ": perk " + perk.id + "'s Choice is A or B");
+            }
+            perk.choice = choice[0];
+            perk.name = s.get("Name").value_or(perk.id);
+            perk.description = s.get("Description").value_or("");
+            perk.needs = s.get("Needs").value_or("");
+            if (!perk.needs.empty() && perk.needs != "trigger" && perk.needs != "mechanic") {
+                throw std::runtime_error(at + ": perk " + perk.id + "'s Needs is trigger or mechanic");
+            }
+            if (const auto a = s.get("Archetypes")) {
+                perk.archetypes = split_list(*a);
+                for (const std::string& id : perk.archetypes) {
+                    if (std::find(def.archetypes.begin(), def.archetypes.end(), id) == def.archetypes.end()) {
+                        throw std::runtime_error(at + ": perk " + perk.id + " is for " + id + ", not " + def.id + "'s");
+                    }
+                }
+            }
+            read_perk(s, "", perk.perk, at);
+            if (const auto name = s.get("Trigger")) {
+                const auto trigger = perk_trigger_from_name(*name);
+                if (!trigger) {
+                    throw std::runtime_error(at + ": perk " + perk.id + ": unknown Trigger " + *name);
+                }
+                if (!perk.needs.empty()) {
+                    throw std::runtime_error(at + ": perk " + perk.id + " has a Trigger and Needs");
+                }
+                TriggeredPerk t;
+                t.id = perk.id;
+                t.trigger = *trigger;
+                t.after = s.number("After", 0);
+                t.below = s.number("Below", 0);
+                t.within = s.number("Within", 0);
+                t.chain = s.number("Chain", 0);
+                t.chance = std::clamp(s.number("Chance", 1), 0.0, 1.0);
+                t.aimed = truthy(s.get("Aimed").value_or("false"));
+                t.mark = s.number("Mark", 0);
+                t.duration = s.number("Duration", 0);
+                t.cooldown = s.number("Cooldown", 0);
+                t.stamina = s.number("Stamina", 0);
+                t.shield = s.number("Shield", 0);
+                t.cool = s.number("Cool", 0);
+                t.reload = truthy(s.get("Reload").value_or("false"));
+                t.recharge = truthy(s.get("Recharge").value_or("false"));
+                t.cloak = s.number("Cloak", 0);
+                t.crit = truthy(s.get("Crit").value_or("false"));
+                t.target_duration = s.number("TargetDuration", 0);
+                t.damage_taken = s.number("DamageTaken", 1);
+                t.resist = s.number("Resist", 0);
+                t.one_hit = truthy(s.get("OneHit").value_or("false"));
+                t.once_per_life = truthy(s.get("OncePerLife").value_or("false"));
+                for (const auto& [key, value] : s.values) {
+                    if (same(key, "TargetModifier")) t.target.push_back(parse_stat_modifier(value, at));
+                }
+                if (t.duration > 0 && t.cooldown > 0) {
+                    throw std::runtime_error(at + ": perk " + perk.id + ": a Duration or a Cooldown, not both");
+                }
+                // Stances hold while they last; anything else needs a time
+                // for its modifiers to last.
+                const bool lasting = !perk.perk.empty() || t.damage_taken != 1 || t.resist != 0;
+                if (lasting && !is_stance(t.trigger) && t.trigger != PerkTrigger::unhit &&
+                    t.trigger != PerkTrigger::low_health && t.duration <= 0) {
+                    throw std::runtime_error(at + ": perk " + perk.id + " needs a Duration for what it changes");
+                }
+                if (!lasting && t.stamina == 0 && t.shield == 0 && t.cool == 0 && !t.reload && !t.recharge &&
+                    t.cloak == 0 && t.mark == 0 && !t.crit && t.target.empty()) {
+                    throw std::runtime_error(at + ": perk " + perk.id + "'s Trigger does nothing");
+                }
+                if ((t.aimed || t.mark > 0) && t.trigger != PerkTrigger::hit) {
+                    throw std::runtime_error(at + ": perk " + perk.id + ": Aimed and Mark are a hit's");
+                }
+                if (!t.target.empty() && t.target_duration <= 0) {
+                    throw std::runtime_error(at + ": perk " + perk.id + "'s TargetModifier needs a TargetDuration");
+                }
+                perk.trigger = std::move(t);
+            }
+            def.perks.push_back(std::move(perk));
         } else {
             throw std::runtime_error(where + ": unknown section [" + s.name + "]");
         }
@@ -254,12 +318,44 @@ void ProfessionBook::parse(const Ini& ini, const std::string& where) {
     for (ProfessionDef& def : professions_) {
         std::stable_sort(def.milestones.begin(), def.milestones.end(),
                          [](const ProfessionMilestone& a, const ProfessionMilestone& b) { return a.level < b.level; });
+        if (!def.chooses()) {
+            continue;
+        }
+        if (!def.milestones.empty()) {
+            throw std::runtime_error(where + " (" + def.id + "): perks or milestones, not both");
+        }
+        std::stable_sort(def.perks.begin(), def.perks.end(), [](const ProfessionPerkDef& a, const ProfessionPerkDef& b) {
+            return a.level != b.level ? a.level < b.level : a.choice < b.choice;
+        });
+        // Two at each level: an A and a B.
+        for (const int level : perk_levels) {
+            int a = 0, b = 0;
+            for (const ProfessionPerkDef& perk : def.perks) {
+                if (perk.level == level) (perk.choice == 'A' ? a : b) += 1;
+            }
+            if (a != 1 || b != 1) {
+                throw std::runtime_error(std::format("{} ({}): level {} needs one perk A and one perk B", where, def.id,
+                                                     level));
+            }
+        }
     }
 }
 
 const ProfessionDef* ProfessionBook::find(std::string_view id) const {
     for (const ProfessionDef& def : professions_) {
         if (def.id == id) return &def;
+    }
+    return nullptr;
+}
+
+const ProfessionPerkDef* ProfessionBook::find_perk(std::string_view id, const ProfessionDef** owner) const {
+    for (const ProfessionDef& def : professions_) {
+        for (const ProfessionPerkDef& perk : def.perks) {
+            if (perk.id == id) {
+                if (owner != nullptr) *owner = &def;
+                return &perk;
+            }
+        }
     }
     return nullptr;
 }
@@ -320,20 +416,164 @@ int64_t add_profession_xp(std::vector<ProfessionProgress>& progress, std::string
     return progress.back().xp;
 }
 
-bool can_specialize(const ProfessionBook& book, std::string_view id) {
-    const ProfessionDef* def = book.find(id);
-    return def != nullptr && def->available && def->slotted;
+const ProfessionProgress* find_progress(std::span<const ProfessionProgress> progress, std::string_view id) {
+    for (const ProfessionProgress& p : progress) {
+        if (p.id == id) return &p;
+    }
+    return nullptr;
 }
 
-std::vector<std::string> clean_specializations(const ProfessionBook& book, std::span<const std::string> ids) {
-    std::vector<std::string> out;
-    for (const std::string& id : ids) {
-        if (int(out.size()) >= specialization_slots) break;
-        if (can_specialize(book, id) && std::find(out.begin(), out.end(), id) == out.end()) {
-            out.push_back(id);
+ProfessionProgress& progress_for(std::vector<ProfessionProgress>& progress, std::string_view id) {
+    for (ProfessionProgress& p : progress) {
+        if (p.id == id) return p;
+    }
+    progress.push_back({std::string(id)});
+    return progress.back();
+}
+
+int learned_count(const ProfessionDef& def, const ProfessionProgress& progress) {
+    if (def.chooses()) {
+        return int(progress.perks.size());
+    }
+    return int(std::count_if(def.milestones.begin(), def.milestones.end(),
+                             [&](const ProfessionMilestone& m) { return m.level <= progress.trained; }));
+}
+
+int perks_learned(const ProfessionBook& book, std::span<const ProfessionProgress> progress) {
+    int count = 0;
+    for (const ProfessionProgress& p : progress) {
+        if (const ProfessionDef* def = book.find(p.id)) {
+            count += learned_count(*def, p);
         }
     }
-    return out;
+    return count;
+}
+
+bool licensed(const ProfessionBook& book, std::span<const ProfessionProgress> progress, std::string_view id) {
+    const ProfessionDef* def = book.find(id);
+    if (def == nullptr || !def->available) return false;
+    if (def->category == ProfessionCategory::weapon || def->category == ProfessionCategory::armor) return true;
+    const ProfessionProgress* p = find_progress(progress, id);
+    return p != nullptr && p->trained >= 1;
+}
+
+namespace {
+
+TrainResult refused(std::string message) {
+    return {false, 0, std::move(message)};
+}
+
+std::string full_message(const ProfessionBook& book, std::span<const ProfessionProgress> progress) {
+    return std::format("You know {} of {} already: give one up first.", perks_learned(book, progress), perk_cap);
+}
+
+} // namespace
+
+TrainResult learn_perk(const ProfessionBook& book, std::vector<ProfessionProgress>& progress, std::string_view perk_id,
+                       int64_t credits) {
+    const ProfessionDef* def = nullptr;
+    const ProfessionPerkDef* perk = book.find_perk(perk_id, &def);
+    if (perk == nullptr || !def->available) {
+        return refused("There's no such perk.");
+    }
+    const ProfessionProgress* mine = find_progress(progress, def->id);
+    if (book.level_for(mine ? mine->xp : 0) < perk->level) {
+        return refused(std::format("{} needs {} level {}.", perk->name, def->name, perk->level));
+    }
+    if (mine != nullptr) {
+        for (const std::string& known : mine->perks) {
+            const ProfessionPerkDef* other = book.find_perk(known);
+            if (other == perk) {
+                return refused(std::format("You know {} already.", perk->name));
+            }
+            if (other != nullptr && other->level == perk->level) {
+                return refused(std::format("You know {} at level {}: give it up to learn {}.", other->name, perk->level,
+                                           perk->name));
+            }
+        }
+    }
+    if (perks_learned(book, progress) >= perk_cap) {
+        return refused(full_message(book, progress));
+    }
+    const bool paid_before = mine != nullptr && std::find(mine->paid_perks.begin(), mine->paid_perks.end(), perk->id) !=
+                                                    mine->paid_perks.end();
+    const int64_t cost = paid_before ? 0 : milestone_cost(perk->level);
+    if (credits < cost) {
+        return refused(std::format("{} Cr to learn {}.", cost, perk->name));
+    }
+    ProfessionProgress& p = progress_for(progress, def->id);
+    p.perks.push_back(perk->id);
+    if (!paid_before) p.paid_perks.push_back(perk->id);
+    return {true, cost,
+            cost > 0 ? std::format("Learned {} ({}) for {} Cr", perk->name, def->name, cost)
+                     : std::format("Learned {} ({})", perk->name, def->name)};
+}
+
+TrainResult learn_milestone(const ProfessionBook& book, std::vector<ProfessionProgress>& progress,
+                            std::string_view profession_id, int level, int64_t credits) {
+    const ProfessionDef* def = book.find(profession_id);
+    if (def == nullptr || !def->available || def->chooses()) {
+        return refused("There's no one here to teach that.");
+    }
+    const ProfessionProgress* mine = find_progress(progress, def->id);
+    const int trained = mine ? mine->trained : 0;
+    const ProfessionMilestone* next = nullptr;  // the next one not yet learned
+    for (const ProfessionMilestone& m : def->milestones) {
+        if (m.level > trained && (next == nullptr || m.level < next->level)) next = &m;
+    }
+    if (next == nullptr || next->level != level) {
+        return refused("You've learned that already, or must learn what comes before it.");
+    }
+    if (book.level_for(mine ? mine->xp : 0) < level) {
+        return refused(std::format("You need {} level {}.", def->name, level));
+    }
+    if (perks_learned(book, progress) >= perk_cap) {
+        return refused(full_message(book, progress));
+    }
+    const bool paid_before = mine != nullptr && mine->paid >= level;
+    const int64_t cost = paid_before ? 0 : milestone_cost(level);
+    if (credits < cost) {
+        return refused(std::format("{} Cr to learn {}.", cost, next->name));
+    }
+    ProfessionProgress& p = progress_for(progress, def->id);
+    p.trained = level;
+    p.paid = std::max(p.paid, level);
+    return {true, cost,
+            cost > 0 ? std::format("Learned {} ({}) for {} Cr", next->name, def->name, cost)
+                     : std::format("Learned {} ({})", next->name, def->name)};
+}
+
+TrainResult forget(const ProfessionBook& book, std::vector<ProfessionProgress>& progress, std::string_view id) {
+    const ProfessionDef* def = nullptr;
+    if (const ProfessionPerkDef* perk = book.find_perk(id, &def)) {
+        for (ProfessionProgress& p : progress) {
+            if (p.id != def->id) continue;
+            const auto it = std::find(p.perks.begin(), p.perks.end(), perk->id);
+            if (it == p.perks.end()) break;
+            p.perks.erase(it);
+            return {true, 0, std::format("Gave up {} ({})", perk->name, def->name)};
+        }
+        return refused(std::format("You don't know {}.", perk->name));
+    }
+    def = book.find(id);
+    if (def == nullptr || def->chooses()) {
+        return refused("There's nothing like that to give up.");
+    }
+    for (ProfessionProgress& p : progress) {
+        if (p.id != def->id || p.trained < 1) continue;
+        // Back to the milestone before the last learned.
+        const ProfessionMilestone* last = nullptr;
+        int before = 0;
+        for (const ProfessionMilestone& m : def->milestones) {
+            if (m.level <= p.trained) {
+                if (last != nullptr) before = last->level;
+                last = &m;
+            }
+        }
+        p.trained = before;
+        return {true, 0, std::format("Gave up {} ({})", last ? last->name : def->name, def->name)};
+    }
+    return refused(std::format("You've learned nothing of {}.", def->name));
 }
 
 std::vector<std::string> routed_professions(const ProfessionBook& book, const Loadout& loadout) {
@@ -390,42 +630,96 @@ int64_t milestone_cost(int level) {
     return 20000;
 }
 
-ProfessionPerk profession_perks(const ProfessionDef& def, int level, int trained) {
+ProfessionPerk profession_perks(const ProfessionDef& def, const ProfessionProgress& progress, int level) {
     ProfessionPerk perk;
     if (def.rank_every > 0) {
         add_perk(perk, def.rank, level / def.rank_every);
     }
     for (const ProfessionMilestone& m : def.milestones) {
-        if (m.level <= level && m.level <= trained) {
+        if (m.level <= level && m.level <= progress.trained) {
             add_perk(perk, m.perk);
+        }
+    }
+    for (const ProfessionPerkDef& p : def.perks) {
+        if (p.needs.empty() && !p.trigger && p.level <= level &&
+            std::find(progress.perks.begin(), progress.perks.end(), p.id) != progress.perks.end()) {
+            add_perk(perk, p.perk);
         }
     }
     return perk;
 }
 
-void apply_specializations(Loadout& loadout, const ProfessionBook& book, std::span<const std::string> specializations,
-                           std::span<const ProfessionProgress> progress) {
+void apply_profession_perks(Loadout& loadout, const ProfessionBook& book, std::span<const ProfessionProgress> progress) {
     Gear perks{"specializations", "specialization", {}};
     const std::string armor = loadout.armor_class.empty() ? "none" : loadout.armor_class;
-    for (const std::string& id : clean_specializations(book, specializations)) {
-        const ProfessionDef* def = book.find(id);
+    loadout.triggered.clear();
+    for (const ProfessionProgress& mine : progress) {
+        const ProfessionDef* def = book.find(mine.id);
+        if (def == nullptr || !def->available) {
+            continue;
+        }
         if (def->category == ProfessionCategory::armor && def->armor_class != armor) {
             continue;  // trained for other armor than this loadout's
         }
-        int trained = 0;
-        for (const ProfessionProgress& p : progress) {
-            if (p.id == id) trained = p.trained;
+        if (def->category != ProfessionCategory::weapon && def->category != ProfessionCategory::armor &&
+            mine.trained < 1) {
+            continue;  // not licensed: none of it
         }
-        const ProfessionPerk perk = profession_perks(*def, book.level_for(profession_xp(progress, id)), trained);
+        if (def->category == ProfessionCategory::weapon &&
+            std::none_of(loadout.weapons.begin(), loadout.weapons.end(), [&](const std::optional<WeaponDef>& w) {
+                return w && std::find(def->archetypes.begin(), def->archetypes.end(), w->archetype) !=
+                                def->archetypes.end();
+            })) {
+            continue;  // none of its weapons carried
+        }
+        const int level = book.level_for(mine.xp);
+        const ProfessionPerk perk = profession_perks(*def, mine, level);
         perks.modifiers.insert(perks.modifiers.end(), perk.stats.begin(), perk.stats.end());
-        if (perk.weapons.empty()) continue;
-        for (std::optional<WeaponDef>& w : loadout.weapons) {
-            if (!w || std::find(def->archetypes.begin(), def->archetypes.end(), w->archetype) == def->archetypes.end()) {
+        // Handling, each to the weapons it's for: ranks and milestones to all
+        // the profession's, a perk to its own (or all).
+        ProfessionPerk shared = profession_perks(*def, ProfessionProgress{mine.id, mine.xp, mine.trained}, level);
+        std::vector<std::pair<const std::vector<std::string>*, const std::vector<WeaponModifier>*>> handling{
+            {&def->archetypes, &shared.weapons}};
+        for (const ProfessionPerkDef& p : def->perks) {
+            if (p.needs.empty() && !p.trigger && p.level <= level && !p.perk.weapons.empty() &&
+                std::find(mine.perks.begin(), mine.perks.end(), p.id) != mine.perks.end()) {
+                handling.push_back({p.archetypes.empty() ? &def->archetypes : &p.archetypes, &p.perk.weapons});
+            }
+        }
+        // (An armor profession's perks handle every weapon: Tactical Swap.)
+        const bool every_weapon = def->category == ProfessionCategory::armor;
+        for (const auto& [archetypes, mods] : handling) {
+            for (std::optional<WeaponDef>& w : loadout.weapons) {
+                if (!w || (!every_weapon &&
+                           std::find(archetypes->begin(), archetypes->end(), w->archetype) == archetypes->end())) {
+                    continue;
+                }
+                for (const WeaponModifier& m : *mods) {
+                    apply_weapon_modifier(*w, m);
+                }
+            }
+        }
+        // Triggered perks: carried for the simulation and the server to fire,
+        // each with the weapon slots it's for.
+        for (const ProfessionPerkDef& p : def->perks) {
+            if (!p.trigger || p.level > level || int(loadout.triggered.size()) >= max_perk_timers ||
+                std::find(mine.perks.begin(), mine.perks.end(), p.id) == mine.perks.end()) {
                 continue;
             }
-            for (const WeaponModifier& m : perk.weapons) {
-                apply_weapon(*w, m);
+            TriggeredPerk t = *p.trigger;
+            t.stats = p.perk.stats;
+            t.weapons = p.perk.weapons;
+            if (def->category == ProfessionCategory::weapon) {
+                const std::vector<std::string>& archetypes = p.archetypes.empty() ? def->archetypes : p.archetypes;
+                for (int slot = 0; slot < weapon_slots; ++slot) {
+                    const auto& w = loadout.weapons[size_t(slot)];
+                    if (w && std::find(archetypes.begin(), archetypes.end(), w->archetype) != archetypes.end()) {
+                        t.slots = uint8_t(t.slots | (1u << slot));
+                    }
+                }
+                if (t.slots == 0) continue;  // none of its weapons carried
             }
+            loadout.triggered.push_back(std::move(t));
         }
     }
     if (!perks.modifiers.empty()) {

@@ -20,7 +20,7 @@ namespace swm::core::net {
 // Every packet starts with a magic number, the protocol version and a message
 // type. Peers drop packets with another version. Bump it on any wire change.
 inline constexpr uint16_t protocol_magic = 0x4D53;  // "SM"
-inline constexpr uint16_t protocol_version = 43;
+inline constexpr uint16_t protocol_version = 45;
 // BoltState/Impact::weapon: a placed trap's shot, from that weapon slot
 // (drawn from the trap, not its owner's gun).
 inline constexpr uint8_t trap_shot_flag = 0x40;
@@ -265,6 +265,7 @@ struct EntityState {
     uint8_t pose = 0;         // 0: on their feet; 1: sitting; 2: attacking
     uint8_t actor_kind = 0;   // 0: player/match bot; 1: hub citizen; 2: wild creature; 3: bandit
     bool passive = false;     // a creature that leaves you be unless you hit it
+    bool quiet = false;       // its shots don't show it on enemies' radar (a perk's: Low Profile)
     uint16_t colors = 0;      // a look's colors: 0 its own; else a seed the client varies them by
     uint8_t species = 0;      // index into core::all_species() (0 = human .. 9 = ithorian)
     uint8_t gender = 0;       // 0 = male, 1 = female
@@ -472,6 +473,8 @@ struct ServiceRequest {
         heal = 5,
         bind = 6,
         travel = 7,                // `id`: the travel point (a "travel" service's name) to fly to (Stage 13)
+        learn_perk = 8,            // `id`: the perk (docs/PERKS.md)
+        forget = 9,                // `id`: a perk, or a profession (its last milestone learned)
     };
     uint8_t action = 0;
     std::string id;
@@ -624,10 +627,9 @@ struct SpecialistRequest {
         bazaar_list = 16,       // `item_id`, `amount`: its price
         bazaar_buy = 17,        // `amount`: a listing's id
         bazaar_cancel = 18,     // `amount`: a listing's id (yours)
-        design_offer = 19,      // `target`: a player; `text`: their new appearance JSON
-        design_answer = 20,     // `amount`: 1 accepts the design offered you, 0 declines
+        // 19 and 20 were Image Designer's design offer and answer.
         slice_item = 21,        // `item_id`; `id`: the slice
-        dye_item = 22,          // `item_id`; `text`: its color JSON
+        // 22 was Image Designer's dye.
         bounty_flag = 23,       // `amount`: 1 opts in to being hunted by other players, 0 out
         supply_contract = 24,   // `item_id`: supplied to the quartermaster you stand at
         set_companion_slot = 25,  // `amount`: a datapad id (0: none) for the active loadout
@@ -680,8 +682,6 @@ struct SpecialistSync {
     std::vector<std::pair<std::string, PriceStats>> prices;  // Market Analytics: by item def
     bool performing = false;
     bool bounty_flag = false;
-    std::string design_from;        // a design offered, by whom (empty: none)
-    std::string design_appearance;
     std::string channel;            // an ability being channeled (empty: none)
     float channel_remaining = 0;
 

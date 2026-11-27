@@ -143,6 +143,8 @@ void put_state(ByteWriter& out, const MoveState& state) {
     out.put(uint8_t(uint8_t(state.crouched) | (uint8_t(state.crouch_held) << 1) | (uint8_t(state.blocking) << 2)));
     out.put(state.roll);
     out.put(state.roll_yaw);
+    out.put(state.slide);
+    out.put(state.rolls);
     out.put(state.parry_window);
     out.put(state.stagger);
     out.put(state.vehicle);
@@ -152,12 +154,20 @@ void put_state(ByteWriter& out, const MoveState& state) {
     out.put(c.cooldown);
     out.put(c.reload);
     out.put(c.spread);
+    out.put(c.idle);
     for (const WeaponState& w : c.weapons) {
         out.put(w.rounds);
         out.put(w.reserve);
         out.put(w.heat);
         out.put(uint8_t(w.overheated));
+        out.put(w.reload);
     }
+    // Triggered perks' timers (the trailing zeros left off) and stillness.
+    size_t timers = state.perk_time.size();
+    while (timers > 0 && state.perk_time[timers - 1] <= 0) --timers;
+    out.put(uint8_t(timers));
+    for (size_t i = 0; i < timers; ++i) out.put(state.perk_time[i]);
+    out.put(state.still);
 }
 
 // What's drawn of someone else's state (Stage 13): floats (a millimeter at
@@ -227,6 +237,8 @@ MoveState get_state(ByteReader& in) {
     state.blocking = (posture & 4) != 0;
     state.roll = in.get<float>();
     state.roll_yaw = in.get<float>();
+    state.slide = in.get<float>();
+    state.rolls = in.get<uint8_t>();
     state.parry_window = in.get<float>();
     state.stagger = in.get<float>();
     state.vehicle = in.get<int8_t>();
@@ -236,12 +248,18 @@ MoveState get_state(ByteReader& in) {
     c.cooldown = in.get<double>();
     c.reload = in.get<double>();
     c.spread = in.get<double>();
+    c.idle = in.get<float>();
     for (WeaponState& w : c.weapons) {
         w.rounds = in.get<int16_t>();
         w.reserve = in.get<int16_t>();
         w.heat = in.get<float>();
         w.overheated = in.get<uint8_t>() != 0;
+        w.reload = in.get<float>();
     }
+    const size_t timers = in.get<uint8_t>();
+    if (timers > state.perk_time.size()) throw PacketError("too many perk timers");
+    for (size_t i = 0; i < timers; ++i) state.perk_time[i] = in.get<float>();
+    state.still = in.get<float>();
     if (c.weapon >= hand_slots) {
         throw PacketError("bad weapon slot");
     }
@@ -255,7 +273,7 @@ void put_input(ByteWriter& out, const MoveInput& input) {
     out.put(input.yaw);
     out.put(input.pitch);
     out.put(input.buttons);
-    out.put(input.weapon);
+    out.put(uint8_t((input.weapon & 0x7f) | (input.aiming ? 0x80 : 0)));  // aiming in the top bit
     out.put(input.view_tick);
 }
 
@@ -267,7 +285,9 @@ MoveInput get_input(ByteReader& in) {
     input.yaw = in.get<float>();
     input.pitch = in.get<float>();
     input.buttons = in.get<uint8_t>();
-    input.weapon = in.get<uint8_t>();
+    const uint8_t weapon = in.get<uint8_t>();
+    input.weapon = uint8_t(weapon & 0x7f);
+    input.aiming = (weapon & 0x80) != 0;
     input.view_tick = in.get<double>();
     return input;
 }
@@ -391,31 +411,94 @@ MatchState get_match(ByteReader& in) {
     return m;
 }
 
+// Stat modifiers in full precision: gear, weapons and triggered perks all feed
+// the client's predicted simulation, which must match the server's exactly.
 void put_modifiers(ByteWriter& out, const std::vector<StatModifier>& mods) {
     out.put(uint8_t(std::min<size_t>(mods.size(), 64)));
     for (size_t i = 0; i < mods.size() && i < 64; ++i) {
         out.put(uint8_t(mods[i].stat));
-        out.put(float(mods[i].add));
-        out.put(float(mods[i].multiply));
+        out.put(mods[i].add);
+        out.put(mods[i].multiply);
     }
 }
 
 std::vector<StatModifier> get_modifiers(ByteReader& in) {
     const size_t n = in.get<uint8_t>();
+    if (n > 64) throw PacketError("too many modifiers");
     std::vector<StatModifier> mods;
     mods.reserve(n);
     for (size_t i = 0; i < n; ++i) {
         const uint8_t s = in.get<uint8_t>();
-        if (s > uint8_t(Stat::explosion_push_resist)) {
+        if (s > uint8_t(last_stat)) {
             throw PacketError("bad stat");
         }
         StatModifier m;
         m.stat = Stat(s);
-        m.add = in.get<float>();
-        m.multiply = in.get<float>();
+        m.add = in.get<double>();
+        m.multiply = in.get<double>();
         mods.push_back(m);
     }
     return mods;
+}
+
+// A loadout's triggered perks (docs/PERKS.md), for its own client to predict with.
+void put_triggered(ByteWriter& out, const std::vector<TriggeredPerk>& perks) {
+    out.put(uint8_t(std::min<size_t>(perks.size(), max_perk_timers)));
+    for (size_t i = 0; i < perks.size() && i < size_t(max_perk_timers); ++i) {
+        const TriggeredPerk& p = perks[i];
+        out.put_string(p.id);
+        out.put(uint8_t(p.trigger));
+        for (const double v : {p.after, p.below, p.within, p.chain, p.chance, p.duration, p.cooldown, p.stamina,
+                               p.shield, p.cool, p.cloak, p.mark, p.target_duration, p.damage_taken, p.resist}) {
+            out.put(v);
+        }
+        out.put(p.slots);
+        out.put(uint8_t(uint8_t(p.reload) | (uint8_t(p.recharge) << 1) | (uint8_t(p.crit) << 2) |
+                        (uint8_t(p.one_hit) << 3) | (uint8_t(p.once_per_life) << 4) | (uint8_t(p.aimed) << 5)));
+        put_modifiers(out, p.stats);
+        put_modifiers(out, p.target);
+        out.put(uint8_t(std::min<size_t>(p.weapons.size(), 16)));
+        for (size_t k = 0; k < p.weapons.size() && k < 16; ++k) {
+            out.put(uint8_t(p.weapons[k].field));
+            out.put(p.weapons[k].multiply);
+        }
+    }
+}
+
+std::vector<TriggeredPerk> get_triggered(ByteReader& in) {
+    std::vector<TriggeredPerk> perks;
+    const size_t n = in.get<uint8_t>();
+    if (n > size_t(max_perk_timers)) throw PacketError("too many triggered perks");
+    for (size_t i = 0; i < n; ++i) {
+        TriggeredPerk p;
+        p.id = in.get_string();
+        const uint8_t trigger = in.get<uint8_t>();
+        if (trigger > uint8_t(PerkTrigger::hit_by)) throw PacketError("bad perk trigger");
+        p.trigger = PerkTrigger(trigger);
+        for (double* v : {&p.after, &p.below, &p.within, &p.chain, &p.chance, &p.duration, &p.cooldown, &p.stamina,
+                          &p.shield, &p.cool, &p.cloak, &p.mark, &p.target_duration, &p.damage_taken, &p.resist}) {
+            *v = in.get<double>();
+        }
+        p.slots = in.get<uint8_t>();
+        const uint8_t flags = in.get<uint8_t>();
+        p.reload = (flags & 1) != 0;
+        p.recharge = (flags & 2) != 0;
+        p.crit = (flags & 4) != 0;
+        p.one_hit = (flags & 8) != 0;
+        p.once_per_life = (flags & 16) != 0;
+        p.aimed = (flags & 32) != 0;
+        p.stats = get_modifiers(in);
+        p.target = get_modifiers(in);
+        const size_t w = in.get<uint8_t>();
+        if (w > 16) throw PacketError("too many perk handling changes");
+        for (size_t k = 0; k < w; ++k) {
+            const uint8_t field = in.get<uint8_t>();
+            if (field > uint8_t(WeaponModifier::last_field)) throw PacketError("bad weapon handling");
+            p.weapons.push_back({WeaponModifier::Field(field), in.get<double>()});
+        }
+        perks.push_back(std::move(p));
+    }
+    return perks;
 }
 
 void put_weapon_def(ByteWriter& out, const WeaponDef& w) {
@@ -426,67 +509,75 @@ void put_weapon_def(ByteWriter& out, const WeaponDef& w) {
     out.put(uint8_t(w.damage_type));
     out.put(uint8_t(w.projectile));
     out.put(int16_t(w.ammo));
-    out.put(float(w.shot_delay));
+    out.put(double(w.shot_delay));
     out.put(int16_t(w.rounds_per_clip));
-    out.put(float(w.reload_time));
-    out.put(float(w.heat_per_shot));
-    out.put(float(w.heat_recover_rate));
-    out.put(float(w.heat_threshold));
-    out.put(float(w.yaw_spread));
-    out.put(float(w.pitch_spread));
-    out.put(float(w.spread_per_shot));
-    out.put(float(w.spread_recover_rate));
-    out.put(float(w.spread_limit));
+    out.put(double(w.reload_time));
+    out.put(double(w.heat_per_shot));
+    out.put(double(w.heat_recover_rate));
+    out.put(double(w.heat_threshold));
+    out.put(double(w.yaw_spread));
+    out.put(double(w.pitch_spread));
+    out.put(double(w.spread_per_shot));
+    out.put(double(w.spread_recover_rate));
+    out.put(double(w.spread_limit));
     out.put(uint8_t(std::clamp(w.shots_per_salvo, 1, 255)));
-    out.put(float(w.zoom_min));
-    out.put(float(w.zoom_max));
+    out.put(double(w.zoom_min));
+    out.put(double(w.zoom_max));
     out.put(uint8_t(w.zoom_first_person));
-    out.put(float(w.damage));
-    out.put(float(w.bolt_speed));
-    out.put(float(w.bolt_gravity));
-    out.put(float(w.bolt_life));
-    out.put(float(w.damage_transition_delay));
-    out.put(float(w.damage_transition_period));
-    out.put(float(w.damage_final));
-    out.put(float(w.bolt_acceleration));
-    out.put(float(w.rebound));
-    out.put(float(w.friction));
+    out.put(double(w.damage));
+    out.put(double(w.bolt_speed));
+    out.put(double(w.bolt_gravity));
+    out.put(double(w.bolt_life));
+    out.put(double(w.damage_transition_delay));
+    out.put(double(w.damage_transition_period));
+    out.put(double(w.damage_final));
+    out.put(double(w.bolt_acceleration));
+    out.put(double(w.rebound));
+    out.put(double(w.friction));
     out.put(uint8_t(w.explode_on_impact));
-    out.put(float(w.fuse));
+    out.put(double(w.fuse));
     out.put(uint8_t(w.timer_on_contact));
-    out.put(float(w.trigger_radius));
-    out.put(float(w.arm_time));
+    out.put(double(w.trigger_radius));
+    out.put(double(w.arm_time));
     out.put(uint8_t(std::clamp(w.trap_shots, 0, 255)));
-    out.put(float(w.trap_interval));
-    out.put(float(w.shot_elevate));
-    out.put(float(w.explosion_damage));
-    out.put(float(w.explosion_inner));
-    out.put(float(w.explosion_outer));
-    out.put(float(w.explosion_push));
-    out.put(float(w.push_inner));
-    out.put(float(w.push_outer));
-    out.put(float(w.melee_range));
-    out.put(float(w.melee_arc));
-    out.put(float(w.melee_lunge));
-    out.put(float(w.melee_stagger));
-    out.put(float(w.shield_disrupt));
-    out.put(float(w.headshot_multiplier));
-    out.put(float(w.crit_chance));
-    out.put(float(w.crit_multiplier));
-    out.put(float(w.shield_factor));
-    out.put(float(w.vehicle_factor));
-    out.put(float(w.explosion_vehicle_factor));
-    out.put(float(w.swap_time));
-    out.put(float(w.recoil));
-    out.put(float(w.aim_speed));
+    out.put(double(w.trap_interval));
+    out.put(double(w.shot_elevate));
+    out.put(double(w.explosion_damage));
+    out.put(double(w.explosion_inner));
+    out.put(double(w.explosion_outer));
+    out.put(double(w.explosion_push));
+    out.put(double(w.push_inner));
+    out.put(double(w.push_outer));
+    out.put(double(w.melee_range));
+    out.put(double(w.melee_arc));
+    out.put(double(w.melee_lunge));
+    out.put(double(w.melee_stagger));
+    out.put(double(w.shield_disrupt));
+    out.put(double(w.headshot_multiplier));
+    out.put(double(w.crit_chance));
+    out.put(double(w.crit_multiplier));
+    out.put(double(w.shield_factor));
+    out.put(double(w.vehicle_factor));
+    out.put(double(w.explosion_vehicle_factor));
+    out.put(double(w.swap_time));
+    out.put(double(w.recoil));
+    out.put(double(w.aim_speed));
+    for (const double v : {w.body_multiplier, w.flank_multiplier, w.holster_cooling, w.proximity_fuse, w.block_leak,
+                           w.block_cost, w.deflect, w.parry_window, w.combo_stagger, w.knockback}) {
+        out.put(v);
+    }
+    out.put(uint8_t(std::clamp(w.ricochets, 0, 255)));
+    out.put(uint8_t(std::clamp(w.pierces, 0, 255)));
+    out.put(uint8_t(uint8_t(w.holster_reload) | (uint8_t(w.reload_sprinting) << 1) | (uint8_t(w.fire_rolling) << 2) |
+                    (uint8_t(w.riposte) << 3) | (uint8_t(w.unblockable) << 4)));
     out.put(uint8_t(w.hit_effect.has_value()));
     if (w.hit_effect) {
         const HitEffect& e = *w.hit_effect;
         out.put_string(e.id);
         out.put_string(e.name);
-        out.put(float(e.chance));
-        out.put(float(e.duration));
-        out.put(float(e.damage_per_second));
+        out.put(double(e.chance));
+        out.put(double(e.duration));
+        out.put(double(e.damage_per_second));
         out.put(uint8_t(e.damage_type));
         put_modifiers(out, e.modifiers);
     }
@@ -533,66 +624,80 @@ WeaponDef get_weapon_def(ByteReader& in) {
     if (proj > uint8_t(Projectile::melee)) throw PacketError("bad projectile");
     w.projectile = Projectile(proj);
     w.ammo = in.get<int16_t>();
-    w.shot_delay = in.get<float>();
+    w.shot_delay = in.get<double>();
     w.rounds_per_clip = in.get<int16_t>();
-    w.reload_time = in.get<float>();
-    w.heat_per_shot = in.get<float>();
-    w.heat_recover_rate = in.get<float>();
-    w.heat_threshold = in.get<float>();
-    w.yaw_spread = in.get<float>();
-    w.pitch_spread = in.get<float>();
-    w.spread_per_shot = in.get<float>();
-    w.spread_recover_rate = in.get<float>();
-    w.spread_limit = in.get<float>();
+    w.reload_time = in.get<double>();
+    w.heat_per_shot = in.get<double>();
+    w.heat_recover_rate = in.get<double>();
+    w.heat_threshold = in.get<double>();
+    w.yaw_spread = in.get<double>();
+    w.pitch_spread = in.get<double>();
+    w.spread_per_shot = in.get<double>();
+    w.spread_recover_rate = in.get<double>();
+    w.spread_limit = in.get<double>();
     w.shots_per_salvo = in.get<uint8_t>();
-    w.zoom_min = in.get<float>();
-    w.zoom_max = in.get<float>();
+    w.zoom_min = in.get<double>();
+    w.zoom_max = in.get<double>();
     w.zoom_first_person = in.get<uint8_t>() != 0;
-    w.damage = in.get<float>();
-    w.bolt_speed = in.get<float>();
-    w.bolt_gravity = in.get<float>();
-    w.bolt_life = in.get<float>();
-    w.damage_transition_delay = in.get<float>();
-    w.damage_transition_period = in.get<float>();
-    w.damage_final = in.get<float>();
-    w.bolt_acceleration = in.get<float>();
-    w.rebound = in.get<float>();
-    w.friction = in.get<float>();
+    w.damage = in.get<double>();
+    w.bolt_speed = in.get<double>();
+    w.bolt_gravity = in.get<double>();
+    w.bolt_life = in.get<double>();
+    w.damage_transition_delay = in.get<double>();
+    w.damage_transition_period = in.get<double>();
+    w.damage_final = in.get<double>();
+    w.bolt_acceleration = in.get<double>();
+    w.rebound = in.get<double>();
+    w.friction = in.get<double>();
     w.explode_on_impact = in.get<uint8_t>() != 0;
-    w.fuse = in.get<float>();
+    w.fuse = in.get<double>();
     w.timer_on_contact = in.get<uint8_t>() != 0;
-    w.trigger_radius = in.get<float>();
-    w.arm_time = in.get<float>();
+    w.trigger_radius = in.get<double>();
+    w.arm_time = in.get<double>();
     w.trap_shots = in.get<uint8_t>();
-    w.trap_interval = in.get<float>();
-    w.shot_elevate = in.get<float>();
-    w.explosion_damage = in.get<float>();
-    w.explosion_inner = in.get<float>();
-    w.explosion_outer = in.get<float>();
-    w.explosion_push = in.get<float>();
-    w.push_inner = in.get<float>();
-    w.push_outer = in.get<float>();
-    w.melee_range = in.get<float>();
-    w.melee_arc = in.get<float>();
-    w.melee_lunge = in.get<float>();
-    w.melee_stagger = in.get<float>();
-    w.shield_disrupt = in.get<float>();
-    w.headshot_multiplier = in.get<float>();
-    w.crit_chance = in.get<float>();
-    w.crit_multiplier = in.get<float>();
-    w.shield_factor = in.get<float>();
-    w.vehicle_factor = in.get<float>();
-    w.explosion_vehicle_factor = in.get<float>();
-    w.swap_time = in.get<float>();
-    w.recoil = in.get<float>();
-    w.aim_speed = in.get<float>();
+    w.trap_interval = in.get<double>();
+    w.shot_elevate = in.get<double>();
+    w.explosion_damage = in.get<double>();
+    w.explosion_inner = in.get<double>();
+    w.explosion_outer = in.get<double>();
+    w.explosion_push = in.get<double>();
+    w.push_inner = in.get<double>();
+    w.push_outer = in.get<double>();
+    w.melee_range = in.get<double>();
+    w.melee_arc = in.get<double>();
+    w.melee_lunge = in.get<double>();
+    w.melee_stagger = in.get<double>();
+    w.shield_disrupt = in.get<double>();
+    w.headshot_multiplier = in.get<double>();
+    w.crit_chance = in.get<double>();
+    w.crit_multiplier = in.get<double>();
+    w.shield_factor = in.get<double>();
+    w.vehicle_factor = in.get<double>();
+    w.explosion_vehicle_factor = in.get<double>();
+    w.swap_time = in.get<double>();
+    w.recoil = in.get<double>();
+    w.aim_speed = in.get<double>();
+    for (double* v : {&w.body_multiplier, &w.flank_multiplier, &w.holster_cooling, &w.proximity_fuse, &w.block_leak,
+                      &w.block_cost, &w.deflect, &w.parry_window, &w.combo_stagger, &w.knockback}) {
+        *v = in.get<double>();
+    }
+    w.ricochets = in.get<uint8_t>();
+    w.pierces = in.get<uint8_t>();
+    {
+        const uint8_t flags = in.get<uint8_t>();
+        w.holster_reload = (flags & 1) != 0;
+        w.reload_sprinting = (flags & 2) != 0;
+        w.fire_rolling = (flags & 4) != 0;
+        w.riposte = (flags & 8) != 0;
+        w.unblockable = (flags & 16) != 0;
+    }
     if (in.get<uint8_t>() != 0) {
         HitEffect e;
         e.id = in.get_string();
         e.name = in.get_string();
-        e.chance = in.get<float>();
-        e.duration = in.get<float>();
-        e.damage_per_second = in.get<float>();
+        e.chance = in.get<double>();
+        e.duration = in.get<double>();
+        e.damage_per_second = in.get<double>();
         const uint8_t et = in.get<uint8_t>();
         if (et >= damage_type_count) throw PacketError("bad effect damage type");
         e.damage_type = DamageType(et);
@@ -646,10 +751,6 @@ void put_char_loadout(ByteWriter& out, const CharacterLoadout& lo) {
         out.put_string(k);
         out.put(v);
     }
-    out.put(uint8_t(std::min<size_t>(lo.specializations.size(), 8)));
-    for (size_t i = 0; i < lo.specializations.size() && i < 8; ++i) {
-        out.put_string(lo.specializations[i]);
-    }
     out.put_string(lo.companion);
 }
 
@@ -672,11 +773,6 @@ CharacterLoadout get_char_loadout(ByteReader& in) {
     for (size_t i = 0; i < an; ++i) {
         const std::string k = in.get_string();
         lo.appearance_ids[k] = in.get<uint64_t>();
-    }
-    const size_t sn = in.get<uint8_t>();
-    if (sn > 8) throw PacketError("too many specializations");
-    for (size_t i = 0; i < sn; ++i) {
-        lo.specializations.push_back(in.get_string());
     }
     lo.companion = in.get_string();
     return lo;
@@ -988,7 +1084,7 @@ struct Encoder {
             out.put(entity.look);
             out.put(entity.pose);
             out.put(entity.actor_kind);
-            out.put(uint8_t(entity.passive));
+            out.put(uint8_t(uint8_t(entity.passive) | (uint8_t(entity.quiet) << 1)));
             out.put(entity.colors);
             out.put(entity.species);
             out.put(entity.gender);
@@ -1166,6 +1262,7 @@ struct Encoder {
                 put_modifiers(out, lo.gear[gi].modifiers);
             }
             out.put_string(lo.armor_class);
+            put_triggered(out, lo.triggered);
         }
             out.put(m.bank_credits);
         out.put(uint16_t(std::min<size_t>(m.bank_items.size(), 512)));
@@ -1263,9 +1360,17 @@ struct Encoder {
         out.put(m.revision);
         out.put(uint8_t(std::min<size_t>(m.professions.size(), 255)));
         for (size_t i = 0; i < m.professions.size() && i < 255; ++i) {
-            out.put_string(m.professions[i].id);
-            out.put(m.professions[i].xp);
-            out.put(uint8_t(m.professions[i].trained));
+            const ProfessionProgress& p = m.professions[i];
+            out.put_string(p.id);
+            out.put(p.xp);
+            out.put(uint8_t(p.trained));
+            out.put(uint8_t(p.paid));
+            for (const std::vector<std::string>* list : {&p.perks, &p.paid_perks}) {
+                out.put(uint8_t(std::min<size_t>(list->size(), 16)));
+                for (size_t k = 0; k < list->size() && k < 16; ++k) {
+                    out.put_string((*list)[k]);
+                }
+            }
         }
     }
     void operator()(const ProfessionAck& m) {
@@ -1394,8 +1499,6 @@ struct Encoder {
         }
         out.put(uint8_t(m.performing));
         out.put(uint8_t(m.bounty_flag));
-        out.put_string(m.design_from);
-        out.put_long_string(m.design_appearance);
         out.put_string(m.channel);
         out.put(m.channel_remaining);
     }
@@ -1553,7 +1656,11 @@ Message decode(std::span<const uint8_t> packet) {
             entity.look = in.get<uint8_t>();
             entity.pose = in.get<uint8_t>();
             entity.actor_kind = in.get<uint8_t>();
-            entity.passive = in.get<uint8_t>() != 0;
+            {
+                const uint8_t flags = in.get<uint8_t>();
+                entity.passive = (flags & 1) != 0;
+                entity.quiet = (flags & 2) != 0;
+            }
             entity.colors = in.get<uint16_t>();
             entity.species = in.get<uint8_t>();
             if (entity.species >= species_count) {
@@ -1797,6 +1904,7 @@ Message decode(std::span<const uint8_t> packet) {
                 lo.gear.push_back(std::move(g));
             }
             lo.armor_class = in.get_string();
+            lo.triggered = get_triggered(in);
             m.resolved_loadouts.push_back(std::move(lo));
         }
         m.bank_credits = in.get<int64_t>();
@@ -1914,6 +2022,14 @@ Message decode(std::span<const uint8_t> packet) {
             p.id = in.get_string();
             p.xp = in.get<int64_t>();
             p.trained = in.get<uint8_t>();
+            p.paid = in.get<uint8_t>();
+            for (std::vector<std::string>* list : {&p.perks, &p.paid_perks}) {
+                const size_t n = in.get<uint8_t>();
+                if (n > 16) throw PacketError("too many perks");
+                for (size_t k = 0; k < n; ++k) {
+                    list->push_back(in.get_string());
+                }
+            }
             m.professions.push_back(std::move(p));
         }
         message = std::move(m);
@@ -2073,8 +2189,6 @@ Message decode(std::span<const uint8_t> packet) {
         }
         m.performing = in.get<uint8_t>() != 0;
         m.bounty_flag = in.get<uint8_t>() != 0;
-        m.design_from = in.get_string();
-        m.design_appearance = in.get_long_string();
         m.channel = in.get_string();
         m.channel_remaining = in.get<float>();
         message = std::move(m);

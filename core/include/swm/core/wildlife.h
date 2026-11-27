@@ -179,6 +179,7 @@ private:
         uint32_t entity;
         Vec3 pos;
         Vec3 vel;
+        double notice = 1;  // times how far it's noticed from (a perk's: Quiet Step)
     };
 
     double random_unit();

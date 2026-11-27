@@ -168,6 +168,9 @@ public:
     // Moves a character, e.g. a teleport. Its client gets corrected.
     void set_state(uint32_t entity, const MoveState& state);
     double health_of(uint32_t entity) const;
+    double shield_of(uint32_t entity) const;
+    // Times how far creatures and outlaws notice a player from (a perk's: Quiet Step); 1 otherwise.
+    double notice_of(uint32_t entity) const;
     bool alive(uint32_t entity) const;
     // The entity as snapshots describe it, if it's connected.
     std::optional<net::EntityState> describe(uint32_t entity) const;
@@ -364,6 +367,21 @@ public:
     std::function<void(const MatchResult&)> on_match_ended;
 
 private:
+    // What a character's triggered perks remember (server_perks.cpp).
+    struct PerkState {
+        double last_kill = -1e9;   // perk_clock() of its last kill (Chain Breach)
+        double last_hit = -1e9;    // ...and of its last hit (Rhythm)
+        double last_hurt = 0;      // ...and when it was last hurt (Untouchable)
+        uint32_t last_target = 0;  // what it last hit
+        bool second_chance_used = false;  // this life
+        DamageType resist_type = DamageType::laser;  // Adaptive Plating's
+        double riposte_until = -1e9;  // after a parry (Riposte), its next hit before this crits
+        uint32_t combo_target = 0;    // melee hits in a row on one target (Teras Kasi Master)
+        int combo_count = 0;
+        double combo_time = -1e9;
+        double charge_ready = 0;      // a shoulder charge can stagger again from this time
+    };
+
     struct Client {
         net::Endpoint endpoint;
         std::string name;
@@ -455,6 +473,7 @@ private:
         };
         std::map<uint32_t, SentStatic> sent_static;
         SpecialistState spec;  // Stage 12: kit, effects, datapad, contracts (server_specialists.cpp)
+        PerkState perks;       // triggered perks' memory (server_perks.cpp)
     };
     // A vehicle in a match. Empty, it keeps its own state; driven, its
     // driver's state is its state (MoveState::vehicle), and the driver's
@@ -540,6 +559,13 @@ private:
         double wait = 0;
         int shots_left = 0;
         double health = 0;  // a mine at rest: shot or blasted to nothing, it's destroyed (harmlessly)
+        // Trainer perks': walls it can still bounce off and bodies it can
+        // still go through (Ricochet, Piercing Round), what it last went
+        // through, and whether it was fired aimed down the sights.
+        int ricochets = 0;
+        int pierces = 0;
+        uint32_t passed = 0;
+        bool aimed = false;
     };
 
     struct Pickup {
@@ -632,6 +658,14 @@ private:
     // Service points (server_services.cpp): trainers, the bank, clinics and cloning terminals.
     void handle_service_request(Client& client, const net::ServiceRequest& request);
     void load_services_data(Client& client);
+    // What a character has learned of a profession, into its extras
+    // (trained:, paid:, perks:, paid_perks:).
+    void save_training(Client& client, const std::string& profession);
+    // After learning or giving up: perks and abilities rebuilt.
+    void training_changed(Client& client);
+    // Whether a character holds a profession's licence (docs/PERKS.md); tells
+    // them to see a trainer when not.
+    bool require_licence(Client& client, const std::string& profession);
     void save_bank(Client& client);
     const net::Vendor* service_near(const Client& client, const std::string& kind, const std::string& detail = "") const;
     int combat_level_of(const Client& client) const;
@@ -679,6 +713,46 @@ private:
     bool use_ability(Client& client, const AbilityDef& ability, uint32_t target, Vec3 at);
     void finish_channel(Client& client);
     void give_effect(Client& client, TimedEffect effect);
+
+    // Triggered perks (server_perks.cpp, docs/PERKS.md).
+    double perk_clock() const;
+    // A character's statistics with its active perks' on top (and Adaptive
+    // Plating's resistance), for what the server works out: damage, knockback.
+    CharacterStats active_stats(const Client& client) const;
+    // A perk's at-once part: stamina, shield, heat, a reload, a recharge, a cloak.
+    void perk_act(Client& client, const TriggeredPerk& perk, int slot);
+    // A shot's damage before mitigation, as hit_damage, but a critical hit
+    // where the shooter's perks make it one (Execution, or `crit`: a
+    // riposte), and more from behind with a weapon that flanks (Flanker).
+    double perk_shot_damage(const Client* shooter, int slot, const WeaponDef& weapon, double base, bool headshot,
+                            double target_share, bool behind = false, bool crit = false);
+    // What was hit, after its damage.
+    struct PerkTarget {
+        uint32_t entity = 0;
+        Client* client = nullptr;
+        Npc* npc = nullptr;
+        double distance = 0;
+        bool headshot = false;
+        bool killed = false;
+        bool aimed = false;  // by a shot fired aimed down the sights
+    };
+    // A character staggered for `seconds`, less its stagger_resist.
+    void stagger(Client& client, double seconds);
+    // A character thrown away from `from` at `speed` m/s, less its knockback resistance.
+    void knock_back(Client& client, Vec3 from, double speed);
+    // A sprinting character's shoulder charge (a perk's: Shoulder Charge), each tick.
+    void update_charge(Client& client);
+    void perk_hit(Client& shooter, int slot, const PerkTarget& target);
+    void perk_kill(Client& killer, int slot, bool headshot);
+    // Damage a character takes after mitigation, as its perks leave it; and
+    // the hit's other triggers (hit_by, unhit).
+    double perk_incoming(Client& victim, double amount, DamageType type);
+    void perk_shield_broken(Client& victim);
+    // A killing blow: true if a perk saved them (Second Chance).
+    bool perk_lethal(Client& victim);
+    // Held conditions, each tick: low health, a while unhurt.
+    void update_perks(Client& client);
+    void perk_life_ended(Client& client);
     // A hit's effect (the weapon's, its ammo's), if it lands: a debuff on a
     // character, a snare and damage over time on an NPC.
     void give_hit_effect(const WeaponDef& weapon, uint32_t attacker, Client& victim);

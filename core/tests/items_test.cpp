@@ -218,15 +218,17 @@ int main() {
     std::filesystem::remove(ammo_ini);
     std::vector<ItemInstance> ainv{
         {1, 1, "r1", 0.5, "", "{}", 1},
-        {2, 1, "a_burn", 0.5, "", "{}", 1500},
+        {2, 1, "a_burn", 0.5, "", "{}", 2500},
         {3, 1, "h1", 0.5, "", "{}", 1},
-        {4, 1, "a_hvy", 0.5, "", "{}", 150},
+        {4, 1, "a_hvy", 0.5, "", "{}", 250},
     };
     CharacterLoadout acl;
     acl.primary_id = 1;
     acl.gear_ids["ammo_standard"] = 2;
     const Loadout std_lo = ammo_cat.build_loadout(acl, ainv, Species::human, false);
-    CHECK(std_lo.unified_standard_ammo == max_standard_ammo);
+    // (A stack is carried up to the most any character can carry: a perk's
+    // capacity lets one grow past the standard, and it's never cut back.)
+    CHECK(std_lo.unified_standard_ammo == int(max_standard_ammo * max_ammo_capacity));
     CHECK(std_lo.weapons[primary_slot] && std_lo.weapons[primary_slot]->ammo_class == AmmoClass::standard);
     CHECK(std::abs(std_lo.weapons[primary_slot]->damage - WeaponDef{}.damage * 1.15) < 1e-6);
     // The ammo's effect is the gun's firing it.
@@ -270,7 +272,7 @@ int main() {
     hcl.primary_id = 3;
     hcl.gear_ids["ammo_heavy"] = 4;
     const Loadout hvy_lo = ammo_cat.build_loadout(hcl, ainv, Species::human, false);
-    CHECK(hvy_lo.unified_heavy_ammo == max_heavy_ammo);
+    CHECK(hvy_lo.unified_heavy_ammo == int(max_heavy_ammo * max_ammo_capacity));
     CHECK(hvy_lo.weapons[primary_slot] && hvy_lo.weapons[primary_slot]->ammo_class == AmmoClass::heavy);
 
     // The sidegrade budget: the archetype scores 1; trading damage for rate

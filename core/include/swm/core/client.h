@@ -79,6 +79,7 @@ public:
         bool crouch = false;     // crouch, stand, or roll on the move (see MoveInput::crouch)
         bool use = false;        // get into the vehicle at hand, or out of the one driven (a press)
         bool block = false;      // melee block / timed parry
+        bool aim = false;        // aimed down the sights (zoomed in)
         int weapon = 0;
     };
     void set_input(const Controls& controls);

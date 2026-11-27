@@ -63,7 +63,6 @@ static func _draw(image: Image, ability: String) -> bool:
 		"ent_perform": _note(image)
 		"ent_flourish": _sparkle(image, C, 40.0)
 		"ent_holo_emitter": _projector(image)
-		"id_holo_flair": _sparkles(image)
 		"pl_field_repair": _wrench(image)
 		"pl_evasive": _swerve(image)
 		"pl_emergency_power": _battery(image)
@@ -420,12 +419,6 @@ static func _sparkle(image: Image, center: Vector2, radius: float) -> void:
 		var r := radius
 		return minf(_segment(d, Vector2(0, 0), Vector2(0, r)) - r * 0.06 - maxf(0.0, r * 0.26 - d.y * 0.26),
 				_segment(d, Vector2(0, 0), Vector2(r, 0)) - r * 0.06 - maxf(0.0, r * 0.26 - d.x * 0.26)))
-
-
-static func _sparkles(image: Image) -> void:
-	_sparkle(image, Vector2(40, 54), 34.0)
-	_sparkle(image, Vector2(74, 22), 16.0)
-	_sparkle(image, Vector2(76, 74), 12.0)
 
 
 static func _projector(image: Image) -> void:

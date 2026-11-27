@@ -19,6 +19,15 @@ namespace {
 constexpr double armor_damage_per_xp = 10;
 constexpr int64_t match_kill_profession_xp = 25;
 
+// Whether a blow or a bolt going `way` takes a target facing `yaw` from
+// behind (within 60 degrees of its back: a perk's, Flanker).
+bool from_behind(Vec3 way, float yaw) {
+    const double length = std::hypot(way.x, way.z);
+    if (length < 1e-6) return false;
+    const double facing = (way.x * -std::sin(double(yaw)) + way.z * -std::cos(double(yaw))) / length;
+    return facing > 0.5;
+}
+
 } // namespace
 
 GameServer::GameServer(net::Link& link, const World& world, ServerConfig config, CharacterStore* store)
@@ -223,7 +232,8 @@ ItemInstance GameServer::grant_stacked_item(Client& client, const ItemDef& def, 
     }
     const int add_qty = std::max(1, delta_qty);
     if (def.kind == ItemKind::ammo && def.ammo_class != AmmoClass::none) {
-        const int cap = max_ammo_for(def.ammo_class);
+        // A stack grows to the standard, or more with a perk's capacity (Ammo Webbing).
+        const int cap = int(max_ammo_for(def.ammo_class) * std::clamp(client.stats.ammo_capacity, 1.0, max_ammo_capacity));
         for (ItemInstance& inst : client.items) {
             if (inst.def_id == def.id && inst.quantity < cap) {
                 const int next_qty = std::min(cap, inst.quantity + add_qty);
@@ -633,6 +643,11 @@ double GameServer::health_of(uint32_t entity) const {
     return client ? client->health : 0;
 }
 
+double GameServer::shield_of(uint32_t entity) const {
+    const Client* client = find(entity);
+    return client ? client->shield : 0;
+}
+
 bool GameServer::alive(uint32_t entity) const {
     const Client* client = find(entity);
     return client && client->life == Life::alive;
@@ -687,6 +702,7 @@ net::EntityState GameServer::describe(const Client& c) const {
     out.gender = uint8_t(c.gender);
     out.name = c.name;
     out.appearance = c.appearance;
+    out.quiet = c.stats.radar_quiet > 0;
     if (!c.custom_loadouts.empty()) {
         const Loadout& lo = loadout_of(c);
         if (const WeaponDef* w = weapon_in_slot(lo, c.state.combat.weapon)) {
@@ -904,9 +920,6 @@ void GameServer::handle(const net::Endpoint& from, const net::Datagram& datagram
                 return false;
             };
             CharacterLoadout clean = save_lo->loadout;
-            clean.specializations = config_.professions
-                                        ? clean_specializations(*config_.professions, clean.specializations)
-                                        : std::vector<std::string>{};
             // Stage 12: the Companion Slot keeps a companion from their datapad.
             if (!clean.companion.empty() &&
                 std::none_of(client->spec.companions.begin(), client->spec.companions.end(), [&](const CompanionRecord& r) {
@@ -1496,9 +1509,15 @@ void GameServer::step() {
         }
         client.shield_recharge_timer = std::max(0.0, client.shield_recharge_timer - dt);
         client.shield_disrupt_timer = std::max(0.0, client.shield_disrupt_timer - dt);
-        if (client.shield_recharge_timer <= 0 && client.shield_disrupt_timer <= 0 &&
-            client.shield < client.stats.shield_capacity && client.stats.shield_recharge > 0) {
-            client.shield = std::min(client.stats.shield_capacity, client.shield + client.stats.shield_recharge * dt);
+        const double capacity = client.stats.shield_capacity;
+        const double over = std::max(0.0, client.stats.shield_overcharge);
+        if (client.shield > capacity) {
+            // Overcharged (a perk's: Overcharge): the extra drains away over 6 s.
+            client.shield = std::max(capacity, client.shield - capacity * over / 6.0 * dt);
+        } else if (client.shield_recharge_timer <= 0 && client.shield_disrupt_timer <= 0 && client.shield < capacity &&
+                   client.stats.shield_recharge > 0) {
+            client.shield = std::min(capacity, client.shield + client.stats.shield_recharge * dt);
+            if (client.shield >= capacity && over > 0) client.shield = capacity * (1 + over);
         }
         if (!conquest_) {
             client.ammo_sync_timer += dt;
@@ -1860,7 +1879,7 @@ void GameServer::run_match() {
     for (const Client& client : clients_) {
         if (client.life == Life::alive) {
             units.push_back({client.team, client.state.position, client.entity, client.state.vehicle < 0});
-            // Stage 12: a slotted Smuggler slices command posts as fast as two
+            // Stage 12: a Smuggler slices command posts as fast as two
             // (a second unit that can't carry a flag).
             if (client.state.vehicle < 0 && specialist_level(client, "smuggler") > 0) {
                 units.push_back({client.team, client.state.position, 0, false});
@@ -2150,6 +2169,24 @@ void GameServer::fire(Client& shooter, const Shot& shot, double view_tick) {
         }
         const Vec3 fwd{-std::sin(double(shooter.state.yaw)), 0, -std::cos(double(shooter.state.yaw))};
         const double cos_half = std::cos(weapon.melee_arc * std::numbers::pi / 180.0);
+        const double now = perk_clock();
+        // A riposte (a perk's: after a parry, the next hit crits), spent by the first hit.
+        const auto take_riposte = [&] {
+            const bool ready = shooter.perks.riposte_until >= now;
+            if (ready) shooter.perks.riposte_until = -1e9;
+            return ready;
+        };
+        // Hits in a row on one target: the third staggers `combo_stagger`
+        // times as long (a perk's: Teras Kasi Master), and starts over.
+        const auto combo = [&](uint32_t victim) {
+            PerkState& p = shooter.perks;
+            p.combo_count = p.combo_target == victim && now - p.combo_time <= 1.5 ? p.combo_count + 1 : 1;
+            p.combo_target = victim;
+            p.combo_time = now;
+            if (p.combo_count < 3) return 1.0;
+            p.combo_count = 0;
+            return weapon.combo_stagger;
+        };
         const auto in_arc = [&](Vec3 target_pos, double radius, double& out_dist) {
             const Vec3 delta = target_pos - shooter.state.position;
             if (delta.y < -1.2 || delta.y > 2.0) return false;
@@ -2185,17 +2222,36 @@ void GameServer::fire(Client& shooter, const Shot& shot, double view_tick) {
                         facing_block = true;
                     }
                 }
-                if (facing_block && target.state.parry_window > 0) {
+                // The blocker's weapon: how much a block lets through and
+                // costs (Iron Guard), whether a parry sets up a riposte.
+                const WeaponDef* guard = weapon_in_slot(loadout_of(target), target.state.combat.weapon);
+                const bool parried = facing_block && target.state.parry_window > 0;
+                if (facing_block && !parried && weapon.unblockable) {
+                    facing_block = false;  // Sweeping Blows: through a block (not a parry)
+                }
+                if (parried) {
                     damage(target, weapon.damage * 0.15, DamageType::melee, shooter.entity, 0.0);
-                    shooter.state.stagger = std::max(shooter.state.stagger, 0.6f);
+                    stagger(shooter, 0.6);
+                    if (guard != nullptr && guard->riposte) target.perks.riposte_until = now + 1.5;
                 } else if (facing_block) {
-                    damage(target, weapon.damage * 0.45, DamageType::melee, shooter.entity, 0.0);
-                    target.state.energy = std::max(0.0, target.state.energy - 15.0);
+                    damage(target, weapon.damage * (guard != nullptr ? guard->block_leak : 0.45), DamageType::melee,
+                           shooter.entity, 0.0);
+                    target.state.energy =
+                        std::max(0.0, target.state.energy - 15.0 * (guard != nullptr ? guard->block_cost : 1.0));
                 } else {
-                    damage(target, hit_damage(weapon, weapon.damage, false, random_unit()), DamageType::melee,
-                           shooter.entity, weapon.shield_disrupt, weapon.shield_factor);
-                    target.state.stagger = std::max(target.state.stagger, float(weapon.melee_stagger));
+                    const double share = target.stats.max_health > 0 ? target.health / target.stats.max_health : 1;
+                    const bool riposte = take_riposte();
+                    damage(target,
+                           perk_shot_damage(&shooter, shot.weapon, weapon, weapon.damage, false, share,
+                                            from_behind(target_pos - shooter.state.position, target.state.yaw), riposte),
+                           DamageType::melee, shooter.entity, weapon.shield_disrupt, weapon.shield_factor);
+                    stagger(target, weapon.melee_stagger * combo(target.entity));
+                    if (weapon.knockback > 0 && target.life == Life::alive) {
+                        knock_back(target, shooter.state.position, weapon.knockback);  // Sweeping Blows
+                    }
                     give_hit_effect(weapon, shooter.entity, target);
+                    perk_hit(shooter, shot.weapon,
+                             {target.entity, &target, nullptr, dist, false, target.life != Life::alive});
                 }
                 impacts_.push_back({shooter.entity, uint8_t(shot.weapon), target_pos + Vec3{0, 1.1, 0}, {0, 1, 0}, true});
             }
@@ -2205,9 +2261,27 @@ void GameServer::fire(Client& shooter, const Shot& shot, double view_tick) {
                 if (npc.hidden || npc.actor_kind < 2 || npc.life != Life::alive) continue;
                 double dist = 0;
                 if (in_arc(npc.state.position, npc.hit_radius, dist)) {
-                    damage_npc(npc, hit_damage(weapon, weapon.damage, false, random_unit()), DamageType::melee,
-                               shooter.entity);
+                    const double share = npc.max_health > 0 ? npc.health / npc.max_health : 1;
+                    const bool riposte = take_riposte();
+                    damage_npc(npc,
+                               perk_shot_damage(&shooter, shot.weapon, weapon, weapon.damage, false, share,
+                                                from_behind(npc.state.position - shooter.state.position, npc.state.yaw),
+                                                riposte),
+                               DamageType::melee, shooter.entity);
+                    // (NPCs aren't staggered by a blow, but by a combo's third, and thrown back.)
+                    if (const double c = combo(npc.entity); c > 1 && npc.life == Life::alive) {
+                        npc.state.stagger = std::max(npc.state.stagger, float(weapon.melee_stagger * c));
+                    }
+                    if (weapon.knockback > 0 && npc.life == Life::alive) {
+                        Vec3 away{npc.state.position.x - shooter.state.position.x, 0,
+                                  npc.state.position.z - shooter.state.position.z};
+                        const double len = std::hypot(away.x, away.z);
+                        away = len > 1e-4 ? away * (1 / len) : fwd;
+                        npc.state.velocity += Vec3{away.x, 0.35, away.z} * weapon.knockback;
+                        npc.state.grounded = false;
+                    }
                     give_hit_effect(weapon, shooter.entity, npc);
+                    perk_hit(shooter, shot.weapon, {npc.entity, nullptr, &npc, dist, false, npc.life != Life::alive});
                     impacts_.push_back(
                         {shooter.entity, uint8_t(shot.weapon), npc.state.position + Vec3{0, 1.0, 0}, {0, 1, 0}, true});
                 }
@@ -2262,6 +2336,9 @@ void GameServer::fire(Client& shooter, const Shot& shot, double view_tick) {
         bolt.gravity = weapon.bolt_gravity * shooter.stats.move.gravity;
         bolt.rewind = rewind;
         bolt.shots_left = weapon.trap_shots;
+        bolt.ricochets = weapon.projectile == Projectile::bolt ? weapon.ricochets : 0;
+        bolt.pierces = weapon.projectile == Projectile::bolt ? weapon.pierces : 0;
+        bolt.aimed = shot.aimed;
         bolts_.push_back(bolt);
     }
 }
@@ -2442,8 +2519,8 @@ void GameServer::advance_bolts() {
         for (Client& target : clients_) {
             const bool teammate = allied(bolt.team, target.team) && !config_.friendly_fire;
             if (bounces || harmless || (pvp_blocked && !bounty_pvp_allowed(bolt.owner, target.entity)) ||
-                target.entity == bolt.owner || target.life != Life::alive || teammate ||
-                target.state.vehicle >= 0) {
+                target.entity == bolt.owner || target.entity == bolt.passed || target.life != Life::alive ||
+                teammate || target.state.vehicle >= 0) {
                 continue;  // (a driver: its vehicle takes the hit)
             }
             // Its posture now (not rewound: ASSUMPTION, close enough).
@@ -2460,7 +2537,7 @@ void GameServer::advance_bolts() {
         }
         if (!bounces && !harmless && bolt.team != hostile_npc_team) {
             for (Npc& npc : npcs_) {
-                if (npc.hidden || npc.actor_kind < 2 || npc.life != Life::alive) continue;
+                if (npc.hidden || npc.actor_kind < 2 || npc.life != Life::alive || npc.entity == bolt.passed) continue;
                 const double h = npc.state.crouched ? std::min(npc.hit_height, crouched_hit_height) : npc.hit_height;
                 const auto t = segment_hits_cylinder(from, to, npc.state.position, npc.hit_radius, h);
                 if (t && (!nearest || *t < *nearest)) {
@@ -2577,6 +2654,39 @@ void GameServer::advance_bolts() {
                 }
             }
         }
+        // A proximity fuse (a perk's: rockets burst passing near an enemy),
+        // before whatever it would hit further on.
+        if (def.proximity_fuse > 0 && def.projectile == Projectile::missile && !harmless) {
+            const Vec3 step = to - from;
+            const double step2 = std::max(1e-9, step.dot(step));
+            std::optional<double> burst;
+            const auto check = [&](Vec3 chest) {
+                const double t = std::clamp((chest - from).dot(step) / step2, 0.0, 1.0);
+                const Vec3 closest = from + step * t;
+                if ((chest - closest).length() <= def.proximity_fuse && (!nearest || t < *nearest) && (!burst || t < *burst)) {
+                    burst = t;
+                }
+            };
+            for (const Client& target : clients_) {
+                if (target.entity == bolt.owner || target.life != Life::alive || target.state.vehicle >= 0 ||
+                    (allied(bolt.team, target.team) && !config_.friendly_fire) ||
+                    (pvp_blocked && !bounty_pvp_allowed(bolt.owner, target.entity))) {
+                    continue;
+                }
+                check(position_at(target, double(tick_) - bolt.rewind) + Vec3{0, 1.0, 0});
+            }
+            if (bolt.team != hostile_npc_team) {
+                for (const Npc& npc : npcs_) {
+                    if (!npc.hidden && npc.actor_kind >= 2 && npc.life == Life::alive) {
+                        check(npc.state.position + Vec3{0, npc.hit_height * 0.5, 0});
+                    }
+                }
+            }
+            if (burst) {
+                blasts.push_back({bolt, from + step * *burst, {0, 1, 0}, false});
+                return true;
+            }
+        }
         if (hit_mine != nullptr) {
             const Vec3 at = from + (to - from) * *nearest;
             hit_mine->health -= bolt_damage(def, def.bolt_life - bolt.life);
@@ -2600,16 +2710,43 @@ void GameServer::advance_bolts() {
         }
         if (victim != nullptr) {
             const Vec3 at = from + (to - from) * *nearest;
+            // A block turns a bolt aside from the front, for stamina (a perk's: Deflect).
+            if (victim->state.blocking && def.projectile == Projectile::bolt) {
+                const WeaponDef* guard = weapon_in_slot(loadout_of(*victim), victim->state.combat.weapon);
+                // (Coming at it within 60 degrees of where it faces: its front, as
+                // from_behind sees the bolt's way turned around.)
+                if (guard != nullptr && guard->deflect > 0 && victim->state.energy >= guard->deflect &&
+                    from_behind(bolt.velocity * -1.0, victim->state.yaw)) {
+                    victim->state.energy -= guard->deflect;
+                    impacts_.push_back({bolt.owner, bolt.weapon, at, normal, false});
+                    return true;
+                }
+            }
             // Less after a long flight; double in the head.
             const bool headshot = at.y >= victim_top - head_size;
             const double flown = def.bolt_life - bolt.life;
-            damage(*victim, hit_damage(def, bolt_damage(def, flown), headshot, random_unit()), def.damage_type,
-                   bolt.owner, 0.0, def.shield_factor);
+            Client* shooter = find(bolt.owner);
+            const double share = victim->stats.max_health > 0 ? victim->health / victim->stats.max_health : 1;
+            damage(*victim,
+                   perk_shot_damage(shooter, bolt.weapon, def, bolt_damage(def, flown), headshot, share,
+                                    from_behind(bolt.velocity, victim->state.yaw)),
+                   def.damage_type, bolt.owner, 0.0, def.shield_factor);
             give_hit_effect(def, bolt.owner, *victim);
+            if (shooter != nullptr) {
+                perk_hit(*shooter, bolt.weapon,
+                         {victim->entity, victim, nullptr, (victim->state.position - shooter->state.position).length(),
+                          headshot, victim->life != Life::alive, bolt.aimed});
+            }
             if (def.explosion_damage > 0 && def.explosion_outer > 0) {
                 blasts.push_back({bolt, at, normal, false});
             } else {
                 impacts_.push_back({bolt.owner, bolt.weapon, at, normal, true});
+                if (bolt.pierces > 0) {  // on through the body (a perk's: Piercing Round)
+                    --bolt.pierces;
+                    bolt.passed = victim->entity;
+                    bolt.position = at;
+                    return bolt.life <= 0;
+                }
             }
             return true;
         }
@@ -2617,13 +2754,30 @@ void GameServer::advance_bolts() {
             const Vec3 at = from + (to - from) * *nearest;
             const bool headshot = hit_npc->actor_kind == 3 && at.y >= victim_top - head_size;
             const double flown = def.bolt_life - bolt.life;
-            damage_npc(*hit_npc, hit_damage(def, bolt_damage(def, flown), headshot, random_unit()),
+            Client* shooter = find(bolt.owner);
+            const double share = hit_npc->max_health > 0 ? hit_npc->health / hit_npc->max_health : 1;
+            const bool was_alive = hit_npc->life == Life::alive;
+            damage_npc(*hit_npc,
+                       perk_shot_damage(shooter, bolt.weapon, def, bolt_damage(def, flown), headshot, share,
+                                        from_behind(bolt.velocity, hit_npc->state.yaw)),
                        def.damage_type, bolt.owner);
             give_hit_effect(def, bolt.owner, *hit_npc);
+            if (shooter != nullptr) {
+                perk_hit(*shooter, bolt.weapon,
+                         {hit_npc->entity, nullptr, hit_npc,
+                          (hit_npc->state.position - shooter->state.position).length(), headshot,
+                          was_alive && hit_npc->life != Life::alive, bolt.aimed});
+            }
             if (def.explosion_damage > 0 && def.explosion_outer > 0) {
                 blasts.push_back({bolt, at, normal, false});
             } else {
                 impacts_.push_back({bolt.owner, bolt.weapon, at, normal, true});
+                if (bolt.pierces > 0) {  // on through the body (Piercing Round)
+                    --bolt.pierces;
+                    bolt.passed = hit_npc->entity;
+                    bolt.position = at;
+                    return bolt.life <= 0;
+                }
             }
             return true;
         }
@@ -2661,6 +2815,14 @@ void GameServer::advance_bolts() {
                     blasts.push_back({bolt, at, normal, false});
                 } else {
                     impacts_.push_back({bolt.owner, bolt.weapon, at, normal, false});
+                    if (bolt.ricochets > 0 && world_hit && world_hit->t == *nearest) {
+                        // Off the wall (a perk's: Ricochet), mirrored about it.
+                        --bolt.ricochets;
+                        bolt.passed = 0;
+                        bolt.velocity = bolt.velocity - normal * (2 * bolt.velocity.dot(normal));
+                        bolt.position = at + normal * 0.02;
+                        return bolt.life <= 0;
+                    }
                 }
                 return true;
             }
@@ -2880,8 +3042,10 @@ void GameServer::explode(const Blast& blast, std::vector<Blast>& blasts) {
             continue;
         }
         // Thrown away from it (teammates too: a blast doesn't take sides).
+        const double push_resist =
+            loadout_of(target).triggered.empty() ? target.stats.explosion_push_resist : active_stats(target).explosion_push_resist;
         const double push = explosion_push(def, blast.at, target.state.position) *
-                            (1.0 - std::clamp(target.stats.explosion_push_resist, 0.0, max_mitigation));
+                            (1.0 - std::clamp(push_resist, 0.0, max_mitigation));
         const bool hunted = pvp_blocked && bounty_pvp_allowed(bolt.owner, target.entity);  // Stage 12
         if (push > 0 && !(pvp_blocked && !hunted && target.entity != bolt.owner)) {
             Vec3 away = target.state.position + Vec3{0, 1.0, 0} - blast.at;
@@ -2893,11 +3057,18 @@ void GameServer::explode(const Blast& blast, std::vector<Blast>& blasts) {
         if (teammate || (pvp_blocked && !hunted && target.entity != bolt.owner)) {
             continue;
         }
-        const double amount = explosion_damage(def, blast.at, target_pos);
+        // Its own blast (a perk's: Danger Close, less).
+        const double amount = explosion_damage(def, blast.at, target_pos) *
+                              (target.entity == bolt.owner && !blast.droid ? target.stats.self_blast : 1.0);
         if (amount > 0) {
             const DamageType blast_type = def.damage_type == DamageType::electro ? DamageType::electro : DamageType::explosive;
             damage(target, amount, blast_type, bolt.owner, 0.0, def.shield_factor);
             give_hit_effect(def, bolt.owner, target);
+            if (Client* shooter = find(bolt.owner); shooter != nullptr && shooter != &target) {
+                perk_hit(*shooter, bolt.weapon,
+                         {target.entity, &target, nullptr, (target.state.position - shooter->state.position).length(),
+                          false, target.life != Life::alive});
+            }
         }
     }
     if (bolt.team != hostile_npc_team) {
@@ -2905,8 +3076,14 @@ void GameServer::explode(const Blast& blast, std::vector<Blast>& blasts) {
             if (npc.hidden || npc.actor_kind < 2 || npc.life != Life::alive || sheltered(npc.state.position)) continue;
             const double amount = explosion_damage(def, blast.at, npc.state.position);
             if (amount > 0) {
+                const bool was_alive = npc.life == Life::alive;
                 damage_npc(npc, amount, DamageType::explosive, bolt.owner);
                 give_hit_effect(def, bolt.owner, npc);
+                if (Client* shooter = find(bolt.owner)) {
+                    perk_hit(*shooter, bolt.weapon,
+                             {npc.entity, nullptr, &npc, (npc.state.position - shooter->state.position).length(), false,
+                              was_alive && npc.life != Life::alive});
+                }
             }
         }
     }
@@ -3017,16 +3194,31 @@ void GameServer::damage_target(RangeTarget& target, double raw, DamageType, uint
 // active Deflector Shield before reaching health.
 void GameServer::damage(Client& victim, double raw, DamageType type, uint32_t attacker, double shield_disrupt,
                         double shield_factor) {
-    const double amount = mitigated_damage(victim.stats, raw, type);
-    if (victim.life != Life::alive || amount <= 0) {
+    if (victim.life != Life::alive) {
         return;
+    }
+    const bool perks = !loadout_of(victim).triggered.empty();
+    double amount = mitigated_damage(perks ? active_stats(victim) : victim.stats, raw, type);
+    if (amount <= 0) {
+        return;
+    }
+    if (perks) {
+        amount = perk_incoming(victim, amount, type);
     }
     if (victim.switching_to >= 0) {
         victim.switching_to = -1;
         victim.switch_remaining = 0.0;
         notify(victim.entity, "Loadout switch interrupted!");
     }
+    const double shield_before = victim.shield;
     const ShieldHitResult hit = apply_shield_damage(victim.shield, amount, type, shield_disrupt, shield_factor);
+    if (perks && shield_before > 0 && victim.shield <= 0) {
+        perk_shield_broken(victim);
+    }
+    if (type == DamageType::explosive && victim.stats.blast_shield > 0 && victim.stats.shield_capacity > 0) {
+        // A share of a blast refills the shield (a perk's: Reactive Plating).
+        victim.shield = std::min(victim.stats.shield_capacity, victim.shield + amount * victim.stats.blast_shield);
+    }
     victim.shield_recharge_timer = std::max(victim.shield_recharge_timer, victim.stats.shield_delay);
     if (hit.disrupt_seconds > 0) {
         victim.shield_disrupt_timer = std::max(victim.shield_disrupt_timer, hit.disrupt_seconds);
@@ -3043,7 +3235,7 @@ void GameServer::damage(Client& victim, double raw, DamageType type, uint32_t at
             }
         }
     }
-    if (victim.health <= 0) {
+    if (victim.health <= 0 && !(perks && perk_lethal(victim))) {
         kill(victim, attacker);
     }
 }
@@ -3061,6 +3253,7 @@ void GameServer::kill(Client& victim, uint32_t attacker, bool is_flyer) {
     victim.health = 0;
     victim.shield = 0;
     victim.life = Life::dead;
+    perk_life_ended(victim);
     victim.respawn_tick = tick_ + uint32_t(std::lround(config_.respawn_delay * config_.tick_rate));
     ++victim.deaths;
     events_.push_back({net::CombatEvent::kill, attacker, victim.entity, 0});

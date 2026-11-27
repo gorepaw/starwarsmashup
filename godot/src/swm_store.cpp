@@ -62,11 +62,6 @@ godot::Dictionary to_dict(const core::CharacterLoadout& lo) {
     }
     out["gear_ids"] = gear;
     out["appearance_ids"] = app;
-    godot::Array specializations;
-    for (const std::string& id : lo.specializations) {
-        specializations.push_back(godot::String::utf8(id.c_str()));
-    }
-    out["specializations"] = specializations;
     out["companion"] = godot::String::utf8(lo.companion.c_str());
     return out;
 }
@@ -151,6 +146,7 @@ godot::String perk_line(const core::WeaponModifier& m) {
     case core::WeaponModifier::swap: what = less ? "faster weapon swap" : "slower weapon swap"; break;
     case core::WeaponModifier::recoil: what = less ? "less recoil" : "more recoil"; break;
     case core::WeaponModifier::aim: what = less ? "slower aiming down sights" : "faster aiming down sights"; break;
+    case core::WeaponModifier::reach: what = less ? "shorter reach" : "longer reach"; break;
     }
     char text[96];
     std::snprintf(text, sizeof text, "%.0f%% %s", pct, what);
@@ -420,7 +416,6 @@ godot::Array SwmCharacterStore::get_professions() const {
         entry["category"] = godot::String::utf8(std::string(core::profession_category_name(def.category)).c_str());
         entry["wave"] = godot::String::utf8(def.wave.c_str());
         entry["available"] = def.available;
-        entry["slotted"] = def.slotted;
         entry["armor_class"] = godot::String::utf8(def.armor_class.c_str());
         entry["earns"] = godot::String::utf8(def.earns.c_str());
         entry["rank_every"] = int64_t(def.rank_every);
@@ -436,6 +431,24 @@ godot::Array SwmCharacterStore::get_professions() const {
             milestones.push_back(ms);
         }
         entry["milestones"] = milestones;
+        // A weapon or armor profession's perks (docs/PERKS.md): two at each level.
+        godot::Array perks;
+        for (const core::ProfessionPerkDef& p : def.perks) {
+            godot::Dictionary pk;
+            pk["id"] = godot::String::utf8(p.id.c_str());
+            pk["level"] = int64_t(p.level);
+            pk["choice"] = godot::String::utf8(std::string(1, p.choice).c_str());
+            pk["name"] = godot::String::utf8(p.name.c_str());
+            pk["description"] = godot::String::utf8(p.description.c_str());
+            pk["needs"] = godot::String::utf8(p.needs.c_str());  // empty: it works
+            // What sets it off (docs/PERKS.md, Triggers); empty: always on.
+            pk["trigger"] = godot::String::utf8(
+                p.trigger ? std::string(core::perk_trigger_name(p.trigger->trigger)).c_str() : "");
+            pk["perks"] = perk_lines(p.perk);
+            pk["cost"] = int64_t(core::milestone_cost(p.level));
+            perks.push_back(pk);
+        }
+        entry["perks"] = perks;
         out.push_back(entry);
     }
     return out;
@@ -624,12 +637,6 @@ godot::Error SwmCharacterStore::save_loadout(int64_t char_id, int64_t slot_index
                 lo.appearance_ids[to_std(keys[i])] = uint64_t(int64_t(app[keys[i]]));
             }
         }
-        if (loadout.has("specializations")) {
-            const godot::Array ids = loadout["specializations"];
-            for (int i = 0; i < ids.size(); ++i) {
-                lo.specializations.push_back(to_std(ids[i]));
-            }
-        }
         if (loadout.has("companion")) {
             lo.companion = to_std(loadout["companion"]);
         }
@@ -803,6 +810,7 @@ godot::String SwmCharacterStore::worn_models(const godot::String& species, const
         core::ItemInstance inst;
         inst.id = d.has("id") ? uint64_t(int64_t(d["id"])) : 0;
         inst.def_id = d.has("def_id") ? to_std(d["def_id"]) : "";
+        if (d.has("color_json")) inst.color_json = to_std(d["color_json"]);  // (its paint)
         inv.push_back(std::move(inst));
     }
     const core::Species sp = core::species_from_name(to_std(species)).value_or(core::Species::human);
@@ -810,7 +818,6 @@ godot::String SwmCharacterStore::worn_models(const godot::String& species, const
     return godot::String::utf8(core::resolve_worn_models(catalog_, cl, inv, sp, g).c_str());
 }
 
-        if (d.has("color_json")) inst.color_json = to_std(d["color_json"]);  // (its paint)
 godot::Dictionary SwmCharacterStore::buy_item(int64_t char_id, const godot::String& def_id,
                                               bool use_faction_points) {
     last_error_.clear();
@@ -957,7 +964,7 @@ void SwmCharacterStore::_bind_methods() {
     ClassDB::bind_method(D_METHOD("load_professions", "path"), &SwmCharacterStore::load_professions);
     ClassDB::bind_method(D_METHOD("get_professions"), &SwmCharacterStore::get_professions);
     ClassDB::bind_method(D_METHOD("profession_level", "xp"), &SwmCharacterStore::profession_level);
-    ClassDB::bind_method(D_METHOD("get_specialization_slots"), &SwmCharacterStore::get_specialization_slots);
+    ClassDB::bind_method(D_METHOD("get_perk_cap"), &SwmCharacterStore::get_perk_cap);
     ClassDB::bind_method(D_METHOD("load_crafting", "resources_path", "schematics_path"),
                          &SwmCharacterStore::load_crafting);
     ClassDB::bind_method(D_METHOD("get_resources"), &SwmCharacterStore::get_resources);

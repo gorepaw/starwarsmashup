@@ -8,9 +8,9 @@ Stage 7 brings Star Wars Galaxies' profession breadth into a Battlefront-paced s
 
 - **1–100 per profession:** Every profession levels from **1 to 100**, replacing SWG's 4×4 skill-box grid and ~30 fragmented XP pools.
 - **Direct XP:** Each profession earns XP by doing its activity (fighting with that weapon, mitigating hits in that armor, harvesting, filling work orders, healing, scouting, performing, commanding companions) plus mission, contract, and match XP routed to the professions active in your loadout.
-- **Horizontal milestones:** Major unlocks sit at **1 / 25 / 50 / 75 / 100** (gear certifications, gadgets, active abilities, masterwork schematics). Intermediate levels (every 5–10) grant small handling, efficiency, yield, or experimentation perks rather than raw DPS or HP bloat.
+- **Perks and milestones ([Perks](PERKS.md)):** Weapon and armor professions offer two perks at each of **5 / 25 / 45 / 65 / 85**, of which a character knows one: sidegrades in handling, stamina and resistances, never raw damage or health. Every other profession teaches milestones at **1 / 25 / 50 / 75 / 100** in order (gadgets, abilities, schematics); its level-1 milestone is its licence, without which you can't do what it's about (gather, craft, heal, tame, perform) or earn its experience.
 - **Gear counts in matches:** There is one queue, and gear (its level and crafted quality) counts in it, within the flat power curve in [Design](DESIGN.md): maxed level-100 gear is about twice a fresh character's. Bots' gear balances the sides.
-- **Uncapped leveling + Active Specialization Slots:** One character can level every profession to 100. Combat balance is enforced per loadout: each of a character's **3 loadouts** holds weapons, armor, the universal **Deflector Shield**, a fixed number of **Active Specialization Slots** (active combat/utility profession perks), and **1 Companion Slot**. Non-combat professions (gathering, crafting, entertaining, trading) apply whenever you perform those activities without unslotting combat perks.
+- **Uncapped leveling, capped learning:** One character can level every profession to 100, but knows at most **10** perks and milestones at once, across every profession (gathering, crafting and social ones included). Learning costs credits the first time; giving one up at its trainer is free, and so is learning it again. What's known applies to every loadout: there are no slots. Each loadout holds weapons, armor, the universal **Deflector Shield** and **1 Companion Slot**.
 - **Universal Deflector Shield slot:** Every character has a **Personal Shield Generator (PSG)** equipment slot regardless of armor class. Shields provide a recharging buffer absorbed before health, with sidegrade profiles (capacity, recharge rate, recharge delay, resistance) and built-in counterplay: `electro` drains/overloads shields, and `melee` pierces or disrupts them.
 
 ---
@@ -36,7 +36,7 @@ SWG's resource-stat economy and experimentation stay intact, while the repetitiv
 
 ---
 
-## Complete Profession Roster (31 Professions, 1–100)
+## Complete Profession Roster (30 Professions, 1–100)
 
 Professions are grouped into three implementation waves. SWG's six starter professions (*Artisan, Marksman, Brawler, Scout, Medic, Entertainer*) dissolve into these 1–100 lines rather than acting as throwaway prerequisite gates.
 
@@ -71,7 +71,7 @@ Armor proficiency is completely decoupled from weapon and advanced professions. 
 - **Chef:** Rations, meals, and drinks providing clean, readable timed buffs (stamina regen, heat dissipation, crafting/gathering focus) without SWG's 50-item stacking clutter.
 - **Architect:** Field camps, portable cover, and interior furniture/decor now; full player housing, shops, factories, and harvesters in Stage 10+.
 
-### Wave 7B — Specialist Combat, Support, Social & Economy (10 Professions)
+### Wave 7B — Specialist Combat, Support, Social & Economy (9 Professions)
 
 *Live since Stage 12: each ability, its milestone and its numbers are in [`game/professions/specialists.ini`](../game/professions/specialists.ini); what's done and what's still open is in the [Roadmap](ROADMAP.md#stage-12-remaining-professions-waves-7b--7c--creature-mounts).*
 
@@ -82,7 +82,6 @@ Armor proficiency is completely decoupled from weapon and advanced professions. 
 - **Combat Medic:** Frontline ranged healing darts/grenades paired with **`DamageType::bio`** area-denial grenades and payloads.
 - **Ranger:** Wilderness tracking, short-duration stealth cloak (broken on firing), motion sensors, trip-traps, and deployable **forward camps** for field healing and loadout swaps.
 - **Entertainer:** Unifies SWG *Musician* and *Dancer*—cantina and camp performances grant quick **15–30 s Inspiration/focus buffs** (not 10-minute AFK sitting), synced band/dance emotes, and an optional portable morale holo-emitter.
-- **Image Designer:** Live character re-customization (hair, markings, blend-shape sliders, species styling) plus custom armor/clothing trim and holographic flair.
 - **Merchant:** Player vendors, shop slots, bazaar listing limits, trade analytics, market fee reductions, and faction supply contracts.
 - **Pilot:** Ground vehicle handling and field repair (Stage 6) plus starfighter maneuvers and reactor tuning in Space Battles (Stage 8).
 
@@ -108,7 +107,8 @@ Armor proficiency is completely decoupled from weapon and advanced professions. 
 | Bounty Hunter, Smuggler, Squad Leader, Ranger | **Bounty Hunter**, **Smuggler**, **Squad Leader**, **Ranger** |
 | Doctor, Combat Medic | **Doctor**, **Combat Medic** |
 | Musician, Dancer | **Entertainer** (unified) |
-| Image Designer, Merchant | **Image Designer**, **Merchant** |
+| Merchant | **Merchant** |
+| Image Designer | Not a profession: an NPC service one day |
 | Bio-Engineer, Creature Handler, Droid Engineer | **Bio-Engineer**, **Creature Handler**, **Droid Engineer** + **Droid Operations** |
 | Pilot (JTL) | **Pilot** (Stages 6 & 8) |
 | Politician | Deferred to Stage 10+ (Player Cities) |
@@ -163,5 +163,5 @@ Combat and support droids run directly on the existing `core::Bot` + `core::NavG
 - **Data-driven definitions (`core/`):** Profession trees, 1–100 milestone tables, schematics, resource classes, and companion templates live in data files and simulate in C++ `core/` (see [Architecture](ARCHITECTURE.md#persistence)).
 - **Persistence (`core::CharacterStore`):** Character profession levels/XP, Material Vault contents, Recipe Presets, and stabled pets/droids persist through the persistence interface (SQLite now, Postgres later). Since Stage 12, datapads (companions), DNA samples and the bounty opt-in are per-character extras, and the bazaar is world extras (`get_extra(0, ...)`).
 - **Specialist rules (`core/specialist.h`, Stage 12):** abilities and their effects, timed buffs and debuffs as loadout gear (so clients predict with them), companions, taming, eggs, droid modules, contracts, bazaar fees and price trends, and slicing. A `core::Loadout` carries its abilities, specialist levels and Companion Slot companion into matches.
-- **Loadouts (`core/loadout.h`):** Extends Stage 4 loadouts with the universal **Deflector Shield** slot, **Active Specialization Slots**, and **1 Companion Slot**.
+- **Loadouts (`core/loadout.h`):** Extends Stage 4 loadouts with the universal **Deflector Shield** slot and **1 Companion Slot**. What a character has learned (`ProfessionProgress`: milestones, perks, and what's been paid for) applies to all of them (`apply_profession_perks`).
 - **Item compatibility:** Crafted weapons, armor, shields, and enhancement modules remain standard Stage 4 item instances with rolled/experimented stat values inside their sidegrade band.

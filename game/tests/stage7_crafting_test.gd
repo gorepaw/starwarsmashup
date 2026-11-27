@@ -1,7 +1,8 @@
 # Headless checks for Stage 7's gathering, Material Vault, Multi-Scanner, and Unified Workbench:
 # 1. Crafting data loads through SwmCharacterStore (16 resources, 21 schematics, 5 work orders),
 #    scan_terrain / auto_fill_schematic / preview_craft work, and WorkbenchScreen renders.
-# 2. Live solo Mos Eisley session: workbenches arrive, Multi-Scanner extracts into Material Vault,
+# 2. Live solo Mos Eisley session: workbenches arrive, a trainer teaches Surveying's licence,
+#    the Multi-Scanner extracts into the Material Vault,
 #    Recipe Presets save & sync, and Unified Workbench opens with synced materials & presets.
 extends SceneTree
 
@@ -130,6 +131,20 @@ func _process(delta: float) -> bool:
 					printerr("FAIL: recipe preset did not sync")
 					_cleanup(1)
 				return false
+			# Extracting takes Surveying's licence (docs/PERKS.md): its first milestone, free.
+			client.service(0, "surveying", 1, 0)
+			_next("licensed")
+		"licensed":
+			var client: Object = _session.get_client()
+			var trained := 0
+			for p: Dictionary in client.get_professions():
+				if str(p["id"]) == "surveying":
+					trained = int(p.get("trained", 0))
+			if trained < 1:
+				if _phase_sec > 5.0:
+					printerr("FAIL: the Survey Trainer didn't teach the licence")
+					_cleanup(1)
+				return false
 			var hub_ui: Node = _session.get("_hub_ui")
 			assert(hub_ui.toggle_workbench(client), "workbench did not open")
 			var wb: Object = hub_ui.get("_workbench_screen")
@@ -150,7 +165,7 @@ func _next(phase: String) -> void:
 func _write_desert_hub() -> void:
 	_desert_hub = ProjectSettings.globalize_path("res://hubs/stage7_desert_temp.ini")
 	var f := FileAccess.open(_desert_hub, FileAccess.WRITE)
-	f.store_string("[hub]\nName = Dune Camp\nSpawn = 3500 -5200\nSides = Rebellion, Empire\nBattlefield = ../battlefields/coruscant.ini\nResources = ../crafting/resources.ini\nSchematics = ../crafting/schematics.ini\n\n[recruiter]\nName = Desert Terminal\nPosition = 3500 -5300\nRadius = 4\n\n[workbench]\nName = Desert Workbench\nPosition = 3500 -5200\nRadius = 4\n")
+	f.store_string("[hub]\nName = Dune Camp\nSpawn = 3500 -5200\nSides = Rebellion, Empire\nBattlefield = ../battlefields/coruscant.ini\nResources = ../crafting/resources.ini\nSchematics = ../crafting/schematics.ini\n\n[recruiter]\nName = Desert Terminal\nPosition = 3500 -5300\nRadius = 4\n\n[workbench]\nName = Desert Workbench\nPosition = 3500 -5200\nRadius = 4\n\n[service]\nName = Survey Trainer\nType = trainer\nProfession = surveying\nPosition = 3500 -5200\nRadius = 6\n")
 	f.close()
 
 

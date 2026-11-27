@@ -50,7 +50,7 @@ func _initialize() -> void:
 		"bazaar": [{"id": 8, "seller": "Gubb", "shop": "Gubb's Shop", "def_id": "wp_rifle_e11", "quality": 0.5,
 				"custom_name": "", "price": 900}],
 		"my_listings": [], "prices": [{"def_id": "wp_rifle_e11", "count": 2, "low": 800, "high": 1000, "average": 900, "last": 1000}],
-		"performing": true, "bounty_flag": false, "design_from": "Ysanna", "design_appearance": "{}",
+		"performing": true, "bounty_flag": false,
 		"channel": "", "channel_remaining": 0.0,
 	}
 	var bar := AbilityBar.new(art)
@@ -69,13 +69,10 @@ func _initialize() -> void:
 		pad.book = book
 		pad.items = items
 		pad.catalog = catalog
-		pad.levels = {"creature_handler": 60, "droid_engineer": 80, "smuggler": 100, "image_designer": 80, "bio_engineer": 90}
+		pad.levels = {"creature_handler": 60, "droid_engineer": 80, "smuggler": 100, "bio_engineer": 90}
 		pad.terminal = {"index": 0, "kind": "bounty", "name": "Bounty Mission Terminal"}
-		pad.own = {"entity": 1, "name": "Me", "appearance": "{\"height\":1.0,\"hair\":\"braids\"}"}
-		pad.designee = {"entity": 2, "name": "You", "appearance": "{\"height\":0.9}"}
 		layer.add_child(pad)
 		pad.open_datapad(tab)
-		pad._on_click("design_them", Vector2.ZERO)
 		_screens.append(pad)
 	var bazaar := BazaarScreen.new(art)
 	bazaar.spec = spec

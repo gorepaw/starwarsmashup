@@ -208,13 +208,10 @@ struct ProfessionStanding {
 ProfessionStanding profession_standing(const ProfessionBook& professions, std::span<const ProfessionProgress> progress,
                                        std::string_view id);
 
-// The abilities a loadout brings: those of its slotted professions (a
-// slotted profession's kit works only from an Active Specialization Slot),
-// and of the unslotted ones (Entertainer, Merchant, the crafters'...) always,
-// each at the character's level and with its milestone trained. `in_match`
-// leaves out world-only abilities, else match-only ones.
+// The abilities a character brings to every loadout: each profession's at
+// the character's level and with its milestone learned. `in_match` leaves out
+// world-only abilities, else match-only ones.
 std::vector<std::string> unlocked_abilities(const SpecialistBook& book, const ProfessionBook& professions,
-                                            std::span<const std::string> specializations,
                                             std::span<const ProfessionProgress> progress, bool in_match);
 
 // ---------------------------------------------------------------------------
@@ -439,15 +436,6 @@ inline constexpr double band_radius = 10;
 inline constexpr double performance_pulse = 5;  // seconds between buffs
 TimedEffect inspiration(int entertainer_level, int band_size, uint32_t source);
 
-// Image Designer: a design offered to someone, waiting for their yes.
-struct DesignOffer {
-    uint32_t from = 0;  // the designer's entity
-    std::string designer;
-    std::string appearance;  // the character's appearance JSON
-    double expires = 0;
-};
-// Whether an appearance a designer sends is sound: a JSON object, short.
-bool valid_appearance(std::string_view json);
 
 // ---------------------------------------------------------------------------
 // Fielded things the server keeps (server_specialists.cpp)
@@ -524,7 +512,6 @@ struct SpecialistState {
     bool performing = false;
     double perform_pulse = 0;
     bool bounty_flag = false;  // opted in to being hunted
-    std::optional<DesignOffer> design_offer;
     // A channel under way (taming, sampling): its ability, target, time left, where it began.
     std::string channel;
     uint32_t channel_target = 0;

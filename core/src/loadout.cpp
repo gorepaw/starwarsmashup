@@ -12,7 +12,7 @@ namespace swm::core {
 
 namespace {
 
-constexpr std::array<std::pair<std::string_view, Stat>, 25> stat_names{{
+constexpr std::array<std::pair<std::string_view, Stat>, 37> stat_names{{
     {"max_health", Stat::max_health},
     {"run_speed", Stat::run_speed},
     {"strafe_speed", Stat::strafe_speed},
@@ -38,6 +38,18 @@ constexpr std::array<std::pair<std::string_view, Stat>, 25> stat_names{{
     {"healing_received", Stat::healing_received},
     {"ability_cooldown", Stat::ability_cooldown},
     {"effect_resistance", Stat::effect_resistance},
+    {"roll_cost", Stat::roll_cost},
+    {"ammo_capacity", Stat::ammo_capacity},
+    {"self_blast", Stat::self_blast},
+    {"stagger_resist", Stat::stagger_resist},
+    {"slow_resist", Stat::slow_resist},
+    {"blast_shield", Stat::blast_shield},
+    {"shield_overcharge", Stat::shield_overcharge},
+    {"notice", Stat::notice},
+    {"slide_time", Stat::slide_time},
+    {"roll_chain", Stat::roll_chain},
+    {"charge", Stat::charge},
+    {"radar_quiet", Stat::radar_quiet},
 }};
 
 constexpr std::array<std::string_view, damage_type_count> damage_type_names{"ballistic", "laser",     "electro",
@@ -65,6 +77,18 @@ double& stat_value(CharacterStats& stats, Stat stat, double& jump_height) {
     case Stat::healing_received: return stats.healing_received;
     case Stat::ability_cooldown: return stats.ability_cooldown;
     case Stat::effect_resistance: return stats.effect_resistance;
+    case Stat::roll_cost: return m.energy_cost_roll;
+    case Stat::ammo_capacity: return stats.ammo_capacity;
+    case Stat::self_blast: return stats.self_blast;
+    case Stat::stagger_resist: return stats.stagger_resist;
+    case Stat::slow_resist: return stats.slow_resist;
+    case Stat::blast_shield: return stats.blast_shield;
+    case Stat::shield_overcharge: return stats.shield_overcharge;
+    case Stat::notice: return stats.notice;
+    case Stat::slide_time: return m.slide_time;
+    case Stat::roll_chain: return m.roll_chain;
+    case Stat::charge: return stats.charge;
+    case Stat::radar_quiet: return stats.radar_quiet;
     default: return stats.mitigation_by_type[size_t(stat) - size_t(Stat::mitigation_ballistic)];
     }
 }
@@ -105,6 +129,168 @@ std::vector<StatModifier> read_modifiers(const Ini::Section& section, const std:
 }
 
 } // namespace
+
+void apply_weapon_modifier(WeaponDef& w, const WeaponModifier& m) {
+    switch (m.field) {
+    case WeaponModifier::spread:
+        w.yaw_spread *= m.multiply;
+        w.pitch_spread *= m.multiply;
+        w.spread_per_shot *= m.multiply;
+        break;
+    case WeaponModifier::heat:
+        w.heat_per_shot *= m.multiply;
+        break;
+    case WeaponModifier::reload:
+        w.reload_time *= m.multiply;
+        break;
+    case WeaponModifier::recovery:
+        w.spread_recover_rate *= m.multiply;
+        break;
+    case WeaponModifier::range:
+        w.damage_transition_delay *= m.multiply;
+        break;
+    case WeaponModifier::speed:
+        w.shot_delay *= m.multiply;
+        break;
+    case WeaponModifier::lunge:
+        w.melee_lunge *= m.multiply;
+        break;
+    case WeaponModifier::disrupt:
+        w.shield_disrupt *= m.multiply;
+        break;
+    case WeaponModifier::velocity:  // faster bolts, as far
+        if (w.projectile == Projectile::bolt || w.projectile == Projectile::missile) {
+            w.bolt_speed *= m.multiply;
+            w.bolt_life /= std::max(0.1, m.multiply);
+            w.damage_transition_delay /= std::max(0.1, m.multiply);
+        }
+        break;
+    case WeaponModifier::headshot:
+        w.headshot_multiplier *= m.multiply;
+        break;
+    case WeaponModifier::crit:  // the chance
+        w.crit_chance = std::clamp(w.crit_chance * m.multiply, 0.0, 1.0);
+        break;
+    case WeaponModifier::vehicle:
+        w.vehicle_factor *= m.multiply;
+        w.explosion_vehicle_factor *= m.multiply;
+        break;
+    case WeaponModifier::shield:
+        w.shield_factor *= m.multiply;
+        break;
+    case WeaponModifier::swap:
+        w.swap_time *= m.multiply;
+        break;
+    case WeaponModifier::recoil:
+        w.recoil *= m.multiply;
+        break;
+    case WeaponModifier::aim:
+        w.aim_speed *= m.multiply;
+        break;
+    case WeaponModifier::reach:
+        w.melee_range *= m.multiply;
+        break;
+    case WeaponModifier::bloom:
+        w.spread_per_shot *= m.multiply;
+        break;
+    case WeaponModifier::body:
+        w.body_multiplier *= m.multiply;
+        break;
+    case WeaponModifier::blast:  // its radii, damage and push alike
+        w.explosion_inner *= m.multiply;
+        w.explosion_outer *= m.multiply;
+        w.push_inner *= m.multiply;
+        w.push_outer *= m.multiply;
+        break;
+    case WeaponModifier::blast_damage:
+        w.explosion_damage *= m.multiply;
+        break;
+    case WeaponModifier::effect:
+        if (w.hit_effect) w.hit_effect->duration *= m.multiply;
+        break;
+    case WeaponModifier::carry:  // its movement penalties (only those) times this
+        for (StatModifier& s : w.modifiers) {
+            const bool movement = s.stat == Stat::run_speed || s.stat == Stat::strafe_speed ||
+                                  s.stat == Stat::sprint_factor || s.stat == Stat::sprint_strafe ||
+                                  s.stat == Stat::jump_height || s.stat == Stat::acceleration;
+            if (!movement) continue;
+            if (s.multiply < 1) s.multiply = 1 - (1 - s.multiply) * m.multiply;
+            if (s.add < 0) s.add *= m.multiply;
+        }
+        break;
+    case WeaponModifier::holster_cool:
+        w.holster_cooling *= m.multiply;
+        break;
+    case WeaponModifier::flank:
+        w.flank_multiplier *= m.multiply;
+        break;
+    case WeaponModifier::guard:
+        w.block_leak = std::clamp(w.block_leak * m.multiply, 0.0, 1.0);
+        break;
+    case WeaponModifier::block:
+        w.block_cost *= m.multiply;
+        break;
+    case WeaponModifier::parry:
+        w.parry_window *= m.multiply;
+        break;
+    case WeaponModifier::combo:
+        w.combo_stagger *= m.multiply;
+        break;
+    case WeaponModifier::ricochet:
+        w.ricochets = std::clamp(w.ricochets + int(std::lround(m.multiply)), 0, 8);
+        break;
+    case WeaponModifier::pierce:
+        w.pierces = std::clamp(w.pierces + int(std::lround(m.multiply)), 0, 8);
+        break;
+    case WeaponModifier::proximity:
+        w.proximity_fuse = std::max(0.0, w.proximity_fuse + m.multiply);
+        break;
+    case WeaponModifier::deflect:
+        w.deflect = std::max(0.0, w.deflect + m.multiply);
+        break;
+    case WeaponModifier::knockback:
+        w.knockback = std::max(0.0, w.knockback + m.multiply);
+        break;
+    case WeaponModifier::sprint_reload:
+        w.reload_sprinting = w.reload_sprinting || m.multiply > 0;
+        break;
+    case WeaponModifier::roll_fire:
+        w.fire_rolling = w.fire_rolling || m.multiply > 0;
+        break;
+    case WeaponModifier::holster_reload:
+        w.holster_reload = w.holster_reload || m.multiply > 0;
+        break;
+    case WeaponModifier::riposte:
+        w.riposte = w.riposte || m.multiply > 0;
+        break;
+    case WeaponModifier::unblockable:
+        w.unblockable = w.unblockable || m.multiply > 0;
+        break;
+    }
+}
+
+namespace {
+
+constexpr std::array<std::string_view, 15> perk_trigger_names{
+    "crouched", "crouched_still", "paused", "rolling", "roll", "overheat", "kill", "headshot_kill",
+    "hit", "target_low_health", "shield_broken", "unhit", "low_health", "lethal", "hit_by"};
+
+} // namespace
+
+std::optional<PerkTrigger> perk_trigger_from_name(std::string_view name) {
+    for (size_t i = 0; i < perk_trigger_names.size(); ++i) {
+        if (perk_trigger_names[i] == name) return PerkTrigger(i);
+    }
+    return std::nullopt;
+}
+
+std::string_view perk_trigger_name(PerkTrigger trigger) {
+    return perk_trigger_names[size_t(trigger)];
+}
+
+bool is_stance(PerkTrigger trigger) {
+    return trigger <= PerkTrigger::rolling;
+}
 
 StatModifier parse_stat_modifier(const std::string& text, const std::string& where) {
     return parse_modifier(text, where);
@@ -155,6 +341,46 @@ const WeaponDef* weapon_in_slot(const Loadout& loadout, int slot) {
     return &*loadout.weapons[size_t(slot)];
 }
 
+namespace {
+
+// Each statistic plus all additions, times all multipliers; then clamped.
+CharacterStats apply_all(const CharacterStats& base, std::span<const StatModifier* const> modifiers) {
+    CharacterStats stats = base;
+    MoveParams& move = stats.move;
+    double jump_height = move.jump_speed * move.jump_speed / (2 * move.gravity);
+    for (const auto& [name, stat] : stat_names) {
+        double add = 0, multiply = 1;
+        for (const StatModifier* m : modifiers) {
+            if (m->stat == stat) {
+                add += m->add;
+                multiply *= m->multiply;
+            }
+        }
+        if (add == 0 && multiply == 1) continue;
+        double& value = stat_value(stats, stat, jump_height);
+        value = std::max(0.0, (value + add) * multiply);
+    }
+    move.jump_speed = std::sqrt(2 * move.gravity * jump_height);
+    stats.max_health = std::max(1.0, stats.max_health);
+    stats.shield_delay = std::max(0.5, stats.shield_delay);
+    stats.explosion_push_resist = std::clamp(stats.explosion_push_resist, 0.0, max_mitigation);
+    stats.effect_resistance = std::clamp(stats.effect_resistance, 0.0, max_mitigation);
+    stats.stagger_resist = std::clamp(stats.stagger_resist, 0.0, 1.0);
+    stats.slow_resist = std::clamp(stats.slow_resist, 0.0, 1.0);
+    stats.ammo_capacity = std::clamp(stats.ammo_capacity, 0.1, max_ammo_capacity);
+    stats.ability_cooldown = std::max(0.1, stats.ability_cooldown);  // (never instant)
+    return stats;
+}
+
+} // namespace
+
+CharacterStats with_modifiers(const CharacterStats& stats, std::span<const StatModifier> modifiers) {
+    std::vector<const StatModifier*> all;
+    all.reserve(modifiers.size());
+    for (const StatModifier& m : modifiers) all.push_back(&m);
+    return apply_all(stats, all);
+}
+
 CharacterStats stats_for(const Loadout& loadout, const CharacterStats& base) {
     std::vector<const StatModifier*> modifiers;
     for (const auto& weapon : loadout.weapons) {
@@ -169,27 +395,7 @@ CharacterStats stats_for(const Loadout& loadout, const CharacterStats& base) {
             modifiers.push_back(&m);
         }
     }
-    CharacterStats stats = base;
-    MoveParams& move = stats.move;
-    double jump_height = move.jump_speed * move.jump_speed / (2 * move.gravity);
-    for (const auto& [name, stat] : stat_names) {
-        double add = 0, multiply = 1;
-        for (const StatModifier* m : modifiers) {
-            if (m->stat == stat) {
-                add += m->add;
-                multiply *= m->multiply;
-            }
-        }
-        double& value = stat_value(stats, stat, jump_height);
-        value = std::max(0.0, (value + add) * multiply);
-    }
-    move.jump_speed = std::sqrt(2 * move.gravity * jump_height);
-    stats.max_health = std::max(1.0, stats.max_health);
-    stats.shield_delay = std::max(0.5, stats.shield_delay);
-    stats.explosion_push_resist = std::clamp(stats.explosion_push_resist, 0.0, max_mitigation);
-    stats.effect_resistance = std::clamp(stats.effect_resistance, 0.0, max_mitigation);
-    stats.ability_cooldown = std::max(0.1, stats.ability_cooldown);  // (never instant)
-    return stats;
+    return apply_all(base, modifiers);
 }
 
 std::string default_weapon_model(std::string_view name) {

@@ -381,15 +381,12 @@ ProfessionStanding profession_standing(const ProfessionBook& professions, std::s
 }
 
 std::vector<std::string> unlocked_abilities(const SpecialistBook& book, const ProfessionBook& professions,
-                                            std::span<const std::string> specializations,
                                             std::span<const ProfessionProgress> progress, bool in_match) {
-    const std::vector<std::string> slotted = clean_specializations(professions, specializations);
     std::vector<std::string> out;
     for (const AbilityDef& a : book.abilities()) {
         if ((in_match && a.world_only) || (!in_match && a.match_only)) continue;
         const ProfessionDef* def = professions.find(a.profession);
         if (def == nullptr || !def->available) continue;
-        if (def->slotted && std::find(slotted.begin(), slotted.end(), def->id) == slotted.end()) continue;
         const ProfessionStanding st = profession_standing(professions, progress, def->id);
         if (st.level >= a.level && st.trained >= a.level) out.push_back(a.id);
     }
@@ -763,7 +760,7 @@ void apply_slice(Gear& gear, const SliceDef& s) {
 }
 
 // ---------------------------------------------------------------------------
-// Entertainer & Image Designer
+// Entertainer
 
 TimedEffect inspiration(int entertainer_level, int band_size, uint32_t source) {
     const double level = std::clamp(entertainer_level, 0, profession_max_level);
@@ -778,31 +775,6 @@ TimedEffect inspiration(int entertainer_level, int band_size, uint32_t source) {
     e.modifiers.push_back({Stat::energy_restore, 0, 1.05 + level * 0.001 + band * 0.02});
     e.modifiers.push_back({Stat::max_energy, 0, 1.02 + level * 0.0005 + band * 0.01});
     return e;
-}
-
-bool valid_appearance(std::string_view json) {
-    if (json.size() < 2 || json.size() > 2048) return false;
-    size_t a = json.find_first_not_of(" \t\r\n");
-    size_t b = json.find_last_not_of(" \t\r\n");
-    if (a == std::string_view::npos || json[a] != '{' || json[b] != '}') return false;
-    int depth = 0;
-    bool in_string = false;
-    for (size_t i = a; i <= b; ++i) {
-        const char c = json[i];
-        if (in_string) {
-            if (c == '\\') ++i;
-            else if (c == '"') in_string = false;
-            continue;
-        }
-        if (c == '"') in_string = true;
-        else if (c == '{' || c == '[') ++depth;
-        else if (c == '}' || c == ']') {
-            if (--depth < 0) return false;
-        } else if (c == '\n' || c == '\r') {
-            return false;
-        }
-    }
-    return depth == 0 && !in_string;
 }
 
 }  // namespace swm::core

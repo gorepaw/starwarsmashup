@@ -35,6 +35,7 @@ struct MoveInput {
     float pitch = 0;        // radians; aim up is positive
     uint8_t buttons = 0;
     uint8_t weapon = 0;     // the weapon slot wanted
+    bool aiming = false;    // aimed down its sights (zoomed: a perk's condition, Spotter)
     // The server tick the client was showing other characters at when it
     // made this input (they're drawn in the past). The server rewinds them to
     // it to judge this input's shots: what the shooter saw is what it hits.
@@ -52,6 +53,7 @@ struct WeaponState {
     int16_t reserve = -1;  // rounds carried beyond the clip; -1: unlimited
     float heat = 0;        // 0..1
     bool overheated = false;
+    float reload = 0;      // holstered: seconds of reloading itself left (a perk's: WeaponDef::holster_reload)
 
     friend bool operator==(const WeaponState&, const WeaponState&) = default;
 };
@@ -61,10 +63,15 @@ struct CombatState {
     double cooldown = 0;  // seconds until it can fire
     double reload = 0;    // seconds of reloading left
     double spread = 0;    // degrees of bloom from recent shots
+    float idle = 0;       // seconds since it last fired (a "paused" perk's trigger)
     std::array<WeaponState, 3> weapons{};  // primary, sidearm, secondary
 
     friend bool operator==(const CombatState&, const CombatState&) = default;
 };
+
+// The most triggered perks a loadout carries (docs/PERKS.md: a character
+// knows ten at most), each with a timer in the character's state.
+inline constexpr int max_perk_timers = 10;
 
 // Everything about a character that its own inputs decide, so the client
 // can predict all of it.
@@ -80,6 +87,8 @@ struct MoveState {
     bool crouch_held = false;  // the crouch button was down last tick (a press starts a crouch or roll)
     float roll = 0;            // seconds of rolling left
     float roll_yaw = 0;        // the way it rolls (as yaw); riding, where it aims its guns (their yaw)
+    float slide = 0;           // seconds of sliding left (a perk's: MoveParams::slide_time)
+    uint8_t rolls = 0;         // rolls in a row so far (a perk lets one follow another: roll_chain)
     bool blocking = false;
     float parry_window = 0;    // seconds of timed parry left
     float stagger = 0;         // seconds of melee stagger left
@@ -92,6 +101,11 @@ struct MoveState {
     // its place and yaw the vehicle's; its look turns the seat's guns.
     int8_t seat = 0;
     CombatState combat;
+    // Triggered perks (docs/PERKS.md, Triggers): each of its loadout's
+    // triggered perks' seconds left, active or cooling down (by its index
+    // in Loadout::triggered); and how long it's been crouched without moving.
+    std::array<float, max_perk_timers> perk_time{};
+    float still = 0;
 
     bool rolling() const { return roll > 0; }
 
@@ -129,6 +143,16 @@ struct MoveParams {
     double roll_speed_factor = 1.5;
     double roll_time = 0.75;        // s
     double energy_cost_roll = 25;
+    // Trainer perks' (docs/PERKS.md): crouching out of a sprint slides this
+    // long instead of rolling (0: it rolls), keeping its speed, crouched, and
+    // able to shoot; and this many rolls can follow a roll at once (in its
+    // second half).
+    double slide_time = 0;
+    double roll_chain = 0;
+    // A melee block: stamina a second held, times this; the timed parry
+    // window, s (its held weapon's: WeaponDef::block_cost, parry_window).
+    double block_cost = 1;
+    double parry_window = 0.25;
     double max_slope_degrees = 55;  // steeper ground can't be walked up
     double snap_down = 0.6;         // m: grounded characters follow ground this far down per tick
     double step_up = 0.5;           // m: highest ledge walked up without jumping

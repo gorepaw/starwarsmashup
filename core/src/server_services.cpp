@@ -89,22 +89,81 @@ const net::Vendor* GameServer::service_near(const Client& client, const std::str
     return nullptr;
 }
 
-// What a character has with the services: milestones learned, the bank, where
-// their clone is kept.
+namespace {
+
+std::vector<std::string> split_commas(const std::string& text) {
+    std::vector<std::string> out;
+    std::string item;
+    for (const char c : text) {
+        if (c == ',') {
+            if (!item.empty()) out.push_back(std::move(item));
+            item.clear();
+        } else {
+            item += c;
+        }
+    }
+    if (!item.empty()) out.push_back(std::move(item));
+    return out;
+}
+
+std::string join_commas(const std::vector<std::string>& items) {
+    std::string out;
+    for (const std::string& item : items) {
+        if (!out.empty()) out += ',';
+        out += item;
+    }
+    return out;
+}
+
+int clamp_level(const std::string& text) {
+    return text.empty() ? 0 : std::clamp(std::atoi(text.c_str()), 0, profession_max_level);
+}
+
+} // namespace
+
+// What a character has with the services: what they've learned from
+// trainers, the bank, where their clone is kept.
 void GameServer::load_services_data(Client& client) {
     if (store_ == nullptr || client.character == 0) return;
-    for (ProfessionProgress& p : client.professions) {
-        const std::string trained = store_->get_extra(client.character, "trained:" + p.id);
-        p.trained = trained.empty() ? 0 : std::clamp(std::atoi(trained.c_str()), 0, 100);
-    }
-    // Learned before it had any experience: it has no row yet.
     if (config_.professions != nullptr) {
+        int64_t refund = 0;
         for (const ProfessionDef& def : config_.professions->all()) {
             const std::string trained = store_->get_extra(client.character, "trained:" + def.id);
-            if (!trained.empty() && std::none_of(client.professions.begin(), client.professions.end(),
-                                                 [&](const ProfessionProgress& p) { return p.id == def.id; })) {
-                client.professions.push_back({def.id, 0, std::clamp(std::atoi(trained.c_str()), 0, 100)});
+            const std::string paid = store_->get_extra(client.character, "paid:" + def.id);
+            const std::string perks = store_->get_extra(client.character, "perks:" + def.id);
+            const std::string paid_perks = store_->get_extra(client.character, "paid_perks:" + def.id);
+            if (trained.empty() && paid.empty() && perks.empty() && paid_perks.empty()) continue;
+            // Learned before it had any experience: it may have no row yet.
+            ProfessionProgress& p = progress_for(client.professions, def.id);
+            p.trained = clamp_level(trained);
+            p.paid = paid.empty() ? p.trained : clamp_level(paid);
+            p.perks.clear();
+            p.paid_perks.clear();
+            for (std::string& id : split_commas(perks)) {
+                const ProfessionDef* owner = nullptr;
+                if (config_.professions->find_perk(id, &owner) && owner == &def) p.perks.push_back(std::move(id));
             }
+            for (std::string& id : split_commas(paid_perks)) {
+                const ProfessionDef* owner = nullptr;
+                if (config_.professions->find_perk(id, &owner) && owner == &def) p.paid_perks.push_back(std::move(id));
+            }
+            if (def.chooses() && p.trained > 0) {
+                // An old save's milestones, from before perks (docs/PERKS.md):
+                // what they cost is refunded, and they're gone.
+                for (const int level : {1, 25, 50, 75, 100}) {
+                    if (level <= p.trained) refund += milestone_cost(level);
+                }
+                p.trained = 0;
+                p.paid = 0;
+                store_->set_extra(client.character, "trained:" + def.id, "0");
+                store_->set_extra(client.character, "paid:" + def.id, "0");
+            }
+        }
+        if (refund > 0) {
+            client.credits += refund;
+            store_->update_economy(client.character, client.credits, client.faction_points, client.experience,
+                                   int(client.loadout));
+            say(std::format("{}: {} Cr refunded for weapon and armor milestones (now perks)", client.name, refund));
         }
     }
     client.bank_credits = std::atoll(store_->get_extra(client.character, "bank_credits").c_str());
@@ -134,6 +193,43 @@ void GameServer::load_services_data(Client& client) {
     }
 }
 
+void GameServer::save_training(Client& client, const std::string& profession) {
+    if (store_ == nullptr || client.character == 0) return;
+    const ProfessionProgress* p = find_progress(client.professions, profession);
+    if (p == nullptr) return;
+    try {
+        store_->set_extra(client.character, "trained:" + profession, std::to_string(p->trained));
+        store_->set_extra(client.character, "paid:" + profession, std::to_string(p->paid));
+        store_->set_extra(client.character, "perks:" + profession, join_commas(p->perks));
+        store_->set_extra(client.character, "paid_perks:" + profession, join_commas(p->paid_perks));
+    } catch (const std::exception& error) {
+        say(std::format("training save error for {}: {}", client.name, error.what()));
+    }
+}
+
+void GameServer::training_changed(Client& client) {
+    ++client.profession_rev;
+    client.professions_dirty = true;
+    rebuild_client_loadouts(client);
+    ++client.inventory_rev;
+    client.last_sync_tick = 0;
+    client.stats = stats_for(loadout_of(client), client.species, config_.base_stats);
+    client.health = std::min(client.health, client.stats.max_health);
+    client.shield = std::min(client.shield, client.stats.shield_capacity);
+    refresh_abilities(client);
+}
+
+bool GameServer::require_licence(Client& client, const std::string& profession) {
+    // Without a character store (a match, a test) nothing is learned to check.
+    if (config_.professions == nullptr || store_ == nullptr || client.character == 0 ||
+        licensed(*config_.professions, client.professions, profession)) {
+        return true;
+    }
+    const ProfessionDef* def = config_.professions->find(profession);
+    notify(client.entity, std::format("Learn {} from a trainer first.", def ? def->name : profession));
+    return false;
+}
+
 void GameServer::save_bank(Client& client) {
     if (store_ == nullptr || client.character == 0) return;
     std::string text;
@@ -158,61 +254,40 @@ void GameServer::handle_service_request(Client& client, const net::ServiceReques
                                int(client.loadout));
     };
     switch (req.action) {
-    case net::ServiceRequest::train: {
+    case net::ServiceRequest::train:
+    case net::ServiceRequest::learn_perk:
+    case net::ServiceRequest::forget: {
+        // A trainer teaches and takes back their own professions' perks and
+        // milestones (docs/PERKS.md).
         const ProfessionBook* book = config_.professions;
-        const ProfessionDef* def = book ? book->find(req.id) : nullptr;
+        if (book == nullptr) return;
+        const ProfessionDef* def = nullptr;
+        if (book->find_perk(req.id, &def) == nullptr) def = book->find(req.id);
         if (def == nullptr || !def->available || service_near(client, "trainer", def->id) == nullptr) {
             notify(client.entity, "There's no one here to teach that.");
             return;
         }
-        const int level = int(req.amount);
-        int trained = 0;
-        for (const ProfessionProgress& p : client.professions) {
-            if (p.id == def->id) trained = p.trained;
+        TrainResult result;
+        switch (req.action) {
+        case net::ServiceRequest::train:
+            result = learn_milestone(*book, client.professions, def->id, int(req.amount), client.credits);
+            break;
+        case net::ServiceRequest::learn_perk:
+            result = learn_perk(*book, client.professions, req.id, client.credits);
+            break;
+        default:
+            result = forget(*book, client.professions, req.id);
+            break;
         }
-        // The next one not yet learned.
-        const ProfessionMilestone* next = nullptr;
-        for (const ProfessionMilestone& m : def->milestones) {
-            if (m.level > trained && (next == nullptr || m.level < next->level)) next = &m;
+        notify(client.entity, result.message);
+        if (!result.ok) return;
+        if (result.cost > 0) {
+            client.credits -= result.cost;
+            save_economy_now();
         }
-        if (next == nullptr || next->level != level) {
-            notify(client.entity, "You've learned that already, or must learn what comes before it.");
-            return;
-        }
-        if (book->level_for(profession_xp(client.professions, def->id)) < level) {
-            notify(client.entity, std::format("You need {} level {}.", def->name, level));
-            return;
-        }
-        const int64_t cost = milestone_cost(level);
-        if (client.credits < cost) {
-            notify(client.entity, std::format("{} Cr to learn {}.", cost, next->name));
-            return;
-        }
-        client.credits -= cost;
-        save_economy_now();
-        add_profession_xp(client.professions, def->id, 0);
-        for (ProfessionProgress& p : client.professions) {
-            if (p.id == def->id) p.trained = level;
-        }
-        store_->set_extra(client.character, "trained:" + def->id, std::to_string(level));
-        ++client.profession_rev;
-        client.professions_dirty = true;
-        const bool slotted = std::any_of(client.char_loadouts.begin(), client.char_loadouts.end(),
-                                         [&](const CharacterLoadout& cl) {
-                                             return std::find(cl.specializations.begin(), cl.specializations.end(), def->id) !=
-                                                    cl.specializations.end();
-                                         });
-        if (slotted) {
-            rebuild_client_loadouts(client);
-            ++client.inventory_rev;
-            client.last_sync_tick = 0;
-            client.stats = stats_for(loadout_of(client), client.species, config_.base_stats);
-            client.health = std::min(client.health, client.stats.max_health);
-            client.shield = std::min(client.shield, client.stats.shield_capacity);
-        }
-        notify(client.entity, cost > 0 ? std::format("Learned {} ({}) for {} Cr", next->name, def->name, cost)
-                                       : std::format("Learned {} ({})", next->name, def->name));
-        quest_event(client, "learn");
+        save_training(client, def->id);
+        training_changed(client);
+        if (req.action != net::ServiceRequest::forget) quest_event(client, "learn");
         return;
     }
     case net::ServiceRequest::bank_deposit_credits:

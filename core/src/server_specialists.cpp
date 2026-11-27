@@ -2,7 +2,7 @@
 // and 7C professions played out. Abilities and the timed effects they leave,
 // deployables, hazards and call-ins, marks, fielded companions (tamed and
 // hatched creatures, assembled droids), mounts, contracts from mission
-// terminals, the bazaar, slicing and image design. See specialist.h.
+// terminals, the bazaar and slicing. See specialist.h.
 #include <algorithm>
 #include <chrono>
 #include <cmath>
@@ -248,21 +248,20 @@ void GameServer::fill_specialist_loadout(const Client& client, const CharacterLo
     const SpecialistBook* book = config_.specialists;
     const ProfessionBook* professions = config_.professions;
     if (book == nullptr || professions == nullptr) return;
-    loadout.abilities = unlocked_abilities(*book, *professions, cl.specializations, client.professions, false);
-    for (std::string& id : unlocked_abilities(*book, *professions, cl.specializations, client.professions, true)) {
+    loadout.abilities = unlocked_abilities(*book, *professions, client.professions, false);
+    for (std::string& id : unlocked_abilities(*book, *professions, client.professions, true)) {
         if (std::find(loadout.abilities.begin(), loadout.abilities.end(), id) == loadout.abilities.end()) {
             loadout.abilities.push_back(std::move(id));
         }
     }
-    const std::vector<std::string> slotted = clean_specializations(*professions, cl.specializations);
+    // The specialists it's licensed in (docs/PERKS.md), at their levels.
     for (const ProfessionDef& def : professions->all()) {
         if (!def.available || !is_specialist_profession(def)) continue;
-        if (def.slotted && std::find(slotted.begin(), slotted.end(), def.id) == slotted.end()) continue;
-        loadout.specialist_levels[def.id] = profession_standing(*professions, client.professions, def.id).level;
-    }
-    // The Companion Slot works without slotting its profession (its own slot).
-    for (const char* id : {"creature_handler", "droid_operations"}) {
-        loadout.specialist_levels.try_emplace(id, profession_standing(*professions, client.professions, id).level);
+        const ProfessionStanding st = profession_standing(*professions, client.professions, def.id);
+        if (st.trained < 1) continue;
+        // Reactor Tuning is Pilot's milestone 75: without it learned, the
+        // loadout carries the level only below it.
+        loadout.specialist_levels[def.id] = def.id == "pilot" && st.trained < 75 ? std::min(st.level, 74) : st.level;
     }
     loadout.companion.clear();
     if (!cl.companion.empty()) {
@@ -307,8 +306,7 @@ int GameServer::specialist_level(const Client& client, const std::string& profes
     const Loadout& lo = loadout_of(client);
     if (const auto it = lo.specialist_levels.find(profession); it != lo.specialist_levels.end()) return it->second;
     if (config_.professions != nullptr && !client.professions.empty()) {
-        const ProfessionDef* def = config_.professions->find(profession);
-        if (def != nullptr && !def->slotted) {
+        if (licensed(*config_.professions, client.professions, profession)) {
             return profession_standing(*config_.professions, client.professions, profession).level;
         }
     }
@@ -358,6 +356,18 @@ void GameServer::give_effect(Client& client, TimedEffect effect) {
         effect.remaining *= kept;
         effect.duration *= kept;
         if (effect.remaining <= 0) return;
+        // Its slows, weaker (a perk's slow_resist: Juggernaut shrugs them off).
+        if (const double resist = std::clamp(client.stats.slow_resist, 0.0, 1.0); resist > 0) {
+            for (StatModifier& m : effect.modifiers) {
+                const bool speed = m.stat == Stat::run_speed || m.stat == Stat::strafe_speed ||
+                                   m.stat == Stat::sprint_factor || m.stat == Stat::sprint_strafe ||
+                                   m.stat == Stat::acceleration || m.stat == Stat::jump_height;
+                if (speed && m.multiply < 1) m.multiply = 1 - (1 - m.multiply) * (1 - resist);
+                if (speed && m.add < 0) m.add *= 1 - resist;
+            }
+            std::erase_if(effect.modifiers, [](const StatModifier& m) { return m.add == 0 && m.multiply == 1; });
+            if (effect.modifiers.empty() && effect.damage_per_second <= 0 && effect.flags == effect_flag::debuff) return;
+        }
     }
     if (add_effect(client.spec.effects, std::move(effect))) refresh_effect_gear(client);
     ++client.spec.revision;
@@ -441,7 +451,7 @@ double GameServer::vehicle_damage_factor(uint32_t driver) const {
     for (const TimedEffect& e : client->spec.effects) {
         if (e.flags & effect_flag::vehicle_guard) factor = std::min(factor, std::clamp(e.heal_per_second, 0.1, 1.0));
     }
-    // Reactor Tuning (Pilot 75, slotted): up to 10% less.
+    // Reactor Tuning (Pilot 75, learned): up to 10% less.
     if (const int level = specialist_level(*client, "pilot"); level >= 75) {
         factor *= 1 - 0.1 * std::min(1.0, double(level - 74) / 26.0);
     }
@@ -1300,7 +1310,7 @@ void GameServer::specialist_kill(uint32_t victim, uint32_t killer, bool npc) {
     if (npc) companion_died(victim);
     Client* hunter = find(killer);
     if (hunter == nullptr) return;
-    // A kill from a vehicle: the Pilot's (slotted, in a match).
+    // A kill from a vehicle: the Pilot's (licensed, in a match).
     if (!npc && conquest_ && hunter->state.vehicle >= 0 && specialist_level(*hunter, "pilot") > 0) {
         earn_specialist_xp(*hunter, "pilot", 40);
     }
@@ -1336,6 +1346,8 @@ void GameServer::specialist_kill(uint32_t victim, uint32_t killer, bool npc) {
 // A character's timed effects: damage over time, then time running out. A
 // dead character's are gone.
 void GameServer::update_effects(Client& client, double dt) {
+    update_perks(client);   // (triggered perks' held conditions)
+    update_charge(client);  // (a perk's shoulder charge)
     SpecialistState& spec = client.spec;
     if (client.life != Life::alive) {
         if (!spec.effects.empty()) {
@@ -1468,7 +1480,7 @@ void GameServer::update_specialists(double dt) {
         }
     }
 
-    // Squad Cohesion: allies near a slotted Squad Leader recover stamina faster.
+    // Squad Cohesion: allies near a Squad Leader with Rally recover stamina faster.
     cohesion_pulse_ -= dt;
     if (cohesion_pulse_ <= 0) {
         cohesion_pulse_ = 1.0;
@@ -2067,7 +2079,7 @@ void GameServer::bazaar_action(Client& client, const net::SpecialistRequest& req
 }
 
 // ---------------------------------------------------------------------------
-// The datapad: companions, the lab, droids, slicing, design, flags
+// The datapad: companions, the lab, droids, slicing, flags
 
 void GameServer::datapad_action(Client& client, const net::SpecialistRequest& request) {
     using R = net::SpecialistRequest;
@@ -2333,77 +2345,6 @@ void GameServer::datapad_action(Client& client, const net::SpecialistRequest& re
         earn_specialist_xp(client, "smuggler", 60 + slice->level);
         return;
     }
-    case R::dye_item: {
-        if (!world) return;
-        const ProfessionStanding id = standing("image_designer");
-        if (id.level < 50 || id.trained < 50) {
-            notify(client.entity, "Custom trim takes Image Designer 50");
-            return;
-        }
-        ItemInstance* item = owned(request.item_id);
-        const ItemDef* def = item && config_.catalog ? config_.catalog->find(item->def_id) : nullptr;
-        if (def == nullptr || (def->kind != ItemKind::armor && def->kind != ItemKind::clothing) ||
-            !valid_appearance(request.text)) {
-            return;
-        }
-        ItemInstance dyed = *item;
-        dyed.color_json = request.text;
-        set_item_slice(dyed, item_slice(*item));  // a slice survives a dye
-        if (!store_->update_item_colors(item->id, dyed.color_json)) return;
-        item->color_json = dyed.color_json;
-        rebuild_client_loadouts(client);
-        ++client.inventory_rev;
-        client.last_sync_tick = 0;
-        earn_specialist_xp(client, "image_designer", 25);
-        return;
-    }
-    case R::design_offer: {
-        if (conquest_) return;
-        const ProfessionStanding id = standing("image_designer");
-        if (id.trained < 1) {
-            notify(client.entity, "Designing takes Image Designer training");
-            return;
-        }
-        Client* target = find(request.target);
-        if (target == nullptr || flat_distance(target->state.position, client.state.position) > 8 ||
-            !valid_appearance(request.text)) {
-            notify(client.entity, "Stand by them to design (within 8 m)");
-            return;
-        }
-        if (target == &client) {
-            client.appearance = request.text;
-            save({&client, 1});
-            notify(client.entity, "You restyle yourself");
-            return;
-        }
-        target->spec.design_offer = DesignOffer{client.entity, client.name, request.text, specialist_clock_ + 90};
-        ++target->spec.revision;
-        target->spec.sync_tick = 0;
-        notify(target->entity, std::format("{} offers you a new look: open your datapad to accept", client.name));
-        notify(client.entity, std::format("Design offered to {}", target->name));
-        return;
-    }
-    case R::design_answer: {
-        if (!spec.design_offer) return;
-        const DesignOffer offer = *spec.design_offer;
-        spec.design_offer.reset();
-        ++spec.revision;
-        spec.sync_tick = 0;
-        Client* designer = find(offer.from);
-        if (request.amount != 1 || specialist_clock_ > offer.expires) {
-            if (designer) notify(designer->entity, std::format("{} declined your design", client.name));
-            return;
-        }
-        client.appearance = offer.appearance;
-        save({&client, 1});
-        notify(client.entity, std::format("You take on {}'s design", offer.designer));
-        if (designer) {
-            const int level = professions ? profession_standing(*professions, designer->professions, "image_designer").level : 0;
-            notify(designer->entity, std::format("{} accepted your design", client.name));
-            earn_specialist_xp(*designer, "image_designer", level >= 100 ? 240 : 120);
-        }
-        return;
-    }
     case R::bounty_flag:
         if (conquest_) return;
         spec.bounty_flag = request.amount == 1;
@@ -2559,10 +2500,6 @@ void GameServer::send_specialist_sync(Client& client) {
     sync.prices = spec.bazaar_prices;
     sync.performing = spec.performing;
     sync.bounty_flag = spec.bounty_flag;
-    if (spec.design_offer) {
-        sync.design_from = spec.design_offer->designer;
-        sync.design_appearance = spec.design_offer->appearance;
-    }
     sync.channel = spec.channel;
     sync.channel_remaining = float(spec.channel_remaining);
     link_.send(client.endpoint, net::encode(sync));
