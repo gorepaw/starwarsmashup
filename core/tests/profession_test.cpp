@@ -496,7 +496,7 @@ void test_server_triggers() {
     store.set_extra(vet.id, "perks:unarmored", "unarmored_untouchable,unarmored_ghost_step");
     store.set_extra(vet.id, "perks:carbines", "carbines_chain_breach");
     store.set_extra(vet.id, "perks:medium_armor", "medium_second_chance");
-    const ItemInstance carbine = store.grant_item({0, vet.id, "wp_carbine_dh17", 0.5, "", "{}"});
+    const ItemInstance carbine = store.grant_item({0, vet.id, "wp_carbine_dh17", ItemGrade::standard, "", "{}"});
     std::vector<CharacterLoadout> los = store.list_loadouts(vet.id);
     CHECK(!los.empty());
     if (los.empty()) return;
@@ -604,7 +604,7 @@ void test_server_triggers() {
     CHECK(!guard_los.empty());
     if (guard_los.empty()) return;
     for (const char* piece : {"chest", "leggings", "boots", "helmet"}) {
-        const ItemInstance item = store.grant_item({0, guard.id, std::string("armor_padded_") + piece, 0.5, "", "{}"});
+        const ItemInstance item = store.grant_item({0, guard.id, std::string("armor_padded_") + piece, ItemGrade::standard, "", "{}"});
         guard_los[0].gear_ids[piece] = item.id;
     }
     store.save_loadout(guard.id, guard_los[0]);

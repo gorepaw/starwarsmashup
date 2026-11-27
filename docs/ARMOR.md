@@ -1,6 +1,6 @@
 # Armor
 
-Every armor set in Galaxies, sorted into our three armor classes, and how we turn them into items. Gear rules (Mk tiers, quality, the 2x curve) are in [Design](DESIGN.md#weapons-and-loadouts); the armor professions are in [Professions](PROFESSIONS.md). Weapons, done first, are in [Weapons](WEAPONS.md).
+Every armor set in Galaxies, sorted into our three armor classes, and how we turn them into items. Gear rules (Mk tiers, grades, the 2x curve) are in [Design](DESIGN.md#weapons-and-loadouts); the armor professions are in [Professions](PROFESSIONS.md). Weapons, done first, are in [Weapons](WEAPONS.md).
 
 ## The classes and slots
 
@@ -94,7 +94,7 @@ Battlefront II's soldiers, worn whole, as looks (above), from their faction's qu
 - **Classes are sidegrades, as weapon archetypes are.** Heavier armor protects more and moves slower; no class is better. Within a class, every full set has the same budget; sets differ in which damage types they resist and in a small perk of their own.
 - **Species sets are how their species looks armored.** A Wookiee or Ithorian wearing armor of any class shows their own species' set of that class (a Wookiee in heavy armor looks like Kashyyykian Hunting armor), on the slots that set has. Gearing stays the same for every species, and Wookiees and Ithorians finally look armored. It goes piece by piece: each slot shows the species' piece of the class of what's worn there (or of what the Cosmetic Override has there), so mixed classes show mixed sets; clothing, and a slot the species' sets don't have (a Wookiee's helmet), show nothing. Where a Galaxies piece leaves the wearer's skin showing (a `skin_body` surface: the Ceremonial leggings), it's drawn with the wearer's own skin.
 - **Faction sets** (Stormtrooper, Scout Trooper, Shock Trooper; Rebel Battle and Assault, the Rebel marine chest), and the bodysuits, sell from their faction's quartermaster, for Faction Points. The Katarn is not sold by any quartermaster: it's meant for its own questline or faction later (playnotes, 2026-11-26), so for now it's a gear vendor's, in neutral paint.
-- **One item per model.** Crafted, quest, reinforced and insulated variants become Mk tiers and quality, as weapon variants did.
+- **One item per model.** Crafted, quest, reinforced and insulated variants become Mk tiers and grades, as weapon variants did.
 - **Any piece can be worn as a look:** owning it, you can put it in the Cosmetic Override, so you can wear Mandalorian looks over light-armor statistics.
 
 ## Paint ✅

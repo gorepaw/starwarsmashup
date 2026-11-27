@@ -36,7 +36,7 @@ public:
     godot::Array get_catalog() const;
     godot::Array list_items(int64_t char_id);
     godot::Dictionary get_reputation(int64_t char_id);
-    godot::Dictionary grant_item(int64_t char_id, const godot::String& def_id, double quality);
+    godot::Dictionary grant_item(int64_t char_id, const godot::String& def_id, int64_t grade = 1);
     bool remove_item(int64_t item_id);
     godot::Array list_loadouts(int64_t char_id);
     godot::Error save_loadout(int64_t char_id, int64_t slot_index, const godot::Dictionary& loadout);
@@ -46,9 +46,13 @@ public:
     godot::Error set_active_loadout(int64_t char_id, int64_t slot_index);
 
     // `color_json`: an owned copy's, for the modules crafted into it.
-    godot::Dictionary resolve_item_stats(const godot::String& def_id, double quality = 0.5,
-                                           bool apply_quality = true, int64_t mark = 0,
+    // `grade`: core ItemGrade (0 Flawed .. 4 Legendary).
+    godot::Dictionary resolve_item_stats(const godot::String& def_id, int64_t grade = 1, int64_t mark = 0,
                                            const godot::String& color_json = "{}") const;
+    // A grade's name ("Fine"), and a slot's materials for a craft at a mark
+    // and Experimentation Focus (core craft_material_amount).
+    static godot::String grade_name(int64_t grade);
+    static int64_t craft_material_amount(int64_t amount, int64_t mark, int64_t focus_pct);
     // An item's name at a mark ("E-11 Blaster Rifle Mk IV"), and what the
     // mark asks for: {level, profession (its name; "" for the character's
     // highest), health (worn gear: the max health it adds, as a share)};
@@ -56,7 +60,7 @@ public:
     godot::String item_display_name(const godot::String& def_id, int64_t mark) const;
     godot::Dictionary mark_requirement(const godot::String& def_id, int64_t mark) const;
     godot::Dictionary compute_loadout_stats(const godot::String& species, const godot::Dictionary& loadout,
-                                              const godot::Array& items, bool apply_quality = true) const;
+                                              const godot::Array& items) const;
     // What a loadout shows on this species and gender: core resolve_worn_models
     // (its gear, its cosmetic override, a bodysuit, a species' own armor).
     godot::String worn_models(const godot::String& species, const godot::String& gender,
@@ -78,10 +82,12 @@ public:
     godot::Dictionary scan_terrain(const godot::String& category, double x, double z, double radius = 60.0,
                                    int64_t grid_n = 17) const;
     godot::PackedStringArray auto_fill_schematic(const godot::String& schematic_id, const godot::Array& materials,
-                                                 const godot::String& mode, int64_t mark = 0) const;
+                                                 const godot::String& mode, int64_t mark = 0,
+                                                 int64_t focus_pct = 0) const;
+    // {material_score, material_mult, flawed, standard, fine, exceptional}.
     godot::Dictionary preview_craft(const godot::String& schematic_id, const godot::PackedStringArray& resource_ids,
                                     int64_t enhancement_count, int64_t crafter_level,
-                                    int64_t exp_quality_pct) const;
+                                    int64_t focus_pct) const;
 
     static godot::Array get_species_list();
 

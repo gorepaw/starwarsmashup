@@ -87,6 +87,11 @@ struct SchematicDef {
 bool item_takes_marks(const ItemDef& def);
 int craft_max_mark(int crafter_level);
 int mark_material_amount(int amount, int mark);    // amount x (1 + 0.25 a mark), rounded up
+// Experimentation Focus (docs/CRAFTING.md, Grades): 0..100%, better odds of a
+// better grade for more materials, up to 10x at 100%.
+double focus_material_mult(int focus_pct);  // 1 + 9 x focus
+// A slot's materials for a craft: its amount, for its mark and focus, rounded up.
+int craft_material_amount(int amount, int mark, int focus_pct);
 int64_t mark_craft_xp(int64_t base_xp, int mark);  // x (1 + 0.15 a mark)
 
 // Dyes (docs/CRAFTING.md): an owned piece's colors, its model's customization
@@ -102,7 +107,7 @@ struct RecipePreset {
     std::string schematic_id;
     std::vector<std::string> resource_ids;
     std::vector<std::string> enhancement_defs;
-    uint8_t exp_quality_pct = 50;
+    uint8_t exp_quality_pct = 0;  // its Experimentation Focus
 
     friend bool operator==(const RecipePreset&, const RecipePreset&) = default;
 };
@@ -118,17 +123,17 @@ struct WorkOrder {
     int64_t reward_xp = 0;
 };
 
+// A craft's odds of each grade (docs/CRAFTING.md, Grades), summing to 1.
 struct ExperimentOdds {
-    double great_success = 0.10;
-    double success = 0.50;
-    double neutral = 0.25;
-    double minor_flaw = 0.15;
+    double flawed = 0.25;
+    double standard = 0.50;
+    double fine = 0.20;
+    double exceptional = 0.05;
 };
 
 struct CraftPreview {
-    double base_quality = 0.5;
-    double min_quality = 0.4;
-    double max_quality = 0.6;
+    double material_score = 0.5;  // 0..1: its materials' stats, as its schematic weighs them
+    double material_mult = 1.0;   // its materials x this, for its focus (focus_material_mult)
     ExperimentOdds odds;
 };
 
@@ -171,14 +176,18 @@ public:
     ScanResult scan_terrain(ResourceCategory category, double x, double z, double radius = 60.0, int grid_n = 17) const;
 
     // Picks resource_ids from `vault` for each slot of `schematic` (empty
-    // string if missing), enough for its mark (mark_material_amount).
+    // string if missing), enough for its mark and focus (craft_material_amount).
     std::vector<std::string> auto_fill(const SchematicDef& schematic, std::span<const MaterialStack> vault,
-                                       AutoFillMode mode, int mark = 0) const;
+                                       AutoFillMode mode, int mark = 0, int focus_pct = 0) const;
 
-    static ExperimentOdds experiment_odds(int crafter_level);
+    // The grade odds: its materials' score (0..1), its crafter's level (and
+    // Lv 75 Experimentation milestone), its modules (0..2) and its focus all
+    // move them toward the better grades.
+    static ExperimentOdds grade_odds(double material_score, int crafter_level, int enhancement_count, int focus_pct);
     CraftPreview preview_craft(const SchematicDef& schematic, std::span<const std::string> resource_ids,
-                               int enhancement_count, int crafter_level, uint8_t exp_quality_pct) const;
-    static std::pair<double, std::string> roll_craft_quality(const CraftPreview& preview, double unit_roll);
+                               int enhancement_count, int crafter_level, uint8_t focus_pct) const;
+    // A craft's grade for a 0..1 roll (Flawed to Exceptional).
+    static ItemGrade roll_craft_grade(const CraftPreview& preview, double unit_roll);
 
     struct SalvageResult {
         std::vector<MaterialStack> materials;

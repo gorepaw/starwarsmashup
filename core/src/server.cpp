@@ -94,8 +94,7 @@ void GameServer::set_player_loadouts(uint32_t entity, std::vector<Loadout> loado
     client->last_sync_tick = 0;
 }
 
-std::vector<Loadout> GameServer::build_player_loadouts(uint32_t entity, bool apply_quality,
-                                                       std::vector<std::string>* out_worn) const {
+std::vector<Loadout> GameServer::build_player_loadouts(uint32_t entity, std::vector<std::string>* out_worn) const {
     const Client* client = find(entity);
     if (client == nullptr || config_.catalog == nullptr) {
         return {};
@@ -103,7 +102,7 @@ std::vector<Loadout> GameServer::build_player_loadouts(uint32_t entity, bool app
     std::vector<Loadout> out;
     if (out_worn) out_worn->clear();
     for (const CharacterLoadout& cl : client->char_loadouts) {
-        out.push_back(config_.catalog->build_loadout(cl, client->items, client->species, apply_quality));
+        out.push_back(config_.catalog->build_loadout(cl, client->items, client->species));
         apply_professions(*client, cl, out.back());
         if (out_worn) {
             out_worn->push_back(resolve_worn_models(*config_.catalog, cl, client->items, client->species, client->gender));
@@ -227,7 +226,7 @@ void GameServer::apply_match_ammo_consumption(const std::string& name, int remai
     }
 }
 
-ItemInstance GameServer::grant_stacked_item(Client& client, const ItemDef& def, int delta_qty, double quality) {
+ItemInstance GameServer::grant_stacked_item(Client& client, const ItemDef& def, int delta_qty, ItemGrade grade) {
     if (store_ == nullptr || client.character == 0) {
         return {};
     }
@@ -265,11 +264,11 @@ ItemInstance GameServer::grant_stacked_item(Client& client, const ItemDef& def, 
                 return inst;
             }
         }
-        ItemInstance created = store_->grant_item({0, client.character, def.id, quality, "", "{}", std::min(cap, add_qty)});
+        ItemInstance created = store_->grant_item({0, client.character, def.id, grade, "", "{}", std::min(cap, add_qty)});
         client.items.push_back(created);
         return created;
     }
-    ItemInstance created = store_->grant_item({0, client.character, def.id, quality, "", "{}", 1});
+    ItemInstance created = store_->grant_item({0, client.character, def.id, grade, "", "{}", 1});
     client.items.push_back(created);
     return created;
 }
@@ -770,7 +769,7 @@ void GameServer::rebuild_client_loadouts(Client& client) {
     client.worn_per_loadout.clear();
     for (const CharacterLoadout& cl : client.char_loadouts) {
         client.custom_loadouts.push_back(
-            config_.catalog->build_loadout(cl, client.items, client.species, true));
+            config_.catalog->build_loadout(cl, client.items, client.species));
         apply_professions(client, cl, client.custom_loadouts.back());
         client.worn_per_loadout.push_back(
             resolve_worn_models(*config_.catalog, cl, client.items, client.species, client.gender));
@@ -1036,7 +1035,8 @@ void GameServer::handle(const net::Endpoint& from, const net::Datagram& datagram
                             store_->update_economy(client->character, client->credits, client->faction_points,
                                                    client->experience, int(client->loadout));
                             // In its quartermaster's faction's paint, if it has one (a Katarn).
-                            store_->grant_item({0, client->character, def->id, 0.5, "", painted_color_json(*def, qf), 1});
+                            store_->grant_item({0, client->character, def->id, ItemGrade::standard, "",
+                                                painted_color_json(*def, qf), 1});
                             client->items = store_->list_items(client->character);
                             ++client->inventory_rev;
                             client->last_sync_tick = 0;
@@ -1051,7 +1051,7 @@ void GameServer::handle(const net::Endpoint& from, const net::Datagram& datagram
                     store_->update_economy(client->character, client->credits, client->faction_points,
                                            client->experience, int(client->loadout));
                     const int qty = def->kind == ItemKind::ammo ? def->ammo_batch : 1;
-                    grant_stacked_item(*client, *def, qty, 0.5);
+                    grant_stacked_item(*client, *def, qty);
                     client->items = store_->list_items(client->character);
                     ++client->inventory_rev;
                     client->last_sync_tick = 0;
@@ -1100,12 +1100,12 @@ void GameServer::handle(const net::Endpoint& from, const net::Datagram& datagram
                     for (const net::LootItemEntry& entry : taken) {
                         if (store_ != nullptr && client->character != 0) {
                             store_->grant_item(
-                                {0, client->character, entry.def_id, double(entry.quality), "", "{}", 1, entry.mark});
+                                {0, client->character, entry.def_id, entry.grade, "", "{}", 1, entry.mark});
                         } else {
                             uint64_t next_id = 1;
                             for (const ItemInstance& cur : client->items) next_id = std::max(next_id, cur.id + 1);
                             client->items.push_back(
-                                {next_id, 0, entry.def_id, double(entry.quality), "", "{}", 1, entry.mark});
+                                {next_id, 0, entry.def_id, entry.grade, "", "{}", 1, entry.mark});
                         }
                     }
                     if (store_ != nullptr && client->character != 0) {

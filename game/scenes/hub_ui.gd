@@ -23,6 +23,8 @@ const TravelScreen = preload("res://ui/travel_screen.gd")
 const MultiScanner3D = preload("res://rendering/multi_scanner.gd")
 const TeamTags = preload("res://rendering/team_tags.gd")
 const SwgCity = preload("res://rendering/swg_city.gd")
+const ItemGrade = preload("res://ui/item_grade.gd")
+const LOOT_BEAM_HEIGHT := 6.0  # m: a corpse's loot beam
 
 const TALK_REACH := 4.5     # meters from a quest NPC to talk to them (the server allows 6)
 const OFFER_REACH := 8.0    # an offer closes when you walk further than this from it
@@ -99,7 +101,8 @@ var _world_root: Node3D
 var _recruiter_nodes: Array = []
 var _bare_recruiters: Array = []  # battle terminals the city draws none for: a hologram stands for each
 var _recruiters_added := false
-var _corpse_nodes: Dictionary = {}  # corpse_entity -> {icon, label}
+var _corpse_nodes: Dictionary = {}  # corpse_entity -> {icon (its loot beam), label, color}
+var _catalog_by_id: Dictionary = {}  # item id -> catalog entry (for loot beams' colors)
 var _holograms: TeamTags      # holograms over the world's people and places (null: no insignia exported)
 var _holograms_looked := false
 var _holo_anchors := {}       # place key -> Node3D standing where it is
@@ -1626,7 +1629,55 @@ func update_hub(client: Object, world: Node3D, delta: float, pause_visible: bool
 	_hub_hud.queue_redraw()
 
 
-# A lootable corpse: Battlefront's pick-up hand over it, and "Loot" under, in its font.
+# The grade color of a corpse's best item (white if it holds nothing graded).
+func _corpse_loot_color(c: Dictionary) -> Color:
+	if _catalog_by_id.size() != _catalog.size():
+		_catalog_by_id.clear()
+		for d: Dictionary in _catalog:
+			_catalog_by_id[str(d.get("id", ""))] = d
+	var best := -1
+	for item: Dictionary in c.get("items", []):
+		best = maxi(best, ItemGrade.shown(_catalog_by_id.get(str(item.get("def_id", "")), {}), item))
+	return ItemGrade.color_of(best)
+
+
+# A beam of light, in its loot's color, standing out of a corpse: brightest at
+# the ground, fading out some 6 m up.
+static func _make_loot_beam(color: Color) -> MeshInstance3D:
+	var mesh := CylinderMesh.new()
+	mesh.top_radius = 0.05
+	mesh.bottom_radius = 0.11
+	mesh.height = LOOT_BEAM_HEIGHT
+	mesh.radial_segments = 12
+	mesh.rings = 1
+	mesh.cap_top = false
+	mesh.cap_bottom = false
+	var fade := Gradient.new()
+	fade.set_color(0, Color(1, 1, 1, 0))  # the top (the mesh's v = 0)
+	fade.set_color(1, Color(1, 1, 1, 1))
+	var tex := GradientTexture2D.new()
+	tex.gradient = fade
+	tex.fill_from = Vector2(0, 0)
+	tex.fill_to = Vector2(0, 1)
+	tex.width = 4
+	tex.height = 64
+	var mat := StandardMaterial3D.new()
+	mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	mat.blend_mode = BaseMaterial3D.BLEND_MODE_ADD
+	mat.cull_mode = BaseMaterial3D.CULL_DISABLED
+	mat.no_depth_test = false
+	mat.albedo_texture = tex
+	mat.albedo_color = Color(color.r, color.g, color.b, 0.75)
+	var beam := MeshInstance3D.new()
+	beam.mesh = mesh
+	beam.material_override = mat
+	beam.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	return beam
+
+
+# A lootable corpse: a beam of light in its best loot's grade color (white for
+# anything ungraded), and "Loot" under, in Battlefront's font.
 func _update_corpse_markers(client: Object) -> void:
 	if _world_root == null:
 		return
@@ -1636,16 +1687,24 @@ func _update_corpse_markers(client: Object) -> void:
 		if (c.get("items", []) as Array).is_empty():
 			continue
 		seen[cid] = true
+		var color := _corpse_loot_color(c)
+		if _corpse_nodes.has(cid):
+			# Taking its best item turns the beam to the next best's color.
+			var entry: Dictionary = _corpse_nodes[cid]
+			if entry.get("color", color) != color:
+				entry["color"] = color
+				var beam_node: Variant = entry.get("icon")
+				if beam_node is MeshInstance3D and is_instance_valid(beam_node):
+					var mat := (beam_node as MeshInstance3D).material_override as StandardMaterial3D
+					mat.albedo_color = Color(color.r, color.g, color.b, 0.75)
+				var label_node: Variant = entry.get("label")
+				if label_node is Label3D and is_instance_valid(label_node):
+					(label_node as Label3D).modulate = color
 		if not _corpse_nodes.has(cid):
 			var pos: Vector3 = c["position"]
 			var art: RefCounted = _hub_hud.art if _hub_hud != null else null
-			var icon := Sprite3D.new()
-			icon.texture = art.texture("pc_pickup_icon") if art != null else null
-			icon.billboard = BaseMaterial3D.BILLBOARD_ENABLED
-			icon.fixed_size = true
-			icon.pixel_size = 0.0009
-			icon.modulate = Color(1.0, 0.88, 0.35)
-			icon.position = pos + Vector3.UP * 1.3
+			var icon := _make_loot_beam(color)
+			icon.position = pos + Vector3.UP * (LOOT_BEAM_HEIGHT * 0.5)
 			var label := Label3D.new()
 			label.text = art.localize("common.loot") if art != null and art.localize("common.loot") != "common.loot" else "Loot"
 			label.billboard = BaseMaterial3D.BILLBOARD_ENABLED
@@ -1655,11 +1714,11 @@ func _update_corpse_markers(client: Object) -> void:
 			if art != null and art.godot_font("gamefont_small") != null:
 				label.font = art.godot_font("gamefont_small")
 			label.outline_size = 0
-			label.modulate = Color(1.0, 0.88, 0.35)
+			label.modulate = color
 			label.position = pos + Vector3.UP * 0.95
 			_world_root.add_child(icon)
 			_world_root.add_child(label)
-			_corpse_nodes[cid] = {"icon": icon, "label": label}
+			_corpse_nodes[cid] = {"icon": icon, "label": label, "color": color}
 	for cid: int in _corpse_nodes.keys():
 		if not seen.has(cid):
 			var entry: Dictionary = _corpse_nodes[cid]

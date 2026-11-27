@@ -163,7 +163,7 @@ public:
     // battlefield's "vehicles"), position, velocity, yaw, pitch, health,
     // max_health, driver (entity; 0 empty), team, alive}].
     godot::Array get_vehicles() const;
-    // Nearby lootable corpses: [{entity_id, name, position, items: [{slot, def_id, quality}]}].
+    // Nearby lootable corpses: [{entity_id, name, position, items: [{slot, def_id, grade, mark}]}].
     godot::Array get_corpses() const;
     // Authoritative inventory, reputation & loadouts synced from the server.
     godot::Array get_inventory() const;

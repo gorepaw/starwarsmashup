@@ -681,7 +681,7 @@ void test_world_vehicles() {
 
     MemoryCharacterStore store;
     const PersistentId owner = store.create("Rider", {0, 0, 0}, 0).id;
-    const ItemInstance item = store.grant_item({0, owner, "vehicle_speeder_bike", 0.5, "", "{}"});
+    const ItemInstance item = store.grant_item({0, owner, "vehicle_speeder_bike", ItemGrade::standard, "", "{}"});
     Heightfield flat{401, 1.0, -200, -200, std::vector<float>(401 * 401, 0.0f)};
     World world(flat);
     net::LoopbackHub hub;

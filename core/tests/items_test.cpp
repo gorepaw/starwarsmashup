@@ -54,20 +54,38 @@ int main() {
     const ItemDef* e11 = catalog.find("wp_rifle_e11");
     CHECK(e11 != nullptr && e11->anim_set == "rifle" && e11->slot == "primary");
 
-    // Standard queue flattens quality; Gear queue scales within +-8% band.
-    const WeaponDef std_w = catalog.resolve_weapon(*e11, 1.0, false);
-    const WeaponDef base_w = catalog.resolve_weapon(*e11, 0.5, true);
-    const WeaponDef high_w = catalog.resolve_weapon(*e11, 1.0, true);
-    CHECK(near(std_w.damage, base_w.damage));
-    CHECK(high_w.damage > base_w.damage && near(high_w.damage, base_w.damage * 1.08));
+    // Grades: -8% Flawed, +8% Fine, +16% Exceptional (Legendary +16% for now).
+    const WeaponDef base_w = catalog.resolve_weapon(*e11);
+    CHECK(near(catalog.resolve_weapon(*e11, ItemGrade::flawed).damage, base_w.damage * 0.92));
+    CHECK(near(catalog.resolve_weapon(*e11, ItemGrade::fine).damage, base_w.damage * 1.08));
+    CHECK(near(catalog.resolve_weapon(*e11, ItemGrade::exceptional).damage, base_w.damage * 1.16));
+    CHECK(near(catalog.resolve_weapon(*e11, ItemGrade::legendary).damage, base_w.damage * 1.16));
+    CHECK(catalog.resolve_weapon(*e11, ItemGrade::exceptional).heat_per_shot <= base_w.heat_per_shot);
+    CHECK(item_grade_name(ItemGrade::exceptional) == "Exceptional" && item_grade_from_name("fine") == ItemGrade::fine &&
+          !item_grade_from_name("rare"));
+    CHECK(grade_from_quality(0.1) == ItemGrade::flawed && grade_from_quality(0.5) == ItemGrade::standard &&
+          grade_from_quality(0.9) == ItemGrade::fine);
+    CHECK(saved_grade("3") == ItemGrade::exceptional && saved_grade("0.9000") == ItemGrade::fine &&
+          saved_grade("") == ItemGrade::standard && saved_grade("9") == ItemGrade::legendary);
+    CHECK(item_takes_grade(*e11) && shown_grade(*e11, ItemGrade::fine) == ItemGrade::fine);
+    {
+        ItemDef junk;
+        junk.kind = ItemKind::junk;
+        CHECK(!item_takes_grade(junk) && !shown_grade(junk, ItemGrade::fine));  // white
+        junk.grade = ItemGrade::legendary;
+        CHECK(shown_grade(junk, ItemGrade::standard) == ItemGrade::legendary);
+        ItemDef relic = *e11;
+        relic.grade = ItemGrade::legendary;  // its def's grade, whatever the copy's
+        CHECK(near(catalog.resolve_weapon(relic, ItemGrade::flawed).damage, base_w.damage * 1.16));
+    }
 
     // Build loadout for Human vs Wookiee: every species wears every slot (a
     // Wookiee's chest armor only doesn't show).
     const std::vector<ItemInstance> inv{
-        {1, 10, "wp_rifle_e11", 0.5, "", "{}"},
-        {2, 10, "wp_pistol_dl44", 0.5, "", "{}"},
-        {3, 10, "armor_stormtrooper_chest", 0.5, "", "{}"},
-        {4, 10, "psg_mark1", 0.5, "", "{}"},
+        {1, 10, "wp_rifle_e11", ItemGrade::standard, "", "{}"},
+        {2, 10, "wp_pistol_dl44", ItemGrade::standard, "", "{}"},
+        {3, 10, "armor_stormtrooper_chest", ItemGrade::standard, "", "{}"},
+        {4, 10, "psg_mark1", ItemGrade::standard, "", "{}"},
     };
     CharacterLoadout cl;
     cl.primary_id = 1;
@@ -75,11 +93,11 @@ int main() {
     cl.gear_ids["chest"] = 3;
     cl.gear_ids["deflector_shield"] = 4;
 
-    const Loadout hum_lo = catalog.build_loadout(cl, inv, Species::human, true);
+    const Loadout hum_lo = catalog.build_loadout(cl, inv, Species::human);
     CHECK(hum_lo.weapons[primary_slot] && hum_lo.weapons[sidearm_slot]);
     CHECK(hum_lo.gear.size() == 2);
 
-    const Loadout wke_lo = catalog.build_loadout(cl, inv, Species::wookiee, true);
+    const Loadout wke_lo = catalog.build_loadout(cl, inv, Species::wookiee);
     CHECK(wke_lo.gear.size() == 2);
 
     const CharacterStats hum_stats = stats_for(hum_lo, Species::human);
@@ -98,9 +116,9 @@ int main() {
     CHECK(mark_level(0) == 1 && mark_level(1) == 10 && mark_level(9) == 90 && mark_level(10) == 100);
     CHECK(item_display_name(*e11, 4) == "E-11 Blaster Carbine Mk IV" &&
           item_display_name(*e11, 0) == "E-11 Blaster Carbine");
-    CHECK(near(catalog.resolve_weapon(*e11, 0.5, true, 10).damage, base_w.damage * 2));
-    CHECK(near(catalog.resolve_weapon(*e11, 0.5, true, 5).damage, base_w.damage * 1.5));
-    CHECK(near(catalog.resolve_weapon(*e11, 1.0, true, 10).damage, base_w.damage * 2 * 1.08));
+    CHECK(near(catalog.resolve_weapon(*e11, ItemGrade::standard, 10).damage, base_w.damage * 2));
+    CHECK(near(catalog.resolve_weapon(*e11, ItemGrade::standard, 5).damage, base_w.damage * 1.5));
+    CHECK(near(catalog.resolve_weapon(*e11, ItemGrade::fine, 10).damage, base_w.damage * 2 * 1.08));
     {
         double total = 0;
         for (const std::string_view s : {"deflector_shield", "helmet", "chest", "biceps", "bracers", "gloves", "belt",
@@ -111,7 +129,7 @@ int main() {
 
         std::vector<ItemInstance> marked = inv;
         for (ItemInstance& i : marked) i.mark = 10;
-        const Loadout hum10_lo = catalog.build_loadout(cl, marked, Species::human, true);
+        const Loadout hum10_lo = catalog.build_loadout(cl, marked, Species::human);
         const CharacterStats hum10 = stats_for(hum10_lo, Species::human);
         // Chest and Deflector Shield worn (0.2 + 0.3 of the weight) at Mk X: x1.5.
         CHECK(near(hum10.max_health, chest_hp * 1.5));
@@ -119,17 +137,17 @@ int main() {
         CHECK(near(hum10_lo.weapons[primary_slot]->damage, hum_lo.weapons[primary_slot]->damage * 2));
         // A Wookiee's marks count the same as anyone's.
         const CharacterStats wke10 =
-            stats_for(catalog.build_loadout(cl, marked, Species::wookiee, true), Species::wookiee);
+            stats_for(catalog.build_loadout(cl, marked, Species::wookiee), Species::wookiee);
         CHECK(near(wke10.max_health, wke_stats.max_health * 1.5));
         // Unmarked: no change.
-        CHECK(catalog.build_loadout(cl, inv, Species::human, true).gear.size() == 2);
+        CHECK(catalog.build_loadout(cl, inv, Species::human).gear.size() == 2);
 
         // A Deflector Shield's mark grows its capacity and recharge.
         ItemDef psg;
         psg.kind = ItemKind::deflector_shield;
         psg.slot = "deflector_shield";
         psg.modifiers = {{Stat::shield_capacity, 100}, {Stat::shield_recharge, 20}, {Stat::mitigation, 0.1}};
-        const Gear g = catalog.resolve_gear(psg, 0.5, true, 10);
+        const Gear g = catalog.resolve_gear(psg, ItemGrade::standard, 10);
         CHECK(near(g.modifiers[0].add, 200) && near(g.modifiers[1].add, 40) && near(g.modifiers[2].add, 0.1));
     }
 
@@ -164,11 +182,11 @@ int main() {
     ItemCatalog worn_cat;
     worn_cat.load(worn_ini);
     std::filesystem::remove(worn_ini);
-    std::vector<ItemInstance> winv{{1, 1, "armor_stormtrooper_chest", 0.5, "", "{}"},
-                                   {2, 1, "cloth_jacket_rebel", 0.5, "", "{}"},
-                                   {3, 1, "speeder_test", 0.5, "", "{}"},
-                                   {4, 1, "helm", 0.5, "", "{}"},
-                                   {5, 1, "suit", 0.5, "", "{}"}};
+    std::vector<ItemInstance> winv{{1, 1, "armor_stormtrooper_chest", ItemGrade::standard, "", "{}"},
+                                   {2, 1, "cloth_jacket_rebel", ItemGrade::standard, "", "{}"},
+                                   {3, 1, "speeder_test", ItemGrade::standard, "", "{}"},
+                                   {4, 1, "helm", ItemGrade::standard, "", "{}"},
+                                   {5, 1, "suit", ItemGrade::standard, "", "{}"}};
     CharacterLoadout wcl;
     wcl.gear_ids["chest"] = 1;
     wcl.gear_ids["mount"] = 3;  // a mount isn't worn: it's summoned
@@ -217,15 +235,15 @@ int main() {
     ammo_cat.load(ammo_ini);
     std::filesystem::remove(ammo_ini);
     std::vector<ItemInstance> ainv{
-        {1, 1, "r1", 0.5, "", "{}", 1},
-        {2, 1, "a_burn", 0.5, "", "{}", 2500},
-        {3, 1, "h1", 0.5, "", "{}", 1},
-        {4, 1, "a_hvy", 0.5, "", "{}", 250},
+        {1, 1, "r1", ItemGrade::standard, "", "{}", 1},
+        {2, 1, "a_burn", ItemGrade::standard, "", "{}", 2500},
+        {3, 1, "h1", ItemGrade::standard, "", "{}", 1},
+        {4, 1, "a_hvy", ItemGrade::standard, "", "{}", 250},
     };
     CharacterLoadout acl;
     acl.primary_id = 1;
     acl.gear_ids["ammo_standard"] = 2;
-    const Loadout std_lo = ammo_cat.build_loadout(acl, ainv, Species::human, false);
+    const Loadout std_lo = ammo_cat.build_loadout(acl, ainv, Species::human);
     // (A stack is carried up to the most any character can carry: a perk's
     // capacity lets one grow past the standard, and it's never cut back.)
     CHECK(std_lo.unified_standard_ammo == int(max_standard_ammo * max_ammo_capacity));
@@ -239,11 +257,11 @@ int main() {
     // Without the ammo, none.
     CharacterLoadout bare;
     bare.primary_id = 1;
-    CHECK(!ammo_cat.build_loadout(bare, ainv, Species::human, false).weapons[primary_slot]->hit_effect);
+    CHECK(!ammo_cat.build_loadout(bare, ainv, Species::human).weapons[primary_slot]->hit_effect);
 
     // A weapon's handling keys, over the archetype's.
-    const WeaponDef base = ammo_cat.resolve_weapon(*ammo_cat.find("r1"), 0.5, false);
-    const WeaponDef tuned = ammo_cat.resolve_weapon(*ammo_cat.find("r2"), 0.5, false);
+    const WeaponDef base = ammo_cat.resolve_weapon(*ammo_cat.find("r1"));
+    const WeaponDef tuned = ammo_cat.resolve_weapon(*ammo_cat.find("r2"));
     CHECK(std::abs(tuned.bolt_speed - base.bolt_speed * 2) < 1e-6);
     CHECK(std::abs(tuned.bolt_speed * tuned.bolt_life - base.bolt_speed * base.bolt_life) < 1e-6);  // as far
     CHECK(std::abs(tuned.headshot_multiplier - base.headshot_multiplier * 1.5) < 1e-6);
@@ -271,7 +289,7 @@ int main() {
     CharacterLoadout hcl;
     hcl.primary_id = 3;
     hcl.gear_ids["ammo_heavy"] = 4;
-    const Loadout hvy_lo = ammo_cat.build_loadout(hcl, ainv, Species::human, false);
+    const Loadout hvy_lo = ammo_cat.build_loadout(hcl, ainv, Species::human);
     CHECK(hvy_lo.unified_heavy_ammo == int(max_heavy_ammo * max_ammo_capacity));
     CHECK(hvy_lo.weapons[primary_slot] && hvy_lo.weapons[primary_slot]->ammo_class == AmmoClass::heavy);
 
@@ -435,7 +453,7 @@ int main() {
             CHECK(painted_color_json(*chest, "Imperial") == R"({"paint":"empire"})" &&
                   painted_color_json(*chest, "republic") == "{}" &&
                   painted_color_json(*real.find("armor_ubese_helmet"), "empire") == "{}");
-            std::vector<ItemInstance> kit{{1, 1, "armor_katarn_chest", 0.5, "", painted_color_json(*chest, "empire")},
+            std::vector<ItemInstance> kit{{1, 1, "armor_katarn_chest", ItemGrade::standard, "", painted_color_json(*chest, "empire")},
                                           {2, 1, "armor_katarn_chest"}};
             CHECK(item_paint(kit[0]) == "empire" && item_paint(kit[1]).empty());
             CharacterLoadout pl;
@@ -445,7 +463,7 @@ int main() {
             pl.gear_ids["chest"] = 2;
             CHECK(resolve_worn_models(real, pl, kit, Species::human, Gender::male) ==
                   "armor/katarn/chest_m.gltf?index_color_1=0&index_color_2=4&index_texture_1=0");
-            const std::vector<ItemInstance> arms{{1, 1, "armor_katarn_biceps", 0.5, "", R"({"paint":"rebellion"})"}};
+            const std::vector<ItemInstance> arms{{1, 1, "armor_katarn_biceps", ItemGrade::standard, "", R"({"paint":"rebellion"})"}};
             CharacterLoadout al;
             al.gear_ids["biceps"] = 1;
             CHECK(resolve_worn_models(real, al, arms, Species::human, Gender::female) ==
@@ -462,7 +480,7 @@ int main() {
         sp_cat.load(ini_path);
         std::filesystem::remove(ini_path);
         CHECK(sp_cat.find("bow")->species == std::vector<Species>{Species::wookiee});
-        const std::vector<ItemInstance> bow_inv{{1, 1, "bow", 0.5, "", "{}"}};
+        const std::vector<ItemInstance> bow_inv{{1, 1, "bow", ItemGrade::standard, "", "{}"}};
         CharacterLoadout bow_lo;
         bow_lo.primary_id = 1;
         CHECK(sp_cat.build_loadout(bow_lo, bow_inv, Species::wookiee).weapons[primary_slot]->name == "bow");

@@ -8,6 +8,7 @@ signal request(action: int, id: String, target: int, position: Vector3, amount: 
 signal closed
 
 const ItemTooltip = preload("res://ui/item_tooltip.gd")
+const ItemGrade = preload("res://ui/item_grade.gd")
 
 const BROWSE := 15
 const LIST := 16
@@ -113,8 +114,11 @@ func _paint() -> void:
 		var l: Dictionary = listings[_scroll + i]
 		var rect := Rect2(lx, y + i * 38 * u, half, 36 * u)
 		draw_rect(rect, Color(0.18, 0.22, 0.3, 0.5) if _hover == "buy:%d" % int(l["id"]) else Color(0.1, 0.13, 0.18, 0.4))
-		text("gamefont_tiny", "%s  Q%d" % [_name(str(l["def_id"]), str(l.get("custom_name", "")), int(l.get("mark", 0))), roundi(float(l.get("quality", 0.5)) * 100)],
-				Vector2(rect.position.x + 8 * u, rect.position.y + 3 * u), "Left", TEXT)
+		var ldef: Dictionary = _defs.get(str(l["def_id"]), {})
+		var lgrade := ItemGrade.label(ldef, l)
+		text("gamefont_tiny", "%s%s" % [_name(str(l["def_id"]), str(l.get("custom_name", "")), int(l.get("mark", 0))),
+				"  (" + lgrade + ")" if lgrade != "" else ""],
+				Vector2(rect.position.x + 8 * u, rect.position.y + 3 * u), "Left", ItemGrade.color(ldef, l))
 		var who := str(l.get("shop", "")) if str(l.get("shop", "")) != "" else str(l.get("seller", ""))
 		var trend := ""
 		if prices.has(str(l["def_id"])):

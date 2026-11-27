@@ -663,6 +663,10 @@ void ItemCatalog::load(const std::filesystem::path& catalog_ini, const std::file
             def.damage_type = damage_type_from_name(*dt);
         }
         def.bolt_color_name = s.get("BoltColor").value_or("");
+        if (const auto g = s.get("Grade")) {
+            def.grade = item_grade_from_name(*g);
+            if (!def.grade) throw std::runtime_error(where + " (" + def.id + "): unknown Grade " + *g);
+        }
         for (const auto& [k, v] : s.values) {
             if (k == "Modifier") {
                 def.modifiers.push_back(parse_catalog_modifier(v, where + " (" + def.id + ")"));
@@ -774,6 +778,53 @@ void apply_armor_budget(ItemDef& def) {
     mult(Stat::run_speed, b.run_speed);
     mult(Stat::sprint_factor, b.sprint_factor);
     mult(Stat::energy_restore, b.energy_restore);
+}
+
+ItemGrade clamp_grade(int grade) { return ItemGrade(std::clamp(grade, 0, item_grade_count - 1)); }
+
+std::string_view item_grade_name(ItemGrade grade) {
+    static constexpr std::array<std::string_view, item_grade_count> names{"Flawed", "Standard", "Fine", "Exceptional",
+                                                                          "Legendary"};
+    return names[size_t(clamp_grade(int(grade)))];
+}
+
+std::optional<ItemGrade> item_grade_from_name(std::string_view name) {
+    for (int g = 0; g < item_grade_count; ++g) {
+        const std::string_view n = item_grade_name(ItemGrade(g));
+        if (n.size() == name.size() &&
+            std::equal(n.begin(), n.end(), name.begin(), [](char a, char b) {
+                return std::tolower(static_cast<unsigned char>(a)) == std::tolower(static_cast<unsigned char>(b));
+            })) {
+            return ItemGrade(g);
+        }
+    }
+    return std::nullopt;
+}
+
+double grade_stat_mult(ItemGrade grade) {
+    static constexpr std::array<double, item_grade_count> mults{0.92, 1.0, 1.08, 1.16, 1.16};
+    return mults[size_t(clamp_grade(int(grade)))];
+}
+
+ItemGrade grade_from_quality(double quality) {
+    // Quality moved stats by (q - 0.5) x 16%: 0 was -8% (Flawed), 1 +8% (Fine).
+    return quality < 0.25 ? ItemGrade::flawed : quality >= 0.75 ? ItemGrade::fine : ItemGrade::standard;
+}
+
+ItemGrade saved_grade(std::string_view text) {
+    const std::string s(text);
+    if (s.find('.') != std::string::npos) return grade_from_quality(std::atof(s.c_str()));
+    return s.empty() ? ItemGrade::standard : clamp_grade(std::atoi(s.c_str()));
+}
+
+bool item_takes_grade(const ItemDef& def) {
+    return def.kind == ItemKind::weapon || def.kind == ItemKind::armor || def.kind == ItemKind::deflector_shield;
+}
+
+std::optional<ItemGrade> shown_grade(const ItemDef& def, ItemGrade instance_grade) {
+    if (def.grade) return def.grade;
+    if (item_takes_grade(def)) return instance_grade;
+    return std::nullopt;
 }
 
 int clamp_mark(int mark) { return std::clamp(mark, 0, max_mark); }
@@ -983,7 +1034,7 @@ const ItemDef* ItemCatalog::find(std::string_view id) const {
     return it == index_.end() ? nullptr : &items_[it->second];
 }
 
-WeaponDef ItemCatalog::resolve_weapon(const ItemDef& def, double quality, bool apply_quality, int mark) const {
+WeaponDef ItemCatalog::resolve_weapon(const ItemDef& def, ItemGrade grade, int mark) const {
     WeaponDef w = default_archetype_weapon(def.archetype);
     if (const auto it = bf2_bases_.find(def.bf2_base); it != bf2_bases_.end()) {
         w = it->second;
@@ -993,11 +1044,10 @@ WeaponDef ItemCatalog::resolve_weapon(const ItemDef& def, double quality, bool a
     w.anim_set = def.anim_set;
     w.archetype = weapon_archetype_info(def.archetype).id;
 
-    // Quality moves damage within ±8% of the item's level; its mark scales
+    // Its grade moves damage by -8% to +16% within its level; its mark scales
     // it along the level curve (x1 at Mk 0 to x2 at Mk X).
-    const double q = std::clamp(apply_quality ? quality : 0.5, 0.0, 1.0);
-    const double q_mult = 1.0 + (q - 0.5) * 0.16;
-    const double power = def.damage_mult * q_mult * mark_scale(mark);
+    const double g_mult = grade_stat_mult(def.grade.value_or(grade));
+    const double power = def.damage_mult * g_mult * mark_scale(mark);
 
     w.damage *= power;
     if (w.damage_final > 0) {
@@ -1005,7 +1055,7 @@ WeaponDef ItemCatalog::resolve_weapon(const ItemDef& def, double quality, bool a
     }
     w.explosion_damage *= power;
     w.shot_delay /= std::max(0.1, def.rate_mult);
-    w.heat_per_shot *= def.heat_mult / (1.0 + (q - 0.5) * 0.08);
+    w.heat_per_shot *= def.heat_mult / (1.0 + (g_mult - 1.0) * 0.5);
     w.yaw_spread *= def.spread_mult;
     w.pitch_spread *= def.spread_mult;
     w.spread_per_shot *= def.spread_mult;
@@ -1061,15 +1111,14 @@ WeaponDef ItemCatalog::resolve_weapon(const ItemDef& def, double quality, bool a
     return w;
 }
 
-Gear ItemCatalog::resolve_gear(const ItemDef& def, double quality, bool apply_quality, int mark) const {
+Gear ItemCatalog::resolve_gear(const ItemDef& def, ItemGrade grade, int mark) const {
     Gear g;
     g.name = def.id;
     g.slot = def.slot;
-    const double q = std::clamp(apply_quality ? quality : 0.5, 0.0, 1.0);
-    const double q_mult = 1.0 + (q - 0.5) * 0.16;
+    const double g_mult = grade_stat_mult(def.grade.value_or(grade));
     for (StatModifier m : def.modifiers) {
         if (m.add > 0) {
-            m.add *= q_mult;
+            m.add *= g_mult;
             // A Deflector Shield's mark grows its capacity and recharge; worn
             // gear's marks go to health as a whole (build_loadout).
             if (def.kind == ItemKind::deflector_shield &&
@@ -1082,8 +1131,8 @@ Gear ItemCatalog::resolve_gear(const ItemDef& def, double quality, bool apply_qu
     return g;
 }
 
-Loadout ItemCatalog::build_loadout(const CharacterLoadout& cl, std::span<const ItemInstance> inventory, Species species,
-                                   bool apply_quality) const {
+Loadout ItemCatalog::build_loadout(const CharacterLoadout& cl, std::span<const ItemInstance> inventory,
+                                   Species species) const {
     Loadout out;
     out.name = cl.name;
     out.weapons = {};
@@ -1100,7 +1149,7 @@ Loadout ItemCatalog::build_loadout(const CharacterLoadout& cl, std::span<const I
     for (size_t s = 0; s < weapon_slots; ++s) {
         if (const ItemInstance* inst = find_inst(w_ids[s])) {
             if (const ItemDef* def = find(inst->def_id); def && species_can_use(*def, species)) {
-                out.weapons[s] = resolve_weapon(tuned(*def, *inst), inst->quality, apply_quality, inst->mark);
+                out.weapons[s] = resolve_weapon(tuned(*def, *inst), inst->grade, inst->mark);
             }
         }
     }
@@ -1111,7 +1160,7 @@ Loadout ItemCatalog::build_loadout(const CharacterLoadout& cl, std::span<const I
         if (const ItemInstance* inst = find_inst(item_id)) {
             if (const ItemDef* def = find(inst->def_id); def && item_fits_slot(*def, slot, false)) {
                 if (def->kind == ItemKind::armor || def->kind == ItemKind::deflector_shield) {
-                    out.gear.push_back(resolve_gear(tuned(*def, *inst), inst->quality, apply_quality, inst->mark));
+                    out.gear.push_back(resolve_gear(tuned(*def, *inst), inst->grade, inst->mark));
                     marked_weight += defense_mark_weight(slot) * clamp_mark(inst->mark);
                 }
                 // Clothing is worn too: it counts toward being unarmored.

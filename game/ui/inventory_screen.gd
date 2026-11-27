@@ -5,6 +5,7 @@ extends "res://ui/bf2_screen.gd"
 
 const CharacterStage = preload("res://rendering/character_stage.gd")
 const ItemTooltip = preload("res://ui/item_tooltip.gd")
+const ItemGrade = preload("res://ui/item_grade.gd")
 
 signal loadout_saved(slot_index: int, loadout: Dictionary)
 signal loadout_activated(slot_index: int)
@@ -71,7 +72,7 @@ var store: Object = null
 var _edit_slot := 0
 var _paperdoll_mode := "gear"  # "gear" or "appearance"
 var _category := "all"
-var _sort_by := "name"         # "name", "kind", "slot", "quality"
+var _sort_by := "name"         # "name", "kind", "slot", "grade"
 var _scroll := 0
 var _rows_visible := 8
 var _selected_item_id := 0
@@ -365,12 +366,14 @@ func _paint() -> void:
 		var ddef: Dictionary = _def_by_id.get(str(_dragging_inst.get("def_id", "")), {})
 		var ghost := Rect2(_mouse_pos + Vector2(10, 10) * u, Vector2(180, 26) * u)
 		frame(ghost, "border_popup")
-		text("gamefont_tiny", ItemTooltip.item_name(ddef, _dragging_inst), ghost.position + Vector2(8, 6) * u, "Left", ACCENT)
+		text("gamefont_tiny", ItemTooltip.item_name(ddef, _dragging_inst), ghost.position + Vector2(8, 6) * u, "Left",
+				ItemTooltip.name_color(ddef, _dragging_inst))
 	elif not _hover_inst.is_empty():
 		var hdef: Dictionary = _def_by_id.get(str(_hover_inst.get("def_id", "")), {})
 		var eq := _find_equipped_for_def(hdef)
 		var lines := ItemTooltip.build_lines(hdef, _hover_inst, store, eq.get("def", {}), eq.get("inst", {}))
-		ItemTooltip.draw(self, _mouse_pos, ItemTooltip.item_name(hdef, _hover_inst), lines)
+		ItemTooltip.draw(self, _mouse_pos, ItemTooltip.item_name(hdef, _hover_inst), lines,
+				ItemTooltip.name_color(hdef, _hover_inst))
 
 
 func _paint_paperdoll(box: Rect2) -> void:
@@ -469,7 +472,7 @@ func _paint_inventory(box: Rect2) -> void:
 		cx += cat_bw + 3 * u
 	y += 30 * u
 	cx = x
-	for s_entry: Array in [["name", "Name"], ["kind", "Kind"], ["slot", "Slot"], ["quality", "Quality"]]:
+	for s_entry: Array in [["name", "Name"], ["kind", "Kind"], ["slot", "Slot"], ["grade", "Grade"]]:
 		var bw := 82.0 * u
 		button(Rect2(cx, y, bw, 22 * u), "Sort: " + s_entry[1], "sort:" + s_entry[0], _sort_by == s_entry[0])
 		cx += bw + 4 * u
@@ -495,7 +498,7 @@ func _paint_inventory(box: Rect2) -> void:
 		match _sort_by:
 			"kind": return str(da.get("kind", "")) < str(db.get("kind", ""))
 			"slot": return str(da.get("slot", "")) < str(db.get("slot", ""))
-			"quality": return float(a.get("quality", 0.5)) > float(b.get("quality", 0.5))
+			"grade": return ItemGrade.shown(da, a) > ItemGrade.shown(db, b)
 		return str(da.get("name", "")) < str(db.get("name", ""))
 	)
 
@@ -519,7 +522,7 @@ func _paint_inventory(box: Rect2) -> void:
 		var used_in := _loadout_badges(iid)
 		var kind := str(def.get("kind", ""))
 		text("gamefont_small", ItemTooltip.item_name(def, inst), Vector2(x + 8 * u, ry + 5 * u),
-				"Left", ACCENT if selected else TEXT)
+				"Left", ItemTooltip.name_color(def, inst))
 		var sub_txt := ""
 		if kind == "junk":
 			sub_txt = "Junk | Sell: %d Cr" % int(def.get("sell_value", 0))
@@ -535,8 +538,9 @@ func _paint_inventory(box: Rect2) -> void:
 		elif kind == "vehicle":
 			sub_txt = "Vehicle | Use to call it, again to put it away"
 		else:
-			sub_txt = "%s | Q %d%% %s" % [str(def.get("slot", "")).capitalize(),
-					roundi(float(inst.get("quality", 0.5)) * 100), used_in]
+			var grade_label := ItemGrade.label(def, inst)
+			sub_txt = "%s%s %s" % [str(def.get("slot", "")).replace("_", " ").capitalize(),
+					" | " + grade_label if grade_label != "" else "", used_in]
 		text("gamefont_tiny", sub_txt, Vector2(x + 8 * u, ry + 20 * u), "Left", DIM)
 
 	var foot_y := box.end.y - 36 * u

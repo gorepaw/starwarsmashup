@@ -5,6 +5,7 @@
 extends "res://ui/bf2_screen.gd"
 
 const ItemTooltip = preload("res://ui/item_tooltip.gd")
+const ItemGrade = preload("res://ui/item_grade.gd")
 
 signal item_bought(def_id: String, use_fp: bool)
 signal item_sold(item_id: int)
@@ -219,11 +220,12 @@ func _paint() -> void:
 				_hover_inst = inst
 			frame(r, "border_3_pieces", Color(0.75, 0.88, 1.0) if hovered else Color(0.85, 0.85, 0.9))
 			var kind := str(def.get("kind", ""))
-			text("gamefont_small", str(def.get("name", did)), Vector2(x + 12 * u, ry + 8 * u),
-					"Left", ACCENT if kind == "junk" else TEXT)
+			text("gamefont_small", ItemTooltip.item_name(def, inst), Vector2(x + 12 * u, ry + 8 * u),
+					"Left", ItemTooltip.name_color(def, inst))
 			var sub := kind.replace("_", " ").capitalize()
-			if kind != "junk" and kind != "supply":
-				sub += " (Q %d%%)" % roundi(float(inst.get("quality", 0.5)) * 100.0)
+			var grade_label := ItemGrade.label(def, inst)
+			if grade_label != "":
+				sub += " (%s)" % grade_label
 			text("gamefont_tiny", sub, Vector2(x + 390 * u, ry + 11 * u), "Left", DIM)
 			var sell_v := int(def.get("sell_value", 0))
 			var iid := int(inst.get("id", 0))
@@ -239,7 +241,8 @@ func _paint() -> void:
 	if not _hover_def.is_empty():
 		var eq := _find_equipped(_hover_def) if _mode == "buy" else {}
 		var lines := ItemTooltip.build_lines(_hover_def, _hover_inst, store, eq.get("def", {}), eq.get("inst", {}))
-		ItemTooltip.draw(self, _mouse_pos, str(_hover_def.get("name", "")), lines)
+		ItemTooltip.draw(self, _mouse_pos, ItemTooltip.item_name(_hover_def, _hover_inst), lines,
+				ItemTooltip.name_color(_hover_def, _hover_inst))
 
 
 func _find_equipped(def: Dictionary) -> Dictionary:

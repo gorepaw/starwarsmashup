@@ -45,8 +45,19 @@ Galaxies has hundreds of weapons and dozens of armor sets. Battlefront has about
 - **Models from Galaxies, feel from Battlefront:** every weapon is a Galaxies model. Battlefront II defines how it handles, plus its effects and sounds.
 - **Archetypes:** each weapon maps to a Battlefront handling type (automatic blaster, burst rifle, sniper, scatter, launcher, etc.). The archetype decides how it feels: fire mode, projectile, overheating.
 - **Sidegrades:** at the same level, weapons within an archetype trade off rate of fire, damage, heat, accuracy, and range. Different, not strictly better: a sidegrade budget formula holds every weapon to the same total ([Weapons](WEAPONS.md#balance-the-sidegrade-budget)).
-- **Power curve:** gear has level requirements, and higher-level gear is stronger, but the whole range from level 1 to level 100 spans about 2x in each stat (health, damage and so on). Quality (crafting, loot) moves stats a little (±8%) within an item's level.
+- **Power curve:** gear has level requirements, and higher-level gear is stronger, but the whole range from level 1 to level 100 spans about 2x in each stat (health, damage and so on). An item's grade (below) moves its stats a little within its level, from -8% to +16%.
 - **Mk tiers:** every item exists at every level without its own catalog entry. The plain E-11 is level 1; an E-11 Mk I needs level 10, up to Mk X at level 100. Each mark adds 10% of the item's base power: a weapon's damage; a Deflector Shield's capacity and recharge; and, for worn gear, a share of the character's maximum health (the Deflector Shield 30%, chest 20%, leggings 14%, helmet 10%, the rest less). A full Mk X kit doubles health. A mark needs the level of the item's own profession (Rifles for a rifle, Light Armor for light armor), or the character's highest level for a Deflector Shield. Sidegrade stats (rate of fire, spread, mitigation) don't change with the mark. Loot tables choose which marks drop (`GearMarkMin`, `GearMarkMax`).
+- **Grades:** every weapon, armor piece and Deflector Shield has a grade, which scales its flat stats (damage; health, resistances, shield capacity and recharge) and shows as its color:
+
+  | Grade | Stats | Color | From |
+  |---|---|---|---|
+  | Flawed | -8% | white | a crafting roll, loot |
+  | Standard | base | green | vendors, quartermasters, quests; crafting, loot |
+  | Fine | +8% | blue | crafting, loot |
+  | Exceptional | +16% | purple | crafting, the best loot |
+  | Legendary | not decided (+16% until then) | orange | never crafted: endgame and horizontal-progression items later (an item's `Grade = legendary`) |
+
+  Every other item (junk, supplies, ammo, modules, clothing, vehicles) has no grade and shows white. Loot tables weigh the grades they drop (`GearGrades = 30 40 30 0`: Flawed, Standard, Fine, Exceptional). A lootable corpse shows a beam of light in its best item's color.
 - **Matches count gear:** there is one queue, and gear counts in it. Bots' gear balances the sides (see Bots).
 - **Open-world PvE widens the gap:** in the open world, a silent level-based modifier scales damage and toughness by the difference in level between a player and the creatures and NPCs they fight, so a level-1 character can't take on endgame content, even with good aim. It never applies between players: open-world PvP uses the same 2x curve as matches.
 - **Five loadouts:** each character keeps up to five, each a full kit. In a match they're the classes you choose from when you spawn. In the world, switching between them takes several seconds.

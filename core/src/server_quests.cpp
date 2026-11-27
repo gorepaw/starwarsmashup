@@ -43,14 +43,14 @@ std::string GameServer::item_name(const std::string& def_id) const {
     return def ? def->display_name : def_id;
 }
 
-void GameServer::give_item(Client& client, const std::string& def_id, double quality) {
+void GameServer::give_item(Client& client, const std::string& def_id, ItemGrade grade) {
     if (store_ != nullptr && client.character != 0) {
-        store_->grant_item({0, client.character, def_id, quality, "", "{}"});
+        store_->grant_item({0, client.character, def_id, grade, "", "{}"});
         client.items = store_->list_items(client.character);
     } else {
         uint64_t next_id = 1;
         for (const ItemInstance& item : client.items) next_id = std::max(next_id, item.id + 1);
-        client.items.push_back({next_id, 0, def_id, quality, "", "{}"});
+        client.items.push_back({next_id, 0, def_id, grade, "", "{}"});
     }
     ++client.inventory_rev;
     client.last_sync_tick = 0;
@@ -63,7 +63,7 @@ void GameServer::take_items(Client& client, const std::string& def_id, int count
         if (item.def_id == def_id) matching.push_back(item);
     }
     std::sort(matching.begin(), matching.end(),
-              [](const ItemInstance& a, const ItemInstance& b) { return a.quality < b.quality; });
+              [](const ItemInstance& a, const ItemInstance& b) { return a.grade < b.grade; });
     bool loadouts = false;
     for (int i = 0; i < count && i < int(matching.size()); ++i) {
         const uint64_t id = matching[size_t(i)].id;
@@ -110,7 +110,7 @@ void GameServer::apply_quests(Client& client, QuestEffects effects) {
             }
         }
         for (const std::string& item : effects.grant) {
-            give_item(client, item, 0.5);
+            give_item(client, item);
             notes.push_back("Found " + item_name(item));
             inventory = true;
         }
@@ -129,7 +129,7 @@ void GameServer::apply_quests(Client& client, QuestEffects effects) {
             client.faction_points += def->reward.faction_points;
             save_economy(client);
             for (const std::string& item : def->reward.items) {
-                give_item(client, item, 0.5);
+                give_item(client, item);
                 inventory = true;
             }
             // Quest items have done their job.

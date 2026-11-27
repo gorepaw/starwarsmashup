@@ -46,7 +46,16 @@ func _initialize() -> void:
 	var filled: PackedStringArray = store.auto_fill_schematic("sch_wp_pistol_d18", vault, "best_stat")
 	assert(filled.size() == 2 and filled[0] == "min_tatooine_durasteel" and filled[1] == "gas_inert_argon", "auto_fill: %s" % [filled])
 	var prev: Dictionary = store.preview_craft("sch_wp_pistol_d18", filled, 1, 20, 70)
-	assert(float(prev.get("base_quality", 0.0)) > 0.0, "preview: %s" % prev)
+	assert(float(prev.get("material_score", 0.0)) > 0.0, "preview: %s" % prev)
+	var odds_sum := 0.0
+	for k: String in ["flawed", "standard", "fine", "exceptional"]:
+		odds_sum += float(prev.get(k, 0.0))
+	assert(absf(odds_sum - 1.0) < 1e-6, "grade odds: %s" % prev)
+	assert(absf(float(prev.get("material_mult", 0.0)) - 7.3) < 1e-6, "focus 70%%: x7.3 materials: %s" % prev)
+	assert(SwmCharacterStore.craft_material_amount(4, 0, 100) == 40 and SwmCharacterStore.grade_name(3) == "Exceptional",
+			"focus cost / grade names")
+	assert(WorkbenchScreen._craft_amount(4, 2, 50) == SwmCharacterStore.craft_material_amount(4, 2, 50),
+			"the workbench's amounts disagree with the server's")
 
 	_screen = WorkbenchScreen.new(art)
 	_screen.set_anchors_preset(Control.PRESET_FULL_RECT)
@@ -71,7 +80,7 @@ func _initialize() -> void:
 			{"resource_id": "gas_inert_argon", "amount": 5}], "best_stat", 2)[0] == "", "Mk II takes 6 durasteel")
 	_screen._on_click("group:+1", Vector2.ZERO)
 	assert(_screen._group != "" and not _screen._filtered_schematics().is_empty(), "group picker")
-	_screen.inventory = [{"id": 7, "def_id": "cloth_shirt_s04", "quality": 0.5, "color_json": "{\"dye\":\"index_color_1=5\"}"}]
+	_screen.inventory = [{"id": 7, "def_id": "cloth_shirt_s04", "grade": 1, "color_json": "{\"dye\":\"index_color_1=5\"}"}]
 	_screen._on_click("tab:dye", Vector2.ZERO)
 	_screen._on_click("dyeitem:7", Vector2.ZERO)
 	assert(int(_screen._dye_choice.get("index_color_1", -1)) == 5, "dye read back: %s" % _screen._dye_choice)

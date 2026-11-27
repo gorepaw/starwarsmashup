@@ -195,7 +195,7 @@ Loadout WorldPopulation::build_bandit_loadout(const BanditArchetype& arch) const
     if (catalog_ != nullptr) {
         if (const ItemDef* item = catalog_->find(arch.weapon_id)) {
             if (item->kind == ItemKind::weapon) {
-                lo.weapons[primary_slot] = catalog_->resolve_weapon(*item, 0.5, false);
+                lo.weapons[primary_slot] = catalog_->resolve_weapon(*item);
                 return lo;
             }
         }

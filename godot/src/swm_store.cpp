@@ -38,7 +38,7 @@ godot::Dictionary to_dict(const core::ItemInstance& inst) {
     out["id"] = int64_t(inst.id);
     out["owner_id"] = int64_t(inst.owner_id);
     out["def_id"] = godot::String::utf8(inst.def_id.c_str());
-    out["quality"] = inst.quality;
+    out["grade"] = int64_t(inst.grade);
     out["mark"] = int64_t(inst.mark);
     out["quantity"] = int64_t(inst.quantity);
     out["custom_name"] = godot::String::utf8(inst.custom_name.c_str());
@@ -175,6 +175,9 @@ godot::Dictionary to_dict(const core::ItemDef& d, const core::ItemCatalog& catal
     out["cost_fp"] = int64_t(d.cost_faction_points);
     out["cost_credits"] = int64_t(d.cost_credits);
     out["sell_value"] = int64_t(d.sell_value);
+    // Grades: whether its copies have one, and the grade its def fixes (-1: none).
+    out["graded"] = core::item_takes_grade(d);
+    out["grade"] = d.grade ? int64_t(*d.grade) : int64_t(-1);
     out["heal_amount"] = d.heal_amount;
     out["teaches"] = godot::String::utf8(d.teaches.c_str());
     out["ammo_class"] = godot::String::utf8(std::string(core::ammo_class_name(d.ammo_class)).c_str());
@@ -209,7 +212,7 @@ godot::Dictionary to_dict(const core::ItemDef& d, const core::ItemCatalog& catal
     out["modifiers"] = mods;
 
     if (d.kind == core::ItemKind::weapon) {
-        const core::WeaponDef w = catalog.resolve_weapon(d, 0.5, false);
+        const core::WeaponDef w = catalog.resolve_weapon(d);
         godot::Dictionary ws;
         ws["damage"] = w.damage;
         ws["shot_delay"] = w.shot_delay;
@@ -339,7 +342,7 @@ godot::Array SwmCharacterStore::list_items(int64_t char_id) {
     return out;
 }
 
-godot::Dictionary SwmCharacterStore::grant_item(int64_t char_id, const godot::String& def_id, double quality) {
+godot::Dictionary SwmCharacterStore::grant_item(int64_t char_id, const godot::String& def_id, int64_t grade) {
     last_error_.clear();
     if (!store_) {
         last_error_ = "database not open";
@@ -349,7 +352,7 @@ godot::Dictionary SwmCharacterStore::grant_item(int64_t char_id, const godot::St
         core::ItemInstance inst;
         inst.owner_id = core::PersistentId(char_id);
         inst.def_id = to_std(def_id);
-        inst.quality = quality;
+        inst.grade = core::clamp_grade(int(grade));
         return to_dict(store_->grant_item(inst));
     } catch (const std::exception& e) {
         last_error_ = e.what();
@@ -573,7 +576,8 @@ godot::Dictionary SwmCharacterStore::scan_terrain(const godot::String& category,
 
 godot::PackedStringArray SwmCharacterStore::auto_fill_schematic(const godot::String& schematic_id,
                                                                 const godot::Array& materials,
-                                                                const godot::String& mode, int64_t mark) const {
+                                                                const godot::String& mode, int64_t mark,
+                                                                int64_t focus_pct) const {
     godot::PackedStringArray out;
     const core::SchematicDef* s = crafting_.find_schematic(to_std(schematic_id));
     if (s == nullptr) return out;
@@ -587,7 +591,7 @@ godot::PackedStringArray SwmCharacterStore::auto_fill_schematic(const godot::Str
     const core::AutoFillMode fill_mode = m == "best_quality" ? core::AutoFillMode::best_quality
                                          : m == "cheapest"   ? core::AutoFillMode::cheapest
                                                              : core::AutoFillMode::best_stat;
-    for (const std::string& rid : crafting_.auto_fill(*s, vault, fill_mode, int(mark))) {
+    for (const std::string& rid : crafting_.auto_fill(*s, vault, fill_mode, int(mark), int(focus_pct))) {
         out.push_back(godot::String::utf8(rid.c_str()));
     }
     return out;
@@ -596,7 +600,7 @@ godot::PackedStringArray SwmCharacterStore::auto_fill_schematic(const godot::Str
 godot::Dictionary SwmCharacterStore::preview_craft(const godot::String& schematic_id,
                                                    const godot::PackedStringArray& resource_ids,
                                                    int64_t enhancement_count, int64_t crafter_level,
-                                                   int64_t exp_quality_pct) const {
+                                                   int64_t focus_pct) const {
     godot::Dictionary out;
     const core::SchematicDef* s = crafting_.find_schematic(to_std(schematic_id));
     if (s == nullptr) return out;
@@ -604,15 +608,23 @@ godot::Dictionary SwmCharacterStore::preview_craft(const godot::String& schemati
     rids.reserve(size_t(resource_ids.size()));
     for (int i = 0; i < resource_ids.size(); ++i) rids.push_back(to_std(resource_ids[i]));
     const core::CraftPreview p = crafting_.preview_craft(*s, rids, int(enhancement_count), int(crafter_level),
-                                                         uint8_t(std::clamp<int64_t>(exp_quality_pct, 0, 100)));
-    out["base_quality"] = p.base_quality;
-    out["min_quality"] = p.min_quality;
-    out["max_quality"] = p.max_quality;
-    out["great_success"] = p.odds.great_success;
-    out["success"] = p.odds.success;
-    out["neutral"] = p.odds.neutral;
-    out["minor_flaw"] = p.odds.minor_flaw;
+                                                         uint8_t(std::clamp<int64_t>(focus_pct, 0, 100)));
+    out["material_score"] = p.material_score;
+    out["material_mult"] = p.material_mult;
+    out["flawed"] = p.odds.flawed;
+    out["standard"] = p.odds.standard;
+    out["fine"] = p.odds.fine;
+    out["exceptional"] = p.odds.exceptional;
     return out;
+}
+
+godot::String SwmCharacterStore::grade_name(int64_t grade) {
+    const std::string_view n = core::item_grade_name(core::clamp_grade(int(grade)));
+    return godot::String::utf8(n.data(), int(n.size()));
+}
+
+int64_t SwmCharacterStore::craft_material_amount(int64_t amount, int64_t mark, int64_t focus_pct) {
+    return core::craft_material_amount(int(amount), int(mark), int(focus_pct));
 }
 
 godot::Error SwmCharacterStore::save_loadout(int64_t char_id, int64_t slot_index, const godot::Dictionary& loadout) {
@@ -696,8 +708,7 @@ godot::Dictionary SwmCharacterStore::mark_requirement(const godot::String& def_i
     return out;
 }
 
-godot::Dictionary SwmCharacterStore::resolve_item_stats(const godot::String& def_id, double quality,
-                                                        bool apply_quality, int64_t mark,
+godot::Dictionary SwmCharacterStore::resolve_item_stats(const godot::String& def_id, int64_t grade, int64_t mark,
                                                         const godot::String& color_json) const {
     godot::Dictionary out;
     const core::ItemDef* found = catalog_.find(to_std(def_id));
@@ -713,7 +724,7 @@ godot::Dictionary SwmCharacterStore::resolve_item_stats(const godot::String& def
     }
     out["modules"] = module_names;
     if (def->kind == core::ItemKind::weapon) {
-        const core::WeaponDef w = catalog_.resolve_weapon(*def, quality, apply_quality, int(mark));
+        const core::WeaponDef w = catalog_.resolve_weapon(*def, core::clamp_grade(int(grade)), int(mark));
         out["damage"] = w.damage;
         out["shot_delay"] = w.shot_delay;
         out["rounds_per_clip"] = int64_t(w.rounds_per_clip);
@@ -747,7 +758,7 @@ godot::Dictionary SwmCharacterStore::resolve_item_stats(const godot::String& def
         out["aim_speed"] = w.aim_speed;
         if (w.hit_effect) out["hit_effect"] = hit_effect_dict(*w.hit_effect);
     }
-    const core::Gear g = catalog_.resolve_gear(*def, quality, apply_quality, int(mark));
+    const core::Gear g = catalog_.resolve_gear(*def, core::clamp_grade(int(grade)), int(mark));
     godot::Array mods;
     for (const core::StatModifier& m : g.modifiers) {
         godot::Dictionary md;
@@ -762,7 +773,7 @@ godot::Dictionary SwmCharacterStore::resolve_item_stats(const godot::String& def
 }
 
 godot::Dictionary SwmCharacterStore::compute_loadout_stats(const godot::String& species, const godot::Dictionary& loadout,
-                                                           const godot::Array& items, bool apply_quality) const {
+                                                           const godot::Array& items) const {
     core::CharacterLoadout cl;
     cl.primary_id = loadout.has("primary_id") ? uint64_t(int64_t(loadout["primary_id"])) : 0;
     cl.sidearm_id = loadout.has("sidearm_id") ? uint64_t(int64_t(loadout["sidearm_id"])) : 0;
@@ -781,12 +792,12 @@ godot::Dictionary SwmCharacterStore::compute_loadout_stats(const godot::String& 
         core::ItemInstance inst;
         inst.id = d.has("id") ? uint64_t(int64_t(d["id"])) : 0;
         inst.def_id = d.has("def_id") ? to_std(d["def_id"]) : "";
-        inst.quality = d.has("quality") ? double(d["quality"]) : 0.5;
+        inst.grade = d.has("grade") ? core::clamp_grade(int(int64_t(d["grade"]))) : core::ItemGrade::standard;
         inst.mark = d.has("mark") ? core::clamp_mark(int(int64_t(d["mark"]))) : 0;
         inv.push_back(std::move(inst));
     }
     const core::Species sp = core::species_from_name(to_std(species)).value_or(core::Species::human);
-    const core::Loadout built = catalog_.build_loadout(cl, inv, sp, apply_quality);
+    const core::Loadout built = catalog_.build_loadout(cl, inv, sp);
     const core::CharacterStats stats = core::stats_for(built, sp);
     godot::Dictionary out;
     out["max_health"] = stats.max_health;
@@ -869,7 +880,7 @@ godot::Dictionary SwmCharacterStore::buy_item(int64_t char_id, const godot::Stri
             credits -= def->cost_credits;
         }
         store_->update_economy(ch->id, credits, fp, ch->experience, ch->active_loadout);
-        return to_dict(store_->grant_item({0, ch->id, id_str, 0.5, "", "{}", 1}));
+        return to_dict(store_->grant_item({0, ch->id, id_str, core::ItemGrade::standard, "", "{}", 1}));
     } catch (const std::exception& e) {
         last_error_ = e.what();
         return {};
@@ -957,7 +968,8 @@ void SwmCharacterStore::_bind_methods() {
     ClassDB::bind_method(D_METHOD("get_catalog"), &SwmCharacterStore::get_catalog);
     ClassDB::bind_method(D_METHOD("list_items", "char_id"), &SwmCharacterStore::list_items);
     ClassDB::bind_method(D_METHOD("get_reputation", "char_id"), &SwmCharacterStore::get_reputation);
-    ClassDB::bind_method(D_METHOD("grant_item", "char_id", "def_id", "quality"), &SwmCharacterStore::grant_item);
+    ClassDB::bind_method(D_METHOD("grant_item", "char_id", "def_id", "grade"), &SwmCharacterStore::grant_item,
+                         DEFVAL(1));
     ClassDB::bind_method(D_METHOD("remove_item", "item_id"), &SwmCharacterStore::remove_item);
     ClassDB::bind_method(D_METHOD("list_loadouts", "char_id"), &SwmCharacterStore::list_loadouts);
     ClassDB::bind_method(D_METHOD("save_loadout", "char_id", "slot_index", "loadout"),
@@ -968,13 +980,16 @@ void SwmCharacterStore::_bind_methods() {
                          &SwmCharacterStore::add_rewards);
     ClassDB::bind_method(D_METHOD("set_active_loadout", "char_id", "slot_index"),
                          &SwmCharacterStore::set_active_loadout);
-    ClassDB::bind_method(D_METHOD("resolve_item_stats", "def_id", "quality", "apply_quality", "mark", "color_json"),
-                         &SwmCharacterStore::resolve_item_stats, DEFVAL(0.5), DEFVAL(true), DEFVAL(0), DEFVAL("{}"));
+    ClassDB::bind_method(D_METHOD("resolve_item_stats", "def_id", "grade", "mark", "color_json"),
+                         &SwmCharacterStore::resolve_item_stats, DEFVAL(1), DEFVAL(0), DEFVAL("{}"));
+    ClassDB::bind_static_method("SwmCharacterStore", D_METHOD("grade_name", "grade"), &SwmCharacterStore::grade_name);
+    ClassDB::bind_static_method("SwmCharacterStore", D_METHOD("craft_material_amount", "amount", "mark", "focus_pct"),
+                                &SwmCharacterStore::craft_material_amount);
     ClassDB::bind_method(D_METHOD("item_display_name", "def_id", "mark"), &SwmCharacterStore::item_display_name,
                          DEFVAL(0));
     ClassDB::bind_method(D_METHOD("mark_requirement", "def_id", "mark"), &SwmCharacterStore::mark_requirement);
-    ClassDB::bind_method(D_METHOD("compute_loadout_stats", "species", "loadout", "items", "apply_quality"),
-                         &SwmCharacterStore::compute_loadout_stats, DEFVAL(true));
+    ClassDB::bind_method(D_METHOD("compute_loadout_stats", "species", "loadout", "items"),
+                         &SwmCharacterStore::compute_loadout_stats);
     ClassDB::bind_method(D_METHOD("worn_models", "species", "gender", "loadout", "items"),
                          &SwmCharacterStore::worn_models);
     ClassDB::bind_method(D_METHOD("load_professions", "path"), &SwmCharacterStore::load_professions);
@@ -988,9 +1003,9 @@ void SwmCharacterStore::_bind_methods() {
     ClassDB::bind_method(D_METHOD("get_work_orders"), &SwmCharacterStore::get_work_orders);
     ClassDB::bind_method(D_METHOD("scan_terrain", "category", "x", "z", "radius", "grid_n"),
                          &SwmCharacterStore::scan_terrain, DEFVAL(60.0), DEFVAL(17));
-    ClassDB::bind_method(D_METHOD("auto_fill_schematic", "schematic_id", "materials", "mode", "mark"),
-                         &SwmCharacterStore::auto_fill_schematic, DEFVAL(0));
-    ClassDB::bind_method(D_METHOD("preview_craft", "schematic_id", "resource_ids", "enhancement_count", "crafter_level", "exp_quality_pct"),
+    ClassDB::bind_method(D_METHOD("auto_fill_schematic", "schematic_id", "materials", "mode", "mark", "focus_pct"),
+                         &SwmCharacterStore::auto_fill_schematic, DEFVAL(0), DEFVAL(0));
+    ClassDB::bind_method(D_METHOD("preview_craft", "schematic_id", "resource_ids", "enhancement_count", "crafter_level", "focus_pct"),
                          &SwmCharacterStore::preview_craft);
     ClassDB::bind_static_method("SwmCharacterStore", D_METHOD("get_species_list"),
                                 &SwmCharacterStore::get_species_list);

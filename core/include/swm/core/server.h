@@ -212,9 +212,8 @@ public:
     // Custom loadouts for a player (in a hub, or handed from a hub to a match).
     void set_player_loadouts(uint32_t entity, std::vector<Loadout> loadouts,
                              std::vector<std::string> worn_per_loadout = {});
-    // Resolves a connected hub player's saved loadouts (with or without quality).
-    std::vector<Loadout> build_player_loadouts(uint32_t entity, bool apply_quality,
-                                               std::vector<std::string>* out_worn = nullptr) const;
+    // Resolves a connected hub player's saved loadouts.
+    std::vector<Loadout> build_player_loadouts(uint32_t entity, std::vector<std::string>* out_worn = nullptr) const;
     // Persists battle rewards & faction reputation for a player by name and updates live balance if connected.
     void award_battle_rewards(const std::string& name, const std::string& faction, const BattleReward& reward);
     // Syncs remaining unified ammo quantities back from a finished battle to the player's equipped stacks.
@@ -641,7 +640,8 @@ private:
     void return_to_waiting(Client& client);
     void rebuild_client_loadouts(Client& client);
     void scrub_item_from_loadouts(Client& client, uint64_t item_id);
-    ItemInstance grant_stacked_item(Client& client, const ItemDef& def, int delta_qty, double quality);
+    ItemInstance grant_stacked_item(Client& client, const ItemDef& def, int delta_qty,
+                                    ItemGrade grade = ItemGrade::standard);
     void sync_client_ammo(Client& client, bool flush_now);
     void send_inventory_sync(Client& client);
     // Vehicles (server_vehicles.cpp).
@@ -705,7 +705,7 @@ private:
     std::string step_text(const QuestStep& step) const;
     std::string item_name(const std::string& def_id) const;
     int held_count(const Client& client, const std::string& def_id) const;
-    void give_item(Client& client, const std::string& def_id, double quality);
+    void give_item(Client& client, const std::string& def_id, ItemGrade grade = ItemGrade::standard);
     void take_items(Client& client, const std::string& def_id, int count);
     void save_economy(Client& client);
     const Loadout& loadout_of(const Client& client) const;

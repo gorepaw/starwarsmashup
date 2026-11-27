@@ -47,7 +47,7 @@ func _initialize() -> void:
 		"contracts": [{"id": 5, "kind": "track", "title": "Track: a worrt", "reward": 120, "expires_in": 600.0,
 				"progress": 0.0, "needed": 0.0, "profession": "ranger"}],
 		"offers": [], "offer_source": "",
-		"bazaar": [{"id": 8, "seller": "Gubb", "shop": "Gubb's Shop", "def_id": "wp_rifle_e11", "quality": 0.5,
+		"bazaar": [{"id": 8, "seller": "Gubb", "shop": "Gubb's Shop", "def_id": "wp_rifle_e11", "grade": 1,
 				"custom_name": "", "price": 900}],
 		"my_listings": [], "prices": [{"def_id": "wp_rifle_e11", "count": 2, "low": 800, "high": 1000, "average": 900, "last": 1000}],
 		"performing": true, "bounty_flag": false,
@@ -60,8 +60,8 @@ func _initialize() -> void:
 	bar.channel = {"name": "Tame... hold still", "progress": 0.4}
 	bar.performing = true
 	layer.add_child(bar)
-	var items := [{"id": 11, "def_id": "wp_rifle_e11", "quality": 0.5, "custom_name": "", "color_json": "{\"slice\":\"slice_overclock\"}"},
-			{"id": 12, "def_id": "bio_creature_egg", "quality": 0.6, "custom_name": "Dewback Egg", "color_json": "{}"}]
+	var items := [{"id": 11, "def_id": "wp_rifle_e11", "grade": 1, "custom_name": "", "color_json": "{\"slice\":\"slice_overclock\"}"},
+			{"id": 12, "def_id": "bio_creature_egg", "grade": 1, "custom_name": "Dewback Egg", "color_json": "{}"}]
 	var catalog := [{"id": "wp_rifle_e11", "name": "E-11", "kind": "weapon"}, {"id": "bio_creature_egg", "name": "Egg", "kind": "supply"}]
 	for tab in DatapadScreen.TABS.size():
 		var pad := DatapadScreen.new(art)

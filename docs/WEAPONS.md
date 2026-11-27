@@ -1,6 +1,6 @@
 # Weapons
 
-Every weapon model in Galaxies, sorted into our seven categories, and how we turn them into items. Gear rules (Mk tiers, quality, the 2x curve, ammo effects) are in [Design](DESIGN.md#weapons-and-loadouts); weapon professions are in [Professions](PROFESSIONS.md).
+Every weapon model in Galaxies, sorted into our seven categories, and how we turn them into items. Gear rules (Mk tiers, grades, the 2x curve, ammo effects) are in [Design](DESIGN.md#weapons-and-loadouts); weapon professions are in [Professions](PROFESSIONS.md).
 
 ## The categories
 
@@ -228,7 +228,7 @@ It renders every catalog weapon in a soldier's hands, one image per category, si
 
 ### 3. One item per model, with variants as tiers
 
-Galaxies' variants of one model (quest, Corsec, noob, Lithitanium, "light" or "heavy" versions) don't become separate items. They become Mk tiers and quality, or faction quartermaster stock. Recolors like the black DH-17 can be appearance options later. That keeps the catalog at about 130 weapons.
+Galaxies' variants of one model (quest, Corsec, noob, Lithitanium, "light" or "heavy" versions) don't become separate items. They become Mk tiers and grades, or faction quartermaster stock. Recolors like the black DH-17 can be appearance options later. That keeps the catalog at about 130 weapons.
 
 ### 4. New archetypes only where handling really differs
 

@@ -115,14 +115,16 @@ func _paint() -> void:
 			var item: Dictionary = carried[_scroll_left + i]
 			var rect := Rect2(left_x, ry, half, row_h)
 			draw_rect(rect, Color(0.18, 0.22, 0.3, 0.5) if _hover == "in:%d" % int(item["id"]) else Color(0.1, 0.13, 0.18, 0.4))
-			text("gamefont_tiny", _name_of(item), Vector2(rect.position.x + 8 * u, ry + 7 * u), "Left", TEXT)
+			text("gamefont_tiny", _name_of(item), Vector2(rect.position.x + 8 * u, ry + 7 * u), "Left",
+					ItemTooltip.name_color(_defs.get(str(item.get("def_id", "")), {}), item))
 			text("gamefont_tiny", "bank >>", Vector2(rect.end.x - 8 * u, ry + 7 * u), "Right", DIM)
 			region(rect, "in:%d" % int(item["id"]))
 		if _scroll_right + i < bank_items.size():
 			var item: Dictionary = bank_items[_scroll_right + i]
 			var rect := Rect2(right_x, ry, half, row_h)
 			draw_rect(rect, Color(0.18, 0.22, 0.3, 0.5) if _hover == "out:%d" % int(item["id"]) else Color(0.1, 0.13, 0.18, 0.4))
-			text("gamefont_tiny", _name_of(item), Vector2(rect.position.x + 8 * u, ry + 7 * u), "Left", TEXT)
+			text("gamefont_tiny", _name_of(item), Vector2(rect.position.x + 8 * u, ry + 7 * u), "Left",
+					ItemTooltip.name_color(_defs.get(str(item.get("def_id", "")), {}), item))
 			text("gamefont_tiny", "<< take", Vector2(rect.end.x - 8 * u, ry + 7 * u), "Right", DIM)
 			region(rect, "out:%d" % int(item["id"]))
 	if feedback != "":

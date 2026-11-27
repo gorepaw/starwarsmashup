@@ -75,12 +75,13 @@ void test_store(CharacterStore& store) {
     CHECK(all.size() == 3);
 
     // Items, loadouts, and economy.
-    const ItemInstance i1 = store.grant_item({0, created_wke.id, "wp_rifle_e11", 0.75, "", "{}"});
-    const ItemInstance i2 = store.grant_item({0, created_wke.id, "psg_mark1", 0.5, "", "{}"});
+    const ItemInstance i1 = store.grant_item({0, created_wke.id, "wp_rifle_e11", ItemGrade::fine, "", "{}"});
+    const ItemInstance i2 = store.grant_item({0, created_wke.id, "psg_mark1", ItemGrade::standard, "", "{}"});
     CHECK(i1.id != 0 && i2.id > i1.id);
     CHECK(store.list_items(created_wke.id).size() == 2);
+    CHECK(store.list_items(created_wke.id)[0].grade == ItemGrade::fine);  // its grade is kept
     // An item's Mk tier is kept.
-    const ItemInstance mk7 = store.grant_item({0, created_wke.id, "wp_pistol_dl44", 0.6, "", "{}", 1, 7});
+    const ItemInstance mk7 = store.grant_item({0, created_wke.id, "wp_pistol_dl44", ItemGrade::standard, "", "{}", 1, 7});
     CHECK(mk7.mark == 7);
     const auto with_mk = store.list_items(created_wke.id);
     CHECK(with_mk.size() == 3 && with_mk[2].mark == 7 && with_mk[0].mark == 0);
@@ -159,9 +160,9 @@ void test_sqlite_file() {
         {
             SqliteCharacterStore fresh(v8.path);
             owner = fresh.create("dresser", {}, 0).id;
-            const auto suit = fresh.grant_item({0, owner, "cosmetic_rep_clone_p1", 0.5, "", "{}"});
-            const auto legs = fresh.grant_item({0, owner, "cosmetic_imp_stormtrooper_pants", 0.5, "", "{}"});
-            const auto boots = fresh.grant_item({0, owner, "cloth_boots_leather", 0.5, "", "{}"});
+            const auto suit = fresh.grant_item({0, owner, "cosmetic_rep_clone_p1", ItemGrade::standard, "", "{}"});
+            const auto legs = fresh.grant_item({0, owner, "cosmetic_imp_stormtrooper_pants", ItemGrade::standard, "", "{}"});
+            const auto boots = fresh.grant_item({0, owner, "cloth_boots_leather", ItemGrade::standard, "", "{}"});
             CharacterLoadout old;
             old.appearance_ids = {{"full_body", suit.id}, {"pants", legs.id}, {"boots_cosmetic", boots.id}};
             fresh.save_loadout(owner, old);
@@ -178,6 +179,33 @@ void test_sqlite_file() {
         const auto los = migrated.list_loadouts(owner);
         CHECK(los.size() == 1 && los[0].appearance_ids.size() == 3 && los[0].appearance_ids.contains("full_body") &&
               los[0].appearance_ids.contains("leggings") && los[0].appearance_ids.contains("boots"));
+    }
+    // A v9 database's item qualities become the grades nearest their stats.
+    {
+        TempDatabase v9;
+        PersistentId owner = 0;
+        {
+            SqliteCharacterStore fresh(v9.path);
+            owner = fresh.create("crafter", {}, 0).id;
+            for (const char* def : {"wp_rifle_e11", "wp_pistol_dl44", "psg_mark1"}) {
+                fresh.grant_item({0, owner, def, ItemGrade::standard, "", "{}"});
+            }
+        }
+        sqlite3* db = nullptr;
+        CHECK(sqlite3_open(v9.path.string().c_str(), &db) == SQLITE_OK);
+        CHECK(sqlite3_exec(db,
+                           "ALTER TABLE items DROP COLUMN grade;"
+                           "UPDATE items SET quality = 0.1 WHERE def_id = 'wp_rifle_e11';"
+                           "UPDATE items SET quality = 0.9 WHERE def_id = 'wp_pistol_dl44';"
+                           "UPDATE items SET quality = 0.6 WHERE def_id = 'psg_mark1';"
+                           "PRAGMA user_version = 9;",
+                           nullptr, nullptr, nullptr) == SQLITE_OK);
+        sqlite3_close(db);
+
+        SqliteCharacterStore migrated(v9.path);
+        const auto items = migrated.list_items(owner);
+        CHECK(items.size() == 3 && items[0].grade == ItemGrade::flawed && items[1].grade == ItemGrade::fine &&
+              items[2].grade == ItemGrade::standard);
     }
     // A v1 database migrates cleanly to v2, preserving existing characters.
     {
@@ -222,7 +250,7 @@ void test_sqlite_file() {
         SqliteCharacterStore migrated(v2.path);
         const auto ch = migrated.find_by_name("v2char");
         CHECK(ch && ch->species == "wookiee" && ch->credits == 0 && ch->faction_points == 0);
-        const auto granted = migrated.grant_item({0, ch->id, "psg_mark1", 0.5, "", "{}", 1, 3});
+        const auto granted = migrated.grant_item({0, ch->id, "psg_mark1", ItemGrade::standard, "", "{}", 1, 3});
         CHECK(granted.id > 0 && migrated.list_items(ch->id).size() == 1);
         CHECK(migrated.list_items(ch->id)[0].mark == 3);
     }

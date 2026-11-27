@@ -642,8 +642,8 @@ PriceStats price_stats(std::span<const BazaarSale> sales, std::string_view def_i
 std::string format_listings(std::span<const BazaarListing> listings) {
     std::string out;
     for (const BazaarListing& l : listings) {
-        out += std::format("{}|{}|{}|{}|{}|{}|{:.4f}|{}|{}|{}|{}|{}|{}\n", l.id, l.seller, escape(l.seller_name),
-                           escape(l.shop), l.item.id, escape(l.item.def_id), l.item.quality, l.item.quantity,
+        out += std::format("{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}\n", l.id, l.seller, escape(l.seller_name),
+                           escape(l.shop), l.item.id, escape(l.item.def_id), int(l.item.grade), l.item.quantity,
                            escape(l.item.custom_name), escape(l.item.color_json), l.price, l.listed_at, l.item.mark);
     }
     return out;
@@ -662,7 +662,7 @@ std::vector<BazaarListing> parse_listings(std::string_view text) {
         l.item.id = to_uint(f[4]);
         l.item.owner_id = l.seller;
         l.item.def_id = unescape(f[5]);
-        l.item.quality = std::clamp(to_double(f[6], 0.5), 0.0, 1.0);
+        l.item.grade = saved_grade(f[6]);
         l.item.quantity = int(std::clamp<int64_t>(to_int(f[7], 1), 1, 65535));
         l.item.custom_name = unescape(f[8]);
         l.item.color_json = unescape(f[9]);

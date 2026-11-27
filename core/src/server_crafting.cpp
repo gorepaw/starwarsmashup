@@ -406,6 +406,9 @@ void GameServer::handle_craft_request(Client& client, const net::CraftRequest& r
             }
         }
         const int batch = std::clamp<int>(req.batch_count, 1, 10);
+        // Focus buys a better grade, so it costs nothing on what has none.
+        const bool graded = out_def != nullptr && item_takes_grade(*out_def) && !out_def->grade;
+        const int focus = graded ? std::clamp<int>(req.exp_quality_pct, 0, 100) : 0;
         if (req.resource_ids.size() < sch->slots.size()) {
             notify(client.entity, "Fill every material slot first.");
             return;
@@ -417,7 +420,7 @@ void GameServer::handle_craft_request(Client& client, const net::CraftRequest& r
                 notify(client.entity, "Invalid material for schematic slot.");
                 return;
             }
-            needed[r->id] += int64_t(mark_material_amount(sch->slots[i].amount, mark)) * batch;
+            needed[r->id] += int64_t(craft_material_amount(sch->slots[i].amount, mark, focus)) * batch;
         }
         for (const auto& [rid, amt] : needed) {
             if (material_amount(client.materials, rid) < amt) {
@@ -426,7 +429,7 @@ void GameServer::handle_craft_request(Client& client, const net::CraftRequest& r
             }
         }
         // Its modules: each tunes it (docs/CRAFTING.md, Modules) if it fits,
-        // and adds quality; one for something else isn't used.
+        // and betters its grade odds; one for something else isn't used.
         std::vector<uint64_t> enh_ids;
         std::string mods;
         for (const uint64_t eid : req.enhancement_item_ids) {
@@ -455,20 +458,19 @@ void GameServer::handle_craft_request(Client& client, const net::CraftRequest& r
             std::erase_if(client.items, [&](const ItemInstance& inst) { return inst.id == eid; });
         }
         const CraftPreview preview =
-            book.preview_craft(*sch, req.resource_ids, int(enh_ids.size()), lv, req.exp_quality_pct);
-        double best_q = 0.0;
-        std::string last_outcome = "Success";
+            book.preview_craft(*sch, req.resource_ids, int(enh_ids.size()), lv, uint8_t(focus));
+        std::array<int, item_grade_count> made{};
         const int unit_count = sch->output_count > 1 ? sch->output_count
                                                      : (out_def && out_def->kind == ItemKind::ammo ? out_def->ammo_batch : 1);
         for (int i = 0; i < batch; ++i) {
-            const auto [q, outcome] = CraftingBook::roll_craft_quality(preview, random_unit());
-            best_q = std::max(best_q, q);
-            last_outcome = outcome;
+            const ItemGrade grade =
+                graded ? CraftingBook::roll_craft_grade(preview, random_unit()) : ItemGrade::standard;
+            ++made[size_t(grade)];
             if (out_def != nullptr && (unit_count > 1 || out_def->kind == ItemKind::ammo)) {
-                grant_stacked_item(client, *out_def, unit_count, q);
+                grant_stacked_item(client, *out_def, unit_count, grade);
             } else {
                 client.items.push_back(store_->grant_item(
-                    {0, client.character, sch->output_item, q, "", with_item_json_field("{}", "mods", mods), 1, mark}));
+                    {0, client.character, sch->output_item, grade, "", with_item_json_field("{}", "mods", mods), 1, mark}));
             }
         }
         save_materials(client);
@@ -478,9 +480,17 @@ void GameServer::handle_craft_request(Client& client, const net::CraftRequest& r
         client.crafting_sync_tick = 0;
         earn_profession_xp(client, sch->profession, mark_craft_xp(sch->base_xp, mark) * batch);
         quest_event(client, "craft");
-        notify(client.entity, std::format("Crafted {}x {} ({}% - {})", batch,
+        // "Crafted 3x E-11 Blaster Rifle Mk II (2 Fine, 1 Exceptional)".
+        std::string grades;
+        for (int g = item_grade_count - 1; graded && g >= 0; --g) {
+            if (made[size_t(g)] == 0) continue;
+            const std::string_view name = item_grade_name(ItemGrade(g));
+            grades += (grades.empty() ? "" : ", ") +
+                      (batch > 1 ? std::format("{} {}", made[size_t(g)], name) : std::string(name));
+        }
+        notify(client.entity, std::format("Crafted {}x {}{}", batch,
                                           out_def ? item_display_name(*out_def, mark) : sch->name,
-                                          int(std::lround(best_q * 100.0)), last_outcome));
+                                          grades.empty() ? "" : " (" + grades + ")"));
     }
 }
 

@@ -2106,9 +2106,11 @@ void GameServer::datapad_action(Client& client, const net::SpecialistRequest& re
         }
         return nullptr;
     };
-    const auto grant = [&](const std::string& def_id, double quality, const std::string& name, const std::string& colors) {
+    // Mounts, eggs, tissue and droids aren't graded (their quality is the
+    // companion's own, in its payload).
+    const auto grant = [&](const std::string& def_id, const std::string& name, const std::string& colors) {
         if (store_ == nullptr || client.character == 0) return;
-        store_->grant_item({0, client.character, def_id, quality, name, colors});
+        store_->grant_item({0, client.character, def_id, ItemGrade::standard, name, colors});
         client.items = store_->list_items(client.character);
         ++client.inventory_rev;
         client.last_sync_tick = 0;
@@ -2161,7 +2163,7 @@ void GameServer::datapad_action(Client& client, const net::SpecialistRequest& re
             return;
         }
         r->mount = true;
-        grant(tpl->mount_item, std::clamp(r->quality, 0.0, 1.0), r->name, "{}");
+        grant(tpl->mount_item, r->name, "{}");
         notify(client.entity, std::format("{} is trained to ride: equip it in your Mount slot", r->name));
         earn_specialist_xp(client, "creature_handler", 150);
         changed();
@@ -2186,7 +2188,7 @@ void GameServer::datapad_action(Client& client, const net::SpecialistRequest& re
         egg.name = tpl->name;
         const uint64_t a_id = a->id, b_id = b ? b->id : 0;
         std::erase_if(spec.samples, [&](const DnaSample& s) { return s.id == a_id || (b_id && s.id == b_id); });
-        grant("bio_creature_egg", egg.quality, std::format("{} Egg", tpl->name), companion_payload(egg));
+        grant("bio_creature_egg", std::format("{} Egg", tpl->name), companion_payload(egg));
         notify(client.entity, std::format("Engineered a {} egg (quality {})", tpl->name, int(std::round(egg.quality * 100))));
         earn_specialist_xp(client, "bio_engineer", 120 + tpl->tier * 20);
         changed();
@@ -2204,9 +2206,8 @@ void GameServer::datapad_action(Client& client, const net::SpecialistRequest& re
         const auto it = std::find_if(spec.samples.begin(), spec.samples.end(),
                                      [&](const DnaSample& s) { return int64_t(s.id) == request.amount; });
         if (it == spec.samples.end()) return;
-        const double quality = it->quality;
         spec.samples.erase(it);
-        grant(additive ? "bio_stim_additive" : "bio_tissue_organic", quality, "", "{}");
+        grant(additive ? "bio_stim_additive" : "bio_tissue_organic", "", "{}");
         earn_specialist_xp(client, "bio_engineer", 80);
         changed();
         return;
@@ -2304,7 +2305,7 @@ void GameServer::datapad_action(Client& client, const net::SpecialistRequest& re
         r.health = 0.9 + r.quality * 0.25;
         r.damage = 0.9 + r.quality * 0.25;
         r.modules = modules;
-        grant("companion_droid", r.quality, std::format("{} (Q{})", chassis->name, int(std::round(r.quality * 100))),
+        grant("companion_droid", std::format("{} (Q{})", chassis->name, int(std::round(r.quality * 100))),
               companion_payload(r));
         notify(client.entity, std::format("Assembled a {}", chassis->name));
         earn_specialist_xp(client, "droid_engineer", 100 + chassis->tier * 50 + int64_t(modules.size()) * 25);

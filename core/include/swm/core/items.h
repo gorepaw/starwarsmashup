@@ -20,6 +20,25 @@ enum class ItemKind : uint8_t {
     weapon, armor, deflector_shield, clothing, junk, supply, quest, enhancement, vehicle, ammo, bodysuit
 };
 
+// Item grades (docs/DESIGN.md, Grades): an owned weapon's, armor piece's or
+// Deflector Shield's (item_takes_grade), rolled when it's crafted or dropped.
+// Its stats move by grade_stat_mult within its Mk. Each has a color (white,
+// green, blue, purple, orange); every other item shows white, ungraded.
+// Legendary isn't crafted: it's for endgame items (an ItemDef's Grade).
+enum class ItemGrade : uint8_t { flawed, standard, fine, exceptional, legendary };
+inline constexpr int item_grade_count = 5;
+ItemGrade clamp_grade(int grade);
+std::string_view item_grade_name(ItemGrade grade);  // "Flawed" ... "Legendary"
+std::optional<ItemGrade> item_grade_from_name(std::string_view name);  // any case
+// x0.92, x1, x1.08, x1.16 (Legendary's isn't decided: x1.16 for now).
+double grade_stat_mult(ItemGrade grade);
+// The grade nearest the stats of a 0..1 quality from before grades (0.5
+// standard, ±8% at 0 and 1): old saves, and companions' quality.
+ItemGrade grade_from_quality(double quality);
+// A grade saved as text: its number (0..4), or a quality from before grades
+// (a decimal, "0.65").
+ItemGrade saved_grade(std::string_view text);
+
 inline constexpr std::array<std::string_view, 4> playable_factions{"rebellion", "empire", "republic", "separatists"};
 
 enum class RepTier : uint8_t { hated = 0, unfriendly, neutral, friendly, honored, revered, exalted };
@@ -151,6 +170,9 @@ struct ItemDef {
     std::vector<Species> species;
     std::optional<DamageType> damage_type;
     std::string bolt_color_name;  // optional red/blue/green/yellow
+    // `Grade = legendary`: every copy's grade (a graded item's), or the color
+    // it shows (any other's; white if unset).
+    std::optional<ItemGrade> grade;
 
     // Armor: how its class's typed resistance is spread ("Resist = laser:0.6,
     // ballistic:0.4", shares summing to 1), and its own small perk (its
@@ -235,7 +257,7 @@ struct ItemInstance {
     uint64_t id = 0;
     uint64_t owner_id = 0;
     std::string def_id;
-    double quality = 0.5;  // 0..1; 0.5 is standard-issue baseline (±8% in Gear queue)
+    ItemGrade grade = ItemGrade::standard;  // a graded item's (item_takes_grade); others ignore it
     std::string custom_name;
     std::string color_json = "{}";
     int quantity = 1;
@@ -243,6 +265,12 @@ struct ItemInstance {
 
     friend bool operator==(const ItemInstance&, const ItemInstance&) = default;
 };
+
+// Whether grades move an item's stats: a weapon, armor or a Deflector Shield.
+bool item_takes_grade(const ItemDef& def);
+// The grade an owned item shows: its def's Grade, else a graded item's own;
+// none (white) for anything else.
+std::optional<ItemGrade> shown_grade(const ItemDef& def, ItemGrade instance_grade);
 
 // Mk tiers (docs/DESIGN.md, Power curve): any item at levels 1 (Mk 0, the
 // plain item), 10 (Mk I), 20 (Mk II) ... 100 (Mk X). An item's mark is its
@@ -322,10 +350,9 @@ public:
     // A species' own piece for a slot and an armor class; nullptr if it has none.
     const SpeciesArmorLook* species_look(Species species, std::string_view armor_class, std::string_view slot) const;
 
-    WeaponDef resolve_weapon(const ItemDef& def, double quality = 0.5, bool apply_quality = true, int mark = 0) const;
-    Gear resolve_gear(const ItemDef& def, double quality = 0.5, bool apply_quality = true, int mark = 0) const;
-    Loadout build_loadout(const CharacterLoadout& cl, std::span<const ItemInstance> inventory, Species species,
-                          bool apply_quality = true) const;
+    WeaponDef resolve_weapon(const ItemDef& def, ItemGrade grade = ItemGrade::standard, int mark = 0) const;
+    Gear resolve_gear(const ItemDef& def, ItemGrade grade = ItemGrade::standard, int mark = 0) const;
+    Loadout build_loadout(const CharacterLoadout& cl, std::span<const ItemInstance> inventory, Species species) const;
     // An owned item's def, tuned by the modules crafted into it (item_modules;
     // those that don't fit it, or the catalog lacks, do nothing).
     ItemDef tuned(const ItemDef& def, const ItemInstance& inst) const;

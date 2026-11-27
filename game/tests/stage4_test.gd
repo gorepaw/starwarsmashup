@@ -8,6 +8,7 @@ const Bf2Audio = preload("res://audio/bf2_audio.gd")
 const Bf2Art = preload("res://ui/bf2_art.gd")
 const InventoryScreen = preload("res://ui/inventory_screen.gd")
 const ItemTooltip = preload("res://ui/item_tooltip.gd")
+const ItemGrade = preload("res://ui/item_grade.gd")
 const QuartermasterScreen = preload("res://ui/quartermaster_screen.gd")
 const WarTerminalScreen = preload("res://ui/war_terminal_screen.gd")
 const HubHud = preload("res://ui/hub_hud.gd")
@@ -87,7 +88,7 @@ func _initialize() -> void:
 	var chars2: Array = store2.list_characters()
 	assert(chars2.size() == 1 and int(chars2[0]["faction_points"]) == 250 and int(chars2[0]["credits"]) == 300)
 	assert(store2.list_items(cid).size() == items.size() + 2)
-	var computed: Dictionary = store.compute_loadout_stats("wookiee", loadouts[0], items, true)
+	var computed: Dictionary = store.compute_loadout_stats("wookiee", loadouts[0], items)
 	assert(float(computed.get("max_health", 0.0)) > 400.0, "expected Wookiee trait health bonus")
 	store2.close()
 	for suffix in ["", "-wal", "-shm"]:
@@ -105,7 +106,7 @@ func _initialize() -> void:
 	inv_scr.loadouts = loadouts
 	inv_scr.open_screen()
 	# Ammo equips like gear (double-click), into its slot, and says what its hits do.
-	var burning := {"id": 990001, "def_id": "ammo_tibanna_burning", "quality": 0.5, "quantity": 100}
+	var burning := {"id": 990001, "def_id": "ammo_tibanna_burning", "grade": 1, "quantity": 100}
 	inv_scr.inventory = items + [burning]
 	var saved: Array = []
 	inv_scr.loadout_saved.connect(func(_slot: int, lo: Dictionary) -> void: saved.append(lo))
@@ -125,15 +126,23 @@ func _initialize() -> void:
 	for d: Dictionary in catalog:
 		if str(d.get("id", "")) == "wp_rifle_e11":
 			e11_def = d
-	var mk4 := {"id": 990002, "def_id": "wp_rifle_e11", "quality": 0.5, "mark": 4}
+	var mk4 := {"id": 990002, "def_id": "wp_rifle_e11", "grade": 2, "mark": 4}
 	assert(ItemTooltip.item_name(e11_def, mk4) == str(e11_def["name"]) + " Mk IV", "no Mk in the name")
 	assert(store.item_display_name("wp_rifle_e11", 4) == ItemTooltip.item_name(e11_def, mk4), "names disagree")
 	var mk_tip := ItemTooltip.build_lines(e11_def, mk4, store)
 	var says_level := func(l: Dictionary) -> bool: return str(l["text"]).begins_with("Mk IV: requires") and str(l["text"]).ends_with("level 40")
 	assert(mk_tip.any(says_level), "a marked item's tooltip doesn't say its level")
-	var dmg0 := float(store.resolve_item_stats("wp_rifle_e11", 0.5, true)["damage"])
-	var dmg4 := float(store.resolve_item_stats("wp_rifle_e11", 0.5, true, 4)["damage"])
+	var dmg0 := float(store.resolve_item_stats("wp_rifle_e11")["damage"])
+	var dmg4 := float(store.resolve_item_stats("wp_rifle_e11", 1, 4)["damage"])
 	assert(absf(dmg4 - dmg0 * 1.4) < 0.01, "Mk IV doesn't hit 1.4x as hard")
+	# Grades: Exceptional hits 16% harder; its tooltip says its grade, in its color; ammo has none.
+	var dmg_ex := float(store.resolve_item_stats("wp_rifle_e11", 3)["damage"])
+	assert(absf(dmg_ex - dmg0 * 1.16) < 0.01, "Exceptional doesn't hit 1.16x as hard")
+	assert(mk_tip.any(func(l: Dictionary) -> bool: return str(l["text"]) == "Fine" and l["color"] == ItemGrade.COLORS[2]),
+			"a Fine item's tooltip doesn't say Fine in blue")
+	assert(ItemTooltip.name_color(e11_def, mk4) == ItemGrade.COLORS[2], "a Fine name isn't blue")
+	assert(ItemTooltip.name_color(burning_def, burning) == ItemGrade.WHITE and ItemGrade.label(burning_def, burning) == "",
+			"ammo isn't ungraded white")
 	# The bowcaster is a Wookiee's: its tooltip says so.
 	var bow_def: Dictionary = {}
 	for d: Dictionary in catalog:

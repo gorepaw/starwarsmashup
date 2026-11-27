@@ -157,6 +157,12 @@ int mark_material_amount(int amount, int mark) {
     return int(std::ceil(double(amount) * (1.0 + 0.25 * double(clamp_mark(mark))) - 1e-9));
 }
 
+double focus_material_mult(int focus_pct) { return 1.0 + 9.0 * double(std::clamp(focus_pct, 0, 100)) / 100.0; }
+
+int craft_material_amount(int amount, int mark, int focus_pct) {
+    return int(std::ceil(double(mark_material_amount(amount, mark)) * focus_material_mult(focus_pct) - 1e-9));
+}
+
 int64_t mark_craft_xp(int64_t base_xp, int mark) {
     return int64_t(std::llround(double(base_xp) * (1.0 + 0.15 * double(clamp_mark(mark)))));
 }
@@ -395,7 +401,7 @@ ScanResult CraftingBook::scan_terrain(ResourceCategory category, double x, doubl
 }
 
 std::vector<std::string> CraftingBook::auto_fill(const SchematicDef& schematic, std::span<const MaterialStack> vault,
-                                                 AutoFillMode mode, int mark) const {
+                                                 AutoFillMode mode, int mark, int focus_pct) const {
     std::vector<std::string> chosen(schematic.slots.size());
     std::vector<std::pair<std::string, int64_t>> available;
     available.reserve(vault.size());
@@ -434,7 +440,7 @@ std::vector<std::string> CraftingBook::auto_fill(const SchematicDef& schematic, 
 
     for (size_t i = 0; i < schematic.slots.size(); ++i) {
         const SchematicSlot& slot = schematic.slots[i];
-        const int amount = mark_material_amount(slot.amount, mark);
+        const int amount = craft_material_amount(slot.amount, mark, focus_pct);
         const ResourceDef* best = nullptr;
         double best_score = -1e18;
         for (const ResourceDef& r : resources_) {
@@ -455,19 +461,29 @@ std::vector<std::string> CraftingBook::auto_fill(const SchematicDef& schematic, 
     return chosen;
 }
 
-ExperimentOdds CraftingBook::experiment_odds(int crafter_level) {
+ExperimentOdds CraftingBook::grade_odds(double material_score, int crafter_level, int enhancement_count,
+                                        int focus_pct) {
+    // Where the roll centers, from Flawed (0) to Exceptional (3), spread
+    // around it as a bell: a fresh crafter on average materials makes mostly
+    // Standard; a master on great ones, two modules and full focus mostly
+    // Exceptional.
     const double t = std::clamp(double(crafter_level - 1) / 99.0, 0.0, 1.0);
-    const double exp_bonus = crafter_level >= 75 ? 0.05 : 0.0;  // Lv 75 Experimentation milestone
-    ExperimentOdds o;
-    o.great_success = std::clamp(0.10 + 0.25 * t + exp_bonus, 0.05, 0.45);
-    o.minor_flaw = std::clamp(0.15 - 0.12 * t - exp_bonus * 0.4, 0.02, 0.20);
-    o.neutral = std::clamp(0.25 - 0.17 * t, 0.06, 0.30);
-    o.success = std::max(0.10, 1.0 - o.great_success - o.neutral - o.minor_flaw);
-    return o;
+    const double center = 0.3 + 1.2 * std::clamp(material_score, 0.0, 1.0) + 0.6 * t +
+                          0.2 * std::clamp(enhancement_count, 0, 2) + 0.8 * double(std::clamp(focus_pct, 0, 100)) / 100.0 +
+                          (crafter_level >= 75 ? 0.15 : 0.0);  // the Lv 75 Experimentation milestone
+    constexpr double spread = 0.75;
+    std::array<double, 4> w{};
+    double total = 0.0;
+    for (size_t k = 0; k < w.size(); ++k) {
+        const double d = double(k) - center;
+        w[k] = std::exp(-d * d / (2.0 * spread * spread));
+        total += w[k];
+    }
+    return {w[0] / total, w[1] / total, w[2] / total, w[3] / total};
 }
 
 CraftPreview CraftingBook::preview_craft(const SchematicDef& schematic, std::span<const std::string> resource_ids,
-                                         int enhancement_count, int crafter_level, uint8_t exp_quality_pct) const {
+                                         int enhancement_count, int crafter_level, uint8_t focus_pct) const {
     double weighted_sum = 0.0;
     double weight_total = 0.0;
     for (size_t i = 0; i < schematic.slots.size(); ++i) {
@@ -486,32 +502,21 @@ CraftPreview CraftingBook::preview_craft(const SchematicDef& schematic, std::spa
         weighted_sum += (slot_score / 1000.0) * amt_w;
         weight_total += amt_w;
     }
-    const double mat_score = weight_total > 0.0 ? weighted_sum / weight_total : 0.5;
-    const double level_bonus = std::clamp(double(crafter_level - 1) / 99.0, 0.0, 1.0) * 0.12;
-    const double enh_bonus = std::clamp(double(enhancement_count), 0.0, 2.0) * 0.08;
-    const double focus = double(std::clamp<int>(exp_quality_pct, 0, 100)) / 100.0;
-
     CraftPreview out;
-    out.base_quality = std::clamp(0.22 + 0.58 * mat_score + level_bonus + enh_bonus, 0.05, 0.95);
-    out.min_quality = std::clamp(out.base_quality - 0.06, 0.02, 0.95);
-    out.max_quality = std::clamp(out.base_quality + 0.08 + 0.10 * focus, out.base_quality, 1.0);
-    out.odds = experiment_odds(crafter_level);
+    out.material_score = weight_total > 0.0 ? weighted_sum / weight_total : 0.5;
+    out.material_mult = focus_material_mult(focus_pct);
+    out.odds = grade_odds(out.material_score, crafter_level, enhancement_count, focus_pct);
     return out;
 }
 
-std::pair<double, std::string> CraftingBook::roll_craft_quality(const CraftPreview& preview, double unit_roll) {
+ItemGrade CraftingBook::roll_craft_grade(const CraftPreview& preview, double unit_roll) {
+    // The best grade on the lowest rolls.
     const double r = std::clamp(unit_roll, 0.0, 0.999999);
     const ExperimentOdds& o = preview.odds;
-    if (r < o.great_success) {
-        return {preview.max_quality, "Great Success"};
-    }
-    if (r < o.great_success + o.success) {
-        return {std::clamp((preview.base_quality + preview.max_quality) * 0.5, 0.0, 1.0), "Success"};
-    }
-    if (r < o.great_success + o.success + o.neutral) {
-        return {preview.base_quality, "Neutral"};
-    }
-    return {preview.min_quality, "Minor Flaw"};
+    if (r < o.exceptional) return ItemGrade::exceptional;
+    if (r < o.exceptional + o.fine) return ItemGrade::fine;
+    if (r < o.exceptional + o.fine + o.standard) return ItemGrade::standard;
+    return ItemGrade::flawed;
 }
 
 CraftingBook::SalvageResult CraftingBook::salvage_yield(const ItemDef& def, int salvaging_level) const {

@@ -70,7 +70,7 @@ void test_protocol() {
 
     InventorySync isync;
     isync.revision = 4;
-    isync.items.push_back({10, 1, "wp_rifle_e11", 0.85f, "", "{}", 1});
+    isync.items.push_back({10, 1, "wp_rifle_e11", ItemGrade::exceptional, "", "{}", 1});
     isync.reputation["rebellion"] = 3500;
     isync.reputation["empire"] = -1750;
     CharacterLoadout cl;
@@ -94,7 +94,8 @@ void test_protocol() {
     isync.resolved_loadouts.push_back(rl);
     const Message decoded_sync = decode(encode(isync));
     const auto* ds = std::get_if<InventorySync>(&decoded_sync);
-    CHECK(ds != nullptr && ds->revision == 4 && ds->items.size() == 1 && ds->loadouts.size() == 1 &&
+    CHECK(ds != nullptr && ds->revision == 4 && ds->items.size() == 1 && ds->items[0] == isync.items[0] &&
+          ds->loadouts.size() == 1 &&
           ds->resolved_loadouts.size() == 1 && ds->resolved_loadouts[0].name == "Heavy");
     if (ds != nullptr && ds->resolved_loadouts.size() == 1) {
         const Loadout& got = ds->resolved_loadouts[0];
@@ -126,7 +127,7 @@ void test_protocol() {
 
     Snapshot cs;
     cs.server_tick = 5;
-    cs.corpses.push_back({12, "Lesser Womp Rat", {1, 0, 2}, {{0, "junk_womp_rat_hide", 0.5f}}});
+    cs.corpses.push_back({12, "Lesser Womp Rat", {1, 0, 2}, {{0, "junk_womp_rat_hide"}, {1, "wp_rifle_e11", ItemGrade::fine, 3}}});
     const auto dcs = std::get<Snapshot>(decode(encode(cs)));
     CHECK(dcs.corpses == cs.corpses);
 

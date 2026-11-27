@@ -82,7 +82,7 @@ void test_tatooine_loot_tables() {
         for (const LootEntry& e : lt->gear_pool) CHECK(catalog.find(e.item_id) != nullptr);
     }
 
-    // Roll 50 times on a bandit table and verify bounds + sidegrade quality range.
+    // Roll 50 times on a bandit table and verify bounds, and grades it gives weight.
     uint64_t rng = 0x123456789ABCDEF0ull;
     const LootTable* tusken = tables.find("loot_tusken_raider");
     CHECK(tusken != nullptr);
@@ -96,7 +96,9 @@ void test_tatooine_loot_tables() {
             CHECK(def != nullptr);
             if (def->kind != ItemKind::junk) {
                 ++gear_drops;
-                CHECK(it.quality >= tusken->gear_quality_min && it.quality <= tusken->gear_quality_max);
+                CHECK(it.grade != ItemGrade::legendary && tusken->gear_grade_weights[size_t(it.grade)] > 0);
+            } else {
+                CHECK(it.grade == ItemGrade::standard);
             }
         }
     }
@@ -112,7 +114,9 @@ void test_loot_marks() {
             << "Gear = wp_rifle_e11\n"
             << "[loot_table]\nId = mk7\nJunkMin = 0\nGearChance = 1\nGearMarkMin = 7\nGearMarkMax = 7\n"
             << "Gear = wp_rifle_e11\n"
-            << "[loot_table]\nId = plain\nJunkMin = 0\nGearChance = 1\nGearMarkMax = 14\nGear = wp_rifle_e11\n";
+            << "[loot_table]\nId = plain\nJunkMin = 0\nGearChance = 1\nGearMarkMax = 14\nGear = wp_rifle_e11\n"
+            << "[loot_table]\nId = fine\nJunkMin = 0\nGearChance = 1\nGearGrades = 0 0 1 0\nGear = wp_rifle_e11\n"
+            << "[loot_table]\nId = split\nJunkMin = 0\nGearChance = 1\nGearGrades = 1 0 0 1\nGear = wp_rifle_e11\n";
     }
     LootTableSet tables;
     tables.load(ini);
@@ -127,6 +131,27 @@ void test_loot_marks() {
         CHECK(tables.roll("mk7", rng).items[0].mark == 7);
     }
     CHECK(seen[3] > 0 && seen[4] > 0 && seen[5] > 0);
+
+    // GearGrades weighs Flawed, Standard, Fine, Exceptional.
+    std::array<int, item_grade_count> grades{};
+    for (int i = 0; i < 200; ++i) {
+        CHECK(tables.roll("fine", rng).items[0].grade == ItemGrade::fine);
+        ++grades[size_t(tables.roll("split", rng).items[0].grade)];
+    }
+    CHECK(grades[0] > 50 && grades[3] > 50 && grades[0] + grades[3] == 200);
+    {
+        std::ofstream out(ini);
+        out << "[loot_table]\nId = bad\nGearGrades = 1 2\n";
+    }
+    bool threw = false;
+    try {
+        LootTableSet bad;
+        bad.load(ini);
+    } catch (const std::exception&) {
+        threw = true;
+    }
+    std::filesystem::remove(ini);
+    CHECK(threw);
 }
 
 // Every item a hub's data names is in the catalog: an unknown id drops loot with
@@ -214,8 +239,8 @@ void test_corpse_loot_vendor_and_credit_persistence() {
             if (npc_entity == mob_id && killer_entity != 0) {
                 server.award_credits(killer_entity, 35);
                 server.set_corpse_loot(npc_entity, killer_entity, "Lesser Womp Rat", {4, 0, 0}, {
-                    {0, "junk_womp_rat_hide", 0.5f},
-                    {1, "junk_broken_blaster", 0.5f},
+                    {0, "junk_womp_rat_hide"},
+                    {1, "junk_broken_blaster"},
                 });
             }
         };

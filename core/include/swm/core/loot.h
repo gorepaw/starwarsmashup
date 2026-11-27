@@ -1,11 +1,14 @@
 #pragma once
 
+#include <array>
 #include <cstdint>
 #include <filesystem>
 #include <map>
 #include <string>
 #include <string_view>
 #include <vector>
+
+#include "swm/core/items.h"
 
 namespace swm::core {
 
@@ -22,8 +25,9 @@ struct LootTable {
     int junk_rolls_max = 1;
     std::vector<LootEntry> junk_pool;
     double gear_chance = 0.0;
-    double gear_quality_min = 0.25;
-    double gear_quality_max = 0.85;
+    // Its gear's grade odds (GearGrades): Flawed, Standard, Fine, Exceptional
+    // weights. Legendary never drops from a table.
+    std::array<double, 4> gear_grade_weights{30, 50, 17, 3};
     int gear_mark_min = 0;  // its gear's Mk tiers (items.h), rolled evenly between
     int gear_mark_max = 0;
     std::vector<LootEntry> gear_pool;
@@ -31,7 +35,7 @@ struct LootTable {
 
 struct RolledLootItem {
     std::string def_id;
-    double quality = 0.5;
+    ItemGrade grade = ItemGrade::standard;
     int mark = 0;
 };
 

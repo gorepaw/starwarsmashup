@@ -149,14 +149,14 @@ void test_rules(const SpecialistBook& book, const ProfessionBook& professions) {
     const std::vector<BazaarSale> sales{{"x", 100, 1}, {"y", 5, 2}, {"x", 300, 3}};
     const PriceStats ps = price_stats(sales, "x");
     CHECK(ps.count == 2 && ps.low == 100 && ps.high == 300 && ps.average == 200 && ps.last == 300);
-    BazaarListing l{7, 3, "Seller", "Seller's Shop", {11, 3, "wp_rifle_e11", 0.6, "My \"Rifle\"|", "{\"slice\":\"slice_overclock\"}", 1},
+    BazaarListing l{7, 3, "Seller", "Seller's Shop", {11, 3, "wp_rifle_e11", ItemGrade::fine, "My \"Rifle\"|", "{\"slice\":\"slice_overclock\"}", 1},
                     500, 123};
     const auto listings = parse_listings(format_listings(std::vector<BazaarListing>{l}));
     CHECK(listings.size() == 1 && listings[0] == l);
     CHECK(listing_matches(l, "E-11 Carbine", "e11 shop") && !listing_matches(l, "E-11 Carbine", "bowcaster"));
 
     // Slicing: on an item's color JSON, one at a time; applied to what it resolves to.
-    ItemInstance item{1, 1, "wp_rifle_e11", 0.5, "", "{\"primary\":3}"};
+    ItemInstance item{1, 1, "wp_rifle_e11", ItemGrade::standard, "", "{\"primary\":3}"};
     set_item_slice(item, "slice_overclock");
     CHECK(item_slice(item) == "slice_overclock" && item.color_json.find("\"primary\":3") != std::string::npos);
     set_item_slice(item, "slice_hot_shot");

@@ -192,7 +192,9 @@ BotProfileEntry build_entry(std::string name, std::string faction, Species speci
     out.gender = gender;
     out.appearance = make_appearance(rng);
 
-    const double base_quality = 0.38 + rand_unit(rng) * 0.48;  // varied quality tiers per bot
+    // Each bot's gear centers on a grade of its own (mostly Standard and Fine),
+    // each piece a little either side.
+    const double base_tier = 0.38 + rand_unit(rng) * 0.48;
     out.loadouts.reserve(max_character_loadouts);
     out.worn_per_loadout.reserve(max_character_loadouts);
 
@@ -210,8 +212,12 @@ BotProfileEntry build_entry(std::string name, std::string faction, Species speci
         uint64_t next_id = 1;
         const auto add_item = [&](const char* id) -> uint64_t {
             if (id == nullptr || catalog->find(id) == nullptr) return 0;
-            const double jitter = std::clamp(base_quality + (rand_unit(rng) - 0.5) * 0.14, 0.25, 0.95);
-            inv.push_back({next_id, 1, id, jitter, "", painted_color_json(*catalog->find(id), out.faction), 1});
+            const double tier = std::clamp(base_tier + (rand_unit(rng) - 0.5) * 0.14, 0.25, 0.95);
+            const ItemGrade grade = tier < 0.4   ? ItemGrade::flawed
+                                    : tier < 0.6 ? ItemGrade::standard
+                                    : tier < 0.8 ? ItemGrade::fine
+                                                 : ItemGrade::exceptional;
+            inv.push_back({next_id, 1, id, grade, "", painted_color_json(*catalog->find(id), out.faction), 1});
             return next_id++;
         };
 
@@ -240,7 +246,7 @@ BotProfileEntry build_entry(std::string name, std::string faction, Species speci
             }
         }
 
-        Loadout built = catalog->build_loadout(cl, inv, species, true);
+        Loadout built = catalog->build_loadout(cl, inv, species);
         // Bots never exhaust standard or heavy ammo during BF2 conquest matches.
         built.unified_standard_ammo = -1;
         built.unified_heavy_ammo = -1;

@@ -858,7 +858,7 @@ void put_listing(ByteWriter& out, const BazaarListing& l) {
     out.put_string(l.shop);
     out.put(l.item.id);
     out.put_string(l.item.def_id);
-    out.put(float(l.item.quality));
+    out.put(uint8_t(l.item.grade));
     out.put(uint8_t(clamp_mark(l.item.mark)));
     out.put(uint16_t(std::clamp(l.item.quantity, 1, 65535)));
     out.put_string(l.item.custom_name);
@@ -875,7 +875,7 @@ BazaarListing get_listing(ByteReader& in) {
     l.shop = in.get_string();
     l.item.id = in.get<uint64_t>();
     l.item.def_id = in.get_string();
-    l.item.quality = in.get<float>();
+    l.item.grade = clamp_grade(in.get<uint8_t>());
     l.item.mark = clamp_mark(in.get<uint8_t>());
     l.item.quantity = std::max<int>(1, in.get<uint16_t>());
     l.item.custom_name = in.get_string();
@@ -1184,7 +1184,7 @@ struct Encoder {
             for (size_t ii = 0; ii < icount; ++ii) {
                 out.put(c.items[ii].slot);
                 out.put_string(c.items[ii].def_id);
-                out.put(c.items[ii].quality);
+                out.put(uint8_t(c.items[ii].grade));
                 out.put(c.items[ii].mark);
             }
         }
@@ -1237,7 +1237,7 @@ struct Encoder {
             out.put(inst.id);
             out.put(inst.owner_id);
             out.put_string(inst.def_id);
-            out.put(float(inst.quality));
+            out.put(uint8_t(inst.grade));
             out.put(uint8_t(clamp_mark(inst.mark)));
             out.put(uint16_t(std::clamp(inst.quantity, 1, 65535)));
             out.put_string(inst.custom_name);
@@ -1273,7 +1273,7 @@ struct Encoder {
             const ItemInstance& inst = m.bank_items[i];
             out.put(inst.id);
             out.put_string(inst.def_id);
-            out.put(float(inst.quality));
+            out.put(uint8_t(inst.grade));
             out.put(uint8_t(clamp_mark(inst.mark)));
             out.put(uint16_t(std::clamp(inst.quantity, 1, 65535)));
             out.put_string(inst.custom_name);
@@ -1800,7 +1800,7 @@ Message decode(std::span<const uint8_t> packet) {
                 LootItemEntry entry;
                 entry.slot = in.get<uint8_t>();
                 entry.def_id = in.get_string();
-                entry.quality = in.get<float>();
+                entry.grade = clamp_grade(in.get<uint8_t>());
                 entry.mark = uint8_t(clamp_mark(in.get<uint8_t>()));
                 c.items.push_back(std::move(entry));
             }
@@ -1883,7 +1883,7 @@ Message decode(std::span<const uint8_t> packet) {
             inst.id = in.get<uint64_t>();
             inst.owner_id = in.get<uint64_t>();
             inst.def_id = in.get_string();
-            inst.quality = in.get<float>();
+            inst.grade = clamp_grade(in.get<uint8_t>());
             inst.mark = clamp_mark(in.get<uint8_t>());
             inst.quantity = std::max<int>(1, in.get<uint16_t>());
             inst.custom_name = in.get_string();
@@ -1924,7 +1924,7 @@ Message decode(std::span<const uint8_t> packet) {
             ItemInstance inst;
             inst.id = in.get<uint64_t>();
             inst.def_id = in.get_string();
-            inst.quality = in.get<float>();
+            inst.grade = clamp_grade(in.get<uint8_t>());
             inst.mark = clamp_mark(in.get<uint8_t>());
             inst.quantity = std::max<int>(1, in.get<uint16_t>());
             inst.custom_name = in.get_string();

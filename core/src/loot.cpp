@@ -76,8 +76,18 @@ void LootTableSet::load(const std::filesystem::path& ini_path) {
         t.junk_rolls_min = std::max(0, int(s.number("JunkMin", 1)));
         t.junk_rolls_max = std::max(t.junk_rolls_min, int(s.number("JunkMax", double(t.junk_rolls_min))));
         t.gear_chance = std::clamp(s.number("GearChance", 0.0), 0.0, 1.0);
-        t.gear_quality_min = std::clamp(s.number("GearQualityMin", 0.25), 0.0, 1.0);
-        t.gear_quality_max = std::clamp(s.number("GearQualityMax", 0.85), t.gear_quality_min, 1.0);
+        if (const auto g = s.get("GearGrades")) {
+            // "GearGrades = 35 50 15 0": Flawed, Standard, Fine, Exceptional weights.
+            std::istringstream weights(*g);
+            double total = 0.0;
+            for (double& w : t.gear_grade_weights) {
+                if (!(weights >> w) || w < 0.0) {
+                    throw std::runtime_error(where + " (" + t.id + "): GearGrades takes 4 weights");
+                }
+                total += w;
+            }
+            if (total <= 0.0) throw std::runtime_error(where + " (" + t.id + "): GearGrades weighs nothing");
+        }
         t.gear_mark_min = clamp_mark(int(s.number("GearMarkMin", 0)));
         t.gear_mark_max = std::max(t.gear_mark_min, clamp_mark(int(s.number("GearMarkMax", double(t.gear_mark_min)))));
         for (const auto& [k, v] : s.values) {
@@ -108,20 +118,28 @@ RolledLoot LootTableSet::roll(std::string_view table_id, uint64_t& rng_state) co
         const int count = int(roll_int_range(t->junk_rolls_min, t->junk_rolls_max, rng_state));
         for (int i = 0; i < count; ++i) {
             if (const LootEntry* e = pick_weighted(t->junk_pool, rng_state)) {
-                out.items.push_back({e->item_id, 0.5});
+                out.items.push_back({e->item_id});
             }
         }
     }
 
     if (!t->gear_pool.empty() && t->gear_chance > 0.0 && next_unit(rng_state) < t->gear_chance) {
         if (const LootEntry* e = pick_weighted(t->gear_pool, rng_state)) {
-            const double q = t->gear_quality_min +
-                             next_unit(rng_state) * (t->gear_quality_max - t->gear_quality_min);
+            const auto& w = t->gear_grade_weights;
+            double r = next_unit(rng_state) * (w[0] + w[1] + w[2] + w[3]);
+            ItemGrade grade = ItemGrade::exceptional;
+            for (size_t g = 0; g < w.size(); ++g) {
+                if (r < w[g]) {
+                    grade = ItemGrade(g);
+                    break;
+                }
+                r -= w[g];
+            }
             // A range of marks takes one more roll (none for a single mark).
             const int mark = t->gear_mark_max > t->gear_mark_min
                                  ? int(roll_int_range(t->gear_mark_min, t->gear_mark_max, rng_state))
                                  : t->gear_mark_min;
-            out.items.push_back({e->item_id, std::clamp(q, 0.0, 1.0), mark});
+            out.items.push_back({e->item_id, grade, mark});
         }
     }
     return out;

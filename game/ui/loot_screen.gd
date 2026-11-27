@@ -4,12 +4,13 @@
 extends "res://ui/bf2_screen.gd"
 
 const ItemTooltip = preload("res://ui/item_tooltip.gd")
+const ItemGrade = preload("res://ui/item_grade.gd")
 
 signal loot_taken(corpse_entity: int, slot: int)
 signal corpse_harvested(corpse_entity: int)
 signal closed
 
-var corpse: Dictionary = {}  # {entity_id, name, position, items: [{slot, def_id, quality}]}
+var corpse: Dictionary = {}  # {entity_id, name, position, items: [{slot, def_id, grade, mark}]}
 var catalog: Array = []
 var store: Object = null
 var feedback := ""
@@ -88,14 +89,15 @@ func _paint() -> void:
 			frame(r, "border_3_pieces", Color(0.75, 0.88, 1.0) if hovered else Color(0.85, 0.85, 0.9))
 			var kind := str(def.get("kind", "junk"))
 			var title := ItemTooltip.item_name(def, entry)
-			text("gamefont_small", title, Vector2(x + 12 * u, ry + 5 * u), "Left", ACCENT if kind != "junk" else TEXT)
+			text("gamefont_small", title, Vector2(x + 12 * u, ry + 5 * u), "Left", ItemTooltip.name_color(def, entry))
 			var sub := ""
+			var grade_label := ItemGrade.label(def, entry)
 			if kind == "junk":
 				sub = "Junk  |  Sell: %d Cr" % int(def.get("sell_value", 0))
 			elif kind == "supply":
 				sub = "Supply  |  +%d HP" % roundi(float(def.get("heal_amount", 0.0)))
 			else:
-				sub = "%s  |  Quality %d%%" % [kind.replace("_", " ").capitalize(), roundi(float(entry.get("quality", 0.5)) * 100.0)]
+				sub = kind.replace("_", " ").capitalize() + ("  |  " + grade_label if grade_label != "" else "")
 			text("gamefont_tiny", sub, Vector2(x + 12 * u, ry + 21 * u), "Left", DIM)
 			var slot := int(entry.get("slot", 0))
 			button(Rect2(box.end.x - 108 * u, ry + 5 * u, 80 * u, 28 * u), "Take", "take:%d" % slot)
@@ -109,10 +111,10 @@ func _paint() -> void:
 	if not _hover_entry.is_empty():
 		var hdid := str(_hover_entry.get("def_id", ""))
 		var hdef: Dictionary = _def_by_id.get(hdid, {})
-		var hinst := {"def_id": hdid, "quality": float(_hover_entry.get("quality", 0.5)),
+		var hinst := {"def_id": hdid, "grade": int(_hover_entry.get("grade", 1)),
 				"mark": int(_hover_entry.get("mark", 0))}
 		var lines := ItemTooltip.build_lines(hdef, hinst, store)
-		ItemTooltip.draw(self, _mouse_pos, ItemTooltip.item_name(hdef, hinst), lines)
+		ItemTooltip.draw(self, _mouse_pos, ItemTooltip.item_name(hdef, hinst), lines, ItemTooltip.name_color(hdef, hinst))
 
 
 func cid_ok(c: Dictionary) -> bool:

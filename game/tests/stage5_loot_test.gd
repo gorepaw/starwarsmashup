@@ -46,7 +46,7 @@ func _initialize() -> void:
 	var loot_scr := LootScreen.new(art)
 	loot_scr.catalog = catalog
 	loot_scr.store = store
-	loot_scr.corpse = {"entity_id": 99, "name": "Lesser Womp Rat", "items": [{"slot": 0, "def_id": "junk_womp_rat_hide", "quality": 0.5}]}
+	loot_scr.corpse = {"entity_id": 99, "name": "Lesser Womp Rat", "items": [{"slot": 0, "def_id": "junk_womp_rat_hide", "grade": 1}]}
 	loot_scr.free()
 
 	var vend_scr := VendorScreen.new(art)

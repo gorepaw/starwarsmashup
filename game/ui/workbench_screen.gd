@@ -57,6 +57,7 @@ const STAT_SORTS := [
 	["purity", "Purity"],
 	["amount", "Amount"],
 ]
+const ItemGrade = preload("res://ui/item_grade.gd")
 const GOOD := Color(0.45, 0.9, 0.5)
 const WARN := Color(0.95, 0.72, 0.25)
 const BAD := Color(0.95, 0.4, 0.35)
@@ -82,7 +83,7 @@ var _selected_schematic := ""
 var _pinned: Dictionary = {}
 var _slot_resources: Array = []       # resource_id per schematic slot
 var _slot_enhancements: Array = []    # item_id (int) per enhancement slot
-var _exp_quality_pct := 65
+var _exp_quality_pct := 0  # Experimentation Focus: better grade odds for up to 10x the materials
 var _sch_scroll := 0
 var _group := ""  # the schematics' group shown ("" every group)
 var _mark := -1   # the Mk chosen (-1: the highest the crafter may make)
@@ -233,6 +234,19 @@ static func _mark_amount(amount: int, mark: int) -> int:
 	return ceili(amount * (1.0 + 0.25 * mark) - 0.000001)
 
 
+# A slot's materials at a mark and Experimentation Focus (core
+# craft_material_amount): focus takes up to 10x.
+static func _craft_amount(amount: int, mark: int, focus: int) -> int:
+	return ceili(_mark_amount(amount, mark) * (1.0 + 9.0 * clampi(focus, 0, 100) / 100.0) - 0.000001)
+
+
+# The focus a craft uses: none for an output without a grade to better (the
+# server ignores it there too).
+func _focus(sch: Dictionary) -> int:
+	var output: Dictionary = _cat_by_id.get(str(sch.get("output_item", "")), {})
+	return _exp_quality_pct if bool(output.get("graded", false)) and int(output.get("grade", -1)) < 0 else 0
+
+
 static func _mark_name(mark: int) -> String:
 	return "Mk 0" if mark <= 0 else "Mk " + NUMERALS[mini(mark, NUMERALS.size() - 1)]
 
@@ -279,7 +293,8 @@ func _auto_fill(mode: String) -> void:
 	var sch := _current_schematic()
 	if store == null or sch.is_empty():
 		return
-	var filled: PackedStringArray = store.auto_fill_schematic(str(sch["id"]), materials, mode, _current_mark(sch))
+	var filled: PackedStringArray = store.auto_fill_schematic(str(sch["id"]), materials, mode, _current_mark(sch),
+			_focus(sch))
 	for i in mini(filled.size(), _slot_resources.size()):
 		_slot_resources[i] = filled[i]
 
@@ -446,7 +461,7 @@ func _paint_workbench(rect: Rect2) -> void:
 		var rid := str(_slot_resources[i]) if i < _slot_resources.size() else ""
 		var r: Dictionary = _res_by_id.get(rid, {})
 		var have := _vault_amount(rid) if rid != "" else 0
-		var need := _mark_amount(int(sl.get("amount", 1)), mark)
+		var need := _craft_amount(int(sl.get("amount", 1)), mark, _focus(sch))
 		var sr := Rect2(cx, cy, center.size.x - 24 * u, 42 * u)
 		frame(sr, "border_3_pieces", Color(1, 1, 1, 0.85))
 		region(sr, "cslot:%d" % i)
@@ -501,25 +516,35 @@ func _paint_workbench(rect: Rect2) -> void:
 	for eid in _slot_enhancements:
 		if int(eid) > 0:
 			enh_count += 1
+	var output_def: Dictionary = _cat_by_id.get(str(sch.get("output_item", "")), {})
+	var graded := bool(output_def.get("graded", false)) and int(output_def.get("grade", -1)) < 0
+	var focus := _focus(sch)
 	var prev: Dictionary = store.preview_craft(str(sch.get("id", "")), PackedStringArray(_slot_resources),
-			enh_count, lv, _exp_quality_pct) if store != null else {}
+			enh_count, lv, focus) if store != null and graded else {}
 	if not prev.is_empty():
-		text("gamefont_small", "Quality: %d%%  (%d%% - %d%%)" % [
-				roundi(float(prev["base_quality"]) * 100.0),
-				roundi(float(prev["min_quality"]) * 100.0),
-				roundi(float(prev["max_quality"]) * 100.0)], Vector2(rx, ry), "Left", TEXT)
+		text("gamefont_small", "Materials: %d%%" % roundi(float(prev["material_score"]) * 100.0),
+				Vector2(rx, ry), "Left", TEXT)
 		ry += 22 * u
-		text("gamefont_tiny", "Great %d%%   Success %d%%   Neutral %d%%   Flaw %d%%" % [
-				roundi(float(prev["great_success"]) * 100.0),
-				roundi(float(prev["success"]) * 100.0),
-				roundi(float(prev["neutral"]) * 100.0),
-				roundi(float(prev["minor_flaw"]) * 100.0)], Vector2(rx, ry), "Left", GOOD)
+		# The grade odds, each in its grade's color.
+		var ox := rx
+		for g in 4:
+			var key: String = ["flawed", "standard", "fine", "exceptional"][g]
+			var part := "%s %d%%" % [ItemGrade.NAMES[g], roundi(float(prev[key]) * 100.0)]
+			text("gamefont_tiny", part, Vector2(ox, ry), "Left", ItemGrade.COLORS[g])
+			ox += art.text_width("gamefont_tiny", part, u) + 10 * u
 		ry += 24 * u
-
-	text("gamefont_tiny", "Experimentation Focus: %d%%" % _exp_quality_pct, Vector2(rx, ry), "Left", TEXT)
-	button(Rect2(rx + 210 * u, ry - 2 * u, 28 * u, 20 * u), "-", "exp:-10")
-	button(Rect2(rx + 242 * u, ry - 2 * u, 28 * u, 20 * u), "+", "exp:+10")
-	ry += 28 * u
+		text("gamefont_tiny", "Experimentation Focus: %d%%" % _exp_quality_pct, Vector2(rx, ry), "Left", TEXT)
+		button(Rect2(rx + 210 * u, ry - 2 * u, 28 * u, 20 * u), "-", "exp:-10", false, false, _exp_quality_pct > 0)
+		button(Rect2(rx + 242 * u, ry - 2 * u, 28 * u, 20 * u), "+", "exp:+10", false, false, _exp_quality_pct < 100)
+		ry += 18 * u
+		text("gamefont_tiny", "Materials x%.1f" % float(prev["material_mult"]), Vector2(rx, ry), "Left",
+				WARN if focus > 0 else DIM)
+		ry += 22 * u
+	elif not output_def.is_empty():
+		var fixed := int(output_def.get("grade", -1))
+		text("gamefont_tiny", "Always %s." % ItemGrade.NAMES[fixed] if fixed >= 0
+				else "Ungraded: Experimentation Focus doesn't apply.", Vector2(rx, ry), "Left", DIM)
+		ry += 24 * u
 
 	text("gamefont_tiny", "Recipe Presets:", Vector2(rx, ry + 3 * u), "Left", ACCENT)
 	button(Rect2(rx + 158 * u, ry, 112 * u, 22 * u), "Save Preset", "save_preset")
@@ -534,7 +559,7 @@ func _paint_workbench(rect: Rect2) -> void:
 	var ready := lv >= req and station_kind != "none"
 	for i in slots.size():
 		var rid := str(_slot_resources[i]) if i < _slot_resources.size() else ""
-		if rid == "" or _vault_amount(rid) < _mark_amount(int((slots[i] as Dictionary).get("amount", 1)), mark):
+		if rid == "" or _vault_amount(rid) < _craft_amount(int((slots[i] as Dictionary).get("amount", 1)), mark, _focus(sch)):
 			ready = false
 	var by := right.end.y - 42 * u
 	button(Rect2(rx, by, 86 * u, 30 * u), "Craft x1", "craft:1", false, true, ready)
@@ -647,8 +672,10 @@ func _paint_salvage(rect: Rect2) -> void:
 		var row := Rect2(rect.position.x + 10 * u, rect.position.y + 6 * u + (i - _salvage_scroll) * row_h,
 				rect.size.x - 20 * u, row_h - 4 * u)
 		frame(row, "border_3_pieces", Color(0.85, 0.85, 0.9))
-		text("gamefont_small", "%s  (%d%%)" % [str(def.get("name", inst.get("def_id", ""))),
-				roundi(float(inst.get("quality", 0.5)) * 100.0)], row.position + Vector2(12, 10) * u, "Left", TEXT)
+		var grade_label := ItemGrade.label(def, inst)
+		text("gamefont_small", "%s%s" % [str(def.get("name", inst.get("def_id", ""))),
+				"  (" + grade_label + ")" if grade_label != "" else ""], row.position + Vector2(12, 10) * u, "Left",
+				ItemGrade.color(def, inst))
 		button(Rect2(row.end.x - 116 * u, row.position.y + 6 * u, 102 * u, row.size.y - 12 * u),
 				"Salvage", "salvage:%d" % int(inst.get("id", 0)))
 
@@ -882,7 +909,7 @@ func _on_click(id: String, _at: Vector2) -> void:
 			var rids: PackedStringArray = pr.get("resource_ids", PackedStringArray())
 			for i in mini(rids.size(), _slot_resources.size()):
 				_slot_resources[i] = rids[i]
-			_exp_quality_pct = int(pr.get("exp_quality_pct", 50))
+			_exp_quality_pct = int(pr.get("exp_quality_pct", 0))
 	elif id.begins_with("del_preset:"):
 		preset_deleted.emit(id.substr(11))
 	elif id.begins_with("craft:"):

@@ -76,12 +76,12 @@ func _initialize() -> void:
 	trainer.queue_redraw()
 	assert(store.load_catalog(ProjectSettings.globalize_path("res://items/swg_catalog.ini"),
 			ProjectSettings.globalize_path("res://imported_assets/items")) == OK)
-	var psg: Dictionary = store.resolve_item_stats("psg_mark1", 0.5, true)
+	var psg: Dictionary = store.resolve_item_stats("psg_mark1")
 	assert((psg.get("modifiers", []) as Array).any(func(m: Dictionary) -> bool:
 		return m.get("stat_name") == "shield_capacity" and float(m.get("add", 0.0)) > 0.0), "PSG shield capacity: %s" % psg)
-	var ion: Dictionary = store.resolve_item_stats("wp_pistol_ion", 0.5, true)
+	var ion: Dictionary = store.resolve_item_stats("wp_pistol_ion")
 	assert(ion.get("damage_type") == "electro", "Ion pistol type: %s" % ion)
-	var blade: Dictionary = store.resolve_item_stats("wp_melee_vibroblade", 0.5, true)
+	var blade: Dictionary = store.resolve_item_stats("wp_melee_vibroblade")
 	assert(blade.get("projectile") == "melee", "Melee blade projectile: %s" % blade)
 	print("Stage 7 profession planner: OK")
 

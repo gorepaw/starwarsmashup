@@ -1,9 +1,11 @@
 # Shared Battlefront II-styled item tooltip renderer for Inventory & Quartermaster:
-# shows item name, kind/slot, faction, quality %, every stat, and color-coded
-# deltas against the currently equipped item in the matching slot.
+# shows item name (in its grade's color), kind/slot, faction, grade, every
+# stat, and color-coded deltas against the currently equipped item in the
+# matching slot.
 extends RefCounted
 
 const Bf2Screen = preload("res://ui/bf2_screen.gd")
+const ItemGrade = preload("res://ui/item_grade.gd")
 const GOOD := Color(0.45, 0.95, 0.5)
 const BAD := Color(1.0, 0.4, 0.35)
 const MARK_NUMERALS := ["", "I", "II", "III", "IV", "V", "VI", "VII", "VIII", "IX", "X"]
@@ -14,6 +16,11 @@ static func item_name(def: Dictionary, inst: Dictionary = {}) -> String:
 	var base := str(def.get("name", def.get("id", inst.get("def_id", "?"))))
 	var mark := clampi(int(inst.get("mark", 0)), 0, 10)
 	return base if mark == 0 else "%s Mk %s" % [base, MARK_NUMERALS[mark]]
+
+
+# The color its name shows in: its grade's (white for an ungraded item).
+static func name_color(def: Dictionary, inst: Dictionary = {}) -> Color:
+	return ItemGrade.color(def, inst)
 
 
 static func stat_label(stat_name: String) -> String:
@@ -69,14 +76,15 @@ static func build_lines(def: Dictionary, inst: Dictionary, store: Object, equipp
 		equipped_inst: Dictionary = {}) -> Array:
 	var lines: Array = []
 	var def_id := str(def.get("id", ""))
-	var quality := float(inst.get("quality", 0.5)) if not inst.is_empty() else 0.5
+	var grade := int(inst.get("grade", 1)) if not inst.is_empty() else 1
 	var kind := str(def.get("kind", "weapon"))
 	var slot := str(def.get("slot", ""))
 	var faction := str(def.get("faction", "neutral")).capitalize()
 	lines.append({"text": "%s | %s | %s" % [kind.replace("_", " ").capitalize(), slot.replace("_", " ").capitalize(), faction],
 			"color": Bf2Screen.DIM})
-	if not inst.is_empty() and kind != "junk" and kind != "supply" and kind != "quest" and kind != "ammo":
-		lines.append({"text": "Quality: %d%%" % roundi(quality * 100.0), "color": Bf2Screen.ACCENT})
+	var grade_label := ItemGrade.label(def, inst)
+	if grade_label != "":
+		lines.append({"text": grade_label, "color": ItemGrade.color(def, inst)})
 	if kind == "bodysuit":
 		lines.append({"text": "A look only: worn in the Cosmetic Override, in place of everything",
 				"color": Bf2Screen.ACCENT})
@@ -131,12 +139,12 @@ static func build_lines(def: Dictionary, inst: Dictionary, store: Object, equipp
 		lines.append({"text": desc, "color": Bf2Screen.TEXT})
 
 	# As the modules crafted into it tune it (docs/CRAFTING.md).
-	var stats: Dictionary = store.resolve_item_stats(def_id, quality, true, mark,
+	var stats: Dictionary = store.resolve_item_stats(def_id, grade, mark,
 			str(inst.get("color_json", "{}"))) if store != null else {}
 	var eq_stats: Dictionary = {}
 	if not equipped_def.is_empty() and store != null:
-		var eq_q := float(equipped_inst.get("quality", 0.5)) if not equipped_inst.is_empty() else 0.5
-		eq_stats = store.resolve_item_stats(str(equipped_def.get("id", "")), eq_q, true,
+		var eq_g := int(equipped_inst.get("grade", 1)) if not equipped_inst.is_empty() else 1
+		eq_stats = store.resolve_item_stats(str(equipped_def.get("id", "")), eq_g,
 				int(equipped_inst.get("mark", 0)), str(equipped_inst.get("color_json", "{}")))
 	var modules: PackedStringArray = stats.get("modules", PackedStringArray())
 	if not modules.is_empty():
@@ -264,7 +272,8 @@ static func _cmp_line(label: String, val: float, eq_val: float, val_str: String,
 	return {"text": txt, "color": col}
 
 
-static func draw(screen: Control, at: Vector2, title: String, lines: Array) -> void:
+static func draw(screen: Control, at: Vector2, title: String, lines: Array,
+		title_color: Color = Bf2Screen.ACCENT) -> void:
 	if screen.art == null or lines.is_empty():
 		return
 	var u: float = screen.u
@@ -289,7 +298,7 @@ static func draw(screen: Control, at: Vector2, title: String, lines: Array) -> v
 	screen.frame(box, "border_popup")
 	for i in title_rows.size():
 		screen.text("gamefont_small", title_rows[i], Vector2(box.position.x + 10 * u, box.position.y + (8 + 20 * i) * u),
-				"Left", Bf2Screen.ACCENT)
+				"Left", title_color)
 	var y := box.position.y + title_h * u
 	for row: Array in rows:
 		screen.text("gamefont_tiny", row[0], Vector2(box.position.x + 10 * u, y), "Left", row[1])

@@ -65,13 +65,34 @@ void test_crafting_book() {
     CHECK(cheap.size() == 2 && !cheap[0].empty() && !cheap[1].empty());
 
     const CraftPreview preview = book.preview_craft(*pistol, best_s, 1, 25, 65);
-    CHECK(preview.base_quality > 0.0 && preview.base_quality <= 1.0);
-    CHECK(preview.max_quality >= preview.base_quality);
-    const auto [great_q, great_label] = CraftingBook::roll_craft_quality(preview, 0.01);
-    const auto [flaw_q, flaw_label] = CraftingBook::roll_craft_quality(preview, 0.99);
-    CHECK(great_q >= flaw_q);
-    CHECK(great_label == "Great Success");
-    CHECK(flaw_label == "Minor Flaw");
+    CHECK(preview.material_score > 0.0 && preview.material_score <= 1.0);
+    CHECK(std::abs(preview.material_mult - 6.85) < 1e-9);  // 1 + 9 x 65%
+    {
+        const ExperimentOdds& o = preview.odds;
+        CHECK(std::abs(o.flawed + o.standard + o.fine + o.exceptional - 1.0) < 1e-9);
+    }
+    CHECK(CraftingBook::roll_craft_grade(preview, 0.0) == ItemGrade::exceptional);
+    CHECK(CraftingBook::roll_craft_grade(preview, 0.999999) == ItemGrade::flawed);
+
+    // Grade odds: a fresh crafter on average materials makes mostly Standard;
+    // better materials, level, modules and focus each move them up; a master
+    // with everything makes mostly Exceptional.
+    {
+        const ExperimentOdds fresh = CraftingBook::grade_odds(0.5, 1, 0, 0);
+        CHECK(fresh.standard > fresh.flawed && fresh.standard > fresh.fine && fresh.exceptional < 0.05);
+        const auto better = [&](const ExperimentOdds& o) { return o.exceptional > fresh.exceptional && o.flawed < fresh.flawed; };
+        CHECK(better(CraftingBook::grade_odds(0.9, 1, 0, 0)));
+        CHECK(better(CraftingBook::grade_odds(0.5, 60, 0, 0)));
+        CHECK(better(CraftingBook::grade_odds(0.5, 1, 2, 0)));
+        CHECK(better(CraftingBook::grade_odds(0.5, 1, 0, 100)));
+        CHECK(CraftingBook::grade_odds(0.5, 75, 0, 0).exceptional > CraftingBook::grade_odds(0.5, 74, 0, 0).exceptional);
+        const ExperimentOdds master = CraftingBook::grade_odds(0.9, 100, 2, 100);
+        CHECK(master.exceptional > 0.6 && master.flawed < 0.01);
+    }
+    // Focus costs materials: up to 10x, on top of the mark's.
+    CHECK(craft_material_amount(4, 0, 0) == 4 && craft_material_amount(4, 0, 100) == 40);
+    CHECK(craft_material_amount(4, 2, 50) == 33);  // 6 at Mk II, x5.5
+    CHECK(std::abs(focus_material_mult(150) - 10.0) < 1e-9);
 
     ItemCatalog catalog;
     catalog.load(root / "game" / "items" / "swg_catalog.ini");
@@ -213,12 +234,16 @@ void test_server_client_crafting_loopback() {
 
         // A pistol isn't made at an Armor & Clothing station...
         const size_t inv_before = client.items().size();
-        client.craft_item("sch_wp_pistol_d18", {min_id, gas_id}, {}, 70, 3);
+        client.craft_item("sch_wp_pistol_d18", {min_id, gas_id}, {}, 0, 3);
         run(0.4);
         CHECK(client.items().size() == inv_before);
         // ...but at a Weapon & Droid one: 3x D-18 Blaster Pistols (2 for wo_pistols_militia, 1 to salvage).
+        // Full focus would take 10x the materials, more than the vault holds.
         server.set_crafting(&crafting, {{"Weapon & Droid Crafting Station", {3, 0, 3}, 4.0, "weapon"}});
-        client.craft_item("sch_wp_pistol_d18", {min_id, gas_id}, {}, 70, 3);
+        client.craft_item("sch_wp_pistol_d18", {min_id, gas_id}, {}, 100, 3);
+        run(0.4);
+        CHECK(client.items().size() == inv_before);
+        client.craft_item("sch_wp_pistol_d18", {min_id, gas_id}, {}, 0, 3);
         run(0.4);
         CHECK(client.items().size() == inv_before + 3);
         CHECK(profession_xp(client.professions().professions, "weaponsmith") >= 225);
@@ -532,16 +557,16 @@ void test_marks_modules_and_dyes() {
         const int64_t mineral_before = material_amount(client.crafting().materials, rids[0]);
 
         // Mk III takes level 30.
-        client.craft_item(sch->id, rids, {}, 50, 1, 3);
+        client.craft_item(sch->id, rids, {}, 0, 1, 3);
         run(0.4);
         CHECK(owned("wp_pistol_dh17").empty());
         CHECK(client.player_status().notice.find("level 30") != std::string::npos);
         // Armor plating doesn't fit a pistol.
-        client.craft_item(sch->id, rids, {plating.id}, 50, 1, 2);
+        client.craft_item(sch->id, rids, {plating.id}, 0, 1, 2);
         run(0.4);
         CHECK(owned("wp_pistol_dh17").empty() && owned("mod_armor_plating").size() == 1);
         // Mk II with the barrel: tuned, the barrel used, half again the materials.
-        client.craft_item(sch->id, rids, {barrel.id}, 50, 1, 2);
+        client.craft_item(sch->id, rids, {barrel.id}, 0, 1, 2);
         run(0.4);
         const auto pistols = owned("wp_pistol_dh17");
         CHECK(pistols.size() == 1 && pistols[0].mark == 2);
@@ -550,7 +575,7 @@ void test_marks_modules_and_dyes() {
         CHECK(material_amount(client.crafting().materials, rids[0]) ==
               mineral_before - mark_material_amount(sch->slots[0].amount, 2));
         // By default, the highest it may make: Mk II at level 20.
-        client.craft_item(sch->id, rids, {}, 50, 1);
+        client.craft_item(sch->id, rids, {}, 0, 1);
         run(0.4);
         CHECK(owned("wp_pistol_dh17").size() == 2 && owned("wp_pistol_dh17").back().mark == 2);
 

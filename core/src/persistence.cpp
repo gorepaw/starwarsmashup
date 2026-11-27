@@ -203,13 +203,13 @@ void ensure_starter_kit(CharacterStore& store, PersistentId char_id) {
         return;
     }
     const auto grant = [&](const char* def_id) {
-        return store.grant_item({0, char_id, def_id, 0.5, "", "{}"});
+        return store.grant_item({0, char_id, def_id, ItemGrade::standard, "", "{}"});
     };
     const auto primary = grant("wp_rifle_e11");
     const auto sidearm = grant("wp_pistol_dh17");
     const auto grenade = grant("wp_grenade_c22");
     const auto psg = grant("psg_mark1");
-    const auto ammo_std = store.grant_item({0, char_id, "ammo_tibanna_standard", 0.5, "", "{}", 250});
+    const auto ammo_std = store.grant_item({0, char_id, "ammo_tibanna_standard", ItemGrade::standard, "", "{}", 250});
     grant("cloth_jacket_rebel");
     const auto shirt = grant("cloth_shirt_tunic");
     const auto pants = grant("cloth_pants_cargo");

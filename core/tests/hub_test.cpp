@@ -479,8 +479,8 @@ void test_stage4_hub_loop() {
     MemoryCharacterStore store;
     const auto hero = store.create_character({0, "Luke", {0, 0, 0}, 0, "human", "male"});
     ensure_starter_kit(store, hero.id);
-    // Grant a high-quality (1.0) T-21 directly as well as testing quartermaster buy.
-    const auto hq_t21 = store.grant_item({0, hero.id, "wp_rifle_t21", 1.0, "", "{}"});
+    // Grant a Fine T-21 directly as well as testing quartermaster buy.
+    const auto hq_t21 = store.grant_item({0, hero.id, "wp_rifle_t21", ItemGrade::fine, "", "{}"});
 
     Battlefield field;
     field.name = "Dunes";
@@ -567,7 +567,7 @@ void test_stage4_hub_loop() {
     CHECK(session.client().items().size() == before_buy + 2);
     CHECK(session.client().player_status().credits == 300);
 
-    // Save Loadout 1 with the high-quality T-21 and switch to it in the hub (takes 3s).
+    // Save Loadout 1 with the Fine T-21 and switch to it in the hub (takes 3s).
     CharacterLoadout lo1;
     lo1.slot_index = 1;
     lo1.name = "Heavy";
@@ -580,7 +580,7 @@ void test_stage4_hub_loop() {
     CHECK(session.client().player_status().active_loadout == 1);
     CHECK(session.client().loadout().name == "Heavy");
 
-    // Queue -> match always runs under Gear-Matters rules with +8% quality!
+    // Queue -> the match counts its grade: Fine's +8%.
     session.client().queue(0);
     bool checked_gear = false;
     for (double limit = now + 4.0; now < limit; now += 1.0 / 60) {

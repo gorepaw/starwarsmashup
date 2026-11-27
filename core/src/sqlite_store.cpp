@@ -110,11 +110,12 @@ SqliteCharacterStore::SqliteCharacterStore(const std::filesystem::path& path) {
                  " id INTEGER PRIMARY KEY AUTOINCREMENT,"
                  " owner_id INTEGER NOT NULL,"
                  " def_id TEXT NOT NULL,"
-                 " quality REAL NOT NULL DEFAULT 0.5,"
+                 " quality REAL NOT NULL DEFAULT 0.5,"  // unused since grades (schema 10)
                  " quantity INTEGER NOT NULL DEFAULT 1,"
                  " custom_name TEXT NOT NULL DEFAULT '',"
                  " color_json TEXT NOT NULL DEFAULT '{}',"
-                 " mark INTEGER NOT NULL DEFAULT 0"
+                 " mark INTEGER NOT NULL DEFAULT 0,"
+                 " grade INTEGER NOT NULL DEFAULT 1"
                  ") STRICT");
             exec("CREATE TABLE loadouts ("
                  " owner_id INTEGER NOT NULL,"
@@ -166,7 +167,7 @@ SqliteCharacterStore::SqliteCharacterStore(const std::filesystem::path& path) {
                  ") STRICT");
             exec(("PRAGMA user_version = " + std::to_string(schema_version)).c_str());
             exec("COMMIT");
-        } else if (version >= 1 && version <= 8) {
+        } else if (version >= 1 && version <= 9) {
             exec("BEGIN");
             if (version == 1) {
                 exec("ALTER TABLE characters ADD COLUMN species TEXT NOT NULL DEFAULT 'human'");
@@ -274,6 +275,18 @@ SqliteCharacterStore::SqliteCharacterStore(const std::filesystem::path& path) {
                      " '\"jacket\":', '\"chest\":'), '\"shirt\":', '\"chest\":'), '\"pants\":', '\"leggings\":'),"
                      " '\"boots_cosmetic\":', '\"boots\":')");
             }
+            if (version <= 9) {
+                // Grades replace quality (items.h): the grade whose stats are
+                // nearest (grade_from_quality).
+                sqlite3_stmt* has_grade = prepare(db_, "SELECT 1 FROM pragma_table_info('items') WHERE name = 'grade'");
+                const bool had = sqlite3_step(has_grade) == SQLITE_ROW;
+                sqlite3_finalize(has_grade);
+                if (!had) {
+                    exec("ALTER TABLE items ADD COLUMN grade INTEGER NOT NULL DEFAULT 1");
+                    exec("UPDATE items SET grade = CASE WHEN quality < 0.25 THEN 0 WHEN quality >= 0.75 THEN 2 "
+                         "ELSE 1 END");
+                }
+            }
             exec("CREATE TABLE IF NOT EXISTS faction_reputation ("
                  " owner_id INTEGER NOT NULL,"
                  " faction_id TEXT NOT NULL,"
@@ -339,8 +352,8 @@ SqliteCharacterStore::SqliteCharacterStore(const std::filesystem::path& path) {
                                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
         update_ = prepare(db_, "UPDATE characters SET x = ?, y = ?, z = ?, yaw = ?, location = ?, appearance = ? WHERE id = ?");
         delete_ = prepare(db_, "DELETE FROM characters WHERE id = ?");
-        list_items_ = prepare(db_, "SELECT id, owner_id, def_id, quality, quantity, custom_name, color_json, mark FROM items WHERE owner_id = ? ORDER BY id ASC");
-        grant_item_ = prepare(db_, "INSERT INTO items (owner_id, def_id, quality, quantity, custom_name, color_json, mark) VALUES (?, ?, ?, ?, ?, ?, ?)");
+        list_items_ = prepare(db_, "SELECT id, owner_id, def_id, grade, quantity, custom_name, color_json, mark FROM items WHERE owner_id = ? ORDER BY id ASC");
+        grant_item_ = prepare(db_, "INSERT INTO items (owner_id, def_id, grade, quantity, custom_name, color_json, mark) VALUES (?, ?, ?, ?, ?, ?, ?)");
         remove_item_ = prepare(db_, "DELETE FROM items WHERE id = ?");
         update_item_quantity_ = prepare(db_, "UPDATE items SET quantity = ? WHERE id = ?");
         remove_items_by_owner_ = prepare(db_, "DELETE FROM items WHERE owner_id = ?");
@@ -644,7 +657,7 @@ std::vector<ItemInstance> SqliteCharacterStore::list_items(PersistentId owner_id
         inst.id = PersistentId(sqlite3_column_int64(list_items_, 0));
         inst.owner_id = PersistentId(sqlite3_column_int64(list_items_, 1));
         inst.def_id = col_str(2);
-        inst.quality = sqlite3_column_double(list_items_, 3);
+        inst.grade = clamp_grade(sqlite3_column_int(list_items_, 3));
         inst.quantity = std::max(1, sqlite3_column_int(list_items_, 4));
         inst.custom_name = col_str(5);
         inst.color_json = col_str(6);
@@ -661,7 +674,7 @@ ItemInstance SqliteCharacterStore::grant_item(const ItemInstance& item) {
     Reset reset{grant_item_};
     sqlite3_bind_int64(grant_item_, 1, sqlite3_int64(copy.owner_id));
     sqlite3_bind_text(grant_item_, 2, copy.def_id.c_str(), int(copy.def_id.size()), SQLITE_TRANSIENT);
-    sqlite3_bind_double(grant_item_, 3, copy.quality);
+    sqlite3_bind_int(grant_item_, 3, int(copy.grade));
     sqlite3_bind_int(grant_item_, 4, copy.quantity);
     sqlite3_bind_text(grant_item_, 5, copy.custom_name.c_str(), int(copy.custom_name.size()), SQLITE_TRANSIENT);
     sqlite3_bind_text(grant_item_, 6, copy.color_json.c_str(), int(copy.color_json.size()), SQLITE_TRANSIENT);

@@ -94,9 +94,23 @@ A crafted weapon, armor piece or Deflector Shield can be made at any Mk up to it
 - **Workbench:** offers the highest tier first, and lowers it for a lower-level buyer.
 - **No tiers:** clothing, speeders, mounts and consumables have none (`item_takes_marks`).
 
+## Grades ✅
+
+A crafted weapon, armor piece or Deflector Shield rolls its grade ([DESIGN.md](DESIGN.md), Grades): Flawed, Standard, Fine or Exceptional. A craft never makes a Legendary item.
+
+- **Odds:** `CraftingBook::grade_odds` places the roll's center from Flawed (0) to Exceptional (3), and spreads it as a bell (0.75 wide). The center starts at 0.3 and goes up with:
+  - **materials:** +1.2 × their score, 0 to 1 (their stats, as the schematic weighs them)
+  - **crafter level:** +0.6 from level 1 to 100, and +0.15 more from the Lv 75 Experimentation milestone
+  - **modules:** +0.2 each, up to 2
+  - **Experimentation Focus:** +0.8 at 100%
+
+  A level-1 crafter on average materials makes mostly Standard (about 26% Flawed, 54% Standard, 19% Fine, 1% Exceptional). A master on great materials with two modules and full focus makes mostly Exceptional. The workbench shows the four odds.
+- **Experimentation Focus costs materials:** 0 to 100% in steps of 10, multiplying every slot's amount by up to 10 (`focus_material_mult`: 1 + 9 × focus), on top of the mark's (`craft_material_amount`). It starts at 0. It does nothing, and costs nothing, on an output without a grade.
+- **Batches:** each item rolls its own grade. The notice lists them ("Crafted 3x ... (1 Exceptional, 2 Fine)").
+
 ## Modules ✅
 
-Crafted into an item at the workbench: up to its schematic's module slots (0 to 2). Each module adds quality, as before. One with a `ModuleFor` also tunes the item: something better for something worse, within the item's budget. The owned copy lists its modules in its `color_json` (`"mods"`), and `ItemCatalog::tuned` applies them wherever its stats are worked out (loadouts, tooltips).
+Crafted into an item at the workbench: up to its schematic's module slots (0 to 2). Each module betters the grade odds (Grades, above). One with a `ModuleFor` also tunes the item: something better for something worse, within the item's budget. The owned copy lists its modules in its `color_json` (`"mods"`), and `ItemCatalog::tuned` applies them wherever its stats are worked out (loadouts, tooltips).
 
 | Module | Fits | Tuning | Crafter |
 |---|---|---|---|
@@ -109,7 +123,7 @@ Crafted into an item at the workbench: up to its schematic's module slots (0 to 
 | Ballistic Armor-Weave Lining | armor | a quarter to laser and electro | Tailor |
 | Organic Armor Tissue | armor | a quarter to bio | Bio-Engineer |
 | Capacitor Bank | Deflector Shields | capacity x1.15, recharge x0.85 | Armorsmith |
-| Stim Additive | anything (medicine and food) | quality only | Bio-Engineer |
+| Stim Additive | anything (medicine and food) | nothing yet: medicine has no grade | Bio-Engineer |
 
 **Budget:**
 

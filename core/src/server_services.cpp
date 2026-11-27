@@ -186,7 +186,7 @@ void GameServer::load_services_data(Client& client) {
         item.id = std::strtoull(f[0].c_str(), nullptr, 10);
         item.owner_id = client.character;
         item.def_id = f[1];
-        item.quality = std::atof(f[2].c_str());
+        item.grade = saved_grade(f[2]);
         item.custom_name = f[3];
         item.color_json = f[4];
         if (f.size() > 5) item.mark = clamp_mark(std::atoi(f[5].c_str()));
@@ -242,7 +242,7 @@ void GameServer::save_bank(Client& client) {
     if (store_ == nullptr || client.character == 0) return;
     std::string text;
     for (const ItemInstance& item : client.bank_items) {
-        text += std::format("{}\t{}\t{}\t{}\t{}\t{}\n", item.id, escape(item.def_id), item.quality,
+        text += std::format("{}\t{}\t{}\t{}\t{}\t{}\n", item.id, escape(item.def_id), int(item.grade),
                             escape(item.custom_name), escape(item.color_json), item.mark);
     }
     try {
@@ -345,7 +345,7 @@ void GameServer::handle_service_request(Client& client, const net::ServiceReques
         const auto it = std::find_if(client.bank_items.begin(), client.bank_items.end(),
                                      [&](const ItemInstance& i) { return i.id == req.item_id; });
         if (it == client.bank_items.end()) return;
-        store_->grant_item({0, client.character, it->def_id, it->quality, it->custom_name, it->color_json, 1, it->mark});
+        store_->grant_item({0, client.character, it->def_id, it->grade, it->custom_name, it->color_json, 1, it->mark});
         const std::string name = item_name(it->def_id);
         client.bank_items.erase(it);
         client.items = store_->list_items(client.character);
