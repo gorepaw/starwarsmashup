@@ -11,21 +11,21 @@
 #include <fstream>
 #include <memory>
 
-#include "swm/core/bot.h"
-#include "swm/core/client.h"
-#include "swm/core/hub.h"
-#include "swm/core/net/link.h"
-#include "swm/core/net/protocol.h"
-#include "swm/core/server.h"
-#include "swm/core/world.h"
+#include "swbfo/core/bot.h"
+#include "swbfo/core/client.h"
+#include "swbfo/core/hub.h"
+#include "swbfo/core/net/link.h"
+#include "swbfo/core/net/protocol.h"
+#include "swbfo/core/server.h"
+#include "swbfo/core/world.h"
 #include "test.h"
 
-using namespace swm::core;
+using namespace swbfo::core;
 
 namespace {
 
 void test_hub_file() {
-    const auto dir = std::filesystem::temp_directory_path() / "swm_hub_test";
+    const auto dir = std::filesystem::temp_directory_path() / "swbfo_hub_test";
     std::filesystem::create_directories(dir / "fields");
     std::filesystem::create_directories(dir / "items");
     std::filesystem::create_directories(dir / "loadouts");
@@ -318,7 +318,7 @@ void test_queue_battle_and_back() {
 // (the crowd wanders, a guard walks his route, a drinker sits), and seen by
 // a player with their looks.
 void test_people() {
-    const auto dir = std::filesystem::temp_directory_path() / "swm_hub_people_test";
+    const auto dir = std::filesystem::temp_directory_path() / "swbfo_hub_people_test";
     std::filesystem::create_directories(dir / "fields");
     std::filesystem::create_directories(dir / "loadouts");
     std::filesystem::create_directories(dir / "items");
@@ -512,7 +512,7 @@ void test_stage4_hub_loop() {
     const Heightfield ground(2, 200.0, -100, -100, flat);
     const World world(ground);
 
-    const auto cat_path = std::filesystem::temp_directory_path() / "swm_stage4_hub_catalog.ini";
+    const auto cat_path = std::filesystem::temp_directory_path() / "swbfo_stage4_hub_catalog.ini";
     {
         std::ofstream out(cat_path);
         out << "[item]\nId = wp_rifle_e11\nName = E-11\nKind = weapon\nArchetype = rifle_auto\nSlot = primary\n"
@@ -706,5 +706,5 @@ int main() {
     test_wookiee_profile_in_battle();
     test_stage4_hub_loop();
     test_stock_bot_roster();
-    return swm::test::finish("hub_test");
+    return swbfo::test::finish("hub_test");
 }

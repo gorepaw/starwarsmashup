@@ -3,9 +3,9 @@
 # earns it more, and what it teaches: its perks (an A or a B at each tier: 5
 # or 1, then 25/45/65/85). What a character knows works in every loadout;
 # they may know at most `cap` perks in each pool, learned and given up at
-# trainers. `professions` are SwmCharacterStore.get_professions()'s;
+# trainers. `professions` are SwbfoCharacterStore.get_professions()'s;
 # `progress` is id -> experience and `known` id -> the perks learned
-# (SwmClient.get_professions()).
+# (SwbfoClient.get_professions()).
 extends "res://ui/bf2_screen.gd"
 
 signal closed
@@ -27,7 +27,7 @@ const ROWS := 9
 var professions: Array = []
 var progress: Dictionary = {}
 var known: Dictionary = {}       # profession id -> [perk ids learned]
-var store: Object            # SwmCharacterStore: the level curve
+var store: Object            # SwbfoCharacterStore: the level curve
 var cap := 10                # perks a character may know in each pool
 
 var _tab := "combat"

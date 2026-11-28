@@ -29,10 +29,10 @@ var _last_focus := Vector2(INF, INF)
 
 
 func setup(bake_prefix: String, meta: Dictionary) -> bool:
-	if not ClassDB.class_exists("SwmTerrain"):
-		printerr("SwmTerrain GDExtension class not registered")
+	if not ClassDB.class_exists("SwbfoTerrain"):
+		printerr("SwbfoTerrain GDExtension class not registered")
 		return false
-	_terrain = ClassDB.instantiate("SwmTerrain")
+	_terrain = ClassDB.instantiate("SwbfoTerrain")
 	if _terrain.load_bake(ProjectSettings.globalize_path("res://" + bake_prefix) if not bake_prefix.is_absolute_path() else bake_prefix) != OK:
 		return false
 	_samples = int(_terrain.get_samples())

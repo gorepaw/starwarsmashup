@@ -1,4 +1,4 @@
-# Star Wars Mashup
+# SWBFO
 
 A non-commercial Star Wars fangame: classic Battlefront II (2005) third-person combat spilling out across the open planets of Star Wars Galaxies, with MMO-depth customization, player housing, and SWG-scale professions with transparent systems.
 

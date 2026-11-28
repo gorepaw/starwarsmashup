@@ -1,4 +1,4 @@
-#include "swm/core/profession.h"
+#include "swbfo/core/profession.h"
 
 #include <algorithm>
 #include <array>
@@ -7,7 +7,7 @@
 #include <sstream>
 #include <stdexcept>
 
-namespace swm::core {
+namespace swbfo::core {
 
 namespace {
 
@@ -728,4 +728,4 @@ std::string loadout_armor_class(std::span<const std::string> piece_classes) {
     return best == 0 ? "none" : best == 1 ? "light" : best == 2 ? "medium" : "heavy";
 }
 
-} // namespace swm::core
+} // namespace swbfo::core

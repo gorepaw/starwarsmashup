@@ -6,7 +6,7 @@
 #include <cstring>
 #include <map>
 
-namespace swm::bf2 {
+namespace swbfo::bf2 {
 
 namespace {
 
@@ -192,4 +192,4 @@ std::vector<OdfClass> read_odf_classes(const UcfbNode& root) {
     return classes;
 }
 
-} // namespace swm::bf2
+} // namespace swbfo::bf2

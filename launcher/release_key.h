@@ -3,9 +3,9 @@
 #include <array>
 #include <cstdint>
 
-// The release signing key's public half (swm_sign keygen). Launchers only
+// The release signing key's public half (swbfo_sign keygen). Launchers only
 // install updates whose manifest it signed. The secret half never enters the repo.
-namespace swm::launcher {
+namespace swbfo::launcher {
 
 inline constexpr std::array<uint8_t, 32> release_public_key = {
     0xcb, 0x1b, 0x83, 0x65, 0x9c, 0x1f, 0x4c, 0xd1,
@@ -14,4 +14,4 @@ inline constexpr std::array<uint8_t, 32> release_public_key = {
     0x3d, 0x51, 0xc8, 0x80, 0x12, 0x3f, 0x9a, 0x59,
 };
 
-} // namespace swm::launcher
+} // namespace swbfo::launcher

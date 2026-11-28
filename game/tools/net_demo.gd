@@ -12,12 +12,12 @@ const GameSession = preload("res://scenes/game_session.gd")
 
 func _init() -> void:
 	var args := OS.get_cmdline_user_args()
-	if args.size() < 2 or not ClassDB.class_exists("SwmClient"):
+	if args.size() < 2 or not ClassDB.class_exists("SwbfoClient"):
 		printerr("usage: -- <bake_prefix> <character.gltf> [--server addr:port] [--host port] [--spawn x z] ",
 				"[--name n] [--building gltf x y z yaw] [--bot circle|chase|route|conquest] [--route x,z;...] ",
 				"[--loadout ini] [--battlefield ini] [--bots n] [--hub ini] [--lag ms] ",
 				"[--jitter ms] [--loss 0..1] [--seconds n] [--shots prefix] [--solo] [--terrain3d]",
-				"   (needs the swm GDExtension)")
+				"   (needs the swbfo GDExtension)")
 		quit(2)
 		return
 

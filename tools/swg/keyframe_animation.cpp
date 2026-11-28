@@ -26,7 +26,7 @@
 // format bytes, one per component (x, y, z), shared by a channel's keys,
 // and a 32-bit code per key: x in bits 21-31, y in 10-20, z in 0-9. See
 // decompress_rotation.
-namespace swm::swg {
+namespace swbfo::swg {
 
 namespace {
 
@@ -260,4 +260,4 @@ AnimationClip sample_animation(const KeyframeAnimation& animation, const Skeleto
     return clip;
 }
 
-} // namespace swm::swg
+} // namespace swbfo::swg

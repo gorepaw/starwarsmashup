@@ -1,15 +1,15 @@
-#include "swm/core/client.h"
+#include "swbfo/core/client.h"
 
 #include <algorithm>
 #include <cmath>
 #include <numbers>
 #include <utility>
 
-#include "swm/core/net/bytes.h"
-#include "swm/core/net/protocol.h"
-#include "swm/core/species.h"
+#include "swbfo/core/net/bytes.h"
+#include "swbfo/core/net/protocol.h"
+#include "swbfo/core/species.h"
 
-namespace swm::core {
+namespace swbfo::core {
 
 namespace {
 
@@ -752,4 +752,4 @@ void ClientSession::update(double now) {
     client_->update(now);
 }
 
-} // namespace swm::core
+} // namespace swbfo::core

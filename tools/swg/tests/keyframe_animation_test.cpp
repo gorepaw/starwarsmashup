@@ -9,8 +9,8 @@
 
 #include "swg/keyframe_animation.h"
 
-using namespace swm;
-using namespace swm::swg;
+using namespace swbfo;
+using namespace swbfo::swg;
 
 namespace {
 

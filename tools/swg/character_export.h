@@ -10,7 +10,7 @@
 #include "swg/skeleton.h"
 #include "swg/tre_library.h"
 
-namespace swm::swg {
+namespace swbfo::swg {
 
 struct CharacterExport {
     std::string name;                      // output file stem
@@ -61,4 +61,4 @@ struct CharacterBounds {
 CharacterBounds export_character(TreLibrary& library, const CharacterExport& request,
                                  const std::filesystem::path& out_dir, std::ostream& log);
 
-} // namespace swm::swg
+} // namespace swbfo::swg

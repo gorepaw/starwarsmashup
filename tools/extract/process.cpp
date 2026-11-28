@@ -4,7 +4,7 @@
 #define NOMINMAX
 #include <windows.h>
 
-namespace swm::extract {
+namespace swbfo::extract {
 
 std::wstring widen(const std::string& utf8) {
     if (utf8.empty()) {
@@ -145,4 +145,4 @@ int run_process(const std::vector<std::string>& argv, const std::filesystem::pat
     return result;
 }
 
-} // namespace swm::extract
+} // namespace swbfo::extract

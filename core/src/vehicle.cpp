@@ -1,4 +1,4 @@
-#include "swm/core/vehicle.h"
+#include "swbfo/core/vehicle.h"
 
 #include <algorithm>
 #include <cmath>
@@ -6,11 +6,11 @@
 #include <sstream>
 #include <stdexcept>
 
-#include "swm/core/conquest.h"
-#include "swm/core/ini.h"
-#include "swm/core/world.h"
+#include "swbfo/core/conquest.h"
+#include "swbfo/core/ini.h"
+#include "swbfo/core/world.h"
 
-namespace swm::core {
+namespace swbfo::core {
 namespace {
 
 constexpr double degrees = std::numbers::pi / 180;
@@ -607,4 +607,4 @@ bool towable(const VehicleClass& vehicle) {
     return vehicle.kind == VehicleKind::walker && vehicle.name.find("atat") != std::string::npos;
 }
 
-} // namespace swm::core
+} // namespace swbfo::core

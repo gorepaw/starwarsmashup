@@ -11,7 +11,7 @@
 #include "swg/sha256.h"
 #include "swg/tre_scan.h"
 
-namespace swm::swg {
+namespace swbfo::swg {
 namespace {
 
 // (tier, patch level): bottom < data < default_patch < patch_NN.
@@ -199,4 +199,4 @@ std::string TreLibrary::archive_of(std::string_view path) const {
     return it == index_.end() ? std::string() : archive_names_[it->second.front().archive];
 }
 
-} // namespace swm::swg
+} // namespace swbfo::swg

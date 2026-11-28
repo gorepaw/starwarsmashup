@@ -9,24 +9,24 @@
 #include <memory>
 #include <numbers>
 
-#include "swm/core/bot.h"
-#include "swm/core/client.h"
-#include "swm/core/conquest.h"
-#include "swm/core/nav.h"
-#include "swm/core/net/link.h"
-#include "swm/core/server.h"
-#include "swm/core/world.h"
+#include "swbfo/core/bot.h"
+#include "swbfo/core/client.h"
+#include "swbfo/core/conquest.h"
+#include "swbfo/core/nav.h"
+#include "swbfo/core/net/link.h"
+#include "swbfo/core/server.h"
+#include "swbfo/core/world.h"
 #include "test.h"
 
-using namespace swm::core;
-using swm::test::near;
+using namespace swbfo::core;
+using swbfo::test::near;
 
 namespace {
 
 constexpr double dt = 1.0 / 30;
 
 void test_battlefield_file() {
-    const auto dir = std::filesystem::temp_directory_path() / "swm_match_test";
+    const auto dir = std::filesystem::temp_directory_path() / "swbfo_match_test";
     std::filesystem::create_directories(dir / "items");
     std::filesystem::create_directories(dir / "loadouts");
     std::ofstream(dir / "items" / "rifle.ini") << "[weapon]\nName = rifle\n";
@@ -1057,5 +1057,5 @@ int main() {
     test_bots_play_a_match();
     test_bots_play_ctf();
     test_bot_places_mines();
-    return swm::test::finish("match_test");
+    return swbfo::test::finish("match_test");
 }

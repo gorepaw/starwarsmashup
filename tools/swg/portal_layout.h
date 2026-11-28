@@ -8,7 +8,7 @@
 
 #include "common/math.h"
 
-namespace swm::swg {
+namespace swbfo::swg {
 
 // A portalized building (.pob, PRTO 0003/0004): cells (rooms) connected by
 // portals (doorway polygons). Cell 0 is the exterior shell; the rest are
@@ -74,4 +74,4 @@ FloorMesh parse_floor(std::span<const uint8_t> bytes);
 // The floor's walls: boundary edges that can't be crossed, as vertex pairs.
 std::vector<std::array<Vec3, 2>> floor_walls(const FloorMesh& floor);
 
-} // namespace swm::swg
+} // namespace swbfo::swg

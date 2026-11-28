@@ -6,7 +6,7 @@
 
 #include "swg/tre_library.h"
 
-namespace swm::swg {
+namespace swbfo::swg {
 
 // Exports a portalized building (.pob) to <out_dir>/<name>.gltf, .bin, one PNG
 // per texture, and <name>.json.
@@ -27,4 +27,4 @@ namespace swm::swg {
 void export_building(TreLibrary& library, const std::string& pob_path, const std::string& name,
                      const std::filesystem::path& out_dir, std::ostream& log);
 
-} // namespace swm::swg
+} // namespace swbfo::swg

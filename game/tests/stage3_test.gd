@@ -1,5 +1,5 @@
 # Headless verification for Stage 3:
-# 1. SwmCharacterStore: 10 species + slot rules, create/list/reopen/delete
+# 1. SwbfoCharacterStore: 10 species + slot rules, create/list/reopen/delete
 # 2. Exported Wookiee & Ithorian glTFs: blend shapes, 19 retargeted BF2 clips, SwgColors.apply_custom
 # 3. Main Menu scene + SettingsScreen + LoadCharacterScreen + CharacterCreatorScreen instantiation
 extends SceneTree
@@ -14,13 +14,13 @@ var _frames := 0
 
 
 func _initialize() -> void:
-	if not ClassDB.class_exists("SwmCharacterStore"):
-		printerr("FAIL: SwmCharacterStore not registered")
+	if not ClassDB.class_exists("SwbfoCharacterStore"):
+		printerr("FAIL: SwbfoCharacterStore not registered")
 		quit(1)
 		return
 
 	# 1. Store & Species
-	var species_list: Array = SwmCharacterStore.get_species_list()
+	var species_list: Array = SwbfoCharacterStore.get_species_list()
 	assert(species_list.size() == 10, "expected 10 species, got %d" % species_list.size())
 	var by_id := {}
 	for sp: Dictionary in species_list:
@@ -35,7 +35,7 @@ func _initialize() -> void:
 		if FileAccess.file_exists(db_path + suffix):
 			DirAccess.remove_absolute(db_path + suffix)
 
-	var store: SwmCharacterStore = ClassDB.instantiate("SwmCharacterStore")
+	var store: SwbfoCharacterStore = ClassDB.instantiate("SwbfoCharacterStore")
 	assert(store.open(db_path) == OK)
 	var rec: Dictionary = store.create_character("Chewtest", "wookiee", "male",
 			'{"height":0.85,"colors":{"index_color_1":2}}', "Mos Eisley", Vector3(1, 2, 3), 0.5)
@@ -44,7 +44,7 @@ func _initialize() -> void:
 	assert(listed.size() == 1 and str(listed[0]["name"]) == "Chewtest")
 	store.close()
 
-	var store2: SwmCharacterStore = ClassDB.instantiate("SwmCharacterStore")
+	var store2: SwbfoCharacterStore = ClassDB.instantiate("SwbfoCharacterStore")
 	assert(store2.open(db_path) == OK)
 	var listed2: Array = store2.list_characters()
 	assert(listed2.size() == 1 and str(listed2[0]["species"]) == "wookiee")
@@ -104,7 +104,7 @@ func _initialize() -> void:
 	for suffix in ["", "-wal", "-shm"]:
 		if FileAccess.file_exists(_e2e_db + suffix):
 			DirAccess.remove_absolute(_e2e_db + suffix)
-	var e2e_store: SwmCharacterStore = ClassDB.instantiate("SwmCharacterStore")
+	var e2e_store: SwbfoCharacterStore = ClassDB.instantiate("SwbfoCharacterStore")
 	assert(e2e_store.open(_e2e_db) == OK)
 	var created: Dictionary = e2e_store.create_character("Chewtest", "wookiee", "male",
 			_saved_app, "Mos Eisley", Vector3(-3480.0, 5.0, -4794.0), 0.25)
@@ -150,7 +150,7 @@ func _process(_delta: float) -> bool:
 	_session.queue_free()
 	_session = null
 
-	var verify_store: SwmCharacterStore = ClassDB.instantiate("SwmCharacterStore")
+	var verify_store: SwbfoCharacterStore = ClassDB.instantiate("SwbfoCharacterStore")
 	assert(verify_store.open(_e2e_db) == OK)
 	var all_chars: Array = verify_store.list_characters()
 	assert(all_chars.size() == 1)

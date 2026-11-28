@@ -7,14 +7,14 @@
 # ~/deploy/server_assets.tar (tools/release/server_assets.py). Layout:
 #
 #   /opt/swm/assets/imported_assets     the server's game data (shared by releases)
-#   /opt/swm/releases/<commit>/bin      swm_server, swm_probe, swm-backup
+#   /opt/swm/releases/<commit>/bin      swbfo_server, swbfo_probe, swm-backup
 #   /opt/swm/releases/<commit>/game     the repo's game/ (imported_assets: a link to the shared one)
 #   /opt/swm/current -> releases/<commit>
 #   /var/lib/swm                        the database (never touched here)
 #
 # Builds in ~/src and ~/build (incrementally: only changed files are copied
 # over), installs a release, switches `current`, restarts swm-galaxy and joins
-# it with swm_probe. If the server doesn't come up or the probe fails, it
+# it with swbfo_probe. If the server doesn't come up or the probe fails, it
 # switches back to the previous release and exits 1.
 set -euo pipefail
 COMMIT=$1
@@ -39,12 +39,12 @@ say "building $COMMIT"
 export CC=gcc-14 CXX=g++-14
 # Configure every time (a second when nothing changed): make won't build a
 # target added since the last configure.
-if ! cmake -S ~/src -B ~/build -DCMAKE_BUILD_TYPE=Release -DSWM_BUILD_GODOT=OFF > ~/deploy/configure.log 2>&1; then
+if ! cmake -S ~/src -B ~/build -DCMAKE_BUILD_TYPE=Release -DSWBFO_BUILD_GODOT=OFF > ~/deploy/configure.log 2>&1; then
   tail -20 ~/deploy/configure.log
   say "configure failed"
   exit 1
 fi
-if ! cmake --build ~/build -j "$(nproc)" --target swm_server swm_probe > ~/deploy/build.log 2>&1; then
+if ! cmake --build ~/build -j "$(nproc)" --target swbfo_server swbfo_probe > ~/deploy/build.log 2>&1; then
   { grep -E 'error|Error|No rule' ~/deploy/build.log || tail -20 ~/deploy/build.log; } | sort -u | head -20
   say "build failed"
   exit 1
@@ -71,7 +71,7 @@ fi
 # The release.
 REL=/opt/swm/releases/$COMMIT
 sudo rm -rf "$REL.new" && sudo install -d -m 755 "$REL.new/bin"
-sudo install -m 755 ~/build/server/swm_server ~/build/server/swm_probe "$REL.new/bin/"
+sudo install -m 755 ~/build/server/swbfo_server ~/build/server/swbfo_probe "$REL.new/bin/"
 sudo install -m 755 ~/src/server/deploy/swm-backup.sh "$REL.new/bin/swm-backup"
 sudo cp -r ~/src/game "$REL.new/game"
 sudo rm -rf "$REL.new/game/tests" "$REL.new/game/imported_assets"
@@ -104,7 +104,7 @@ started_ok() {
   return 1
 }
 probe_ok() {
-  /opt/swm/current/bin/swm_probe 127.0.0.1:7777 --bake /opt/swm/assets/imported_assets/terrain/tatooine \
+  /opt/swm/current/bin/swbfo_probe 127.0.0.1:7777 --bake /opt/swm/assets/imported_assets/terrain/tatooine \
     --name deploy-probe --seconds 5
 }
 if started_ok && probe_ok; then

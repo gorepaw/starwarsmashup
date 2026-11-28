@@ -1,12 +1,12 @@
-#include "swm/core/net/protocol.h"
+#include "swbfo/core/net/protocol.h"
 
 #include <algorithm>
 #include <cmath>
 #include <format>
 
-#include "swm/core/net/bytes.h"
+#include "swbfo/core/net/bytes.h"
 
-namespace swm::core::net {
+namespace swbfo::core::net {
 
 namespace {
 
@@ -2320,4 +2320,4 @@ uint32_t static_key(const EntityState& entity) {
     return hash == 0 ? 1 : hash;
 }
 
-} // namespace swm::core::net
+} // namespace swbfo::core::net

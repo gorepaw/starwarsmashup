@@ -1,6 +1,6 @@
 """Publish a staged build to a release channel on the update server (docs/DISTRIBUTION.md).
 
-  set SWM_PUBLISH_TOKEN=...
+  set SWBFO_PUBLISH_TOKEN=...
   python -I tools/release/publish.py --stage E:\\swm_stage\\player --channel stable --version 2026.11.28.1
   python -I tools/release/publish.py --stage E:\\swm_stage\\portable --channel portable --version ...
 
@@ -11,7 +11,7 @@ portable  the developer's portable build: the same plus game/imported_assets.
 
 Every file becomes a blob named by its SHA-256 (uploaded once, ever); the
 channel's manifest lists path, hash and size, is signed with the release key
-(swm_sign), and goes up last, so a half-finished publish is never live. Also
+(swbfo_sign), and goes up last, so a half-finished publish is never live. Also
 writes the channel's bootstrap zip (launcher.exe + launcher.cfg [+ portable.flag])
 next to the stage folder: unzip it anywhere and run launcher.exe. The portable
 token is never in it: copy portable.token next to the launcher by hand.
@@ -28,9 +28,9 @@ import urllib.request
 import zipfile
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
-DEFAULT_URL = os.environ.get("SWM_UPDATE_URL", "")
+DEFAULT_URL = os.environ.get("SWBFO_UPDATE_URL", "")
 DEFAULT_KEY = os.path.join(os.path.expanduser("~"), ".swm", "release_ed25519.key")
-DEFAULT_SIGN = r"E:\swm_build\release\launcher\Release\swm_sign.exe"
+DEFAULT_SIGN = r"E:\swm_build\release\launcher\Release\swbfo_sign.exe"
 AREAS = {"stable": "public", "portable": "private"}
 
 # Never published: per-install state, local databases, the bootstrap-only files.
@@ -71,7 +71,7 @@ class Server:
     def _req(self, method, key, data=None, length=None):
         req = urllib.request.Request(self.base + "/" + key, data=data, method=method)
         req.add_header("Authorization", "Bearer " + self.token)
-        req.add_header("User-Agent", "swm-publish/1")
+        req.add_header("User-Agent", "swbfo-publish/1")
         if length is not None:
             req.add_header("Content-Length", str(length))
         return urllib.request.urlopen(req, timeout=300)
@@ -104,13 +104,13 @@ class Server:
 
 
 def bootstrap_zip(stage, channel, url, area):
-    out = os.path.join(os.path.dirname(os.path.abspath(stage)), "StarWarsMashup-%s.zip" % channel)
-    cfg = "# Star Wars Mashup launcher\nchannel = %s\nurl = %s/%s\n" % (channel, url.rstrip("/"), area)
+    out = os.path.join(os.path.dirname(os.path.abspath(stage)), "SWBFO-%s.zip" % channel)
+    cfg = "# SWBFO launcher\nchannel = %s\nurl = %s/%s\n" % (channel, url.rstrip("/"), area)
     with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as z:
-        z.write(os.path.join(stage, "launcher.exe"), "StarWarsMashup/launcher.exe")
-        z.writestr("StarWarsMashup/launcher.cfg", cfg)
+        z.write(os.path.join(stage, "launcher.exe"), "SWBFO/launcher.exe")
+        z.writestr("SWBFO/launcher.cfg", cfg)
         if channel == "portable":
-            z.writestr("StarWarsMashup/portable.flag", "")
+            z.writestr("SWBFO/portable.flag", "")
     return out
 
 
@@ -119,8 +119,8 @@ def main():
     ap.add_argument("--stage", required=True, help="a folder tools/release/stage.py made")
     ap.add_argument("--channel", required=True, choices=sorted(AREAS))
     ap.add_argument("--version", required=True)
-    ap.add_argument("--url", default=DEFAULT_URL, help="the Worker's base URL (or SWM_UPDATE_URL)")
-    ap.add_argument("--key", default=DEFAULT_KEY, help="the release secret key (swm_sign keygen)")
+    ap.add_argument("--url", default=DEFAULT_URL, help="the Worker's base URL (or SWBFO_UPDATE_URL)")
+    ap.add_argument("--key", default=DEFAULT_KEY, help="the release secret key (swbfo_sign keygen)")
     ap.add_argument("--sign-tool", default=DEFAULT_SIGN)
     ap.add_argument("--min-launcher", type=int, default=1)
     ap.add_argument("--threads", type=int, default=8)
@@ -133,9 +133,9 @@ def main():
     with_assets = args.channel == "portable"
     if with_assets and not os.path.isdir(os.path.join(stage, "game", "imported_assets")):
         sys.exit("the portable channel needs game/imported_assets in the stage (stage.py --assets)")
-    token = os.environ.get("SWM_PUBLISH_TOKEN", "")
+    token = os.environ.get("SWBFO_PUBLISH_TOKEN", "")
     if not args.dry_run and (not token or not args.url):
-        sys.exit("set SWM_PUBLISH_TOKEN and --url (or SWM_UPDATE_URL)")
+        sys.exit("set SWBFO_PUBLISH_TOKEN and --url (or SWBFO_UPDATE_URL)")
 
     rels = files_to_publish(stage, with_assets)
     print("hashing %d files ..." % len(rels), flush=True)
@@ -154,7 +154,7 @@ def main():
     with open(manifest_file, "wb") as f:
         f.write(body)
     if not os.path.exists(args.key):
-        sys.exit("no release key at %s (swm_sign keygen)" % args.key)
+        sys.exit("no release key at %s (swbfo_sign keygen)" % args.key)
     if subprocess.run([args.sign_tool, "sign", args.key, manifest_file]).returncode != 0:
         sys.exit("signing failed")
     with open(manifest_file + ".sig", "rb") as f:

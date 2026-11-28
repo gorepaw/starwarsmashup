@@ -10,7 +10,7 @@
 
 #include "swg/iff.h"
 
-namespace swm::swg {
+namespace swbfo::swg {
 namespace {
 
 constexpr double pi = 3.14159265358979323846;
@@ -971,4 +971,4 @@ std::vector<std::string> trace_terrain(const ProceduralTerrain& terrain, double 
     evaluator.run();
     return out;
 }
-} // namespace swm::swg
+} // namespace swbfo::swg

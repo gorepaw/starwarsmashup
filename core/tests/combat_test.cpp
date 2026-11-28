@@ -8,16 +8,16 @@
 #include <fstream>
 #include <numbers>
 
-#include "swm/core/client.h"
-#include "swm/core/combat.h"
-#include "swm/core/items.h"
-#include "swm/core/net/link.h"
-#include "swm/core/server.h"
-#include "swm/core/world.h"
+#include "swbfo/core/client.h"
+#include "swbfo/core/combat.h"
+#include "swbfo/core/items.h"
+#include "swbfo/core/net/link.h"
+#include "swbfo/core/server.h"
+#include "swbfo/core/world.h"
 #include "test.h"
 
-using namespace swm::core;
-using swm::test::near;
+using namespace swbfo::core;
+using swbfo::test::near;
 
 namespace {
 
@@ -38,7 +38,7 @@ int hold(MoveState& state, const Loadout& loadout, uint8_t buttons, int ticks, u
 
 // Item files and a loadout naming them, from its Items folder.
 std::filesystem::path write_items(const std::string& test) {
-    const auto dir = std::filesystem::temp_directory_path() / ("swm_combat_test_" + test);
+    const auto dir = std::filesystem::temp_directory_path() / ("swbfo_combat_test_" + test);
     std::filesystem::create_directories(dir / "items");
     std::filesystem::create_directories(dir / "loadouts");
     return dir;
@@ -785,7 +785,7 @@ void test_hit_effects() {
 // its time is gone, harmlessly. Shot to nothing, or disarmed by B (the use
 // button, from just outside its trigger), a mine is gone without a blast.
 void test_placed_mines_and_traps() {
-    const std::filesystem::path ini = "swm_placed_test_catalog.ini";
+    const std::filesystem::path ini = "swbfo_placed_test_catalog.ini";
     {
         std::ofstream out(ini);
         out << "[item]\nId = mine\nKind = weapon\nArchetype = placed\n"
@@ -883,7 +883,7 @@ void test_placed_mines_and_traps() {
 // them without Battlefront's files: a beam is near-instant and runs on heat;
 // a flamer's cone dies out short of 12 m, and burns what it reaches.
 void test_beam_and_flamer() {
-    const std::filesystem::path ini = "swm_beam_test_catalog.ini";
+    const std::filesystem::path ini = "swbfo_beam_test_catalog.ini";
     {
         std::ofstream out(ini);
         out << "[item]\nId = beam\nKind = weapon\nArchetype = beam\n"
@@ -1091,7 +1091,7 @@ void test_unified_ammo() {
 // the secondary slot. Nothing is fired; its user is healed, at once or over
 // its HealTime, as many times a life as it's Carried. Its grade moves its heal.
 void test_medpacks() {
-    const std::filesystem::path ini = "swm_medpack_test_catalog.ini";
+    const std::filesystem::path ini = "swbfo_medpack_test_catalog.ini";
     {
         std::ofstream out(ini);
         out << "[item]\nId = stim\nKind = weapon\nArchetype = medpack\nSlot = secondary\nHealAmount = 100\n"
@@ -1142,7 +1142,7 @@ void test_medpacks() {
 
 // A jump pack: a tap of the Tactical slot lifts its user, Carried times a life.
 void test_jump_pack() {
-    const std::filesystem::path ini = "swm_jump_pack_test_catalog.ini";
+    const std::filesystem::path ini = "swbfo_jump_pack_test_catalog.ini";
     {
         std::ofstream out(ini);
         out << "[item]\nId = pack\nKind = weapon\nArchetype = jump_pack\nSlot = secondary\nJump = 12\nCarried = 2\n";
@@ -1196,5 +1196,5 @@ int main() {
     test_unified_ammo();
     test_medpacks();
     test_jump_pack();
-    return swm::test::finish("combat_test");
+    return swbfo::test::finish("combat_test");
 }

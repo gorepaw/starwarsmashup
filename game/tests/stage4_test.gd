@@ -1,6 +1,6 @@
 # Headless verification for Stage 4 Milestone A & Hoth team tags fix:
 # 1. Hoth (hot1) BattleUI.add_posts() initializes TeamTags instead of falling back to text labels
-# 2. SwmCharacterStore: load_catalog, ensure_starter_kit, list_items, list_loadouts, buy_item, add_rewards, persistence
+# 2. SwbfoCharacterStore: load_catalog, ensure_starter_kit, list_items, list_loadouts, buy_item, add_rewards, persistence
 extends SceneTree
 
 const BattleUI = preload("res://scenes/battle_ui.gd")
@@ -56,7 +56,7 @@ func _initialize() -> void:
 		if FileAccess.file_exists(db_path + suffix):
 			DirAccess.remove_absolute(db_path + suffix)
 
-	var store: SwmCharacterStore = ClassDB.instantiate("SwmCharacterStore")
+	var store: SwbfoCharacterStore = ClassDB.instantiate("SwbfoCharacterStore")
 	assert(store.open(db_path) == OK)
 	var cat_err: int = store.load_catalog(
 			ProjectSettings.globalize_path("res://items/swg_catalog.ini"),
@@ -83,7 +83,7 @@ func _initialize() -> void:
 	assert(not bought_cr.is_empty() and str(bought_cr["def_id"]) == "wp_rifle_dlt20a")
 	store.close()
 
-	var store2: SwmCharacterStore = ClassDB.instantiate("SwmCharacterStore")
+	var store2: SwbfoCharacterStore = ClassDB.instantiate("SwbfoCharacterStore")
 	assert(store2.open(db_path) == OK)
 	var chars2: Array = store2.list_characters()
 	assert(chars2.size() == 1 and int(chars2[0]["faction_points"]) == 250 and int(chars2[0]["credits"]) == 300)

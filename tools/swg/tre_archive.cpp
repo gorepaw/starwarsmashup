@@ -7,7 +7,7 @@
 
 #include <zlib.h>
 
-namespace swm::swg {
+namespace swbfo::swg {
 namespace {
 
 static_assert(std::endian::native == std::endian::little, "TRE parsing assumes a little-endian host");
@@ -127,4 +127,4 @@ std::vector<uint8_t> TreArchive::read_block(uint64_t offset, uint32_t compressor
     return out;
 }
 
-} // namespace swm::swg
+} // namespace swbfo::swg

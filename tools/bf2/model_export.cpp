@@ -10,7 +10,7 @@
 #include "swg/gltf.h"
 #include "swg/image.h"
 
-namespace swm::bf2 {
+namespace swbfo::bf2 {
 
 std::string lowercase(std::string_view text) {
     std::string out(text);
@@ -500,4 +500,4 @@ ModelExport export_model(const AssetLibrary& library, std::string_view name, con
     return result;
 }
 
-} // namespace swm::bf2
+} // namespace swbfo::bf2

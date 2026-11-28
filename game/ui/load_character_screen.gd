@@ -1,4 +1,4 @@
-# Load Character screen: lists saved characters from SwmCharacterStore
+# Load Character screen: lists saved characters from SwbfoCharacterStore
 # (name, species, gender, location), lets the player enter the world, delete
 # a character (2-click confirm), or jump to New Character.
 extends "res://ui/bf2_screen.gd"

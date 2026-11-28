@@ -8,7 +8,7 @@
 
 #include "swg/iff.h"
 
-using namespace swm::swg;
+using namespace swbfo::swg;
 
 namespace {
 

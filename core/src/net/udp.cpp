@@ -1,4 +1,4 @@
-#include "swm/core/net/udp.h"
+#include "swbfo/core/net/udp.h"
 
 #include <array>
 #include <stdexcept>
@@ -20,7 +20,7 @@ using native_socket = SOCKET;
 using native_socket = int;
 #endif
 
-namespace swm::core::net {
+namespace swbfo::core::net {
 
 namespace {
 
@@ -124,4 +124,4 @@ std::optional<Datagram> UdpLink::receive() {
     }
 }
 
-} // namespace swm::core::net
+} // namespace swbfo::core::net

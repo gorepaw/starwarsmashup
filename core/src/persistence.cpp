@@ -1,8 +1,8 @@
-#include "swm/core/persistence.h"
+#include "swbfo/core/persistence.h"
 
 #include <stdexcept>
 
-namespace swm::core {
+namespace swbfo::core {
 
 std::optional<CharacterRecord> MemoryCharacterStore::find(PersistentId id) {
     auto it = characters_.find(id);
@@ -245,4 +245,4 @@ std::vector<MatchTelemetry> MemoryCharacterStore::list_matches(size_t limit) {
     return out;
 }
 
-} // namespace swm::core
+} // namespace swbfo::core

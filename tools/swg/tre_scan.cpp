@@ -8,7 +8,7 @@
 #include <ostream>
 #include <thread>
 
-namespace swm::swg {
+namespace swbfo::swg {
 
 std::vector<std::filesystem::path> find_tre_archives(const std::filesystem::path& dir) {
     std::vector<std::filesystem::path> archives;
@@ -80,4 +80,4 @@ TreVisitResult visit_tre_archives(const std::vector<std::filesystem::path>& arch
     return result;
 }
 
-} // namespace swm::swg
+} // namespace swbfo::swg

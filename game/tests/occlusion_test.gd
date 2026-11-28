@@ -1,7 +1,7 @@
 # Worn things hide what they cover (SwgOcclusion, Galaxies' occlusion zones):
 # a player in full stormtrooper armor shows none of its body, taking it off
 # shows it all again, and a hair style covers a Twi'lek's own lekku. With
-# SWM_SHOTS set (a path prefix), renders them.
+# SWBFO_SHOTS set (a path prefix), renders them.
 #   godot --path game --script res://tests/occlusion_test.gd
 extends SceneTree
 
@@ -53,7 +53,7 @@ func _initialize() -> void:
 	print("twi'lek head: %d triangles bare, %d with hair" % [head_without, head_with])
 	_check(head_with < head_without, "a Twi'lek's hair covers her own lekku")
 
-	if OS.get_environment("SWM_SHOTS") == "":
+	if OS.get_environment("SWBFO_SHOTS") == "":
 		_finish()
 		return
 	_stage([human, partial, twilek, head_bare])
@@ -65,7 +65,7 @@ func _process(_delta: float) -> bool:
 	_frames += 1
 	if _frames == 30:
 		var image := root.get_texture().get_image()
-		var path := OS.get_environment("SWM_SHOTS") + "occlusion.png"
+		var path := OS.get_environment("SWBFO_SHOTS") + "occlusion.png"
 		image.save_png(path)
 		print("wrote " + path)
 		_finish()

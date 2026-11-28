@@ -9,9 +9,9 @@
 #include <format>
 #include <numbers>
 
-#include "swm/core/server.h"
+#include "swbfo/core/server.h"
 
-namespace swm::core {
+namespace swbfo::core {
 
 namespace {
 
@@ -3858,4 +3858,4 @@ void GameServer::answer_slice(Client& smuggler, uint64_t job_id, bool accept) {
     earn_specialist_xp(smuggler, "smuggler", 60 + slice->level);
 }
 
-} // namespace swm::core
+} // namespace swbfo::core

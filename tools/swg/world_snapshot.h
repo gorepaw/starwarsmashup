@@ -7,7 +7,7 @@
 
 #include "common/math.h"
 
-namespace swm::swg {
+namespace swbfo::swg {
 
 // A world snapshot (.ws, WSNP 0001): the statically placed objects of a
 // planet. Objects inside buildings are nested under their building's node.
@@ -24,4 +24,4 @@ struct SnapshotNode {
 
 std::vector<SnapshotNode> parse_world_snapshot(std::span<const uint8_t> bytes);
 
-} // namespace swm::swg
+} // namespace swbfo::swg

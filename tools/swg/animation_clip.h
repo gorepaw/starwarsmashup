@@ -5,7 +5,7 @@
 
 #include "common/math.h"
 
-namespace swm::swg {
+namespace swbfo::swg {
 
 // An animation for a Galaxies skeleton, sampled at a fixed rate (SWG space).
 struct AnimationClip {
@@ -15,4 +15,4 @@ struct AnimationClip {
     std::vector<Vec3> root_translations;       // [frame]: local translation of joint 0
 };
 
-} // namespace swm::swg
+} // namespace swbfo::swg

@@ -7,9 +7,9 @@
 
 #include "swg/gltf_assets.h"
 #include "swg/portal_layout.h"
-#include "swm/core/world.h"
+#include "swbfo/core/world.h"
 
-namespace swm::swg {
+namespace swbfo::swg {
 namespace {
 
 std::string json_string(const std::string& s) {
@@ -181,4 +181,4 @@ void export_building(TreLibrary& library, const std::string& pob_path, const std
     }
 }
 
-} // namespace swm::swg
+} // namespace swbfo::swg

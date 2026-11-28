@@ -6,7 +6,7 @@
 #include <string>
 #include <vector>
 
-namespace swm::swg {
+namespace swbfo::swg {
 
 // A value over time (WVFM 0001): two flags (not read), a count, then each
 // control point as four floats: when (0..1 through the emitter's loop, or
@@ -52,4 +52,4 @@ struct ParticleEmitter {
 // Throws std::runtime_error on malformed data.
 std::vector<ParticleEmitter> parse_particle_effect(std::span<const uint8_t> bytes);
 
-} // namespace swm::swg
+} // namespace swbfo::swg

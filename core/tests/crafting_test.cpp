@@ -8,18 +8,18 @@
 #include <set>
 #include <vector>
 
-#include "swm/core/client.h"
-#include "swm/core/crafting.h"
-#include "swm/core/heightfield.h"
-#include "swm/core/items.h"
-#include "swm/core/net/link.h"
-#include "swm/core/profession.h"
-#include "swm/core/server.h"
-#include "swm/core/sqlite_store.h"
-#include "swm/core/world.h"
+#include "swbfo/core/client.h"
+#include "swbfo/core/crafting.h"
+#include "swbfo/core/heightfield.h"
+#include "swbfo/core/items.h"
+#include "swbfo/core/net/link.h"
+#include "swbfo/core/profession.h"
+#include "swbfo/core/server.h"
+#include "swbfo/core/sqlite_store.h"
+#include "swbfo/core/world.h"
 #include "test.h"
 
-using namespace swm::core;
+using namespace swbfo::core;
 
 namespace {
 
@@ -112,7 +112,7 @@ void test_crafting_book() {
 }
 
 void test_sqlite_v6_materials_and_presets() {
-    const auto db_path = std::filesystem::temp_directory_path() / "swm_crafting_v6_test.sqlite";
+    const auto db_path = std::filesystem::temp_directory_path() / "swbfo_crafting_v6_test.sqlite";
     std::filesystem::remove(db_path);
     {
         SqliteCharacterStore store(db_path);
@@ -144,7 +144,7 @@ void test_sqlite_v6_materials_and_presets() {
 
 void test_server_client_crafting_loopback() {
     const auto root = repo_root();
-    const auto db_path = std::filesystem::temp_directory_path() / "swm_crafting_srv_test.sqlite";
+    const auto db_path = std::filesystem::temp_directory_path() / "swbfo_crafting_srv_test.sqlite";
     std::filesystem::remove(db_path);
 
     ItemCatalog catalog;
@@ -420,7 +420,7 @@ void test_blueprints() {
     CHECK(hidden >= 1 && open >= 1);
 
     // A blueprint item: a supply that Teaches.
-    std::filesystem::path cat_file = std::filesystem::temp_directory_path() / "swm_blueprint_catalog.ini";
+    std::filesystem::path cat_file = std::filesystem::temp_directory_path() / "swbfo_blueprint_catalog.ini";
     {
         std::FILE* f = std::fopen(cat_file.string().c_str(), "wb");
         std::fputs("[item]\nId = bp_secret\nName = Blueprint: Secret\nKind = supply\nTeaches = sch_secret\n", f);
@@ -539,7 +539,7 @@ void test_modules() {
 // and a dye.
 void test_marks_modules_and_dyes() {
     const auto root = repo_root();
-    const auto db_path = std::filesystem::temp_directory_path() / "swm_crafting_marks_test.sqlite";
+    const auto db_path = std::filesystem::temp_directory_path() / "swbfo_crafting_marks_test.sqlite";
     std::filesystem::remove(db_path);
     ItemCatalog catalog;
     catalog.load(root / "game" / "items" / "swg_catalog.ini");
@@ -779,5 +779,5 @@ int main() {
     test_blueprints();
     test_modules();
     test_marks_modules_and_dyes();
-    return swm::test::finish("crafting_test");
+    return swbfo::test::finish("crafting_test");
 }

@@ -1,5 +1,5 @@
 # Headless checks for Stage 7's gathering, Material Vault, Multi-Scanner, and Unified Workbench:
-# 1. Crafting data loads through SwmCharacterStore (16 resources, the schematics),
+# 1. Crafting data loads through SwbfoCharacterStore (16 resources, the schematics),
 #    scan_terrain / auto_fill_schematic / preview_craft work, and WorkbenchScreen renders.
 # 2. Live solo Mos Eisley session: workbenches arrive, a trainer teaches Surveying's licence,
 #    the Multi-Scanner extracts into the Material Vault,
@@ -24,7 +24,7 @@ func _initialize() -> void:
 	DisplayServer.window_set_size(Vector2i(1280, 720))
 	var art := Bf2Art.load_from("res://imported_assets/hud")
 	assert(art != null, "missing hud art")
-	var store: Object = ClassDB.instantiate("SwmCharacterStore")
+	var store: Object = ClassDB.instantiate("SwbfoCharacterStore")
 	assert(store.load_professions(ProjectSettings.globalize_path("res://professions/professions.ini")) == OK)
 	assert(store.load_catalog(ProjectSettings.globalize_path("res://items/swg_catalog.ini"),
 			ProjectSettings.globalize_path("res://imported_assets/items")) == OK)
@@ -50,9 +50,9 @@ func _initialize() -> void:
 		odds_sum += float(prev.get(k, 0.0))
 	assert(absf(odds_sum - 1.0) < 1e-6, "grade odds: %s" % prev)
 	assert(absf(float(prev.get("material_mult", 0.0)) - 7.3) < 1e-6, "focus 70%%: x7.3 materials: %s" % prev)
-	assert(SwmCharacterStore.craft_material_amount(4, 0, 100) == 40 and SwmCharacterStore.grade_name(3) == "Exceptional",
+	assert(SwbfoCharacterStore.craft_material_amount(4, 0, 100) == 40 and SwbfoCharacterStore.grade_name(3) == "Exceptional",
 			"focus cost / grade names")
-	assert(WorkbenchScreen._craft_amount(4, 2, 50) == SwmCharacterStore.craft_material_amount(4, 2, 50),
+	assert(WorkbenchScreen._craft_amount(4, 2, 50) == SwbfoCharacterStore.craft_material_amount(4, 2, 50),
 			"the workbench's amounts disagree with the server's")
 
 	_screen = WorkbenchScreen.new(art)

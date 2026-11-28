@@ -207,8 +207,8 @@ func _rebuild_lookup() -> void:
 	for def: Dictionary in catalog:
 		_def_by_id[str(def.get("id", ""))] = def
 	_hidden_slots = PackedStringArray()
-	if ClassDB.class_exists("SwmCharacterStore"):
-		for sp: Dictionary in SwmCharacterStore.get_species_list():
+	if ClassDB.class_exists("SwbfoCharacterStore"):
+		for sp: Dictionary in SwbfoCharacterStore.get_species_list():
 			if str(sp.get("id", "")) == species:
 				_hidden_slots = sp.get("hidden_slots", PackedStringArray())
 				break

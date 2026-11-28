@@ -6,7 +6,7 @@
 #include <string_view>
 #include <vector>
 
-namespace swm::bf2 {
+namespace swbfo::bf2 {
 
 // Battlefront II munged files (.lvl and friends) are "ucfb" chunk trees. Each
 // chunk is a 4-character tag, a little-endian uint32 size, then `size` bytes,
@@ -42,4 +42,4 @@ void visit_ucfb(const UcfbNode& node, Visitor&& visitor, int depth = 0) {
     }
 }
 
-} // namespace swm::bf2
+} // namespace swbfo::bf2

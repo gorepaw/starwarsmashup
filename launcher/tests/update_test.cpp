@@ -8,7 +8,7 @@
 #include "update.h"
 
 namespace fs = std::filesystem;
-using namespace swm::launcher;
+using namespace swbfo::launcher;
 
 namespace {
 
@@ -92,7 +92,7 @@ void test_manifest_round_trip() {
 }
 
 void test_plan() {
-    const fs::path dir = fs::temp_directory_path() / "swm_update_test";
+    const fs::path dir = fs::temp_directory_path() / "swbfo_update_test";
     fs::remove_all(dir);
     fs::create_directories(dir / "game");
     const auto write = [&](const std::string& rel, const std::string& text) {

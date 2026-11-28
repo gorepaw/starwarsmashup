@@ -9,7 +9,7 @@
 #include "bf2/ucfb.h"
 #include "swg/image.h"
 
-namespace swm::bf2 {
+namespace swbfo::bf2 {
 
 // Munged models ("modl"), their skeletons ("skel"), textures ("tex_") and
 // collision ("coll", "prim"). Coordinates are Battlefront's, as stored
@@ -142,4 +142,4 @@ Skeleton read_skeleton(const UcfbNode& skel);
 // supported (e.g. bump maps).
 std::optional<swg::ImageRgba> read_texture(const UcfbNode& tex);
 
-} // namespace swm::bf2
+} // namespace swbfo::bf2

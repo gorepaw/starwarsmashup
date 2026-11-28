@@ -10,9 +10,9 @@
 #include <cmath>
 #include <format>
 
-#include "swm/core/server.h"
+#include "swbfo/core/server.h"
 
-namespace swm::core {
+namespace swbfo::core {
 
 namespace {
 
@@ -321,4 +321,4 @@ double GameServer::notice_of(uint32_t entity) const {
     return client != nullptr ? std::max(0.0, client->stats.notice) : 1.0;
 }
 
-} // namespace swm::core
+} // namespace swbfo::core

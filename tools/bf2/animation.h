@@ -9,7 +9,7 @@
 #include "bf2/ucfb.h"
 #include "common/math.h"
 
-namespace swm::bf2 {
+namespace swbfo::bf2 {
 
 // The skeleton an animation bank was authored for (zaf_ chunk). Rest pose is
 // in Battlefront space (left-handed, Y up, characters face +Z).
@@ -62,4 +62,4 @@ std::string bone_label(uint32_t hash);
 // First chunk with `tag` whose NAME is `name`, anywhere under `root`; nullptr if missing.
 const UcfbNode* find_named_chunk(const UcfbNode& root, std::string_view tag, std::string_view name);
 
-} // namespace swm::bf2
+} // namespace swbfo::bf2

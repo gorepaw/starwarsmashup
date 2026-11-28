@@ -23,7 +23,7 @@ const WALKING := 0.4  # m/s: a walker going slower is standing
 const TURNING := 0.35  # rad/s: a standing walker turning faster turns on the spot
 const ENGINE_OFF := 4.0  # s: an engine turned off this long is silent
 
-var classes: Array = []      # the battlefield's "vehicles" (SwmClient.get_battlefield)
+var classes: Array = []      # the battlefield's "vehicles" (SwbfoClient.get_battlefield)
 var _root: Node3D
 var _effects: RefCounted     # the game's Bf2Effects (null: none)
 var _audio: RefCounted       # the game's Bf2Audio (null: none)
@@ -80,7 +80,7 @@ func _template(index: int) -> Node3D:
 	return node
 
 
-# `vehicles`: SwmClient.get_vehicles(); `shown`: entity id -> its drawn
+# `vehicles`: SwbfoClient.get_vehicles(); `shown`: entity id -> its drawn
 # {position, yaw} (the own character's predicted state, others' presented
 # ones), for driven vehicles.
 func update(vehicles: Array, shown: Dictionary, delta: float) -> void:

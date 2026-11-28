@@ -1,5 +1,5 @@
 # Stage 12: what specialists put in the field, drawn from each snapshot's
-# field state (SwmClient.get_field()): marks over spotted enemies (red),
+# field state (SwbfoClient.get_field()): marks over spotted enemies (red),
 # tracked creatures (amber) and bounty marks (orange); deployables (sensors,
 # traps, bacta dispensers, holo-emitters, spawn beacons, camps) with their
 # reach; bio clouds, smoke and incoming strikes; performers and holo flair;

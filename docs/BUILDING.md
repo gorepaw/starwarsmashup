@@ -37,21 +37,21 @@ ctest --preset msvc-release
   <godot> --headless --dump-extension-api
   move extension_api.json extension_api-<version>-double.json
   ```
-- The GDExtension is written to `game/bin/swm.windows.template_debug.double.x86_64.dll`, and the standalone server to `build\msvc\server\Release\swm_server.exe`.
-- To build only `core/`, `server/` and `tools/`, configure with `-DSWM_BUILD_GODOT=OFF`.
+- The GDExtension is written to `game/bin/swbfo.windows.template_debug.double.x86_64.dll`, and the standalone server to `build\msvc\server\Release\swbfo_server.exe`.
+- To build only `core/`, `server/` and `tools/`, configure with `-DSWBFO_BUILD_GODOT=OFF`.
 
 ## 3. Godot project
 
 ```powershell
 # Fresh checkout only: see "Known issue" below.
 New-Item -ItemType Directory -Force game\.godot
-Set-Content game\.godot\extension_list.cfg "res://swm.gdextension"
+Set-Content game\.godot\extension_list.cfg "res://swbfo.gdextension"
 
 <godot> --headless --path game --import
 <godot> --headless --path game --script res://tests/smoke_test.gd
 ```
 
-**Known issue (Godot 4.7.2):** on a fresh project with no `.godot/` yet, the editor discovers the extension during its first filesystem scan instead of at startup. A headless session then crashes at exit (`0xC0000005`) if the extension registers any class. The import itself has already finished, so a second run is clean. Writing `.godot/extension_list.cfg` first makes the extension load at startup and avoids the crash. Upstream: [godotengine/godot#123511](https://github.com/godotengine/godot/issues/123511), fix pending in [#123658](https://github.com/godotengine/godot/pull/123658). We confirmed it here: fresh imports crash with `SwmInfo` registered, exit cleanly with no classes registered, and exit cleanly with `extension_list.cfg` pre-written.
+**Known issue (Godot 4.7.2):** on a fresh project with no `.godot/` yet, the editor discovers the extension during its first filesystem scan instead of at startup. A headless session then crashes at exit (`0xC0000005`) if the extension registers any class. The import itself has already finished, so a second run is clean. Writing `.godot/extension_list.cfg` first makes the extension load at startup and avoids the crash. Upstream: [godotengine/godot#123511](https://github.com/godotengine/godot/issues/123511), fix pending in [#123658](https://github.com/godotengine/godot/pull/123658). We confirmed it here: fresh imports crash with `SwbfoInfo` registered, exit cleanly with no classes registered, and exit cleanly with `extension_list.cfg` pre-written.
 
 The smoke test checks that the engine and the extension are both double precision and that the extension calls into `core/`. Open the project in the editor with `<godot> --path game -e`.
 

@@ -1,9 +1,9 @@
-#include "swm/core/species.h"
+#include "swbfo/core/species.h"
 
 #include <algorithm>
 #include <cctype>
 
-namespace swm::core {
+namespace swbfo::core {
 
 namespace {
 
@@ -206,4 +206,4 @@ CharacterStats stats_for(const Loadout& loadout, Species species, const Characte
     return stats_for(filtered, base);
 }
 
-} // namespace swm::core
+} // namespace swbfo::core

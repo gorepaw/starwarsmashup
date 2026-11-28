@@ -8,7 +8,7 @@
 
 #include "bf2/hud.h"
 
-namespace swm::bf2 {
+namespace swbfo::bf2 {
 
 namespace {
 
@@ -412,4 +412,4 @@ void write_effect_json(std::ostream& out, const std::vector<EffectEmitter>& emit
     out << "\n  ]\n}\n";
 }
 
-} // namespace swm::bf2
+} // namespace swbfo::bf2

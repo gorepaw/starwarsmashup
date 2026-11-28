@@ -181,7 +181,7 @@ Galaxies' scout traps have their own models too: `wp_grenade_flash_bomb`, `wp_gr
 
 ## Balance: the sidegrade budget
 
-Within an archetype, weapons are different but not better. `sidegrade_score` (`core/include/swm/core/items.h`) turns a weapon's multipliers over its archetype into one number. The archetype itself scores 1.
+Within an archetype, weapons are different but not better. `sidegrade_score` (`core/include/swbfo/core/items.h`) turns a weapon's multipliers over its archetype into one number. The archetype itself scores 1.
 
 | Term | Weight |
 |---|---|

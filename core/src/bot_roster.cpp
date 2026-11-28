@@ -1,10 +1,10 @@
-#include "swm/core/bot_roster.h"
+#include "swbfo/core/bot_roster.h"
 
 #include <algorithm>
 #include <array>
 #include <format>
 
-namespace swm::core {
+namespace swbfo::core {
 namespace {
 
 uint64_t next_rng(uint64_t& state) {
@@ -310,4 +310,4 @@ std::vector<const BotProfileEntry*> roster_for_faction(const std::vector<BotProf
     return out;
 }
 
-} // namespace swm::core
+} // namespace swbfo::core

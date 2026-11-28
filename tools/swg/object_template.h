@@ -8,7 +8,7 @@
 
 #include "swg/tre_library.h"
 
-namespace swm::swg {
+namespace swbfo::swg {
 
 // What an object template (object/.../shared_*.iff) says about how an
 // object looks: its appearance (.apt, .msh, .lod, .cmp, .sat, ...) and,
@@ -55,4 +55,4 @@ private:
     std::map<std::string, SharedObjectTemplate> cache_;
 };
 
-} // namespace swm::swg
+} // namespace swbfo::swg

@@ -1,9 +1,9 @@
-#include "swm/core/build_info.h"
+#include "swbfo/core/build_info.h"
 
-namespace swm::core {
+namespace swbfo::core {
 
 std::string_view version() {
-    return SWM_VERSION;
+    return SWBFO_VERSION;
 }
 
-} // namespace swm::core
+} // namespace swbfo::core

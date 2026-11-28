@@ -9,7 +9,7 @@
 
 #include "swg/image.h"
 
-using namespace swm::swg;
+using namespace swbfo::swg;
 
 namespace {
 
@@ -75,7 +75,7 @@ void test_dxt5_alpha() {
 
 void test_png_signature() {
     const ImageRgba image{2, 1, {255, 0, 0, 255, 0, 255, 0, 255}};
-    const auto path = std::filesystem::temp_directory_path() / "swm_image_test.png";
+    const auto path = std::filesystem::temp_directory_path() / "swbfo_image_test.png";
     write_png(path, image);
     std::ifstream in(path, std::ios::binary);
     char signature[8] = {};

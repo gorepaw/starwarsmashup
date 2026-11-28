@@ -1,0 +1,366 @@
+#pragma once
+
+#include <atomic>
+#include <chrono>
+#include <memory>
+#include <mutex>
+#include <thread>
+#include <optional>
+#include <utility>
+#include <vector>
+#include <string>
+
+#include <godot_cpp/classes/ref_counted.hpp>
+#include <godot_cpp/variant/array.hpp>
+#include <godot_cpp/variant/dictionary.hpp>
+#include <godot_cpp/variant/string.hpp>
+#include <godot_cpp/variant/vector2.hpp>
+#include <godot_cpp/variant/vector3.hpp>
+
+#include "swbfo/core/bot.h"
+#include "swbfo/core/client.h"
+#include "swbfo/core/conquest.h"
+#include "swbfo/core/heightfield.h"
+#include "swbfo/core/galaxy.h"
+#include "swbfo/core/hub.h"
+#include "swbfo/core/items.h"
+#include "swbfo/core/nav.h"
+#include "swbfo/core/net/link.h"
+#include "swbfo/core/net/udp.h"
+#include "swbfo/core/server.h"
+#include "swbfo/core/sqlite_store.h"
+#include "swbfo/core/world.h"
+
+namespace swbfo::godot_bindings {
+
+// A game client (core::GameClient) over UDP. Call update() every frame.
+// Positions are in game space (Godot's axes). It follows the server's
+// transfers (from a hub to a battle and back): each one starts over with new
+// entity ids, and get_generation() counts them.
+class SwbfoClient : public godot::RefCounted {
+    GDCLASS(SwbfoClient, godot::RefCounted)
+
+public:
+    // Simulated network trouble on this client's traffic, for testing
+    // prediction. Call before start().
+    void set_simulated_network(double latency_ms, double jitter_ms, double loss);
+    // Places a building's floors and walls (an OS path to a .collision file
+    // from swgtool export-building), at a Galaxies position and yaw in
+    // degrees. Must match the server's buildings. Call before start().
+    godot::Error add_building(const godot::String& collision_path, const godot::Vector3& position, double yaw_degrees);
+    // The loadout outside a match (an OS path to a loadout file; see
+    // game/loadouts/). Must match the server's. Call before start().
+    godot::Error set_loadout(const godot::String& path);
+    // A battlefield file (an OS path; see game/battlefields/), for a server
+    // running a match on it. Must match the server's. Call before start().
+    godot::Error set_battlefield(const godot::String& path);
+    // Where battlefield files are (an OS path), for battles a hub sends us to:
+    // <dir>/<name>.ini. Call before start().
+    void set_battlefield_dir(const godot::String& path);
+    // Lets a bot (core::Bot) drive the character instead of set_input.
+    void set_bot(bool enabled);
+    // `server` is "a.b.c.d:port". `bake_prefix` is an OS path to the terrain
+    // bake the server uses (swgtool bake-terrain).
+    godot::Error start(const godot::String& server, const godot::String& bake_prefix, const godot::String& name);
+    // {forward, right, yaw, pitch, sprint, jump, fire, reload, secondary, weapon};
+    // missing keys are 0/false. `secondary` throws a grenade.
+    void set_input(const godot::Dictionary& controls);
+    void update();
+    void leave();
+
+    godot::String get_status() const;
+    bool is_spawned() const;
+    int64_t get_entity_id() const;
+    // The saved character's persistent id (0 if the server doesn't save).
+    int64_t get_character_id() const;
+    // Why the server refused the connection (status "refused").
+    godot::String get_refusal() const;
+    // Own character as drawn: {position, velocity, yaw, grounded, energy,
+    // sprinting, weapon, rounds, reserve (-1: unlimited), heat, overheated,
+    // reloading, grenades, health, alive,
+    // life ("waiting", "alive" or "dead"), team (-1 outside a match),
+    // loadout (index into the team's loadouts), kills, deaths, captures}.
+    godot::Dictionary get_presented() const;
+    // Other characters: [{id, position, velocity, yaw, ..., health, alive, life, team, ...}].
+    godot::Array get_remotes() const;
+    // Projectiles in flight: others' bolts, and everyone's missiles and grenades:
+    // [{owner, weapon, kind ("bolt", "missile" or "grenade"), position, velocity,
+    // color, length, width}] (the looks come from the firing character's weapon).
+    // Own bolts come from take_shots.
+    godot::Array get_bolts() const;
+    // Own bolts since the last call, to draw at once:
+    // [{origin, directions (one per pellet), weapon, color, length, width}].
+    // (Own missiles and grenades are drawn from get_bolts.)
+    godot::Array take_shots();
+    // Events since the last call: [{kind, attacker, victim, damage}]. Kinds
+    // "hit" and "kill" are between entities (attacker 0: the world);
+    // "captured" and "neutralized" have the team as attacker and the command
+    // post as victim.
+    godot::Array take_events();
+    // Explosions since the last call: [{position, normal, radius, owner, effect,
+    // light_color, light_radius}].
+    godot::Array take_explosions();
+    // The own loadout's triggered perks (docs/PERKS.md): {id, name, trigger,
+    // where ("stance", "simulation", "server"), active, time, cooldown}.
+    godot::Array get_perks() const;
+    // Bolt impacts since the last call (for sparks and scorch marks):
+    // [{position, normal, hit_character, effect, color}].
+    godot::Array take_impacts();
+    // Dropped health, ammo, dual and energy canisters on the ground:
+    // [{id, kind, model, position, time_left}].
+    godot::Array get_pickups() const;
+    // The current loadout's secondary (a throwable): {name}, or empty.
+    godot::Dictionary get_secondary() const;
+    // The current loadout's held weapons, by slot (primary, sidearm; {} for an
+    // empty slot): [{name, rounds_per_clip, heat_per_shot,
+    // bolt_speed, bolt_life, bolt_color, bolt_length, bolt_width}].
+    godot::Array get_weapons() const;
+    double get_max_health() const;
+    double get_max_shield() const;
+    // The battlefield: {name, min_x, min_z, max_x, max_z (game space),
+    // boundaries: [PackedVector2Array of (x, z)], teams:
+    // [{name, loadouts: [{name, max_health, weapons: [names], secondary}]}], posts: [{name,
+    // position, radius, capturable}]}; empty outside a match.
+    godot::Dictionary get_battlefield() const;
+    // Whether teams a and b don't fight: the same team, or a battlefield's
+    // natives (team 2) and a side they're friends with.
+    bool is_allied(int a, int b) const;
+    // The match: {phase ("warmup", "live" or "ended"), time_left, tickets: [a, b],
+    // dominant, victory_left, winner, posts: [{owner, holder, charge, contested}]};
+    // empty outside a match.
+    godot::Dictionary get_match() const;
+    // Asks to spawn with one of our team's loadouts at a command post (indexes into
+    // get_battlefield()), until the character spawns.
+    void request_spawn(int64_t loadout, int64_t post);
+    // How many times the server has sent us to another server.
+    int64_t get_generation() const;
+    // Why the last transfer couldn't be followed (e.g. a missing battlefield).
+    godot::String get_session_error() const;
+    // A hub's war terminals: [{name, position, radius}]; empty elsewhere.
+    godot::Array get_recruiters() const;
+    // The two sides a hub's battles are between.
+    godot::PackedStringArray get_factions() const;
+    // How the server's people look: Galaxies object templates; a remote's
+    // look (1 and up) indexes these from 1.
+    godot::PackedStringArray get_looks() const;
+    // Queue for a battle on a side (0..3) at a war terminal; -1 leaves the queue.
+    // Stage 11: `mode` is a game mode id ("conquest", "ctf", "1flag",
+    // "hunt", "xl") or "any"; a Space Terminal queues for space battles.
+    void queue(int64_t team, const godot::String& mode = "conquest");
+    // The game modes: [{id, name}].
+    godot::Array get_game_modes() const;
+    // {queue ("none" or "queued"), team, in_queue, starts_in, battlefield,
+    // notice_id, notice, credits, faction_points, experience, active_loadout,
+    // switching_loadout, switch_progress, inventory_rev}.
+    godot::Dictionary get_player_status() const;
+    // Quartermasters in the hub: [{name, faction, position, radius}].
+    godot::Array get_quartermasters() const;
+    // Open-world vendors in the hub: [{name, kind, position, radius}].
+    godot::Array get_vendors() const;
+    // Shooting-range targets in the hub: [{id, name, position, health, max_health, alive}].
+    godot::Array get_targets() const;
+    // A match's vehicles: [{id, vehicle (its class: an index into the
+    // battlefield's "vehicles"), position, velocity, yaw, pitch, health,
+    // max_health, driver (entity; 0 empty), team, alive}].
+    godot::Array get_vehicles() const;
+    // Nearby lootable corpses: [{entity_id, name, position, items: [{slot, def_id, grade, mark}]}].
+    godot::Array get_corpses() const;
+    // Authoritative inventory, reputation & loadouts synced from the server.
+    godot::Array get_inventory() const;
+    godot::Dictionary get_reputation() const;
+    godot::Array get_character_loadouts() const;
+    godot::Array get_custom_loadouts() const;
+    void save_loadout(int64_t slot_index, const godot::Dictionary& loadout);
+    void switch_loadout(int64_t slot_index);
+    void buy_item(const godot::String& def_id, bool use_faction_points = true);
+    void destroy_item(int64_t item_id);
+    void take_loot(int64_t corpse_entity, int64_t slot = -1);
+    void sell_item(int64_t item_id);
+    void sell_all_junk();
+    void use_item(int64_t item_id);
+    // Quests. The hub's quest people: [{entity, name, position, giver}];
+    // its mission terminals: [{index, name, position, radius}]; the journal:
+    // {revision, active: [quest], completed: [title], offers: [quest],
+    // offer_source, offer_serial}, a quest being {id, title, giver, summary,
+    // steps: [text], step, count, needed, waypoint (or absent), credits,
+    // experience, faction_points, items: [def id], mission, objects: [{index,
+    // name, look, position, has_height, reach}] (a use step's not used yet)}.
+    godot::Array get_quest_npcs() const;
+    godot::Array get_mission_terminals() const;
+    godot::Dictionary get_quests() const;
+    // Our experience in each profession we have any in: [{id, xp}].
+    godot::Array get_professions() const;
+    // Outside a match: the world's vehicle classes (game/vehicles/, an OS
+    // path), as the server has them; call before start().
+    godot::Error set_world_vehicles(const godot::String& dir);
+    // The vehicle classes in play (the battlefield's in a match, else the
+    // world's), as get_battlefield()["vehicles"] gives them.
+    godot::Array get_vehicle_classes() const;
+    godot::Array get_workbenches() const;
+    godot::Dictionary get_bank() const;
+    void service(int64_t action, const godot::String& id, int64_t amount, int64_t item_id);
+    // Stage 12: the specialist and companion professions. `action` is a
+    // net::SpecialistRequest::Action; see core/include/swbfo/core/net/protocol.h.
+    void specialist(int64_t action, const godot::String& id, int64_t target, const godot::Vector3& position,
+                    int64_t amount, int64_t item_id, const godot::String& text);
+    godot::Dictionary get_specialist() const;
+    godot::Dictionary get_field() const;
+    // The abilities, companions, droid modules and slices (specialists.ini), for screens.
+    godot::Dictionary get_specialist_book(const godot::String& path);
+    godot::Array get_materials() const;
+    godot::PackedStringArray get_blueprints() const;  // `Blueprint = yes` schematics learned
+    godot::Array get_presets() const;
+    void gather_extract(const godot::String& category_name);
+    void harvest_corpse(int64_t corpse_entity);
+    void salvage_item(int64_t item_id);
+    void craft_item(const godot::String& schematic_id, const godot::PackedStringArray& resource_ids,
+                    const godot::PackedInt64Array& enhancement_ids, int64_t exp_quality_pct, int64_t batch_count,
+                    int64_t mark = -1);
+    void dye_item(int64_t item_id, const godot::String& dye);
+    void save_recipe_preset(const godot::String& name, const godot::String& schematic_id,
+                            const godot::PackedStringArray& resource_ids,
+                            const godot::PackedStringArray& enhancement_defs, int64_t exp_quality_pct);
+    void delete_recipe_preset(const godot::String& name);
+    void talk_to(int64_t npc_entity);
+    void use_quest_object(const godot::String& quest_id, int64_t index);
+    // The comm messages heard since the last call: [{quest_id, from, text}].
+    godot::Array take_comms();
+    void use_mission_terminal(int64_t index);
+    void accept_quest(const godot::String& id);
+    void abandon_quest(const godot::String& id);
+    // The terrain bake (prefix) of the world the client is in now: a
+    // battle's own (its battlefield's map), or the one start() was given.
+    godot::String get_bake() const;
+    // {ticks, snapshots, corrections, max_correction, rtt_ms}
+    godot::Dictionary get_stats() const;
+    // The ground at (x, z) under height `below` (by default, the highest).
+    double get_ground_height(double x, double z, double below) const;
+    double get_swim_floor(double x, double z) const;
+    // Where along from..to (0..1) the segment first hits the world (terrain,
+    // buildings, a map's props), as a shot would; -1 if nothing.
+    double raycast(const godot::Vector3& from, const godot::Vector3& to) const;
+    // Whether a point is on the battlefield (its bounds and boundaries);
+    // true outside a match.
+    bool in_battlefield(const godot::Vector3& point) const;
+
+protected:
+    static void _bind_methods();
+
+private:
+    double now() const;
+    core::GameClient* client() const { return session_ ? &session_->client() : nullptr; }
+    // The world the client is in now (see get_bake()).
+    const core::World* world() const { return session_ ? &session_->world() : world_.get(); }
+    const std::optional<core::Battlefield>& battlefield() const;
+    const core::Loadout& loadout() const;
+    // An entity's loadout, by team and loadout index.
+    const core::Loadout& loadout_of(int team, int loadout) const;
+    // What an entity fires with now: its vehicle's guns while it drives,
+    // else its loadout's.
+    const core::Loadout& weapons_of(uint32_t entity) const;
+
+    std::chrono::steady_clock::time_point start_time_ = std::chrono::steady_clock::now();
+    core::net::ImpairedLink::Settings impairment_;
+    core::Heightfield ground_;
+    std::vector<std::pair<core::BuildingCollision, core::Placement>> buildings_;
+    core::Loadout loadout_;
+    std::optional<core::Battlefield> battlefield_;
+    std::vector<core::VehicleClass> world_vehicles_;
+    std::string battlefield_dir_;
+    std::unique_ptr<core::Bot> bot_;
+    int bot_generation_ = 0;
+    std::shared_ptr<const core::NavGrid> navigation_;  // the bot's, for the current battlefield
+    std::string bake_;
+    std::unique_ptr<core::World> world_;  // the hub's (or the only server's)
+    std::unique_ptr<core::net::UdpLink> udp_;
+    std::unique_ptr<core::net::ImpairedLink> impaired_;
+    std::unique_ptr<core::ClientSession> session_;
+};
+
+// A game server (core::GameServer) over UDP, hosted inside Godot. The
+// standalone swbfo_server runs the same server without Godot.
+class SwbfoServer : public godot::RefCounted {
+    GDCLASS(SwbfoServer, godot::RefCounted)
+
+public:
+    ~SwbfoServer() override;
+
+    // Saves characters in this SQLite file (an OS path). Call before start().
+    void set_database(const godot::String& path);
+    // As SwbfoClient.add_building. Call before start().
+    godot::Error add_building(const godot::String& collision_path, const godot::Vector3& position, double yaw_degrees);
+    // As SwbfoClient.set_loadout. Call before start().
+    godot::Error set_loadout(const godot::String& path);
+    // Runs a conquest match on this battlefield (as SwbfoClient.set_battlefield).
+    // Call before start().
+    godot::Error set_battlefield(const godot::String& path);
+    // Adds bots, connected like players, when the server starts (locked to Hard difficulty).
+    void set_bots(int64_t count);
+    // Makes the server a hub (a hub file, an OS path; see game/hubs/): its
+    // war terminals queue players for battles it launches. Call before start().
+    godot::Error set_hub(const godot::String& path);
+    // Stage 13: hosts every planet a galaxy file names (an OS path; see
+    // game/hubs/galaxy.ini), each a hub on its own world server, with
+    // starships between them. The first is this server's (set_hub's hub and
+    // start()'s bake should be its). Call before start().
+    godot::Error set_galaxy(const godot::String& path);
+    // Loads the item catalog for hub inventory, quartermasters, and loadouts.
+    godot::Error set_catalog(const godot::String& catalog_ini, const godot::String& bf2_items_dir);
+    // Loads the profession roster (game/professions/professions.ini): players
+    // earn experience and what they've learned from trainers applies.
+    godot::Error set_professions(const godot::String& path);
+    // The world's vehicle classes (game/vehicles/), for a server without a
+    // battlefield: players call them from their items.
+    godot::Error set_world_vehicles(const godot::String& dir);
+    godot::Error set_crafting(const godot::String& resources_path, const godot::String& schematics_path);
+    // `spawn` is where new characters start, in Galaxies coordinates (x, z).
+    godot::Error start(int64_t port, const godot::String& bake_prefix, const godot::Vector2& spawn);
+    void update();
+    // After start(): runs update() on a thread of its own from now on, so the
+    // world servers keep their 30 Hz whatever the game's frame rate (update()
+    // then does nothing). stop() ends it.
+    void run_in_background();
+    // Saves every connected character and shuts the server down.
+    void stop();
+    int64_t get_client_count() const;
+    int64_t get_port() const;
+
+protected:
+    static void _bind_methods();
+
+private:
+    void update_now();
+
+    std::chrono::steady_clock::time_point start_time_ = std::chrono::steady_clock::now();
+    std::thread worker_;                 // run_in_background()'s
+    std::atomic<bool> running_{false};
+    mutable std::mutex mutex_;           // the servers, between the worker and the game's calls
+    std::string database_;
+    core::Heightfield ground_;
+    std::vector<std::pair<core::BuildingCollision, core::Placement>> buildings_;
+    core::Loadout loadout_;
+    std::optional<core::Battlefield> battlefield_;
+    int bot_count_ = 0;
+    core::BotSkill bot_skill_;
+    std::unique_ptr<core::World> world_;
+    std::unique_ptr<core::SqliteCharacterStore> store_;
+    std::unique_ptr<core::net::UdpLink> udp_;
+    std::unique_ptr<core::GameServer> server_;
+    std::unique_ptr<core::BotPlayers> bots_;
+    std::optional<core::HubConfig> hub_config_;
+    core::ItemCatalog catalog_;
+    bool has_catalog_ = false;
+    core::ProfessionBook professions_;
+    bool has_professions_ = false;
+    core::SpecialistBook specialists_;  // Stage 12: specialists.ini, next to professions.ini
+    bool has_specialists_ = false;
+    std::vector<core::VehicleClass> world_vehicles_;
+    core::CraftingBook crafting_;
+    bool has_crafting_ = false;
+    core::UdpHubNetwork hub_network_;
+    std::unique_ptr<core::Hub> hub_;
+    std::optional<core::GalaxyConfig> galaxy_config_;  // Stage 13
+    std::unique_ptr<core::Galaxy> galaxy_;
+};
+
+} // namespace swbfo::godot_bindings

@@ -8,7 +8,7 @@
 
 #include "bf2/ucfb.h"
 
-namespace swm::bf2 {
+namespace swbfo::bf2 {
 
 // Battlefront II's HUD layouts ("hud_" chunks in ingame.lvl, munged from its
 // .hud files) and fonts ("font" chunks in core.lvl).
@@ -82,4 +82,4 @@ Font read_font(const UcfbNode& font);
 // included) and a NUL-terminated UTF-16 string. Returned as UTF-8, by key.
 std::vector<std::pair<uint32_t, std::string>> read_strings(const UcfbNode& locl);
 
-} // namespace swm::bf2
+} // namespace swbfo::bf2

@@ -24,8 +24,8 @@
 #include "swg/tre_archive.h"
 #include "swg/tre_library.h"
 
-using namespace swm;
-using namespace swm::swg;
+using namespace swbfo;
+using namespace swbfo::swg;
 
 namespace {
 
@@ -173,7 +173,7 @@ double signed_volume(const std::vector<std::array<Vec3, 3>>& triangles) {
 void test_templates_and_collision() {
     const std::string crate = "appearance/crate.msh", pob = "appearance/house.pob";
     const float person_radius = 0.5f, beast_radius = 1.7f;
-    const auto dir = std::filesystem::temp_directory_path() / "swm_city_export_test";
+    const auto dir = std::filesystem::temp_directory_path() / "swbfo_city_export_test";
     std::filesystem::create_directories(dir);
     write_tre(dir / "test.tre",
               {
@@ -342,7 +342,7 @@ void test_effect_blend() {
     Gltf gltf;
     gltf.materials.push_back({.name = "glow", .alpha_mode = "BLEND", .unlit = true, .additive = true});
     gltf.materials.push_back({.name = "plain"});
-    const std::filesystem::path path = std::filesystem::temp_directory_path() / "swm_additive_test.gltf";
+    const std::filesystem::path path = std::filesystem::temp_directory_path() / "swbfo_additive_test.gltf";
     gltf.write(path);
     std::stringstream json;
     json << std::ifstream(path).rdbuf();

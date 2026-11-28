@@ -1,4 +1,4 @@
-#include "swm/core/crafting.h"
+#include "swbfo/core/crafting.h"
 
 #include <algorithm>
 #include <array>
@@ -8,7 +8,7 @@
 #include <sstream>
 #include <stdexcept>
 
-namespace swm::core {
+namespace swbfo::core {
 
 namespace {
 
@@ -588,4 +588,4 @@ std::string_view station_name(std::string_view station_kind) {
     return "crafting station";
 }
 
-} // namespace swm::core
+} // namespace swbfo::core

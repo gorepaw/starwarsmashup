@@ -9,7 +9,7 @@
 
 #include "bf2/ucfb.h"
 
-namespace swm::bf2 {
+namespace swbfo::bf2 {
 
 // Battlefront II's fx__ particle effect chunks (in ingame.lvl and side/*.lvl).
 //
@@ -67,4 +67,4 @@ std::vector<EffectEmitter> read_effect(const UcfbNode& fx_chunk);
 // Writes the emitters as JSON for game/rendering/bf2_effects.gd.
 void write_effect_json(std::ostream& out, const std::vector<EffectEmitter>& emitters);
 
-} // namespace swm::bf2
+} // namespace swbfo::bf2

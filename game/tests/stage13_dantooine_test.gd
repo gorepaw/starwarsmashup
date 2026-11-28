@@ -8,7 +8,7 @@
 #     (Height), not on the terrain under the building;
 #   - a ticket to the Mining Outpost's landing pad takes the traveller there,
 #     100 Cr poorer.
-# Screenshots go to the path in SWM_SHOTS (if set), as <path>NN.png.
+# Screenshots go to the path in SWBFO_SHOTS (if set), as <path>NN.png.
 #
 #   <godot> --path game --script res://tests/stage13_dantooine_test.gd
 extends SceneTree
@@ -31,7 +31,7 @@ var _shot := 0
 
 
 func _initialize() -> void:
-	_shots = OS.get_environment("SWM_SHOTS")
+	_shots = OS.get_environment("SWBFO_SHOTS")
 	_db = ProjectSettings.globalize_path("res://stage13_dantooine_temp.sqlite")
 	_remove_db()
 	var packed := load("res://scenes/game_session.tscn") as PackedScene

@@ -17,7 +17,7 @@ const CANCEL := 18
 const ROWS := 10
 
 var title := "Galactic Bazaar"
-var spec := {}           # SwmClient.get_specialist()
+var spec := {}           # SwbfoClient.get_specialist()
 var items: Array = []    # what you carry
 var equipped := {}       # item id -> true, for what's in a loadout (can't be listed)
 var catalog: Array = []

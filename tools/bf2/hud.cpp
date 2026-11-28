@@ -7,7 +7,7 @@
 
 #include "bf2/odf.h"
 
-namespace swm::bf2 {
+namespace swbfo::bf2 {
 namespace {
 
 template <class T>
@@ -191,4 +191,4 @@ std::vector<std::pair<uint32_t, std::string>> read_strings(const UcfbNode& locl)
     return out;
 }
 
-} // namespace swm::bf2
+} // namespace swbfo::bf2

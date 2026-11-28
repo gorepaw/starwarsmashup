@@ -16,7 +16,7 @@ var _frames := 0
 
 func _initialize() -> void:
 	# 1. Catalog check
-	var store: SwmCharacterStore = ClassDB.instantiate("SwmCharacterStore")
+	var store: SwbfoCharacterStore = ClassDB.instantiate("SwbfoCharacterStore")
 	var cat_err: int = store.load_catalog(
 			ProjectSettings.globalize_path("res://items/swg_catalog.ini"),
 			ProjectSettings.globalize_path("res://imported_assets/items"))

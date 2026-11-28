@@ -6,7 +6,7 @@
 #include <string>
 #include <vector>
 
-namespace swm::swg {
+namespace swbfo::swg {
 
 // A skeletal appearance template (.sat, SMAT 0003).
 struct SkeletalAppearance {
@@ -88,4 +88,4 @@ EffectBlend effect_blend(std::span<const uint8_t> bytes);
 // colors, RGB.
 std::vector<std::array<uint8_t, 3>> parse_palette(std::span<const uint8_t> bytes);
 
-} // namespace swm::swg
+} // namespace swbfo::swg

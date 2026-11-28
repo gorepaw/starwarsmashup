@@ -141,7 +141,7 @@ Then every archive in every source is read, but only SOE originals are used: for
     --pob appearance/thm_tato_cantina.pob --name thm_tato_cantina
   ```
 
-  It also writes `<name>.collision`: the floor triangles and walls again, in a compact binary for `core::World` (the game server and clients' movement). Its format belongs to `core/` (`swm/core/world.h`).
+  It also writes `<name>.collision`: the floor triangles and walls again, in a compact binary for `core::World` (the game server and clients' movement). Its format belongs to `core/` (`swbfo/core/world.h`).
 
   Not handled yet: doors and the objects placed inside cells.
 - **pob-check**: parse every building and floor, and load every cell mesh. On the Total Experience set: 223 buildings (2,669 cells, 12,617 lights) and 3,896 floors load. 93 files are deleted by later patches (shipped empty), and 3 buildings use an older layout (`PRTO 0001`) that isn't supported.
@@ -241,7 +241,7 @@ Battlefront II munged files (`.lvl`) are `ucfb` chunk trees: `lvl_` sub-levels h
   bf2tool export-map "<Battlefront>\GameData\Data\_lvl_pc" dag1 -o game\imported_assets\maps\dag1 --skip dag1_gunship
   ```
 
-  Then `swm_server --battlefield game/battlefields/dagobah.ini --bots 12` runs a match on it, and `net_demo.gd -- imported_assets/maps/dag1/dag1 ...` draws it.
+  Then `swbfo_server --battlefield game/battlefields/dagobah.ini --bots 12` runs a match on it, and `net_demo.gd -- imported_assets/maps/dag1/dag1 ...` draws it.
 
   **Other game modes (Stage 11).** `--mode ctf|1flag|hunt|xl` with `--layer <sublevel>` (the name the mode's mission script passes to `ReadDataFile` after the map's lvl: `kamino1_1CTF`, `hoth_XL`, `kas2_tdm`; matched by its hash, FNV-1a over `c | 0x20`) exports that mode's layer: its own command posts (in flag and Hunt layers spawn-only `com_bldg_controlzone_ctf` posts: a spawn path and a team, no capture region; written at the post itself, not at a region a script points them at), vehicle spawns and death regions. A flag mode's flags come from the script's `ObjectiveCTF` / `ObjectiveOneFlagCTF` tables as `--flag <object>=<owner>` (0 neutral, 1, 2) and `--flag-capture <region>=<team>` (the side that scores there), written as `Flag = <owner> x y z` and `FlagCapture = <team> <shape> x y z sx sy sz` and 9 rotation numbers. In two-flag CTF flag N is team N's, and its home region is where team N scores. Only the mode's map file is wanted: export into a scratch folder and copy `<map>_<mode>.ini` next to the map's conquest export (`game/imported_assets/maps/<map>/`). A battlefield file offers the mode with `Mode = <mode> <map file>` (`core::load_battlefield`: the mode's posts, vehicle spawns and flags over the conquest map's; everything else stays the conquest export's). The commands, read off the Galactic Civil War script where there is one, else the Clone Wars one (the two agree on everything but death regions' case on Coruscant and eight barriers on Polis Massa; posts' teams are numbers, the same in both eras):
 

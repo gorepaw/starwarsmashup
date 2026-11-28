@@ -9,7 +9,7 @@
 
 #include "swg/tre_archive.h"
 
-namespace swm::swg {
+namespace swbfo::swg {
 
 struct Manifest;
 
@@ -90,4 +90,4 @@ private:
     std::vector<std::string> warnings_;
 };
 
-} // namespace swm::swg
+} // namespace swbfo::swg

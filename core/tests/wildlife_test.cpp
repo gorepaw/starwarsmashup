@@ -2,18 +2,18 @@
 #include <cstdio>
 #include <filesystem>
 
-#include "swm/core/client.h"
-#include "swm/core/heightfield.h"
-#include "swm/core/items.h"
-#include "swm/core/net/link.h"
-#include "swm/core/server.h"
-#include "swm/core/wildlife.h"
-#include "swm/core/world.h"
+#include "swbfo/core/client.h"
+#include "swbfo/core/heightfield.h"
+#include "swbfo/core/items.h"
+#include "swbfo/core/net/link.h"
+#include "swbfo/core/server.h"
+#include "swbfo/core/wildlife.h"
+#include "swbfo/core/world.h"
 #include "test.h"
 
-using namespace swm::core;
-using swm::core::net::LoopbackHub;
-using swm::core::net::LoopbackLink;
+using namespace swbfo::core;
+using swbfo::core::net::LoopbackHub;
+using swbfo::core::net::LoopbackLink;
 
 namespace {
 
@@ -454,5 +454,5 @@ int main() {
     test_creature_behaviors_leash_and_respawn();
     test_bandit_pvp_disabled_and_cloning();
     test_interest_and_dormancy();
-    return swm::test::finish("wildlife_test");
+    return swbfo::test::finish("wildlife_test");
 }

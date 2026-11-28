@@ -10,7 +10,7 @@
 
 #include "bf2/ucfb.h"
 
-namespace swm::bf2 {
+namespace swbfo::bf2 {
 
 // A Battlefront II map (`<map>.lvl`, e.g. dag/dag1.lvl): terrain, world
 // layers of object instances and regions, and paths. Sublevels ("lvl_"
@@ -249,4 +249,4 @@ Level read_level(const UcfbNode& root);
 // spa_sky.lvl's planet sublevels) into `sky`.
 bool merge_sky_sublevel(const UcfbNode& root, uint32_t sublevel_hash, LevelSky& sky);
 
-} // namespace swm::bf2
+} // namespace swbfo::bf2

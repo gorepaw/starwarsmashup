@@ -10,7 +10,7 @@
 
 #include "common/math.h"
 
-namespace swm::swg {
+namespace swbfo::swg {
 
 // Minimal glTF 2.0 writer: one .gltf (JSON) plus one .bin buffer. Images are
 // referenced by URI and written by the caller.
@@ -101,4 +101,4 @@ private:
     std::vector<Accessor> accessors_;
 };
 
-} // namespace swm::swg
+} // namespace swbfo::swg

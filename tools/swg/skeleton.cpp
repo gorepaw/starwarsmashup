@@ -6,7 +6,7 @@
 
 #include "swg/iff.h"
 
-namespace swm::swg {
+namespace swbfo::swg {
 namespace {
 
 bool iequals(std::string_view a, std::string_view b) {
@@ -104,4 +104,4 @@ Skeleton parse_skeleton(std::span<const uint8_t> bytes) {
     throw std::runtime_error("not a skeleton (" + root.tag + ")");
 }
 
-} // namespace swm::swg
+} // namespace swbfo::swg

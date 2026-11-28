@@ -5,7 +5,7 @@
 ## Where things stand
 
 - **Identity is a typed name.** `Hello { name, ticket, team }` picks a saved character by name; there are no accounts or passwords. A hub's battle servers already admit only holders of a `ticket` the hub issued (`GameServer::admit`).
-- **One process runs the galaxy.** `swm_server --galaxy` runs every planet as a `GameServer` in one process, sharing one `CharacterStore`; battles run in the same process.
+- **One process runs the galaxy.** `swbfo_server --galaxy` runs every planet as a `GameServer` in one process, sharing one `CharacterStore`; battles run in the same process.
 - **State is SQLite** behind `core::CharacterStore` (`persistence.h`: characters, items, loadouts, quests, professions, materials, presets, reputation, telemetry). WAL mode, characters saved in batches every 10 s, economy changes written immediately from about 11 call sites on the tick thread.
 - **Costs are measured** ([Server audit](SERVER_AUDIT.md)): an idle planet costs 0.6% of a core; 16 players in Mos Eisley cost 1.3 ms of a 33 ms tick; Tatooine with seven towns is about 217 MB; snapshots are **about 220 KB/s per client** in a crowd, because they're still full states.
 - **The client doesn't learn why it can't connect** on a version mismatch: packets with another `protocol_version` are dropped.
@@ -28,7 +28,7 @@ Out of scope for now: multiple shards, zone handoff between processes, paid anyt
      │                                  └──── Pages (website)   Turnstile, Email
      │  join token (signed, 10 min)
      ▼
-  game ──────────── UDP 7777 ─────────────────────────────────────────▶ swm_server --galaxy
+  game ──────────── UDP 7777 ─────────────────────────────────────────▶ swbfo_server --galaxy
                                                                           battle servers
                                                                           Postgres (characters)
                                                                           backups ──▶ R2 swm-backups
@@ -70,11 +70,11 @@ Protocol change: `Hello` gains `join_token` and `character_id` (a character chos
 - **Linux.** The server, core and tools build with GCC 15 (Ubuntu 26.04) and GCC 14 (Ubuntu 24.04) and pass all 39 tests (2026-11-28). The [server audit](SERVER_AUDIT.md)'s load test (Tatooine hub, 16 bots) runs at 1.1 ms a tick, 14% of a core including the bots, and 254 MB; the whole galaxy (10 planets) idles at 0.2 ms a tick in 1.5 GB. `.github/workflows/linux.yml` builds and tests every push (GCC 14 on GitHub's Ubuntu 24.04 runner). The game server handles SIGTERM by saving everyone, so `systemctl stop` is safe.
 - **Running now (2026-11-28)**: a Contabo VPS (US East; 8 vCPU, 24 GB, 600 Mbit/s, unlimited traffic; Ubuntu 24.04), set up as follows. The server is built on the VPS from a `git archive` of the repo with GCC 14 (a binary built on a newer Ubuntu needs a newer C library).
   - Logins: SSH keys only, as `ops` (sudo); root and passwords refused. Firewall: SSH from anywhere, game UDP from the developer's address only until accounts exist. Unattended security updates.
-  - `/opt/swm/bin/swm_server`, `/opt/swm/game` (the repo's `game/` without tests, plus the 920 MB of `imported_assets` the server reads: heightfields, collision, water, terrain holes, town data, battlefields, items; checked with `strace` that it opens nothing else), the database in `/var/lib/swm`. Everything there is owned by root except the database: the server runs as the no-login `swm` user, sandboxed by systemd.
+  - `/opt/swm/bin/swbfo_server`, `/opt/swm/game` (the repo's `game/` without tests, plus the 920 MB of `imported_assets` the server reads: heightfields, collision, water, terrain holes, town data, battlefields, items; checked with `strace` that it opens nothing else), the database in `/var/lib/swm`. Everything there is owned by root except the database: the server runs as the no-login `swm` user, sandboxed by systemd.
   - Units in [`server/deploy/`](../server/deploy): `swm-galaxy.service` (the whole galaxy on UDP 7777), `swm-backup.service` + `.timer` (below).
-  - `swm_probe <address:port> --bake <prefix>` joins as a player and reports what it saw. From the developer's connection: joined in 80 ms, 77 ms round trip, 344 snapshots in 12 s, no corrections.
-- **Server data**: the server needs terrain bakes, collision, hub and battlefield data, and item exports, all derived from Battlefront II and Galaxies files. It's the developer's own extraction on the developer's own server, never served to players. It goes up through a third update channel, **`server`** (private bucket, its own token), with the same manifests and blobs, applied by a small headless `swm_update` command (the launcher's update code without the UI). The server channel holds only what the server reads (no textures, meshes or audio: a fraction of the 5 GB).
-- **Processes**: `systemd` runs `swm-galaxy.service` (restart on failure, `LimitNOFILE`, its own user). Battle servers move out of the hub's process ([audit](SERVER_AUDIT.md#whats-left-recommended-next-steps), step 5): the hub launches `swm_server --battlefield ... --ticket-key ...` children on a port range and reaps them.
+  - `swbfo_probe <address:port> --bake <prefix>` joins as a player and reports what it saw. From the developer's connection: joined in 80 ms, 77 ms round trip, 344 snapshots in 12 s, no corrections.
+- **Server data**: the server needs terrain bakes, collision, hub and battlefield data, and item exports, all derived from Battlefront II and Galaxies files. It's the developer's own extraction on the developer's own server, never served to players. It goes up through a third update channel, **`server`** (private bucket, its own token), with the same manifests and blobs, applied by a small headless `swbfo_update` command (the launcher's update code without the UI). The server channel holds only what the server reads (no textures, meshes or audio: a fraction of the 5 GB).
+- **Processes**: `systemd` runs `swm-galaxy.service` (restart on failure, `LimitNOFILE`, its own user). Battle servers move out of the hub's process ([audit](SERVER_AUDIT.md#whats-left-recommended-next-steps), step 5): the hub launches `swbfo_server --battlefield ... --ticket-key ...` children on a port range and reaps them.
 - **Before inviting anyone: delta snapshots.** At 220 KB/s per client, 30 players in a crowd is 6.6 MB/s, about 50 Mbit/s sustained and roughly 15 TB a month at that rate. Delta compression against the last acknowledged snapshot (inputs already carry `view_tick`) should cut that several times over and decides how big a plan is needed.
 - **Datagrams under the path MTU.** Snapshots are about 8 KB and the `Welcome` 31 KB, sent as single UDP datagrams that IP splits into 1,500-byte fragments (6 and 21 of them). Over the internet that works on most connections, but some routers, NATs and mobile networks drop fragments (WSL 2's NAT drops them all), and losing one fragment loses the whole datagram. With delta snapshots: keep each datagram under about 1,200 bytes, splitting large messages (the `Welcome`, a big snapshot) into numbered parts the receiver reassembles.
 - **A fixed port range.** Planets other than the first, and battle servers, bind whatever port the OS gives them; the firewall can't open those to the public. Add `--ports <first>-<last>` and open exactly that range.
@@ -83,7 +83,7 @@ Protocol change: `Hello` gains `join_token` and `character_id` (a character chos
 ## Joining a server
 
 - **Server list**: each server posts a heartbeat to `/api/servers/heartbeat` every 30 s (name, address, players, version, uptime; signed with a per-server secret). The launcher shows the list; one server during the alpha, so it can simply be "Play".
-- **Connect**: the launcher gets a join token for that server and starts `StarWarsMashup.exe --connect <address> --token-file <file>`. The game's main menu keeps local play and direct connect (for LAN and testing).
+- **Connect**: the launcher gets a join token for that server and starts `SWBFO.exe --connect <address> --token-file <file>`. The game's main menu keeps local play and direct connect (for LAN and testing).
 
 ## Website
 
@@ -93,7 +93,7 @@ Protocol change: `Hello` gains `join_token` and `character_id` (a character chos
 ## Operations
 
 - **Backups** (running): nightly at 09:30 UTC, [`swm-backup.sh`](../server/deploy/swm-backup.sh) takes SQLite's online backup, checks its integrity, compresses it and uploads it through the update Worker's `/backups` route to the `swm-backups` bucket: `daily/` kept 30 days, Sundays also `weekly/` kept 180 (bucket lifecycle rules). The server's token can only add backups, never read, replace or delete them; listing and downloading take the publish token. A first drill: downloaded through the Worker, decompressed, integrity `ok`, every table and character there. With Postgres the script switches to `pg_dump`. **Before the alpha, a full drill**: start a server on a restored backup.
-- **Deploys**: `tools/release/deploy_server.sh`: publish the `server` channel, announce a restart in game (a server message, 5 minutes), save everyone, stop, `swm_update`, start, check the heartbeat. Rolling back is republishing the previous version.
+- **Deploys**: `tools/release/deploy_server.sh`: publish the `server` channel, announce a restart in game (a server message, 5 minutes), save everyone, stop, `swbfo_update`, start, check the heartbeat. Rolling back is republishing the previous version.
 - **Monitoring**: the server's perf line goes to the systemd journal; the heartbeat carries tick time and player count; a Worker cron alerts (an email to the operator) when a heartbeat is 2 minutes late or tick time passes 50% of budget.
 - **Logs and privacy**: keep IP addresses only in short-lived logs (7 days) for abuse handling; keep no more personal data than an email address and display name. A short privacy page on the website says what's kept and how to delete it.
 - **Access**: SSH keys only, no passwords; a firewall allowing SSH (from the developer) and the game's UDP ports; Postgres listens only on localhost.
@@ -117,7 +117,7 @@ Protocol change: `Hello` gains `join_token` and `character_id` (a character chos
 
 ## Milestones
 
-1. **Server on Linux.** Done: builds and passes the tests on Linux; CI job. Still to do: headless `swm_update`; `server` channel.
+1. **Server on Linux.** Done: builds and passes the tests on Linux; CI job. Still to do: headless `swbfo_update`; `server` channel.
 2. **Write-behind persistence.** The queue in front of `CharacterStore`, on SQLite; trades as single transactions; tests that kill the server mid-trade and check nothing is lost or duplicated.
 3. **Delta snapshots.** Bandwidth measured again with 16 bots; the audit updated.
 4. **Accounts.** D1 schema, sign-up / sign-in / verify / reset routes, Argon2id, email, Turnstile and rate limits, admin TOTP; launcher sign-in; join tokens; `Hello` with a token; `--auth` on the server; a character picker by account; bans and admin role.

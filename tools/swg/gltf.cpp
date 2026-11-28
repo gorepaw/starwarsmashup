@@ -6,7 +6,7 @@
 #include <limits>
 #include <stdexcept>
 
-namespace swm::swg {
+namespace swbfo::swg {
 namespace {
 
 constexpr int component_float = 5126;
@@ -105,7 +105,7 @@ void Gltf::write(const std::filesystem::path& path) const {
     std::filesystem::path bin_path = path;
     bin_path.replace_extension(".bin");
 
-    std::string json = R"({"asset":{"version":"2.0","generator":"starwarsmashup swgtool"},"scene":0,)";
+    std::string json = R"({"asset":{"version":"2.0","generator":"swbfo swgtool"},"scene":0,)";
     if (std::any_of(materials.begin(), materials.end(), [](const Material& m) { return m.unlit; })) {
         json += R"("extensionsUsed":["KHR_materials_unlit"],)";
     }
@@ -285,4 +285,4 @@ void Gltf::write(const std::filesystem::path& path) const {
     }
 }
 
-} // namespace swm::swg
+} // namespace swbfo::swg

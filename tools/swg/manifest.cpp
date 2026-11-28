@@ -12,10 +12,10 @@
 #include "swg/sha256.h"
 #include "swg/tre_scan.h"
 
-namespace swm::swg {
+namespace swbfo::swg {
 namespace {
 
-constexpr std::string_view format_line = "# swm-manifest 1";
+constexpr std::string_view format_line = "# swbfo-manifest 1";
 constexpr std::string_view name_prefix = "# name: ";
 constexpr std::string_view source_prefix = "# source: ";
 
@@ -145,9 +145,9 @@ Manifest read_manifest(std::istream& in) {
     }
 
     if (!saw_format) {
-        throw std::runtime_error("not a swm manifest (missing '" + std::string(format_line) + "')");
+        throw std::runtime_error("not a swbfo manifest (missing '" + std::string(format_line) + "')");
     }
     return manifest;
 }
 
-} // namespace swm::swg
+} // namespace swbfo::swg

@@ -6,9 +6,9 @@
 #include <format>
 #include <numbers>
 
-#include "swm/core/server.h"
+#include "swbfo/core/server.h"
 
-namespace swm::core {
+namespace swbfo::core {
 namespace {
 
 constexpr double enter_reach = 2.5;   // m from a vehicle's body to get in
@@ -646,4 +646,4 @@ void GameServer::damage_vehicle(Vehicle& v, double amount, uint32_t attacker, st
     blasts.push_back(blast);
 }
 
-} // namespace swm::core
+} // namespace swbfo::core

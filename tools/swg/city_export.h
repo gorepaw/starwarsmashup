@@ -10,9 +10,9 @@
 #include "common/math.h"
 #include "swg/character_export.h"
 #include "swg/tre_library.h"
-#include "swm/core/heightfield.h"
+#include "swbfo/core/heightfield.h"
 
-namespace swm::swg {
+namespace swbfo::swg {
 
 // A town on a planet: the snapshot's objects within `radius` of its center.
 struct CityArea {
@@ -101,4 +101,4 @@ core::TerrainHoles room_terrain_holes(const std::vector<std::array<Vec3, 3>>& wa
                                       const std::function<double(double, double)>& terrain_height,
                                       double keep_deeper = 0);
 
-} // namespace swm::swg
+} // namespace swbfo::swg

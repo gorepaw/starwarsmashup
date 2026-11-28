@@ -6,7 +6,7 @@
 #include "swg/iff.h"
 #include "swg/manifest.h"
 
-namespace swm::swg {
+namespace swbfo::swg {
 
 float Waveform::mean() const {
     if (points.empty()) {
@@ -147,4 +147,4 @@ std::vector<ParticleEmitter> parse_particle_effect(std::span<const uint8_t> byte
     return out;
 }
 
-} // namespace swm::swg
+} // namespace swbfo::swg

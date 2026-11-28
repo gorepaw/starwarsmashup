@@ -11,7 +11,7 @@
 #include "bf2/effect.h"
 #include "bf2/ucfb.h"
 
-using namespace swm::bf2;
+using namespace swbfo::bf2;
 
 namespace {
 

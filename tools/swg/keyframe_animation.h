@@ -11,7 +11,7 @@
 #include "swg/animation_clip.h"
 #include "swg/skeleton.h"
 
-namespace swm::swg {
+namespace swbfo::swg {
 
 // A Galaxies keyframe animation (.ans): KFAT 0003 (rotations as floats) or
 // CKAT 0001 (rotations compressed into 32 bits). Per joint, by name: its
@@ -44,4 +44,4 @@ Quat decompress_rotation(const std::array<uint8_t, 3>& format, uint32_t code);
 // has no track for it) and the root's translation.
 AnimationClip sample_animation(const KeyframeAnimation& animation, const Skeleton& skeleton, const std::string& name);
 
-} // namespace swm::swg
+} // namespace swbfo::swg

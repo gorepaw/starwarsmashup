@@ -7,18 +7,18 @@
 #include <tuple>
 #include <vector>
 
-#include "swm/core/client.h"
-#include "swm/core/heightfield.h"
-#include "swm/core/items.h"
-#include "swm/core/net/link.h"
-#include "swm/core/profession.h"
-#include "swm/core/quest.h"
-#include "swm/core/server.h"
-#include "swm/core/sqlite_store.h"
-#include "swm/core/world.h"
+#include "swbfo/core/client.h"
+#include "swbfo/core/heightfield.h"
+#include "swbfo/core/items.h"
+#include "swbfo/core/net/link.h"
+#include "swbfo/core/profession.h"
+#include "swbfo/core/quest.h"
+#include "swbfo/core/server.h"
+#include "swbfo/core/sqlite_store.h"
+#include "swbfo/core/world.h"
 #include "test.h"
 
-using namespace swm::core;
+using namespace swbfo::core;
 
 namespace {
 
@@ -34,7 +34,7 @@ std::filesystem::path repo_root() {
 
 void test_services() {
     const auto root = repo_root();
-    const auto db_path = std::filesystem::temp_directory_path() / "swm_services_test.sqlite";
+    const auto db_path = std::filesystem::temp_directory_path() / "swbfo_services_test.sqlite";
     std::filesystem::remove(db_path);
     ItemCatalog catalog;
     catalog.load(root / "game" / "items" / "swg_catalog.ini");
@@ -195,7 +195,7 @@ void test_trivial_quests_grey() {
         def.steps = {go};
         quests.add(def);
     }
-    const auto db_path = std::filesystem::temp_directory_path() / "swm_trivial_test.sqlite";
+    const auto db_path = std::filesystem::temp_directory_path() / "swbfo_trivial_test.sqlite";
     std::filesystem::remove(db_path);
     {
         SqliteCharacterStore store(db_path);
@@ -244,7 +244,7 @@ void test_trivial_quests_grey() {
 // Stage 13: a shuttle from one travel point to another, for a fare.
 void test_travel() {
     const auto root = repo_root();
-    const auto db_path = std::filesystem::temp_directory_path() / "swm_travel_test.sqlite";
+    const auto db_path = std::filesystem::temp_directory_path() / "swbfo_travel_test.sqlite";
     std::filesystem::remove(db_path);
     ItemCatalog catalog;
     catalog.load(root / "game" / "items" / "swg_catalog.ini");
@@ -308,5 +308,5 @@ int main() {
     test_event_steps();
     test_services();
     test_travel();
-    return swm::test::finish("services_test");
+    return swbfo::test::finish("services_test");
 }

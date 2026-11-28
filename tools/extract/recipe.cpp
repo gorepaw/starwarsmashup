@@ -10,7 +10,7 @@
 
 #include "extract/process.h"
 
-namespace swm::extract {
+namespace swbfo::extract {
 
 Recipe parse_recipe(const std::string& text) {
     nlohmann::json j;
@@ -208,4 +208,4 @@ RunResult run_recipe(const Recipe& recipe, const RunOptions& options) {
     return result;
 }
 
-} // namespace swm::extract
+} // namespace swbfo::extract

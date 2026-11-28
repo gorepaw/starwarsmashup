@@ -9,7 +9,7 @@
 #include <utility>
 #include <vector>
 
-namespace swm::bf2 {
+namespace swbfo::bf2 {
 
 // 32-bit FNV-1a over `c | 0x20`, used for all Battlefront II sound tags,
 // keywords, and sound/sample/stream names.
@@ -139,4 +139,4 @@ std::vector<int16_t> decode_clip(const SoundClipRef& clip);
 // Writes a standard 44-byte RIFF/WAVE PCM16 file.
 void write_wav(const std::filesystem::path& path, std::span<const int16_t> pcm, uint32_t sample_rate, uint16_t channels);
 
-} // namespace swm::bf2
+} // namespace swbfo::bf2

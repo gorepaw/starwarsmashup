@@ -1,5 +1,5 @@
 [Unit]
-Description=Nightly backup of the Star Wars Mashup database
+Description=Nightly backup of the SWBFO database
 
 [Timer]
 # 09:30 UTC: the small hours across the Americas.

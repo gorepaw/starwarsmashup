@@ -6,7 +6,7 @@
 #include <string>
 #include <vector>
 
-namespace swm::swg {
+namespace swbfo::swg {
 
 enum TreCompressor : uint32_t {
     tre_compressor_none = 0,
@@ -49,4 +49,4 @@ private:
     std::vector<TreEntry> entries_;
 };
 
-} // namespace swm::swg
+} // namespace swbfo::swg

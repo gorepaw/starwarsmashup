@@ -6,7 +6,7 @@
 #include <fstream>
 #include <stdexcept>
 
-namespace swm::bf2 {
+namespace swbfo::bf2 {
 
 namespace {
 
@@ -721,4 +721,4 @@ void write_wav(const std::filesystem::path& path, std::span<const int16_t> pcm, 
     }
 }
 
-} // namespace swm::bf2
+} // namespace swbfo::bf2

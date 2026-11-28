@@ -1,12 +1,12 @@
 # Standalone game server: core/ in its own process, without Godot.
-add_executable(swm_server main.cpp)
-target_link_libraries(swm_server PRIVATE swm_core swm_sqlite_store)
+add_executable(swbfo_server main.cpp)
+target_link_libraries(swbfo_server PRIVATE swbfo_core swbfo_sqlite_store)
 if(WIN32)
-  target_link_libraries(swm_server PRIVATE winmm)
+  target_link_libraries(swbfo_server PRIVATE winmm)
 endif()
-swm_target_warnings(swm_server)
+swbfo_target_warnings(swbfo_server)
 
 # Joins a server as a player for a few seconds and reports what it saw.
-add_executable(swm_probe probe.cpp)
-target_link_libraries(swm_probe PRIVATE swm_core)
-swm_target_warnings(swm_probe)
+add_executable(swbfo_probe probe.cpp)
+target_link_libraries(swbfo_probe PRIVATE swbfo_core)
+swbfo_target_warnings(swbfo_probe)

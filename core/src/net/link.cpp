@@ -1,12 +1,12 @@
-#include "swm/core/net/link.h"
+#include "swbfo/core/net/link.h"
 
 #include <algorithm>
 #include <charconv>
 #include <format>
 
-#include "swm/core/net/bytes.h"
+#include "swbfo/core/net/bytes.h"
 
-namespace swm::core::net {
+namespace swbfo::core::net {
 
 void ByteWriter::put_string(const std::string& value) {
     const size_t length = std::min<size_t>(value.size(), 255);
@@ -161,4 +161,4 @@ std::optional<Datagram> ImpairedLink::receive() {
     return std::nullopt;
 }
 
-} // namespace swm::core::net
+} // namespace swbfo::core::net

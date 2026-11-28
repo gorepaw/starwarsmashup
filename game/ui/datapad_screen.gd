@@ -51,9 +51,9 @@ const POSTED_AMOUNTS := [500, 2500]  # what a "Post" button puts up on an opted-
 const TABS := ["Kit", "Companions", "Lab", "Droids", "Contracts", "Slicing", "Inspiration"]
 const ROWS := 8
 
-var spec := {}             # SwmClient.get_specialist()
-var book := {}             # SwmClient.get_specialist_book()
-var items: Array = []      # what you carry (SwmClient.get_inventory())
+var spec := {}             # SwbfoClient.get_specialist()
+var book := {}             # SwbfoClient.get_specialist_book()
+var items: Array = []      # what you carry (SwbfoClient.get_inventory())
 var catalog: Array = []    # item defs, for names
 var levels := {}           # profession id -> level
 var perks: Array = []      # the perks learned (ids), every profession's

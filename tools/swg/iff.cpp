@@ -5,7 +5,7 @@
 #include <cstring>
 #include <stdexcept>
 
-namespace swm::swg {
+namespace swbfo::swg {
 namespace {
 
 static_assert(std::endian::native == std::endian::little, "IFF payload reads assume a little-endian host");
@@ -129,4 +129,4 @@ void IffReader::require(size_t size) const {
     }
 }
 
-} // namespace swm::swg
+} // namespace swbfo::swg

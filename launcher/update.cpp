@@ -25,12 +25,12 @@ extern "C" {
 #include "extract/process.h"
 
 namespace fs = std::filesystem;
-using swm::extract::narrow;
-using swm::extract::path_utf8;
-using swm::extract::utf8_path;
-using swm::extract::widen;
+using swbfo::extract::narrow;
+using swbfo::extract::path_utf8;
+using swbfo::extract::utf8_path;
+using swbfo::extract::widen;
 
-namespace swm::launcher {
+namespace swbfo::launcher {
 
 ReleaseManifest parse_manifest(const std::string& text) {
     nlohmann::json j;
@@ -234,7 +234,7 @@ int http_request(const std::string& url, const std::string& bearer,
         error = "bad URL " + url;
         return 0;
     }
-    Handle session(WinHttpOpen(L"SwmLauncher/1", WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY, WINHTTP_NO_PROXY_NAME,
+    Handle session(WinHttpOpen(L"SwbfoLauncher/1", WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY, WINHTTP_NO_PROXY_NAME,
                                WINHTTP_NO_PROXY_BYPASS, 0));
     if (!session) {
         error = last_error("WinHttpOpen");
@@ -518,4 +518,4 @@ std::string apply_update(const Remote& remote, const UpdatePlan& plan, const std
     return {};
 }
 
-} // namespace swm::launcher
+} // namespace swbfo::launcher

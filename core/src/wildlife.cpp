@@ -1,4 +1,4 @@
-#include "swm/core/wildlife.h"
+#include "swbfo/core/wildlife.h"
 
 #include <algorithm>
 #include <cctype>
@@ -9,12 +9,12 @@
 #include <sstream>
 #include <stdexcept>
 
-#include "swm/core/ini.h"
-#include "swm/core/nav.h"
-#include "swm/core/server.h"
-#include "swm/core/world.h"
+#include "swbfo/core/ini.h"
+#include "swbfo/core/nav.h"
+#include "swbfo/core/server.h"
+#include "swbfo/core/world.h"
 
-namespace swm::core {
+namespace swbfo::core {
 
 namespace {
 
@@ -954,4 +954,4 @@ KillTags WorldPopulation::kill_tags(uint32_t entity) const {
     return {type.id, type.gang, true};
 }
 
-} // namespace swm::core
+} // namespace swbfo::core

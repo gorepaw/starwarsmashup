@@ -15,7 +15,7 @@
 #include "bf2/model_export.h"
 #include "bf2/ucfb.h"
 
-using namespace swm::bf2;
+using namespace swbfo::bf2;
 
 namespace {
 
@@ -299,7 +299,7 @@ void test_model() {
     library.add(file);
     CHECK(library.model("TEST_PROP") != nullptr && library.texture("LEAF") != nullptr);
     CHECK(library.skeleton("test_prop") != nullptr && library.model("missing") == nullptr);
-    const std::filesystem::path dir = std::filesystem::temp_directory_path() / "swm_bf2_model_test";
+    const std::filesystem::path dir = std::filesystem::temp_directory_path() / "swbfo_bf2_model_test";
     std::filesystem::remove_all(dir);
     std::set<std::string> written;
     const ModelExport result = export_model(library, "Test_Prop", dir / "models", dir / "textures", written);

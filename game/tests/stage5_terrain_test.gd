@@ -1,5 +1,5 @@
 # Headless verification for Stage 5 Milestone 1:
-# 1. SwmTerrain loads full 16x16 km Tatooine (4097x4097 @ 4m, origin -8192)
+# 1. SwbfoTerrain loads full 16x16 km Tatooine (4097x4097 @ 4m, origin -8192)
 # 2. SwgTerrainStreamer streams LOD chunks around focus, supports .holes, and updates LODs when moving 5 km
 # 3. Live GameSession spawns new character in Mos Eisley (~3500, -4800) with _terrain_streamer active
 extends SceneTree
@@ -13,19 +13,19 @@ var _frames := 0
 
 
 func _initialize() -> void:
-	# 1. SwmTerrain full planet load
-	assert(ClassDB.class_exists("SwmTerrain"), "SwmTerrain class missing")
+	# 1. SwbfoTerrain full planet load
+	assert(ClassDB.class_exists("SwbfoTerrain"), "SwbfoTerrain class missing")
 	var bake := "imported_assets/terrain/tatooine"
 	assert(FileAccess.file_exists("res://" + bake + ".json"), "missing tatooine.json")
-	var swm_t: Object = ClassDB.instantiate("SwmTerrain")
-	assert(swm_t.load_bake(ProjectSettings.globalize_path("res://" + bake)) == OK)
-	assert(int(swm_t.get_samples()) == 4097, "expected 4097 samples")
-	assert(is_equal_approx(float(swm_t.get_spacing()), 4.0), "expected 4.0 m spacing")
-	assert(swm_t.get_origin() == Vector2(-8192.0, -8192.0), "unexpected origin")
-	var mos_h := float(swm_t.height_at(-3500.0, -4800.0))
-	var center_h := float(swm_t.height_at(0.0, 0.0))
+	var swbfo_t: Object = ClassDB.instantiate("SwbfoTerrain")
+	assert(swbfo_t.load_bake(ProjectSettings.globalize_path("res://" + bake)) == OK)
+	assert(int(swbfo_t.get_samples()) == 4097, "expected 4097 samples")
+	assert(is_equal_approx(float(swbfo_t.get_spacing()), 4.0), "expected 4.0 m spacing")
+	assert(swbfo_t.get_origin() == Vector2(-8192.0, -8192.0), "unexpected origin")
+	var mos_h := float(swbfo_t.height_at(-3500.0, -4800.0))
+	var center_h := float(swbfo_t.height_at(0.0, 0.0))
 	assert(not is_nan(mos_h) and not is_nan(center_h) and absf(mos_h) < 50.0, "unexpected heights")
-	print("SwmTerrain planet load: OK (mos_h=%.2f, center_h=%.2f)" % [mos_h, center_h])
+	print("SwbfoTerrain planet load: OK (mos_h=%.2f, center_h=%.2f)" % [mos_h, center_h])
 
 	# 2. SwgTerrainStreamer LOD + holes + focus shift
 	var meta: Dictionary = JSON.parse_string(FileAccess.get_file_as_string("res://" + bake + ".json"))

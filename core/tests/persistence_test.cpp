@@ -8,22 +8,22 @@
 
 #include <sqlite3.h>
 
-#include "swm/core/client.h"
-#include "swm/core/net/link.h"
-#include "swm/core/persistence.h"
-#include "swm/core/server.h"
-#include "swm/core/sqlite_store.h"
-#include "swm/core/world.h"
+#include "swbfo/core/client.h"
+#include "swbfo/core/net/link.h"
+#include "swbfo/core/persistence.h"
+#include "swbfo/core/server.h"
+#include "swbfo/core/sqlite_store.h"
+#include "swbfo/core/world.h"
 #include "test.h"
 
-using namespace swm::core;
-using swm::test::near;
+using namespace swbfo::core;
+using swbfo::test::near;
 
 namespace {
 
 // A database file in the temp folder, deleted before and after.
 struct TempDatabase {
-    std::filesystem::path path = std::filesystem::temp_directory_path() / "swm_persistence_test.sqlite";
+    std::filesystem::path path = std::filesystem::temp_directory_path() / "swbfo_persistence_test.sqlite";
     TempDatabase() { remove(); }
     ~TempDatabase() { remove(); }
     void remove() const {
@@ -362,5 +362,5 @@ int main() {
     test_store(memory);
     test_sqlite_file();
     test_restart();
-    return swm::test::finish("persistence_test");
+    return swbfo::test::finish("persistence_test");
 }

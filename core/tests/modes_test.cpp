@@ -11,14 +11,14 @@
 #include <set>
 #include <variant>
 
-#include "swm/core/conquest.h"
-#include "swm/core/hub.h"
-#include "swm/core/net/protocol.h"
-#include "swm/core/persistence.h"
-#include "swm/core/sqlite_store.h"
-#include "swm/core/telemetry.h"
-#include "swm/core/client.h"
-#include "swm/core/world.h"
+#include "swbfo/core/conquest.h"
+#include "swbfo/core/hub.h"
+#include "swbfo/core/net/protocol.h"
+#include "swbfo/core/persistence.h"
+#include "swbfo/core/sqlite_store.h"
+#include "swbfo/core/telemetry.h"
+#include "swbfo/core/client.h"
+#include "swbfo/core/world.h"
 #include "test.h"
 
 #ifdef _WIN32
@@ -30,8 +30,8 @@
 #undef far
 #endif
 
-using namespace swm::core;
-using swm::test::near;
+using namespace swbfo::core;
+using swbfo::test::near;
 
 namespace {
 
@@ -39,7 +39,7 @@ constexpr double dt = 1.0 / 30;
 
 // A battlefield with a conquest map and ctf, 1flag, hunt and xl layers.
 std::filesystem::path write_field() {
-    const auto dir = std::filesystem::temp_directory_path() / "swm_modes_test";
+    const auto dir = std::filesystem::temp_directory_path() / "swbfo_modes_test";
     std::filesystem::remove_all(dir);
     std::filesystem::create_directories(dir / "items");
     std::filesystem::create_directories(dir / "loadouts");
@@ -281,7 +281,7 @@ void test_telemetry() {
     const auto listed = memory.list_matches(10);
     CHECK(listed.size() == 2 && listed[0].mode == "ctf" && listed[1].id == 1);
 
-    const auto db = std::filesystem::temp_directory_path() / "swm_modes_test.sqlite";
+    const auto db = std::filesystem::temp_directory_path() / "swbfo_modes_test.sqlite";
     std::filesystem::remove(db);
     {
         SqliteCharacterStore store(db);
@@ -356,7 +356,7 @@ void test_real_roster() {
     }
 }
 
-// Opt-in (SWM_STAGE11_E2E=1, with your exported Battlefront II assets): the
+// Opt-in (SWBFO_STAGE11_E2E=1, with your exported Battlefront II assets): the
 // real Mos Eisley hub config (its terminals moved onto a flat test plaza).
 // A player queues at the Ground Battle Terminal for the Clone Wars and
 // Capture the Flag, follows the hub's transfer to a real Clone Wars map in
@@ -364,7 +364,7 @@ void test_real_roster() {
 // the battle's telemetry is in the store; then at the Space Terminal, a GCW
 // space battle launches. Slow: it plays whole matches.
 void test_live_hub_e2e() {
-    const char* wanted = std::getenv("SWM_STAGE11_E2E");
+    const char* wanted = std::getenv("SWBFO_STAGE11_E2E");
     if (wanted == nullptr || std::string(wanted) != "1") {
         return;
     }
@@ -546,7 +546,7 @@ LONG WINAPI print_crash(EXCEPTION_POINTERS* info) {
 
 int main() {
 #ifdef _WIN32
-    if (std::getenv("SWM_STAGE11_E2E") != nullptr) {
+    if (std::getenv("SWBFO_STAGE11_E2E") != nullptr) {
         AddVectoredExceptionHandler(1, [](EXCEPTION_POINTERS* info) -> LONG {
             if (info->ExceptionRecord->ExceptionCode == EXCEPTION_ACCESS_VIOLATION) {
                 print_crash(info);
@@ -564,5 +564,5 @@ int main() {
     test_telemetry();
     test_real_roster();
     test_live_hub_e2e();
-    return swm::test::finish("modes_test");
+    return swbfo::test::finish("modes_test");
 }

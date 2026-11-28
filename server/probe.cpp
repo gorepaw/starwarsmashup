@@ -2,7 +2,7 @@
 // whether it was let in, the round trip, snapshots, and who else is about. A
 // quick check that a deployed server is reachable and running (docs/BACKEND.md).
 //
-//   swm_probe <address:port> --bake <prefix> [--name <name>] [--seconds <n>]
+//   swbfo_probe <address:port> --bake <prefix> [--name <name>] [--seconds <n>]
 //
 // --bake is the terrain the server's first planet runs on (e.g.
 // game/imported_assets/terrain/tatooine): the client predicts its movement
@@ -16,16 +16,16 @@
 #include <string>
 #include <thread>
 
-#include "swm/core/client.h"
-#include "swm/core/net/link.h"
-#include "swm/core/net/protocol.h"
-#include "swm/core/net/udp.h"
-#include "swm/core/world.h"
+#include "swbfo/core/client.h"
+#include "swbfo/core/net/link.h"
+#include "swbfo/core/net/protocol.h"
+#include "swbfo/core/net/udp.h"
+#include "swbfo/core/world.h"
 
 namespace {
 
-const char* status_name(swm::core::GameClient::Status status) {
-    using S = swm::core::GameClient::Status;
+const char* status_name(swbfo::core::GameClient::Status status) {
+    using S = swbfo::core::GameClient::Status;
     switch (status) {
     case S::connecting: return "connecting";
     case S::connected: return "connected";
@@ -38,7 +38,7 @@ const char* status_name(swm::core::GameClient::Status status) {
 }
 
 int usage() {
-    std::cerr << "usage: swm_probe <address:port> --bake <prefix> [--name <name>] [--seconds <n>]\n";
+    std::cerr << "usage: swbfo_probe <address:port> --bake <prefix> [--name <name>] [--seconds <n>]\n";
     return 2;
 }
 
@@ -48,7 +48,7 @@ int main(int argc, char** argv) {
     if (argc < 2) {
         return usage();
     }
-    const auto server = swm::core::net::parse_endpoint(argv[1]);
+    const auto server = swbfo::core::net::parse_endpoint(argv[1]);
     if (!server) {
         return usage();
     }
@@ -72,14 +72,14 @@ int main(int argc, char** argv) {
     }
 
     try {
-        const auto world = swm::core::load_world(bake);
-        swm::core::net::UdpLink link;
-        swm::core::ClientConfig config;
+        const auto world = swbfo::core::load_world(bake);
+        swbfo::core::net::UdpLink link;
+        swbfo::core::ClientConfig config;
         config.server = *server;
         config.name = name;
-        swm::core::GameClient client(link, *world, config);
+        swbfo::core::GameClient client(link, *world, config);
 
-        std::cout << std::format("swm_probe: protocol {}, joining {} as {}\n", swm::core::net::protocol_version,
+        std::cout << std::format("swbfo_probe: protocol {}, joining {} as {}\n", swbfo::core::net::protocol_version,
                                  server->to_string(), name);
         const auto start = std::chrono::steady_clock::now();
         auto elapsed = [&] { return std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count(); };
@@ -88,13 +88,13 @@ int main(int argc, char** argv) {
             client.set_input({});
             client.update(elapsed());
             const auto status = client.status();
-            if (status == swm::core::GameClient::Status::connected && !reported) {
+            if (status == swbfo::core::GameClient::Status::connected && !reported) {
                 std::cout << std::format("[{:5.2f}] connected: entity {}, character {}, {} Hz\n", elapsed(),
                                          client.entity_id(), client.character_id(), client.tick_rate());
                 reported = true;
             }
-            if (status == swm::core::GameClient::Status::refused || status == swm::core::GameClient::Status::timed_out ||
-                status == swm::core::GameClient::Status::disconnected) {
+            if (status == swbfo::core::GameClient::Status::refused || status == swbfo::core::GameClient::Status::timed_out ||
+                status == swbfo::core::GameClient::Status::disconnected) {
                 break;
             }
             std::this_thread::sleep_for(std::chrono::milliseconds(5));
@@ -112,7 +112,7 @@ int main(int argc, char** argv) {
         }
         return ok ? 0 : 1;
     } catch (const std::exception& e) {
-        std::cerr << "swm_probe: " << e.what() << "\n";
+        std::cerr << "swbfo_probe: " << e.what() << "\n";
         return 1;
     }
 }

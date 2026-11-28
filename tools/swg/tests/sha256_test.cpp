@@ -3,7 +3,7 @@
 
 #include "swg/sha256.h"
 
-using swm::swg::Sha256;
+using swbfo::swg::Sha256;
 
 namespace {
 

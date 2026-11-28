@@ -10,9 +10,9 @@ FetchContent_MakeAvailable(zlib)
 
 # zlib 1.3.1 doesn't attach its include directories to its targets.
 target_include_directories(zlibstatic INTERFACE ${zlib_BINARY_DIR} ${zlib_SOURCE_DIR})
-add_library(swm::zlib ALIAS zlibstatic)
+add_library(swbfo::zlib ALIAS zlibstatic)
 
-if(SWM_BUILD_GODOT)
+if(SWBFO_BUILD_GODOT)
   # Must match the engine build: Godot 4.7, double precision (see docs/ARCHITECTURE.md).
   # godot-cpp's bundled API files come from single-precision engines, so we use
   # one dumped from our own editor build: godot --dump-extension-api
@@ -42,13 +42,13 @@ FetchContent_Declare(sqlite
   DOWNLOAD_EXTRACT_TIMESTAMP TRUE
   EXCLUDE_FROM_ALL)
 FetchContent_MakeAvailable(sqlite)
-add_library(swm_sqlite3 STATIC ${sqlite_SOURCE_DIR}/sqlite3.c)
-target_include_directories(swm_sqlite3 SYSTEM PUBLIC ${sqlite_SOURCE_DIR})
+add_library(swbfo_sqlite3 STATIC ${sqlite_SOURCE_DIR}/sqlite3.c)
+target_include_directories(swbfo_sqlite3 SYSTEM PUBLIC ${sqlite_SOURCE_DIR})
 # Recommended options (sqlite.org/compile.html): no extension loading, no
 # double-quoted string literals, foreign keys on.
-target_compile_definitions(swm_sqlite3 PRIVATE
+target_compile_definitions(swbfo_sqlite3 PRIVATE
   SQLITE_DQS=0 SQLITE_OMIT_LOAD_EXTENSION SQLITE_OMIT_DEPRECATED SQLITE_DEFAULT_FOREIGN_KEYS=1)
-add_library(swm::sqlite3 ALIAS swm_sqlite3)
+add_library(swbfo::sqlite3 ALIAS swbfo_sqlite3)
 
 # nlohmann/json (MIT, header-only): the extractor's recipe and the launcher's
 # update manifests (docs/DISTRIBUTION.md).
@@ -69,8 +69,8 @@ FetchContent_Declare(unshield
   SOURCE_SUBDIR do-not-add
   EXCLUDE_FROM_ALL)
 FetchContent_MakeAvailable(unshield)
-set(SWM_UNSHIELD_CONFIG "${CMAKE_CURRENT_BINARY_DIR}/unshield_config")
-file(WRITE "${SWM_UNSHIELD_CONFIG}/lib/unshield_config.h" [=[
+set(SWBFO_UNSHIELD_CONFIG "${CMAKE_CURRENT_BINARY_DIR}/unshield_config")
+file(WRITE "${SWBFO_UNSHIELD_CONFIG}/lib/unshield_config.h" [=[
 #define HAVE_INTTYPES_H 1
 #define HAVE_MEMORY_H 1
 #define HAVE_STDBOOL_H 1
@@ -90,23 +90,23 @@ file(WRITE "${SWM_UNSHIELD_CONFIG}/lib/unshield_config.h" [=[
 #define USE_OUR_OWN_MD5 1
 #define VERSION "1.6.2"
 ]=])
-set(SWM_UNSHIELD_LIB "${unshield_SOURCE_DIR}/lib")
-add_library(swm_unshield STATIC
-  ${SWM_UNSHIELD_LIB}/component.c ${SWM_UNSHIELD_LIB}/converter.c ${SWM_UNSHIELD_LIB}/directory.c
-  ${SWM_UNSHIELD_LIB}/file.c ${SWM_UNSHIELD_LIB}/file_group.c ${SWM_UNSHIELD_LIB}/helper.c
-  ${SWM_UNSHIELD_LIB}/libunshield.c ${SWM_UNSHIELD_LIB}/log.c ${SWM_UNSHIELD_LIB}/md5/md5c.c)
-target_include_directories(swm_unshield SYSTEM PUBLIC ${SWM_UNSHIELD_LIB})
-target_include_directories(swm_unshield PRIVATE ${SWM_UNSHIELD_CONFIG} ${unshield_SOURCE_DIR})
+set(SWBFO_UNSHIELD_LIB "${unshield_SOURCE_DIR}/lib")
+add_library(swbfo_unshield STATIC
+  ${SWBFO_UNSHIELD_LIB}/component.c ${SWBFO_UNSHIELD_LIB}/converter.c ${SWBFO_UNSHIELD_LIB}/directory.c
+  ${SWBFO_UNSHIELD_LIB}/file.c ${SWBFO_UNSHIELD_LIB}/file_group.c ${SWBFO_UNSHIELD_LIB}/helper.c
+  ${SWBFO_UNSHIELD_LIB}/libunshield.c ${SWBFO_UNSHIELD_LIB}/log.c ${SWBFO_UNSHIELD_LIB}/md5/md5c.c)
+target_include_directories(swbfo_unshield SYSTEM PUBLIC ${SWBFO_UNSHIELD_LIB})
+target_include_directories(swbfo_unshield PRIVATE ${SWBFO_UNSHIELD_CONFIG} ${unshield_SOURCE_DIR})
 if(MSVC)
-  target_include_directories(swm_unshield PRIVATE ${unshield_SOURCE_DIR}/win32_msvc)
-  target_compile_options(swm_unshield PRIVATE /W0)
-  target_compile_definitions(swm_unshield PRIVATE _CRT_SECURE_NO_WARNINGS _CRT_NONSTDC_NO_WARNINGS)
+  target_include_directories(swbfo_unshield PRIVATE ${unshield_SOURCE_DIR}/win32_msvc)
+  target_compile_options(swbfo_unshield PRIVATE /W0)
+  target_compile_definitions(swbfo_unshield PRIVATE _CRT_SECURE_NO_WARNINGS _CRT_NONSTDC_NO_WARNINGS)
 endif()
 # PROTOTYPES: its RSA md5 code otherwise declares functions with empty
 # parameter lists, which C23 (GCC 15's default) reads as taking none.
-target_compile_definitions(swm_unshield PRIVATE HAVE_CONFIG_H PROTOTYPES=1)
-target_link_libraries(swm_unshield PUBLIC swm::zlib)
-add_library(swm::unshield ALIAS swm_unshield)
+target_compile_definitions(swbfo_unshield PRIVATE HAVE_CONFIG_H PROTOTYPES=1)
+target_link_libraries(swbfo_unshield PUBLIC swbfo::zlib)
+add_library(swbfo::unshield ALIAS swbfo_unshield)
 
 # Monocypher 4.0.2 (CC0 / BSD-2): Ed25519 signatures on update manifests.
 FetchContent_Declare(monocypher
@@ -116,10 +116,10 @@ FetchContent_Declare(monocypher
   SOURCE_SUBDIR do-not-add
   EXCLUDE_FROM_ALL)
 FetchContent_MakeAvailable(monocypher)
-add_library(swm_monocypher STATIC
+add_library(swbfo_monocypher STATIC
   ${monocypher_SOURCE_DIR}/src/monocypher.c ${monocypher_SOURCE_DIR}/src/optional/monocypher-ed25519.c)
-target_include_directories(swm_monocypher SYSTEM PUBLIC ${monocypher_SOURCE_DIR}/src ${monocypher_SOURCE_DIR}/src/optional)
-add_library(swm::monocypher ALIAS swm_monocypher)
+target_include_directories(swbfo_monocypher SYSTEM PUBLIC ${monocypher_SOURCE_DIR}/src ${monocypher_SOURCE_DIR}/src/optional)
+add_library(swbfo::monocypher ALIAS swbfo_monocypher)
 
 # Dear ImGui 1.91.5 (MIT): the launcher's UI, on Win32 + Direct3D 11.
 if(WIN32)
@@ -130,11 +130,11 @@ if(WIN32)
     SOURCE_SUBDIR do-not-add
     EXCLUDE_FROM_ALL)
   FetchContent_MakeAvailable(imgui)
-  add_library(swm_imgui STATIC
+  add_library(swbfo_imgui STATIC
     ${imgui_SOURCE_DIR}/imgui.cpp ${imgui_SOURCE_DIR}/imgui_draw.cpp ${imgui_SOURCE_DIR}/imgui_tables.cpp
     ${imgui_SOURCE_DIR}/imgui_widgets.cpp
     ${imgui_SOURCE_DIR}/backends/imgui_impl_win32.cpp ${imgui_SOURCE_DIR}/backends/imgui_impl_dx11.cpp)
-  target_include_directories(swm_imgui SYSTEM PUBLIC ${imgui_SOURCE_DIR} ${imgui_SOURCE_DIR}/backends)
-  target_link_libraries(swm_imgui PUBLIC d3d11 d3dcompiler dxgi)
-  add_library(swm::imgui ALIAS swm_imgui)
+  target_include_directories(swbfo_imgui SYSTEM PUBLIC ${imgui_SOURCE_DIR} ${imgui_SOURCE_DIR}/backends)
+  target_link_libraries(swbfo_imgui PUBLIC d3d11 d3dcompiler dxgi)
+  add_library(swbfo::imgui ALIAS swbfo_imgui)
 endif()

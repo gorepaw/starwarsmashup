@@ -1,13 +1,13 @@
-#include "swm/core/combat.h"
+#include "swbfo/core/combat.h"
 
 #include <algorithm>
 #include <cmath>
 #include <numbers>
 #include <string_view>
 
-#include "swm/core/world.h"
+#include "swbfo/core/world.h"
 
-namespace swm::core {
+namespace swbfo::core {
 
 namespace {
 
@@ -709,4 +709,4 @@ bool hit_effect_lands(const WeaponDef& weapon, double roll) {
     return weapon.hit_effect && weapon.hit_effect->duration > 0 && roll < weapon.hit_effect->chance;
 }
 
-} // namespace swm::core
+} // namespace swbfo::core

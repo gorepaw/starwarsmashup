@@ -8,7 +8,7 @@ Goal: prove the project is technically viable. If all five spikes work, everythi
 - [x] Build godot-cpp with matching precision: 10.0.0-stable, bindings from our editor's API dump
 - [x] Root CMake project with presets, zlib via FetchContent, tests via CTest
 - [x] Add `core/` (static lib, no Godot) and `godot/` (GDExtension DLL)
-- [x] "Hello world" GDExtension class (`SwmInfo`) that calls into `core/`; headless smoke test passes
+- [x] "Hello world" GDExtension class (`SwbfoInfo`) that calls into `core/`; headless smoke test passes
 - [x] Unit test target for `core/`
 - [ ] Confirm hot reload works on Windows (needs a manual check in the editor)
 
@@ -60,16 +60,16 @@ Provisional decisions:
 
 ## 4. Networked controller
 
-- [x] Third-person controller in C++: movement in `core/` (`simulate_move`: run, sprint, strafe, jump, slope limit, ledges) on the baked terrain heights (`core::Heightfield`, the same triangles the terrain mesh draws). `godot/` exposes it as `SwmClient`/`SwmServer`; drawing, camera and key input are a GDScript dev tool for now (`game/tools/net_demo.gd`).
+- [x] Third-person controller in C++: movement in `core/` (`simulate_move`: run, sprint, strafe, jump, slope limit, ledges) on the baked terrain heights (`core::Heightfield`, the same triangles the terrain mesh draws). `godot/` exposes it as `SwbfoClient`/`SwbfoServer`; drawing, camera and key input are a GDScript dev tool for now (`game/tools/net_demo.gd`).
 - [x] Server-authoritative movement with client prediction and reconciliation (`core::GameServer`, `core::GameClient`, protocol version 1 over UDP):
   - Clients send inputs only, each tick, repeating the ones not yet acknowledged, so lost packets cost nothing. The server simulates every character from its inputs and sends a snapshot every tick (30 Hz).
   - The client predicts its own character with the same code and replays unacknowledged inputs on each snapshot. Because the server only advances a character when its input arrives, predictions match exactly: no corrections at 200 ms round trip with jitter and 10% loss. Server-side moves (e.g. a teleport) are corrected and eased in.
   - Other characters are drawn 100 ms in the past, interpolated between snapshots.
   - `core/tests/net_test.cpp` runs a server and two clients over a simulated laggy, lossy network.
-- [x] Two local clients that see each other on the Tatooine terrain: the standalone `swm_server` (core only, no Godot) plus two `net_demo.gd` windows, or one window hosting with `--host`. Playable with WASD, mouse, Shift and Space; `--bot circle|chase` drives a client for automated runs.
+- [x] Two local clients that see each other on the Tatooine terrain: the standalone `swbfo_server` (core only, no Godot) plus two `net_demo.gd` windows, or one window hosting with `--host`. Playable with WASD, mouse, Shift and Space; `--bot circle|chase` drives a client for automated runs.
 
   ```powershell
-  build\msvc\server\Release\swm_server.exe --bake game\imported_assets\terrain\tatooine_mos_eisley
+  build\msvc\server\Release\swbfo_server.exe --bake game\imported_assets\terrain\tatooine_mos_eisley
   godot --path game --script res://tools/net_demo.gd -- imported_assets/terrain/tatooine_mos_eisley imported_assets/characters/stormtrooper/stormtrooper.gltf
   ```
 
@@ -81,12 +81,12 @@ Provisional decisions:
 
 ## 5. Persistence
 
-- [x] Persistence interface in `core/` (`CharacterStore`, `swm/core/persistence.h`), with an in-memory implementation for tests. Game code never touches a database.
-- [x] SQLite implementation (`SqliteCharacterStore`, in its own `swm_sqlite_store` library so `core/` doesn't depend on SQLite). SQLite 3.54.1 is fetched at configure time and checked against its published SHA3-256. WAL mode, a versioned schema (`PRAGMA user_version`; a database from a newer build is refused), and atomic batch saves.
+- [x] Persistence interface in `core/` (`CharacterStore`, `swbfo/core/persistence.h`), with an in-memory implementation for tests. Game code never touches a database.
+- [x] SQLite implementation (`SqliteCharacterStore`, in its own `swbfo_sqlite_store` library so `core/` doesn't depend on SQLite). SQLite 3.54.1 is fetched at configure time and checked against its published SHA3-256. WAL mode, a versioned schema (`PRAGMA user_version`; a database from a newer build is refused), and atomic batch saves.
 - [x] Save and load a character's position across restarts using a persistent 64-bit ID:
   - The server loads a joining player's character by name (the stand-in for an account until there are accounts), or creates it with a new id. The id is never reused and travels to the client in the handshake (protocol version 2).
   - Characters are saved when they leave or time out, every 10 s, and when the server stops (`--seconds` or Ctrl+C). A second login with a name already playing is refused.
-  - Checked with real processes: `swm_server --db world.sqlite` stopped while a client was running, saving it at (3527.85, -4797.21). After a restart the same name came back as character 1 at exactly (3527.85, -4797.21). `core/tests/persistence_test.cpp` covers the same restart in-process, plus a crash (no shutdown save) recovered from the periodic save.
+  - Checked with real processes: `swbfo_server --db world.sqlite` stopped while a client was running, saving it at (3527.85, -4797.21). After a restart the same name came back as character 1 at exactly (3527.85, -4797.21). `core/tests/persistence_test.cpp` covers the same restart in-process, plus a crash (no shutdown save) recovered from the periodic save.
 
 Provisional decisions:
 - Saves are synchronous on the server thread. Fine for a handful of characters; a save queue on its own thread comes with more state to save.
@@ -100,7 +100,7 @@ A Galaxies character, lit and holding a Galaxies blaster, runs with Battlefront 
 
 ```powershell
 # Server: terrain, the cantina where the world snapshot places it, saved characters.
-build\msvc\server\Release\swm_server.exe --bake game\imported_assets\terrain\tatooine_mos_eisley --db world.sqlite `
+build\msvc\server\Release\swbfo_server.exe --bake game\imported_assets\terrain\tatooine_mos_eisley --db world.sqlite `
   --spawn 3468.37 -4856.27 --building game\imported_assets\buildings\thm_tato_cantina\thm_tato_cantina.collision 3432.35 5.00 -4818.13 38.09
 # Each client (WASD and mouse; or --bot route --route <points printed by walk_building.gd>):
 godot --path game --script res://tools/net_demo.gd -- imported_assets/terrain/tatooine_mos_eisley `

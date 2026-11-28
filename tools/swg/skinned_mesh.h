@@ -9,7 +9,7 @@
 
 #include "common/math.h"
 
-namespace swm::swg {
+namespace swbfo::swg {
 
 // A skinned mesh generator (.mgn, SKMG 0004). Positions and normals are shared
 // tables; each shader part indexes into them per vertex.
@@ -60,4 +60,4 @@ struct SkinnedMesh {
 // Throws std::runtime_error on unsupported or malformed data.
 SkinnedMesh parse_skinned_mesh(std::span<const uint8_t> bytes);
 
-} // namespace swm::swg
+} // namespace swbfo::swg

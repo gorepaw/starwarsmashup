@@ -1,4 +1,4 @@
-#include "swm/core/hub.h"
+#include "swbfo/core/hub.h"
 
 #include <algorithm>
 #include <cctype>
@@ -9,11 +9,11 @@
 #include <sstream>
 #include <stdexcept>
 
-#include "swm/core/ini.h"
-#include "swm/core/net/udp.h"
-#include "swm/core/world.h"
+#include "swbfo/core/ini.h"
+#include "swbfo/core/net/udp.h"
+#include "swbfo/core/world.h"
 
-namespace swm::core {
+namespace swbfo::core {
 
 namespace {
 
@@ -1355,4 +1355,4 @@ void Hub::set_bot_skill(BotSkill skill) {
     }
 }
 
-} // namespace swm::core
+} // namespace swbfo::core

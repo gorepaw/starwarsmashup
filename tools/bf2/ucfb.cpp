@@ -4,7 +4,7 @@
 #include <cstring>
 #include <stdexcept>
 
-namespace swm::bf2 {
+namespace swbfo::bf2 {
 namespace {
 
 constexpr size_t chunk_header_size = 8;
@@ -121,4 +121,4 @@ UcfbNode parse_ucfb(std::span<const uint8_t> bytes) {
     return root;
 }
 
-} // namespace swm::bf2
+} // namespace swbfo::bf2

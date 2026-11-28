@@ -22,7 +22,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Configure
-        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DSWM_BUILD_GODOT=OFF
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DSWBFO_BUILD_GODOT=OFF
       - name: Build
         run: cmake --build build -j "$(nproc)"
       - name: Test

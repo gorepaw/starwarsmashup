@@ -8,7 +8,7 @@
 
 #include "common/math.h"
 
-namespace swm::swg {
+namespace swbfo::swg {
 
 struct Hardpoint {
     std::string name;
@@ -36,4 +36,4 @@ StaticMesh parse_static_mesh(std::span<const uint8_t> bytes);
 // "appearance/" directory as stored (e.g. "mesh/foo_l0.msh").
 std::string lod_highest_detail(std::span<const uint8_t> bytes);
 
-} // namespace swm::swg
+} // namespace swbfo::swg

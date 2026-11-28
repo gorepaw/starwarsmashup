@@ -3,7 +3,7 @@
 #include <array>
 #include <cmath>
 
-namespace swm {
+namespace swbfo {
 
 struct Vec3 {
     float x = 0, y = 0, z = 0;
@@ -151,4 +151,4 @@ inline Mat4 to_gltf(const Mat4& m) {
     return r;
 }
 
-} // namespace swm
+} // namespace swbfo

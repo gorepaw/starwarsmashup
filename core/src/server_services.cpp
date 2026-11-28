@@ -7,9 +7,9 @@
 #include <format>
 #include <sstream>
 
-#include "swm/core/server.h"
+#include "swbfo/core/server.h"
 
-namespace swm::core {
+namespace swbfo::core {
 
 namespace {
 
@@ -457,4 +457,4 @@ void GameServer::handle_service_request(Client& client, const net::ServiceReques
     }
 }
 
-} // namespace swm::core
+} // namespace swbfo::core

@@ -1,4 +1,4 @@
-#include "swm/core/nav.h"
+#include "swbfo/core/nav.h"
 
 #include <algorithm>
 #include <array>
@@ -9,9 +9,9 @@
 #include <unordered_map>
 #include <utility>
 
-#include "swm/core/world.h"
+#include "swbfo/core/world.h"
 
-namespace swm::core {
+namespace swbfo::core {
 
 // A tile's cells, rows along +Z, and their surfaces: cell i's are
 // [first[i], first[i + 1]), top down. Then the search scratch space for the
@@ -894,4 +894,4 @@ std::vector<Vec3> NavGrid::route(Vec3 from, Vec3 to, bool* shut_in) const {
     return path;
 }
 
-} // namespace swm::core
+} // namespace swbfo::core

@@ -10,7 +10,7 @@
 #include "swg/image.h"
 #include "swg/manifest.h"
 
-namespace swm::swg {
+namespace swbfo::swg {
 
 namespace {
 
@@ -270,4 +270,4 @@ StaticMesh load_static_appearance(TreLibrary& library, const std::string& path) 
     return load_appearance(library, normalize_path(path), 0);
 }
 
-} // namespace swm::swg
+} // namespace swbfo::swg

@@ -1,9 +1,9 @@
-// swm_sign: the release signing key and manifest signatures (docs/DISTRIBUTION.md).
+// swbfo_sign: the release signing key and manifest signatures (docs/DISTRIBUTION.md).
 //
-//   swm_sign keygen <secret.key> <release_key.h>   a new key pair: the secret (hex) stays outside
+//   swbfo_sign keygen <secret.key> <release_key.h>   a new key pair: the secret (hex) stays outside
 //                                                  the repo; the header holds the public key
-//   swm_sign sign <secret.key> <file>              writes <file>.sig (hex Ed25519 signature)
-//   swm_sign verify <file>                         checks <file>.sig against the built-in public key
+//   swbfo_sign sign <secret.key> <file>              writes <file>.sig (hex Ed25519 signature)
+//   swbfo_sign verify <file>                         checks <file>.sig against the built-in public key
 
 #include <cstdio>
 #include <filesystem>
@@ -16,7 +16,7 @@
 #include "update.h"
 
 namespace fs = std::filesystem;
-using namespace swm::launcher;
+using namespace swbfo::launcher;
 
 namespace {
 
@@ -51,13 +51,13 @@ int keygen(const fs::path& secret_file, const fs::path& header) {
     std::ofstream(secret_file, std::ios::binary) << to_hex(secret.data(), secret.size()) << "\n";
     std::ofstream h(header, std::ios::binary);
     h << "#pragma once\n\n#include <array>\n#include <cstdint>\n\n"
-         "// The release signing key's public half (swm_sign keygen). Launchers only\n"
+         "// The release signing key's public half (swbfo_sign keygen). Launchers only\n"
          "// install updates whose manifest it signed. The secret half never enters the repo.\n"
-         "namespace swm::launcher {\n\ninline constexpr std::array<uint8_t, 32> release_public_key = {";
+         "namespace swbfo::launcher {\n\ninline constexpr std::array<uint8_t, 32> release_public_key = {";
     for (size_t i = 0; i < pub.size(); ++i) {
         h << (i % 8 == 0 ? "\n    " : " ") << "0x" << to_hex(&pub[i], 1) << ",";
     }
-    h << "\n};\n\n} // namespace swm::launcher\n";
+    h << "\n};\n\n} // namespace swbfo::launcher\n";
     std::cout << "public key " << to_hex(pub.data(), pub.size()) << "\nsecret key in " << secret_file.string()
               << " (back it up; never commit it)\n";
     return 0;
@@ -101,7 +101,7 @@ int main(int argc, char** argv) {
         std::cerr << "error: " << e.what() << "\n";
         return 1;
     }
-    std::cerr << "usage:\n  swm_sign keygen <secret.key> <release_key.h>\n  swm_sign sign <secret.key> <file>\n"
-                 "  swm_sign verify <file>\n";
+    std::cerr << "usage:\n  swbfo_sign keygen <secret.key> <release_key.h>\n  swbfo_sign sign <secret.key> <file>\n"
+                 "  swbfo_sign verify <file>\n";
     return 2;
 }

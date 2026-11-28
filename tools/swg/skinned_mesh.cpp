@@ -5,7 +5,7 @@
 #include "swg/iff.h"
 #include "swg/manifest.h"
 
-namespace swm::swg {
+namespace swbfo::swg {
 namespace {
 
 std::vector<Vec3> read_vec3s(std::span<const uint8_t> data) {
@@ -229,4 +229,4 @@ SkinnedMesh parse_skinned_mesh(std::span<const uint8_t> bytes) {
     return mesh;
 }
 
-} // namespace swm::swg
+} // namespace swbfo::swg

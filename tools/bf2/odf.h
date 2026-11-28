@@ -9,7 +9,7 @@
 
 #include "bf2/ucfb.h"
 
-namespace swm::bf2 {
+namespace swbfo::bf2 {
 
 // A munged ODF: an entity, ordnance, weapon or explosion class (chunks
 // entc/ordc/wpnc/expc). TYPE is the class name, BASE its parent class or
@@ -51,4 +51,4 @@ uint32_t odf_hash(std::string_view name);
 // list of properties documented for Battlefront II's mod tools.
 std::string_view odf_property_name(uint32_t hash);
 
-} // namespace swm::bf2
+} // namespace swbfo::bf2

@@ -5,7 +5,7 @@
 #include <cmath>
 #include <cstdio>
 
-namespace swm::test {
+namespace swbfo::test {
 
 inline int failures = 0;
 
@@ -20,12 +20,12 @@ inline int finish(const char* name) {
     return failures == 0 ? 0 : 1;
 }
 
-} // namespace swm::test
+} // namespace swbfo::test
 
 #define CHECK(cond)                                                    \
     do {                                                               \
         if (!(cond)) {                                                 \
             std::printf("FAIL %s:%d: %s\n", __FILE__, __LINE__, #cond); \
-            ++swm::test::failures;                                     \
+            ++swbfo::test::failures;                                     \
         }                                                              \
     } while (0)

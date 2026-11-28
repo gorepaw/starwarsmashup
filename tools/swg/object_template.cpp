@@ -6,7 +6,7 @@
 #include "swg/iff.h"
 #include "swg/manifest.h"
 
-namespace swm::swg {
+namespace swbfo::swg {
 
 namespace {
 
@@ -134,4 +134,4 @@ std::vector<std::string> client_data_wearables(std::span<const uint8_t> bytes) {
     return wearables;
 }
 
-} // namespace swm::swg
+} // namespace swbfo::swg

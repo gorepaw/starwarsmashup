@@ -6,7 +6,7 @@
 # while the chest keeps facing the aim, as in Battlefront.
 #
 #   var soldier := Soldier.new(model)     # the glTF scene, already in the tree
-#   soldier.pose(state, delta)            # each frame; state from SwmClient
+#   soldier.pose(state, delta)            # each frame; state from SwbfoClient
 #   soldier.fire() / throw() / flinch()   # on its shots and hits
 #   soldier.throw("placed") / throw("utility", model)  # a mine set down low; a tactical pistol drawn and fired
 #   soldier.muzzle()                      # where its bolts leave the barrel
@@ -541,7 +541,7 @@ func _upper_body_paths() -> Array[NodePath]:
 	return out
 
 
-# state: position, velocity, yaw, pitch, alive, reloading (SwmClient).
+# state: position, velocity, yaw, pitch, alive, reloading (SwbfoClient).
 func pose(state: Dictionary, delta: float) -> void:
 	var alive := bool(state.get("alive", true))
 	if alive != _alive:

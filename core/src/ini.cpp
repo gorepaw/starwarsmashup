@@ -1,4 +1,4 @@
-#include "swm/core/ini.h"
+#include "swbfo/core/ini.h"
 
 #include <algorithm>
 #include <cctype>
@@ -7,7 +7,7 @@
 #include <iterator>
 #include <stdexcept>
 
-namespace swm::core {
+namespace swbfo::core {
 
 namespace {
 
@@ -95,4 +95,4 @@ const Ini::Section* Ini::section(std::string_view name) const {
     return nullptr;
 }
 
-} // namespace swm::core
+} // namespace swbfo::core

@@ -9,8 +9,8 @@
 #include "bf2/animation.h"
 #include "bf2/hash.h"
 
-using namespace swm;
-using namespace swm::bf2;
+using namespace swbfo;
+using namespace swbfo::bf2;
 
 namespace {
 

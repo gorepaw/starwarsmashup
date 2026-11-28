@@ -8,7 +8,7 @@
 #include <string_view>
 #include <vector>
 
-namespace swm::swg {
+namespace swbfo::swg {
 
 // One file inside one archive. The same path can appear in several archives
 // (later patches override earlier ones), so a manifest keeps every copy.
@@ -57,4 +57,4 @@ void write_manifest(const Manifest& manifest, std::ostream& out);
 // Throws std::runtime_error on malformed input.
 Manifest read_manifest(std::istream& in);
 
-} // namespace swm::swg
+} // namespace swbfo::swg

@@ -1,13 +1,13 @@
-#include "swm/core/movement.h"
+#include "swbfo/core/movement.h"
 
 #include <algorithm>
 #include <cmath>
 #include <numbers>
 #include <optional>
 
-#include "swm/core/world.h"
+#include "swbfo/core/world.h"
 
-namespace swm::core {
+namespace swbfo::core {
 
 int8_t quantize_axis(double value) {
     return int8_t(std::lround(std::clamp(value, -1.0, 1.0) * 127));
@@ -230,4 +230,4 @@ MoveState simulate_move(const MoveState& state, const MoveInput& input, const Wo
     return next;
 }
 
-} // namespace swm::core
+} // namespace swbfo::core

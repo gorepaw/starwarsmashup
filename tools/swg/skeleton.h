@@ -8,7 +8,7 @@
 
 #include "common/math.h"
 
-namespace swm::swg {
+namespace swbfo::swg {
 
 struct Joint {
     std::string name;
@@ -42,4 +42,4 @@ struct Skeleton {
 // rotations in bind's place, the human walks, runs and sits as it should.
 Skeleton parse_skeleton(std::span<const uint8_t> bytes);
 
-} // namespace swm::swg
+} // namespace swbfo::swg

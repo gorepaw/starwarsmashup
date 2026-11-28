@@ -9,7 +9,7 @@
 
 #include "swg/tre_archive.h"
 
-namespace swm::swg {
+namespace swbfo::swg {
 
 // Every .tre file under `dir`, recursively, sorted.
 std::vector<std::filesystem::path> find_tre_archives(const std::filesystem::path& dir);
@@ -29,4 +29,4 @@ struct TreVisitResult {
 TreVisitResult visit_tre_archives(const std::vector<std::filesystem::path>& archives,
                                   const std::filesystem::path& base_dir, std::ostream& log, const TreVisitor& visitor);
 
-} // namespace swm::swg
+} // namespace swbfo::swg

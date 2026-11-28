@@ -1,17 +1,17 @@
-#include "swm/core/items.h"
-#include "swm/core/combat.h"
-#include "swm/core/persistence.h"
+#include "swbfo/core/items.h"
+#include "swbfo/core/combat.h"
+#include "swbfo/core/persistence.h"
 
 #include <filesystem>
 #include <fstream>
 
 #include "test.h"
 
-using namespace swm::core;
-using swm::test::near;
+using namespace swbfo::core;
+using swbfo::test::near;
 
 int main() {
-    const std::filesystem::path ini_path = "swm_items_test_catalog.ini";
+    const std::filesystem::path ini_path = "swbfo_items_test_catalog.ini";
     {
         std::ofstream out(ini_path);
         out << "[item]\n"
@@ -175,7 +175,7 @@ int main() {
     static_assert(max_character_loadouts == 5);
 
     // Worn models: appearance overrides armor visually; a Wookiee's chest armor doesn't show
-    const std::filesystem::path worn_ini = "swm_worn_test_catalog.ini";
+    const std::filesystem::path worn_ini = "swbfo_worn_test_catalog.ini";
     {
         std::ofstream out(worn_ini);
         out << "[item]\nId = armor_stormtrooper_chest\nKind = armor\nSlot = chest\nModel = armor/stormtrooper/chest_{g}.gltf\n"
@@ -221,7 +221,7 @@ int main() {
     CHECK(reputation_tier(42000) == RepTier::exalted);
 
     // Unified ammo: caps (999 standard / 99 heavy) and horizontal sidegrades
-    const std::filesystem::path ammo_ini = "swm_ammo_test_catalog.ini";
+    const std::filesystem::path ammo_ini = "swbfo_ammo_test_catalog.ini";
     {
         std::ofstream out(ammo_ini);
         out << "[item]\nId = r1\nKind = weapon\nArchetype = rifle_auto\nSlot = primary\n"
@@ -550,5 +550,5 @@ int main() {
         CHECK(w2.projectile == Projectile::melee && lance && lance->anim_set == "melee_2h");
     }
 
-    return swm::test::finish("items_test");
+    return swbfo::test::finish("items_test");
 }

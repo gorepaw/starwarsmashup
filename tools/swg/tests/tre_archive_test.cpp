@@ -14,7 +14,7 @@
 #include "swg/tre_archive.h"
 #include "swg/tre_library.h"
 
-using namespace swm::swg;
+using namespace swbfo::swg;
 
 namespace {
 
@@ -102,7 +102,7 @@ void test_round_trip(const char* version, bool compress_tables) {
         {"texture/test_zlib.dds", bytes_of(std::string(5000, 'x') + "end"), true},
         {"misc/empty.iff", {}, false},
     };
-    const auto path = std::filesystem::temp_directory_path() / "swm_tre_archive_test.tre";
+    const auto path = std::filesystem::temp_directory_path() / "swbfo_tre_archive_test.tre";
     write_tre(path, version, files, compress_tables);
 
     {
@@ -118,7 +118,7 @@ void test_round_trip(const char* version, bool compress_tables) {
 }
 
 void test_rejects_non_tre() {
-    const auto path = std::filesystem::temp_directory_path() / "swm_tre_archive_test_bad.tre";
+    const auto path = std::filesystem::temp_directory_path() / "swbfo_tre_archive_test_bad.tre";
     std::ofstream(path, std::ios::binary) << "this is not a tre archive at all, just text padding....";
     bool threw = false;
     try {
@@ -133,7 +133,7 @@ void test_rejects_non_tre() {
 // A .sources file: only the copy the reference loads (its highest-priority
 // archive's), byte for byte, from whichever source has it.
 void test_sources_use_only_reference_copies() {
-    const auto root = std::filesystem::temp_directory_path() / "swm_tre_sources_test";
+    const auto root = std::filesystem::temp_directory_path() / "swbfo_tre_sources_test";
     std::filesystem::remove_all(root);
     std::filesystem::create_directories(root / "emu");
     std::filesystem::create_directories(root / "disc");

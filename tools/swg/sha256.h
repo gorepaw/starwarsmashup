@@ -5,7 +5,7 @@
 #include <cstdint>
 #include <string>
 
-namespace swm::swg {
+namespace swbfo::swg {
 
 // Streaming SHA-256 (FIPS 180-4).
 class Sha256 {
@@ -29,4 +29,4 @@ private:
     uint64_t total_bytes_ = 0;
 };
 
-} // namespace swm::swg
+} // namespace swbfo::swg

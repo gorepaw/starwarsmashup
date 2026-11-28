@@ -15,7 +15,7 @@
 
 namespace fs = std::filesystem;
 
-namespace swm::extract {
+namespace swbfo::extract {
 
 const char* kind_name(SourceKind kind) {
     switch (kind) {
@@ -405,4 +405,4 @@ void write_sources_file(const fs::path& file, const fs::path& manifest, const st
     }
 }
 
-} // namespace swm::extract
+} // namespace swbfo::extract

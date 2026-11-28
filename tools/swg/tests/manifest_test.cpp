@@ -4,7 +4,7 @@
 
 #include "swg/manifest.h"
 
-using namespace swm::swg;
+using namespace swbfo::swg;
 
 namespace {
 

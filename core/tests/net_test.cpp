@@ -5,15 +5,15 @@
 #include <numbers>
 #include <optional>
 
-#include "swm/core/client.h"
-#include "swm/core/net/bytes.h"
-#include "swm/core/net/protocol.h"
-#include "swm/core/server.h"
+#include "swbfo/core/client.h"
+#include "swbfo/core/net/bytes.h"
+#include "swbfo/core/net/protocol.h"
+#include "swbfo/core/server.h"
 #include "test.h"
 
-using namespace swm::core;
-using namespace swm::core::net;
-using swm::test::near;
+using namespace swbfo::core;
+using namespace swbfo::core::net;
+using swbfo::test::near;
 
 namespace {
 
@@ -359,5 +359,5 @@ int main() {
     test_session();
     test_lost_welcome();
     test_species_persistence_and_replication();
-    return swm::test::finish("net_test");
+    return swbfo::test::finish("net_test");
 }

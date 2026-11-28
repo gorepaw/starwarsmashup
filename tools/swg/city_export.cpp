@@ -25,11 +25,11 @@
 #include "swg/particle_export.h"
 #include "swg/portal_layout.h"
 #include "swg/world_snapshot.h"
-#include "swm/core/heightfield.h"
-#include "swm/core/ini.h"
-#include "swm/core/world.h"
+#include "swbfo/core/heightfield.h"
+#include "swbfo/core/ini.h"
+#include "swbfo/core/world.h"
 
-namespace swm::swg {
+namespace swbfo::swg {
 
 namespace {
 
@@ -863,4 +863,4 @@ core::TerrainHoles room_terrain_holes(const std::vector<std::array<Vec3, 3>>& wa
     return holes;
 }
 
-} // namespace swm::swg
+} // namespace swbfo::swg

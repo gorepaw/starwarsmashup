@@ -1,10 +1,10 @@
 # Server Resource & Cost Audit (Stage 13)
 
-What the open-world server (`swm_server --hub`, or `SwmServer` inside Godot) costs to run, what Stage 13 changed, and what's left before public hosting. Measured on 2026-11-25 on the dev machine (Windows 11, Release build), on the full 16 × 16 km Tatooine bake with all seven towns exported.
+What the open-world server (`swbfo_server --hub`, or `SwbfoServer` inside Godot) costs to run, what Stage 13 changed, and what's left before public hosting. Measured on 2026-11-25 on the dev machine (Windows 11, Release build), on the full 16 × 16 km Tatooine bake with all seven towns exported.
 
 ## How to measure
 
-`swm_server` logs a perf line every 10 seconds (`GameServer::take_perf`, `core::ServerPerf`):
+`swbfo_server` logs a perf line every 10 seconds (`GameServer::take_perf`, `core::ServerPerf`):
 
 ```
 perf: tick 1.36 ms avg, 3.06 ms worst (4% of budget), npcs 78 simulated / 86 frozen per tick,
@@ -18,7 +18,7 @@ perf: tick 1.36 ms avg, 3.06 ms worst (4% of budget), npcs 78 simulated / 86 fro
 - **strings**: how often an entity carried its rarely changing strings.
 - **wildlife**: lairs and camps awake, and creatures/bandits asleep (out of the world).
 
-Load test: `swm_server --bake imported_assets/terrain/tatooine --hub hubs/mos_eisley.ini --catalog items/swg_catalog.ini --bf2-items imported_assets/items --bots 16` (run from `game/`). The bots are in-process clients, so process CPU includes them.
+Load test: `swbfo_server --bake imported_assets/terrain/tatooine --hub hubs/mos_eisley.ini --catalog items/swg_catalog.ini --bf2-items imported_assets/items --bots 16` (run from `game/`). The bots are in-process clients, so process CPU includes them.
 
 ## Results
 

@@ -6,7 +6,7 @@
 #include <string>
 #include <vector>
 
-namespace swm::swg {
+namespace swbfo::swg {
 
 // A texture renderer (.trt, BTRT 0001): a texture Galaxies composites at
 // runtime from layers, for a mesh part's shader (SkinnedMesh's
@@ -48,4 +48,4 @@ struct TextureRenderer {
 // Throws std::runtime_error on malformed or unsupported data.
 TextureRenderer parse_texture_renderer(std::span<const uint8_t> bytes);
 
-} // namespace swm::swg
+} // namespace swbfo::swg

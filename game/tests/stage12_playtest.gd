@@ -1,14 +1,14 @@
 # Stage 12 playtest in a hosted Mos Eisley session, in two runs on one
-# database (SWM_PHASE):
+# database (SWBFO_PHASE):
 #   create  a new character spawns in Mos Eisley, then leaves (the database
 #           is kept for seeding: professions, a datapad, a mount item).
 #   play    the seeded character (Creature Handler learned) fields a bantha and
 #           then an R2 unit (their models drawn), rides the bantha mount, and
-#           opens the datapad. Screenshots go to SWM_SHOTS (<path>NN.png).
+#           opens the datapad. Screenshots go to SWBFO_SHOTS (<path>NN.png).
 #
-#   SWM_PHASE=create <godot> --path game --script res://tests/stage12_playtest.gd
+#   SWBFO_PHASE=create <godot> --path game --script res://tests/stage12_playtest.gd
 #   (seed the database: professions, trained:<id>, datapad, mount_bantha)
-#   SWM_PHASE=play SWM_SHOTS=<dir>/s12_ <godot> --path game --script res://tests/stage12_playtest.gd
+#   SWBFO_PHASE=play SWBFO_SHOTS=<dir>/s12_ <godot> --path game --script res://tests/stage12_playtest.gd
 extends SceneTree
 
 const GameSession = preload("res://scenes/game_session.gd")
@@ -27,9 +27,9 @@ var _ride_from := Vector3.ZERO
 
 
 func _initialize() -> void:
-	_phase_name = OS.get_environment("SWM_PHASE")
-	_shots = OS.get_environment("SWM_SHOTS")
-	_db = OS.get_environment("SWM_DB")
+	_phase_name = OS.get_environment("SWBFO_PHASE")
+	_shots = OS.get_environment("SWBFO_SHOTS")
+	_db = OS.get_environment("SWBFO_DB")
 	if _db == "":
 		_db = ProjectSettings.globalize_path("res://stage12_playtest_temp.sqlite")
 	if _phase_name == "create":
@@ -230,7 +230,7 @@ func _quit(code: int, remove: bool) -> void:
 		_session.leave_session()
 		_session.queue_free()
 		_session = null
-	if remove and OS.get_environment("SWM_KEEP_DB") == "":
+	if remove and OS.get_environment("SWBFO_KEEP_DB") == "":
 		_remove_db()
 	quit(code)
 

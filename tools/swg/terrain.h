@@ -7,7 +7,7 @@
 #include <string>
 #include <vector>
 
-namespace swm::swg {
+namespace swbfo::swg {
 
 // SWG procedural terrain (.trn, PTAT 0014): a tree of layers. Each layer has
 // boundaries (where it applies, with feathered edges), filters (conditions on
@@ -206,4 +206,4 @@ TerrainGrid bake_terrain(const ProceduralTerrain& terrain, double center_x, doub
 // order, with the layer's amount there and the resulting height and texture.
 std::vector<std::string> trace_terrain(const ProceduralTerrain& terrain, double x, double z);
 
-} // namespace swm::swg
+} // namespace swbfo::swg

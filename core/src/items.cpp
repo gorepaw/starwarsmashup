@@ -1,4 +1,4 @@
-#include "swm/core/items.h"
+#include "swbfo/core/items.h"
 
 #include <algorithm>
 #include <array>
@@ -10,10 +10,10 @@
 #include <sstream>
 #include <stdexcept>
 
-#include "swm/core/ini.h"
-#include "swm/core/profession.h"
+#include "swbfo/core/ini.h"
+#include "swbfo/core/profession.h"
 
-namespace swm::core {
+namespace swbfo::core {
 namespace {
 
 const std::array<WeaponArchetypeInfo, 17> archetype_table{{
@@ -1568,4 +1568,4 @@ std::string plain_clothes(const ItemCatalog& catalog, Gender gender) {
     return out;
 }
 
-} // namespace swm::core
+} // namespace swbfo::core

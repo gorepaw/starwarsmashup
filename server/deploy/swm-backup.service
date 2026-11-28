@@ -1,5 +1,5 @@
 [Unit]
-Description=Back up the Star Wars Mashup database to R2
+Description=Back up the SWBFO database to R2
 After=network-online.target
 Wants=network-online.target
 

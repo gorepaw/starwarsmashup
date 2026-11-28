@@ -6,7 +6,7 @@
 #include <variant>
 #include <vector>
 
-namespace swm::swg {
+namespace swbfo::swg {
 
 // A datatable (.iff, DTII 0001): named, typed columns and rows of values.
 // Column types are letters with optional defaults: s (string), i (integer),
@@ -29,4 +29,4 @@ struct DataTable {
 // Throws std::runtime_error on unsupported or malformed data.
 DataTable parse_datatable(std::span<const uint8_t> bytes);
 
-} // namespace swm::swg
+} // namespace swbfo::swg

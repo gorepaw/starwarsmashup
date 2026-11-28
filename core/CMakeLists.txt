@@ -1,5 +1,5 @@
 # Game simulation library. Pure C++: no Godot headers (see docs/ARCHITECTURE.md).
-add_library(swm_core STATIC
+add_library(swbfo_core STATIC
   src/bot.cpp
   src/bot_roster.cpp
   src/build_info.cpp
@@ -37,23 +37,23 @@ add_library(swm_core STATIC
   src/vehicle.cpp
   src/wildlife.cpp
   src/world.cpp)
-target_include_directories(swm_core PUBLIC include)
-target_compile_definitions(swm_core PRIVATE SWM_VERSION="${PROJECT_VERSION}")
+target_include_directories(swbfo_core PUBLIC include)
+target_compile_definitions(swbfo_core PRIVATE SWBFO_VERSION="${PROJECT_VERSION}")
 if(WIN32)
-  target_link_libraries(swm_core PUBLIC ws2_32)
+  target_link_libraries(swbfo_core PUBLIC ws2_32)
 endif()
-swm_target_warnings(swm_core)
+swbfo_target_warnings(swbfo_core)
 
-# SQLite implementation of the persistence interfaces, kept out of swm_core.
-add_library(swm_sqlite_store STATIC src/sqlite_store.cpp)
-target_link_libraries(swm_sqlite_store PUBLIC swm_core PRIVATE swm::sqlite3)
-swm_target_warnings(swm_sqlite_store)
+# SQLite implementation of the persistence interfaces, kept out of swbfo_core.
+add_library(swbfo_sqlite_store STATIC src/sqlite_store.cpp)
+target_link_libraries(swbfo_sqlite_store PUBLIC swbfo_core PRIVATE swbfo::sqlite3)
+swbfo_target_warnings(swbfo_sqlite_store)
 
 foreach(test core_test movement_test nav_test net_test persistence_test combat_test match_test hub_test species_test items_test wildlife_test loot_test quest_test vehicle_test space_test profession_test crafting_test services_test modes_test specialist_test galaxy_test)
   add_executable(${test} tests/${test}.cpp)
-  target_link_libraries(${test} PRIVATE swm_core swm_sqlite_store)
-  swm_target_warnings(${test})
+  target_link_libraries(${test} PRIVATE swbfo_core swbfo_sqlite_store)
+  swbfo_target_warnings(${test})
   add_test(NAME ${test} COMMAND ${test})
 endforeach()
 # Also opens a database directly, to fake one from a newer build.
-target_link_libraries(persistence_test PRIVATE swm::sqlite3)
+target_link_libraries(persistence_test PRIVATE swbfo::sqlite3)

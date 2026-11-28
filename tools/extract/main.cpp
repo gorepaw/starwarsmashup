@@ -1,4 +1,4 @@
-// swm_extract: the launcher's extraction steps from the command line
+// swbfo_extract: the launcher's extraction steps from the command line
 // (docs/DISTRIBUTION.md). Finds Battlefront II and Galaxies installs, reads the
 // Total Experience discs' cabinets, checks Galaxies files against the reference
 // manifest, and runs the extraction recipe.
@@ -24,17 +24,17 @@
 #include "extract/recipe.h"
 
 namespace fs = std::filesystem;
-using namespace swm::extract;
+using namespace swbfo::extract;
 
 namespace {
 
 constexpr const char* usage = R"(usage:
-  swm_extract find [--full]                       look for installs (registry, known folders, discs; --full: every drive)
-  swm_extract classify <dir>                      what a folder is
-  swm_extract cabs <cab_dir> <out_dir>            Galaxies' archives from the Total Experience discs' cabinets
-  swm_extract verify --tools <dir> --swg <dir>... [--manifest <tsv>]
+  swbfo_extract find [--full]                       look for installs (registry, known folders, discs; --full: every drive)
+  swbfo_extract classify <dir>                      what a folder is
+  swbfo_extract cabs <cab_dir> <out_dir>            Galaxies' archives from the Total Experience discs' cabinets
+  swbfo_extract verify --tools <dir> --swg <dir>... [--manifest <tsv>]
                                                   how much of the reference the Galaxies folders supply
-  swm_extract run --install <dir> --tools <dir> --bf2 <_lvl_pc> --swg <dir>... [--recipe <json>]
+  swbfo_extract run --install <dir> --tools <dir> --bf2 <_lvl_pc> --swg <dir>... [--recipe <json>]
                   [--manifest <tsv>] [--state <dir>] [--phase <p>]... [--force]
                                                   run the recipe (defaults: <tools>\recipe.json, <tools>\
                                                   swg-total-experience-2005.tsv, <install>\state)
@@ -151,7 +151,7 @@ int cmd_verify(const std::vector<std::string>& args) {
     for (const auto& s : swg) {
         folders.push_back(utf8_path(s));
     }
-    const fs::path tmp = fs::temp_directory_path() / "swm_extract_verify";
+    const fs::path tmp = fs::temp_directory_path() / "swbfo_extract_verify";
     fs::create_directories(tmp);
     write_sources_file(tmp / "swg.sources", manifest, folders);
     const fs::path log = tmp / "verify.log";

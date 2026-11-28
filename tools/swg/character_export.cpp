@@ -16,7 +16,7 @@
 #include "swg/static_mesh.h"
 #include "swg/texture_renderer.h"
 
-namespace swm::swg {
+namespace swbfo::swg {
 namespace {
 
 constexpr int max_influences = 4;  // glTF JOINTS_0 / WEIGHTS_0
@@ -525,4 +525,4 @@ CharacterBounds export_character(TreLibrary& library, const CharacterExport& req
     return exporter.bounds();
 }
 
-} // namespace swm::swg
+} // namespace swbfo::swg

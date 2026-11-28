@@ -1,5 +1,5 @@
 # Headless checks for the professions (docs/PROFESSIONS.md, docs/PERKS.md):
-# 1. The roster loads through SwmCharacterStore (29 professions; weapon and
+# 1. The roster loads through SwbfoCharacterStore (29 professions; weapon and
 #    armor ones and the rest with their perks, in words; the
 #    level curve and the perk cap), and the planner draws what's known
 #    against the cap, and a trainer's screen its perks and their buttons.
@@ -28,7 +28,7 @@ func _initialize() -> void:
 	DisplayServer.window_set_size(Vector2i(1280, 720))
 	var art := Bf2Art.load_from("res://imported_assets/hud")
 	assert(art != null, "missing hud art")
-	var store: Object = ClassDB.instantiate("SwmCharacterStore")
+	var store: Object = ClassDB.instantiate("SwbfoCharacterStore")
 	assert(store.load_professions(ProjectSettings.globalize_path("res://professions/professions.ini")) == OK,
 			"the roster didn't load")
 	var roster: Array = store.get_professions()

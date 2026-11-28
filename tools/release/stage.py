@@ -10,9 +10,9 @@ every path the game and its C++ core build from res:// works as in the editor.
   <out>/game/                       game/ without imported_assets, tests,
                                     databases, editor caches or Debug dlls; its
                                     .godot import cache made fresh by a headless import
-  <out>/game/StarWarsMashup.exe     the double-precision release template
+  <out>/game/SWBFO.exe     the double-precision release template
   <out>/launcher.exe                the launcher (launcher/)
-  <out>/tools/                      bf2tool.exe, swgtool.exe, swm_extract.exe, the SWG
+  <out>/tools/                      bf2tool.exe, swgtool.exe, swbfo_extract.exe, the SWG
                                     reference manifest, recipe.json
 
 --assets also copies game/imported_assets (the portable build; never public).
@@ -97,14 +97,14 @@ def main():
     template = need(os.path.join(gbin, "godot.windows.template_release.double.x86_64.exe"),
                     "scons platform=windows target=template_release precision=double d3d12=no accesskit=no")
     editor = need(os.path.join(gbin, "godot.windows.editor.double.x86_64.console.exe"), "build the editor first")
-    swm_dll = need(os.path.join(GAME, "bin", "swm.windows.template_release.double.x86_64.dll"),
-                   "cmake --build %s --config Release --target swm_godot" % args.build)
+    swbfo_dll = need(os.path.join(GAME, "bin", "swbfo.windows.template_release.double.x86_64.dll"),
+                   "cmake --build %s --config Release --target swbfo_godot" % args.build)
     t3d_dll = need(os.path.join(args.terrain3d, "project", "addons", "terrain_3d", "bin",
                                 "libterrain.windows.release.x86_64.dll"),
                    "scons platform=windows target=template_release precision=double in " + args.terrain3d)
     tools_dir = os.path.join(args.build, "tools", "Release")
     tools = [need(os.path.join(tools_dir, t + ".exe"), "cmake --build %s --config Release --target %s" % (args.build, t))
-             for t in ("bf2tool", "swgtool", "swm_extract")]
+             for t in ("bf2tool", "swgtool", "swbfo_extract")]
     launcher = need(os.path.join(args.build, "launcher", "Release", "launcher.exe"),
                     "cmake --build %s --config Release --target launcher" % args.build)
 
@@ -117,7 +117,7 @@ def main():
         shutil.rmtree(out)
     print("copying game/ ...", flush=True)
     copy_game(game)
-    shutil.copy2(swm_dll, os.path.join(game, "bin"))
+    shutil.copy2(swbfo_dll, os.path.join(game, "bin"))
     t3d_bin = os.path.join(game, "addons", "terrain_3d", "bin")
     os.makedirs(t3d_bin, exist_ok=True)
     shutil.copy2(t3d_dll, t3d_bin)
@@ -127,9 +127,9 @@ def main():
     # The editor needs Terrain3D's debug dll to load the addon while importing;
     # it's removed again afterwards.
     t3d_debug = os.path.join(GAME, "addons", "terrain_3d", "bin", "libterrain.windows.debug.x86_64.dll")
-    swm_debug = os.path.join(GAME, "bin", "swm.windows.template_debug.double.x86_64.dll")
+    swbfo_debug = os.path.join(GAME, "bin", "swbfo.windows.template_debug.double.x86_64.dll")
     shutil.copy2(t3d_debug, t3d_bin)
-    shutil.copy2(swm_debug, os.path.join(game, "bin"))
+    shutil.copy2(swbfo_debug, os.path.join(game, "bin"))
     try:
         print("importing ...", flush=True)
         p = subprocess.Popen([editor, "--headless", "--path", game, "--import"], stdout=subprocess.DEVNULL,
@@ -149,7 +149,7 @@ def main():
             sys.exit("headless import failed (%d)" % rc)
     finally:
         os.remove(os.path.join(t3d_bin, os.path.basename(t3d_debug)))
-        os.remove(os.path.join(game, "bin", os.path.basename(swm_debug)))
+        os.remove(os.path.join(game, "bin", os.path.basename(swbfo_debug)))
     for cache in ("editor", "shader_cache"):
         shutil.rmtree(os.path.join(game, ".godot", cache), ignore_errors=True)
 
@@ -160,7 +160,7 @@ def main():
         print("copying imported_assets (5 GB) ...", flush=True)
         shutil.copytree(os.path.join(GAME, "imported_assets"), os.path.join(game, "imported_assets"))
 
-    shutil.copy2(template, os.path.join(game, "StarWarsMashup.exe"))
+    shutil.copy2(template, os.path.join(game, "SWBFO.exe"))
     shutil.copy2(launcher, os.path.join(out, "launcher.exe"))
     os.makedirs(os.path.join(out, "tools"))
     for t in tools:
@@ -178,7 +178,7 @@ def main():
     size = sum(os.path.getsize(os.path.join(d, f)) for d, _, fs in os.walk(out) for f in fs
                if "imported_assets" not in d)
     print("staged %s (%.0f MB without imported_assets)" % (out, size / 1e6))
-    print("run: %s" % os.path.join(game, "StarWarsMashup.exe"))
+    print("run: %s" % os.path.join(game, "SWBFO.exe"))
 
 
 if __name__ == "__main__":

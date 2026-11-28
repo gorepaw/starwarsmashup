@@ -9,20 +9,20 @@
 #include <fstream>
 #include <vector>
 
-#include "swm/core/client.h"
-#include "swm/core/heightfield.h"
-#include "swm/core/hub.h"
-#include "swm/core/items.h"
-#include "swm/core/net/link.h"
-#include "swm/core/profession.h"
-#include "swm/core/quest.h"
-#include "swm/core/server.h"
-#include "swm/core/sqlite_store.h"
-#include "swm/core/wildlife.h"
-#include "swm/core/world.h"
+#include "swbfo/core/client.h"
+#include "swbfo/core/heightfield.h"
+#include "swbfo/core/hub.h"
+#include "swbfo/core/items.h"
+#include "swbfo/core/net/link.h"
+#include "swbfo/core/profession.h"
+#include "swbfo/core/quest.h"
+#include "swbfo/core/server.h"
+#include "swbfo/core/sqlite_store.h"
+#include "swbfo/core/wildlife.h"
+#include "swbfo/core/world.h"
 #include "test.h"
 
-using namespace swm::core;
+using namespace swbfo::core;
 
 namespace {
 
@@ -303,7 +303,7 @@ void test_tatooine_quests() {
 
 void test_server_quest() {
     const auto root = repo_root();
-    const auto db_path = std::filesystem::temp_directory_path() / "swm_quest_test.sqlite";
+    const auto db_path = std::filesystem::temp_directory_path() / "swbfo_quest_test.sqlite";
     std::filesystem::remove(db_path);
     ItemCatalog catalog;
     catalog.load(root / "game" / "items" / "swg_catalog.ini");
@@ -446,7 +446,7 @@ void test_server_quest() {
 // branches that rule each other out, comms when a step starts, quest files
 // from a folder, and finished quests kept on planets that don't know them.
 void test_legacy_book() {
-    const auto dir = std::filesystem::temp_directory_path() / "swm_legacy_quests";
+    const auto dir = std::filesystem::temp_directory_path() / "swbfo_legacy_quests";
     std::filesystem::remove_all(dir);
     std::filesystem::create_directories(dir);
     {
@@ -524,7 +524,7 @@ void test_legacy_book() {
 
 // Legacy phase 1b: use steps (quest objects), each object once, in reach.
 void test_use_steps() {
-    const auto dir = std::filesystem::temp_directory_path() / "swm_use_quests";
+    const auto dir = std::filesystem::temp_directory_path() / "swbfo_use_quests";
     std::filesystem::remove_all(dir);
     std::filesystem::create_directories(dir);
     const auto load = [&](const std::string& text) {
@@ -740,5 +740,5 @@ int main() {
     test_server_chain();
     test_use_steps();
     test_server_use();
-    return swm::test::finish("quest_test");
+    return swbfo::test::finish("quest_test");
 }

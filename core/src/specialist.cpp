@@ -1,4 +1,4 @@
-#include "swm/core/specialist.h"
+#include "swbfo/core/specialist.h"
 
 #include <algorithm>
 #include <array>
@@ -8,7 +8,7 @@
 #include <sstream>
 #include <stdexcept>
 
-namespace swm::core {
+namespace swbfo::core {
 
 namespace {
 
@@ -963,4 +963,4 @@ std::vector<PostedBounty> parse_posted_bounties(std::string_view text) {
     return out;
 }
 
-}  // namespace swm::core
+}  // namespace swbfo::core

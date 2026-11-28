@@ -71,8 +71,8 @@ func _ready() -> void:
 		if _connect_address == "":
 			_status_msg = "Can't find server " + args[connect_at + 1]
 
-	if ClassDB.class_exists("SwmCharacterStore"):
-		_store = ClassDB.instantiate("SwmCharacterStore")
+	if ClassDB.class_exists("SwbfoCharacterStore"):
+		_store = ClassDB.instantiate("SwbfoCharacterStore")
 		var db_os := ProjectSettings.globalize_path(WORLD_DB)
 		if _store.open(db_os) != OK:
 			_status_msg = "Database error: " + str(_store.get_last_error())
@@ -186,15 +186,15 @@ func _setup_3d() -> void:
 		var meta: Variant = JSON.parse_string(FileAccess.get_file_as_string(bake + ".json"))
 		if meta is Dictionary:
 			var mesh := MeshInstance3D.new()
-			if ClassDB.class_exists("SwmTerrain"):
-				var swm_t: Object = ClassDB.instantiate("SwmTerrain")
-				if swm_t.load_bake(ProjectSettings.globalize_path(bake)) == OK:
+			if ClassDB.class_exists("SwbfoTerrain"):
+				var swbfo_t: Object = ClassDB.instantiate("SwbfoTerrain")
+				if swbfo_t.load_bake(ProjectSettings.globalize_path(bake)) == OK:
 					var ox := float(meta["origin_x"])
 					var oz := float(meta["origin_z"])
 					var sp := float(meta["spacing"])
 					var c0 := clampi(int((3500.0 - ox) / sp) - 256, 0, int(meta["samples"]) - 2)
 					var r0 := clampi(int((-4800.0 - oz) / sp) - 256, 0, int(meta["samples"]) - 2)
-					mesh.mesh = swm_t.build_chunk(c0, r0, 512, 2, 0.0)
+					mesh.mesh = swbfo_t.build_chunk(c0, r0, 512, 2, 0.0)
 			if mesh.mesh == null:
 				var heights := FileAccess.get_file_as_bytes(bake + ".r32").to_float32_array()
 				mesh.mesh = TerrainTool.build_mesh(heights, int(meta["samples"]), float(meta["spacing"]),
@@ -424,7 +424,7 @@ class MainMenuOverlay extends Bf2Screen:
 	func _paint() -> void:
 		var box := centered(360, 390)
 		frame(box)
-		text("gamefont_large", "STAR WARS MASHUP", Vector2(box.get_center().x, box.position.y + 22 * u),
+		text("gamefont_large", "SWBFO", Vector2(box.get_center().x, box.position.y + 22 * u),
 				"Center", ACCENT)
 		text("gamefont_small", "Galaxies & Battlefront II", Vector2(box.get_center().x, box.position.y + 56 * u),
 				"Center", DIM)

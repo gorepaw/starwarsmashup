@@ -6,7 +6,7 @@
 #include <string>
 #include <vector>
 
-namespace swm::extract {
+namespace swbfo::extract {
 
 // The InstallShield file group holding Galaxies' archives on the Total
 // Experience discs (docs/ARCHITECTURE.md, Supported game versions).
@@ -33,4 +33,4 @@ std::string extract_cab_group(const std::filesystem::path& dir, const std::files
                               const std::atomic<bool>* cancel = nullptr,
                               const std::string& group = swg_cab_group);
 
-} // namespace swm::extract
+} // namespace swbfo::extract

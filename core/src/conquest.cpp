@@ -1,4 +1,4 @@
-#include "swm/core/conquest.h"
+#include "swbfo/core/conquest.h"
 
 #include <algorithm>
 #include <cctype>
@@ -7,9 +7,9 @@
 #include <sstream>
 #include <stdexcept>
 
-#include "swm/core/ini.h"
+#include "swbfo/core/ini.h"
 
-namespace swm::core {
+namespace swbfo::core {
 
 namespace {
 
@@ -1497,4 +1497,4 @@ void Conquest::capture(double dt, std::span<const Unit> units, std::vector<Match
     }
 }
 
-} // namespace swm::core
+} // namespace swbfo::core

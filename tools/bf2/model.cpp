@@ -4,7 +4,7 @@
 #include <cstring>
 #include <stdexcept>
 
-namespace swm::bf2 {
+namespace swbfo::bf2 {
 
 namespace {
 
@@ -420,4 +420,4 @@ std::optional<swg::ImageRgba> read_texture(const UcfbNode& tex) {
     return std::nullopt;
 }
 
-} // namespace swm::bf2
+} // namespace swbfo::bf2

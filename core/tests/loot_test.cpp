@@ -9,20 +9,20 @@
 #include <string>
 #include <vector>
 
-#include "swm/core/client.h"
-#include "swm/core/heightfield.h"
-#include "swm/core/ini.h"
-#include "swm/core/items.h"
-#include "swm/core/loot.h"
-#include "swm/core/net/link.h"
-#include "swm/core/quest.h"
-#include "swm/core/server.h"
-#include "swm/core/sqlite_store.h"
-#include "swm/core/wildlife.h"
-#include "swm/core/world.h"
+#include "swbfo/core/client.h"
+#include "swbfo/core/heightfield.h"
+#include "swbfo/core/ini.h"
+#include "swbfo/core/items.h"
+#include "swbfo/core/loot.h"
+#include "swbfo/core/net/link.h"
+#include "swbfo/core/quest.h"
+#include "swbfo/core/server.h"
+#include "swbfo/core/sqlite_store.h"
+#include "swbfo/core/wildlife.h"
+#include "swbfo/core/world.h"
 #include "test.h"
 
-using namespace swm::core;
+using namespace swbfo::core;
 
 namespace {
 
@@ -113,7 +113,7 @@ void test_tatooine_loot_tables() {
 
 // A table's gear drops at Mk tiers between GearMarkMin and GearMarkMax.
 void test_loot_marks() {
-    const std::filesystem::path ini = "swm_loot_marks_test.ini";
+    const std::filesystem::path ini = "swbfo_loot_marks_test.ini";
     {
         std::ofstream out(ini);
         out << "[loot_table]\nId = marked\nJunkMin = 0\nGearChance = 1\nGearMarkMin = 3\nGearMarkMax = 5\n"
@@ -209,7 +209,7 @@ void test_hub_data_names_known_items() {
 
 void test_corpse_loot_vendor_and_credit_persistence() {
     const auto root = repo_root();
-    const auto db_path = std::filesystem::temp_directory_path() / "swm_loot_test.sqlite";
+    const auto db_path = std::filesystem::temp_directory_path() / "swbfo_loot_test.sqlite";
     std::filesystem::remove(db_path);
 
     ItemCatalog catalog;
@@ -368,5 +368,5 @@ int main() {
     test_loot_marks();
     test_hub_data_names_known_items();
     test_corpse_loot_vendor_and_credit_persistence();
-    return swm::test::finish("loot_test");
+    return swbfo::test::finish("loot_test");
 }

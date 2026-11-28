@@ -11,7 +11,7 @@
 
 namespace {
 
-using namespace swm::swg;
+using namespace swbfo::swg;
 
 void push_u32(std::vector<uint8_t>& out, uint32_t v) {
     const size_t at = out.size();
@@ -142,13 +142,13 @@ void test_gltf_morph_write() {
     gltf.nodes.push_back({.name = "root", .mesh = 0});
     gltf.scene_nodes = {0};
 
-    const auto path = std::filesystem::path("swm_blend_shape_test.gltf");
+    const auto path = std::filesystem::path("swbfo_blend_shape_test.gltf");
     gltf.write(path);
     std::ifstream in(path);
     std::string content((std::istreambuf_iterator<char>(in)), {});
     in.close();
     std::filesystem::remove(path);
-    std::filesystem::remove("swm_blend_shape_test.bin");
+    std::filesystem::remove("swbfo_blend_shape_test.bin");
     assert(content.find("\"targets\":[{\"POSITION\":") != std::string::npos);
     assert(content.find("\"targetNames\":[\"blend_muscle\"]") != std::string::npos);
 }

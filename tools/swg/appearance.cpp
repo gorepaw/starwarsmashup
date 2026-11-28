@@ -7,7 +7,7 @@
 #include "swg/iff.h"
 #include "swg/manifest.h"
 
-namespace swm::swg {
+namespace swbfo::swg {
 namespace {
 
 // Finds the SSHT form inside a shader file: SSHT itself, or CSHD/<version>/SSHT.
@@ -265,4 +265,4 @@ std::vector<std::array<uint8_t, 3>> parse_palette(std::span<const uint8_t> bytes
     return colors;
 }
 
-} // namespace swm::swg
+} // namespace swbfo::swg

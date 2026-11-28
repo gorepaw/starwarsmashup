@@ -12,7 +12,7 @@
 #include "extract/discovery.h"
 #include "update.h"
 
-namespace swm::launcher {
+namespace swbfo::launcher {
 
 // launcher.cfg next to launcher.exe: "key = value" lines.
 struct Config {
@@ -100,4 +100,4 @@ private:
     uint64_t update_bytes_ = 0;
 };
 
-} // namespace swm::launcher
+} // namespace swbfo::launcher

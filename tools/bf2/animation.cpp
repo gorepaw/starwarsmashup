@@ -8,7 +8,7 @@
 
 #include "bf2/hash.h"
 
-namespace swm::bf2 {
+namespace swbfo::bf2 {
 namespace {
 
 constexpr float rotation_scale = 1.0f / 2047.0f;
@@ -260,4 +260,4 @@ const UcfbNode* find_named_chunk(const UcfbNode& root, std::string_view tag, std
     return nullptr;
 }
 
-} // namespace swm::bf2
+} // namespace swbfo::bf2

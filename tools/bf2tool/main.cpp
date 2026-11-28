@@ -25,13 +25,13 @@
 #include "bf2/sound.h"
 #include "bf2/ucfb.h"
 #include "swg/image.h"
-#include "swm/core/conquest.h"
-#include "swm/core/world.h"
+#include "swbfo/core/conquest.h"
+#include "swbfo/core/world.h"
 
 namespace {
 
-using namespace swm;
-using namespace swm::bf2;
+using namespace swbfo;
+using namespace swbfo::bf2;
 
 // A walker's footfall sound (the AT-ST's com_weap_layered_at_step): its key's
 // name is hashed and wasn't found, so it's known by its hash.

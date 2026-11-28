@@ -5,7 +5,7 @@
 #include <span>
 #include <vector>
 
-namespace swm::swg {
+namespace swbfo::swg {
 
 struct ImageRgba {
     uint32_t width = 0;
@@ -24,4 +24,4 @@ ImageRgba decode_dxt(std::span<const uint8_t> data, uint32_t width, uint32_t hei
 // Throws std::runtime_error on I/O failure.
 void write_png(const std::filesystem::path& path, const ImageRgba& image);
 
-} // namespace swm::swg
+} // namespace swbfo::swg

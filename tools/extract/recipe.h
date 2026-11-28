@@ -8,7 +8,7 @@
 #include <string>
 #include <vector>
 
-namespace swm::extract {
+namespace swbfo::extract {
 
 // The launcher's extraction recipe, written by
 // tools/assets/rebuild_imported_assets.py --emit-recipe (docs/DISTRIBUTION.md).
@@ -89,4 +89,4 @@ void mark_done(const std::filesystem::path& state_dir, const std::string& key);
 // Required paths missing under install_dir.
 std::vector<std::string> missing_required(const Recipe& recipe, const std::filesystem::path& install_dir);
 
-} // namespace swm::extract
+} // namespace swbfo::extract

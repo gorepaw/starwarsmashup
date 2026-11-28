@@ -9,7 +9,7 @@
 
 #include <zlib.h>
 
-namespace swm::swg {
+namespace swbfo::swg {
 namespace {
 
 constexpr size_t dds_header_size = 128;
@@ -222,4 +222,4 @@ void write_png(const std::filesystem::path& path, const ImageRgba& image) {
     }
 }
 
-} // namespace swm::swg
+} // namespace swbfo::swg

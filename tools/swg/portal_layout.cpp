@@ -5,7 +5,7 @@
 
 #include "swg/iff.h"
 
-namespace swm::swg {
+namespace swbfo::swg {
 namespace {
 
 Vec3 read_vec3(IffReader& r) {
@@ -243,4 +243,4 @@ std::vector<std::array<Vec3, 2>> floor_walls(const FloorMesh& floor) {
     return walls;
 }
 
-} // namespace swm::swg
+} // namespace swbfo::swg

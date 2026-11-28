@@ -7,7 +7,7 @@
 #include <string_view>
 #include <vector>
 
-namespace swm::swg {
+namespace swbfo::swg {
 
 // SWG IFF: a tree of chunks. Each chunk is a 4-character tag, a big-endian
 // uint32 size, then `size` bytes. A FORM chunk's data starts with a 4-character
@@ -73,4 +73,4 @@ private:
     size_t pos_ = 0;
 };
 
-} // namespace swm::swg
+} // namespace swbfo::swg

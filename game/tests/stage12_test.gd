@@ -19,7 +19,7 @@ var _world: Node3D
 
 
 func _initialize() -> void:
-	var client: Object = ClassDB.instantiate("SwmClient")
+	var client: Object = ClassDB.instantiate("SwbfoClient")
 	assert(client.has_method("get_specialist") and client.has_method("get_field"))
 	var book: Dictionary = client.get_specialist_book(ProjectSettings.globalize_path("res://professions/specialists.ini"))
 	var abilities: Dictionary = book.get("abilities", {})

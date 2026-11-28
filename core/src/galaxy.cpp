@@ -1,14 +1,14 @@
-#include "swm/core/galaxy.h"
+#include "swbfo/core/galaxy.h"
 
 #include <algorithm>
 #include <cctype>
 #include <format>
 #include <stdexcept>
 
-#include "swm/core/ini.h"
-#include "swm/core/world.h"
+#include "swbfo/core/ini.h"
+#include "swbfo/core/world.h"
 
-namespace swm::core {
+namespace swbfo::core {
 
 namespace {
 
@@ -216,4 +216,4 @@ void Galaxy::say(const std::string& text) const {
     }
 }
 
-} // namespace swm::core
+} // namespace swbfo::core

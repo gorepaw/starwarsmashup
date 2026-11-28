@@ -4,37 +4,37 @@
 #include <godot_cpp/core/defs.hpp>
 #include <godot_cpp/godot.hpp>
 
-#include "swm_info.h"
-#include "swm_net.h"
-#include "swm_store.h"
-#include "swm_terrain.h"
+#include "swbfo_info.h"
+#include "swbfo_net.h"
+#include "swbfo_store.h"
+#include "swbfo_terrain.h"
 
 namespace {
 
-void initialize_swm(godot::ModuleInitializationLevel level) {
+void initialize_swbfo(godot::ModuleInitializationLevel level) {
     if (level != godot::MODULE_INITIALIZATION_LEVEL_SCENE) {
         return;
     }
-    GDREGISTER_CLASS(swm::godot_bindings::SwmInfo);
-    GDREGISTER_CLASS(swm::godot_bindings::SwmClient);
-    GDREGISTER_CLASS(swm::godot_bindings::SwmServer);
-    GDREGISTER_CLASS(swm::godot_bindings::SwmCharacterStore);
-    GDREGISTER_CLASS(swm::godot_bindings::SwmTerrain);
+    GDREGISTER_CLASS(swbfo::godot_bindings::SwbfoInfo);
+    GDREGISTER_CLASS(swbfo::godot_bindings::SwbfoClient);
+    GDREGISTER_CLASS(swbfo::godot_bindings::SwbfoServer);
+    GDREGISTER_CLASS(swbfo::godot_bindings::SwbfoCharacterStore);
+    GDREGISTER_CLASS(swbfo::godot_bindings::SwbfoTerrain);
 }
 
-void uninitialize_swm(godot::ModuleInitializationLevel) {}
+void uninitialize_swbfo(godot::ModuleInitializationLevel) {}
 
 } // namespace
 
 extern "C" {
 
-// Entry point named in game/swm.gdextension.
-GDExtensionBool GDE_EXPORT swm_library_init(GDExtensionInterfaceGetProcAddress get_proc_address,
+// Entry point named in game/swbfo.gdextension.
+GDExtensionBool GDE_EXPORT swbfo_library_init(GDExtensionInterfaceGetProcAddress get_proc_address,
                                             GDExtensionClassLibraryPtr library,
                                             GDExtensionInitialization* initialization) {
     godot::GDExtensionBinding::InitObject init(get_proc_address, library, initialization);
-    init.register_initializer(initialize_swm);
-    init.register_terminator(uninitialize_swm);
+    init.register_initializer(initialize_swbfo);
+    init.register_terminator(uninitialize_swbfo);
     init.set_minimum_library_initialization_level(godot::MODULE_INITIALIZATION_LEVEL_SCENE);
     return init.init();
 }

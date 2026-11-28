@@ -11,7 +11,7 @@ extern "C" {
 
 namespace fs = std::filesystem;
 
-namespace swm::extract {
+namespace swbfo::extract {
 namespace {
 
 struct UnshieldCloser {
@@ -93,4 +93,4 @@ std::string extract_cab_group(const fs::path& dir, const fs::path& out_dir,
     }
 }
 
-} // namespace swm::extract
+} // namespace swbfo::extract

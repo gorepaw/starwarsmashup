@@ -1,4 +1,4 @@
-#include "swm/core/loadout.h"
+#include "swbfo/core/loadout.h"
 
 #include <algorithm>
 #include <format>
@@ -6,9 +6,9 @@
 #include <sstream>
 #include <stdexcept>
 
-#include "swm/core/ini.h"
+#include "swbfo/core/ini.h"
 
-namespace swm::core {
+namespace swbfo::core {
 
 namespace {
 
@@ -647,4 +647,4 @@ Loadout load_loadout(const std::filesystem::path& path) {
     return loadout;
 }
 
-} // namespace swm::core
+} // namespace swbfo::core

@@ -21,9 +21,9 @@
 #include "release_key.h"
 
 namespace fs = std::filesystem;
-using namespace swm::extract;
+using namespace swbfo::extract;
 
-namespace swm::launcher {
+namespace swbfo::launcher {
 
 namespace {
 
@@ -184,7 +184,7 @@ void App::start() {
 
 bool App::game_installed() const {
     std::error_code ec;
-    return fs::exists(dir_ / "game" / "StarWarsMashup.exe", ec) && fs::exists(dir_ / "game" / "project.godot", ec);
+    return fs::exists(dir_ / "game" / "SWBFO.exe", ec) && fs::exists(dir_ / "game" / "project.godot", ec);
 }
 
 void App::do_update() {
@@ -470,7 +470,7 @@ void App::play() {
     const fs::path game = dir_ / "game";
     STARTUPINFOW si{sizeof(si)};
     PROCESS_INFORMATION pi{};
-    const std::wstring exe = (game / "StarWarsMashup.exe").wstring();
+    const std::wstring exe = (game / "SWBFO.exe").wstring();
     std::wstring cmd = L"\"" + exe + L"\"";
     if (CreateProcessW(exe.c_str(), cmd.data(), nullptr, nullptr, FALSE, 0, nullptr, game.wstring().c_str(), &si,
                        &pi)) {
@@ -491,7 +491,7 @@ bool App::frame() {
                  ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings |
                      ImGuiWindowFlags_NoBringToFrontOnFocus);
     ImGui::SetWindowFontScale(1.6f);
-    ImGui::TextUnformatted("Star Wars Mashup");
+    ImGui::TextUnformatted("SWBFO");
     ImGui::SetWindowFontScale(1.0f);
     ImGui::TextDisabled("Battlefront II battles on the planets of Galaxies. An unofficial, non-commercial fan project.");
     ImGui::Separator();
@@ -751,4 +751,4 @@ void App::draw_failed() {
     }
 }
 
-} // namespace swm::launcher
+} // namespace swbfo::launcher

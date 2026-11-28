@@ -4,7 +4,7 @@
 
 #include "swg/iff.h"
 
-namespace swm::swg {
+namespace swbfo::swg {
 namespace {
 
 // Vertex format flags (VTXA INFO):
@@ -173,4 +173,4 @@ std::string lod_highest_detail(std::span<const uint8_t> bytes) {
     return best;
 }
 
-} // namespace swm::swg
+} // namespace swbfo::swg

@@ -9,7 +9,7 @@
 #include "swg/manifest.h"
 #include "swg/static_mesh.h"
 
-namespace swm::swg {
+namespace swbfo::swg {
 
 namespace {
 
@@ -253,4 +253,4 @@ void AppearanceCollisions::collect(const std::string& path, const Mat4& transfor
     }
 }
 
-} // namespace swm::swg
+} // namespace swbfo::swg

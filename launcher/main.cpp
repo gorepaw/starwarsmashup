@@ -122,7 +122,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int show) {
     // One launcher per install.
     wchar_t exe_path[MAX_PATH * 4] = {};
     GetModuleFileNameW(nullptr, exe_path, DWORD(std::size(exe_path)));
-    std::wstring mutex_name = L"Local\\SwmLauncher_";
+    std::wstring mutex_name = L"Local\\SwbfoLauncher_";
     for (const wchar_t c : std::wstring(exe_path)) {
         mutex_name += (c == L'\\' || c == L':') ? L'_' : c;
     }
@@ -137,14 +137,14 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int show) {
     ImGui_ImplWin32_EnableDpiAwareness();
 
     WNDCLASSEXW wc{sizeof(wc), CS_CLASSDC, wnd_proc, 0, 0, instance, LoadIconW(instance, MAKEINTRESOURCEW(1)),
-                   LoadCursorW(nullptr, IDC_ARROW), nullptr, nullptr, L"SwmLauncher", nullptr};
+                   LoadCursorW(nullptr, IDC_ARROW), nullptr, nullptr, L"SwbfoLauncher", nullptr};
     RegisterClassExW(&wc);
     const float scale = ImGui_ImplWin32_GetDpiScaleForMonitor(MonitorFromPoint(POINT{0, 0}, MONITOR_DEFAULTTOPRIMARY));
-    HWND hwnd = CreateWindowW(wc.lpszClassName, L"Star Wars Mashup", WS_OVERLAPPEDWINDOW, CW_USEDEFAULT, CW_USEDEFAULT,
+    HWND hwnd = CreateWindowW(wc.lpszClassName, L"SWBFO", WS_OVERLAPPEDWINDOW, CW_USEDEFAULT, CW_USEDEFAULT,
                               int(960 * scale), int(640 * scale), nullptr, nullptr, instance, nullptr);
     if (!create_device(hwnd)) {
         release_device();
-        MessageBoxW(nullptr, L"Couldn't start Direct3D 11.", L"Star Wars Mashup", MB_ICONERROR);
+        MessageBoxW(nullptr, L"Couldn't start Direct3D 11.", L"SWBFO", MB_ICONERROR);
         return 1;
     }
     ShowWindow(hwnd, show);
@@ -165,7 +165,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int show) {
     ImGui_ImplWin32_Init(hwnd);
     ImGui_ImplDX11_Init(g_device, g_context);
 
-    swm::launcher::App app{std::filesystem::path(exe_path)};
+    swbfo::launcher::App app{std::filesystem::path(exe_path)};
     app.start();
 
     bool running = true;

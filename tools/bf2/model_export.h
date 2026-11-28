@@ -16,7 +16,7 @@
 #include "bf2/odf.h"
 #include "bf2/ucfb.h"
 
-namespace swm::bf2 {
+namespace swbfo::bf2 {
 
 // Models, skeletons, textures and object classes gathered from several
 // munged files: a map's .lvl first, then ingame.lvl for the props every map
@@ -117,4 +117,4 @@ bool export_texture(const AssetLibrary& library, std::string_view name, const st
 // Lowercase, for file names and lookups.
 std::string lowercase(std::string_view text);
 
-} // namespace swm::bf2
+} // namespace swbfo::bf2

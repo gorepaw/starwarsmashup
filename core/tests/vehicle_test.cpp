@@ -10,20 +10,20 @@
 #include <memory>
 #include <numbers>
 
-#include "swm/core/bot.h"
-#include "swm/core/client.h"
-#include "swm/core/combat.h"
-#include "swm/core/heightfield.h"
-#include "swm/core/items.h"
-#include "swm/core/persistence.h"
-#include "swm/core/net/link.h"
-#include "swm/core/server.h"
-#include "swm/core/vehicle.h"
-#include "swm/core/world.h"
+#include "swbfo/core/bot.h"
+#include "swbfo/core/client.h"
+#include "swbfo/core/combat.h"
+#include "swbfo/core/heightfield.h"
+#include "swbfo/core/items.h"
+#include "swbfo/core/persistence.h"
+#include "swbfo/core/net/link.h"
+#include "swbfo/core/server.h"
+#include "swbfo/core/vehicle.h"
+#include "swbfo/core/world.h"
 #include "test.h"
 
-using namespace swm::core;
-using swm::test::near;
+using namespace swbfo::core;
+using swbfo::test::near;
 
 namespace {
 
@@ -142,7 +142,7 @@ void test_walker() {
 }
 
 void test_vehicle_file() {
-    const auto dir = std::filesystem::temp_directory_path() / "swm_vehicle_test";
+    const auto dir = std::filesystem::temp_directory_path() / "swbfo_vehicle_test";
     std::filesystem::create_directories(dir / "test_bike");
     std::ofstream(dir / "test_bike" / "test_bike.ini") << R"([vehicle]
 Name = test_bike
@@ -423,7 +423,7 @@ void test_gunner_seat() {
 // A turret: it stays where it stands, however it's pushed, and turns to its
 // gunner's look at its MaxTurnSpeed.
 void test_turret() {
-    const auto dir = std::filesystem::temp_directory_path() / "swm_turret_test";
+    const auto dir = std::filesystem::temp_directory_path() / "swbfo_turret_test";
     std::filesystem::create_directories(dir / "test_turret");
     std::ofstream(dir / "test_turret" / "test_turret.ini") << R"([vehicle]
 Name = test_turret
@@ -814,5 +814,5 @@ int main() {
     test_flyer();
     test_tow_cable();
     test_world_vehicles();
-    return swm::test::finish("vehicle_test");
+    return swbfo::test::finish("vehicle_test");
 }

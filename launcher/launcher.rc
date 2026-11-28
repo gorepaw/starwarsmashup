@@ -13,8 +13,8 @@ BEGIN
   BEGIN
     BLOCK "040904b0"
     BEGIN
-      VALUE "FileDescription", "Star Wars Mashup launcher"
-      VALUE "ProductName", "Star Wars Mashup (unofficial fan project)"
+      VALUE "FileDescription", "SWBFO launcher"
+      VALUE "ProductName", "SWBFO (unofficial fan project)"
       VALUE "FileVersion", "0.1.0.1"
       VALUE "ProductVersion", "0.1.0.1"
       VALUE "OriginalFilename", "launcher.exe"

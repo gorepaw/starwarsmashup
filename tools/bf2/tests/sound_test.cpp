@@ -9,7 +9,7 @@
 
 namespace {
 
-using namespace swm::bf2;
+using namespace swbfo::bf2;
 
 void push_u32(std::vector<uint8_t>& out, uint32_t v) {
     const size_t at = out.size();
@@ -96,7 +96,7 @@ void test_adpcm_and_wav() {
     const std::vector<int16_t> pcm_s = decode_ima_adpcm(stereo, 2, 1, 4, 64);
     assert(pcm_s.size() == 128);
 
-    const auto wav_path = std::filesystem::path("swm_sound_test.wav");
+    const auto wav_path = std::filesystem::path("swbfo_sound_test.wav");
     write_wav(wav_path, pcm_s, 44100, 2);
     std::ifstream in(wav_path, std::ios::binary);
     std::vector<uint8_t> bytes((std::istreambuf_iterator<char>(in)), {});
@@ -195,7 +195,7 @@ void test_library_bank_stream_and_inherit() {
         append(ucfb_body, make_chunk_str("snd_", snd));
     }
 
-    const auto lvl_path = std::filesystem::path("swm_sound_test.lvl");
+    const auto lvl_path = std::filesystem::path("swbfo_sound_test.lvl");
     {
         std::ofstream out(lvl_path, std::ios::binary);
         const auto full = make_chunk_str("ucfb", ucfb_body);

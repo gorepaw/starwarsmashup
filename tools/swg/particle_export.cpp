@@ -10,7 +10,7 @@
 #include "swg/image.h"
 #include "swg/particle_effect.h"
 
-namespace swm::swg {
+namespace swbfo::swg {
 
 namespace {
 
@@ -84,4 +84,4 @@ std::string export_particle_effect(TreLibrary& library, const std::string& prt_p
     return file;
 }
 
-} // namespace swm::swg
+} // namespace swbfo::swg

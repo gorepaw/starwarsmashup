@@ -485,7 +485,7 @@ def main():
         return emit_recipe(ARGS.emit_recipe, ARGS.bf2)
     if ({"swg", "planets"} & set(phases)) and not ARGS.swg:
         sys.exit("the swg and planets phases need --swg <folder of Galaxies .tre archives>")
-    scratch = tempfile.mkdtemp(prefix="swm_modes_")
+    scratch = tempfile.mkdtemp(prefix="swbfo_modes_")
     steps = [s for s in plan(ARGS.bf2, ARGS.swg or "<swg>", scratch) if s.phase in phases]
     if ARGS.list:
         for s in steps:
@@ -499,7 +499,7 @@ def main():
     for exe in ["bf2tool", "swgtool"]:
         if not os.path.exists(tool(exe)):
             sys.exit("no %s: build it first (cmake --build build\\msvc --config Release --target %s)" % (tool(exe), exe))
-    log_dir = ARGS.logs or tempfile.mkdtemp(prefix="swm_rebuild_logs_")
+    log_dir = ARGS.logs or tempfile.mkdtemp(prefix="swbfo_rebuild_logs_")
     print("logs:", log_dir)
     failed = run(steps, log_dir)
     shutil.rmtree(scratch, ignore_errors=True)

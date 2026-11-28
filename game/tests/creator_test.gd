@@ -2,7 +2,7 @@
 # offered (her lekku pattern's among them, named so), and the clothes toggle
 # dresses the stage in a new character's plain clothes and takes them off
 # (none for a species that can't wear them). Pass a path as the first user
-# argument (or SWM_SHOTS) to save screenshots of it (<path>_1.png dressed,
+# argument (or SWBFO_SHOTS) to save screenshots of it (<path>_1.png dressed,
 # _2.png not).
 extends SceneTree
 
@@ -18,11 +18,11 @@ var _frames := 0
 
 func _initialize() -> void:
 	var args := OS.get_cmdline_user_args()
-	_shot = args[0] if args.size() > 0 else OS.get_environment("SWM_SHOTS")
+	_shot = args[0] if args.size() > 0 else OS.get_environment("SWBFO_SHOTS")
 	DisplayServer.window_set_size(Vector2i(1280, 720))
 	var art := Bf2Art.load_from("res://imported_assets/hud")
 	assert(art != null, "missing hud art")
-	var store: Object = ClassDB.instantiate("SwmCharacterStore")
+	var store: Object = ClassDB.instantiate("SwbfoCharacterStore")
 
 	var world := Node3D.new()
 	root.add_child(world)
@@ -89,7 +89,7 @@ func _process(_delta: float) -> bool:
 		assert(not _screen._clothed and _worn_meshes() == 0, "still dressed")
 		_save(2)
 		# A Wookiee can't wear them: the toggle says so.
-		var species: Array = (ClassDB.instantiate("SwmCharacterStore") as Object).get_species_list()
+		var species: Array = (ClassDB.instantiate("SwbfoCharacterStore") as Object).get_species_list()
 		for i in species.size():
 			if str(species[i]["id"]) == "wookiee":
 				_screen._on_click("sp:%d" % i, Vector2.ZERO)

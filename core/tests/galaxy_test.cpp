@@ -5,17 +5,17 @@
 #include <filesystem>
 #include <fstream>
 
-#include "swm/core/client.h"
-#include "swm/core/galaxy.h"
-#include "swm/core/hub.h"
-#include "swm/core/items.h"
-#include "swm/core/net/link.h"
-#include "swm/core/server.h"
-#include "swm/core/sqlite_store.h"
-#include "swm/core/world.h"
+#include "swbfo/core/client.h"
+#include "swbfo/core/galaxy.h"
+#include "swbfo/core/hub.h"
+#include "swbfo/core/items.h"
+#include "swbfo/core/net/link.h"
+#include "swbfo/core/server.h"
+#include "swbfo/core/sqlite_store.h"
+#include "swbfo/core/world.h"
 #include "test.h"
 
-using namespace swm::core;
+using namespace swbfo::core;
 
 namespace {
 
@@ -55,7 +55,7 @@ void write_bake(const std::filesystem::path& prefix, float height) {
 
 void test_starships_between_planets() {
     const auto root = repo_root();
-    const auto dir = std::filesystem::temp_directory_path() / "swm_galaxy_test";
+    const auto dir = std::filesystem::temp_directory_path() / "swbfo_galaxy_test";
     std::filesystem::remove_all(dir);
     std::filesystem::create_directories(dir / "fields");
     std::filesystem::create_directories(dir / "loadouts");
@@ -170,7 +170,7 @@ void test_starships_between_planets() {
 // --ports: planets and battles take the first free port of the range, a
 // released one is taken again, and a full range says so.
 void test_port_range() {
-    swm::core::UdpHubNetwork network(47811, 47813);
+    swbfo::core::UdpHubNetwork network(47811, 47813);
     uint16_t a = 0, b = 0, c = 0;
     auto first = network.open_server(a);
     auto second = network.open_server(b);
@@ -191,7 +191,7 @@ void test_port_range() {
     auto reopened = network.open_server(again);
     CHECK(again == 47812);
     // Without a range: any port.
-    swm::core::UdpHubNetwork any;
+    swbfo::core::UdpHubNetwork any;
     uint16_t free_port = 0;
     auto link = any.open_server(free_port);
     CHECK(free_port != 0);
@@ -207,5 +207,5 @@ int main() {
         std::printf("FAIL: %s\n", error.what());
         return 1;
     }
-    return swm::test::finish("galaxy_test");
+    return swbfo::test::finish("galaxy_test");
 }

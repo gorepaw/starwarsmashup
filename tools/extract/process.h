@@ -5,7 +5,7 @@
 #include <string>
 #include <vector>
 
-namespace swm::extract {
+namespace swbfo::extract {
 
 // UTF-8 <-> UTF-16 for Windows APIs.
 std::wstring widen(const std::string& utf8);
@@ -28,4 +28,4 @@ constexpr int process_cancelled = -1001;
 int run_process(const std::vector<std::string>& argv, const std::filesystem::path& cwd,
                 const std::filesystem::path& log, const std::atomic<bool>* cancel = nullptr);
 
-} // namespace swm::extract
+} // namespace swbfo::extract

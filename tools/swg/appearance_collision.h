@@ -9,7 +9,7 @@
 #include "swg/portal_layout.h"
 #include "swg/tre_library.h"
 
-namespace swm::swg {
+namespace swbfo::swg {
 
 // What stops characters at a static appearance, in glTF space (SWG's with X
 // mirrored: as the appearance's glTF is drawn).
@@ -49,4 +49,4 @@ private:
     std::map<std::string, int> skipped_;
 };
 
-} // namespace swm::swg
+} // namespace swbfo::swg

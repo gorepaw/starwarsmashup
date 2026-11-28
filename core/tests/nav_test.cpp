@@ -6,15 +6,15 @@
 #include <filesystem>
 #include <numbers>
 
-#include "swm/core/conquest.h"
-#include "swm/core/heightfield.h"
-#include "swm/core/movement.h"
-#include "swm/core/nav.h"
-#include "swm/core/world.h"
+#include "swbfo/core/conquest.h"
+#include "swbfo/core/heightfield.h"
+#include "swbfo/core/movement.h"
+#include "swbfo/core/nav.h"
+#include "swbfo/core/world.h"
 #include "test.h"
 
-using namespace swm::core;
-using swm::test::near;
+using namespace swbfo::core;
+using swbfo::test::near;
 
 namespace {
 
@@ -660,5 +660,5 @@ int main() {
     test_pit();
     test_planet_scale_open_terrain();
     test_tatooine_real_bake_if_present();
-    return swm::test::finish("nav_test");
+    return swbfo::test::finish("nav_test");
 }

@@ -6,7 +6,7 @@
 
 #include "bf2/hash.h"
 
-namespace swm::retarget {
+namespace swbfo::retarget {
 namespace {
 
 struct Pose {
@@ -288,4 +288,4 @@ swg::AnimationClip retarget_animation(const swg::Skeleton& target, const bf2::An
     return clip;
 }
 
-} // namespace swm::retarget
+} // namespace swbfo::retarget

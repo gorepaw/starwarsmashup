@@ -3,7 +3,7 @@
 #   chosen one's story, steps and reward, and Accept);
 # - log: the quest journal (active quests with their progress, Track and
 #   Abandon, and the completed ones).
-# Quests are the dictionaries SwmClient.get_quests() gives.
+# Quests are the dictionaries SwbfoClient.get_quests() gives.
 extends "res://ui/bf2_screen.gd"
 
 signal quest_accepted(id: String)

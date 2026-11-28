@@ -4,13 +4,13 @@
 #include <fstream>
 #include <numbers>
 
-#include "swm/core/heightfield.h"
-#include "swm/core/movement.h"
-#include "swm/core/world.h"
+#include "swbfo/core/heightfield.h"
+#include "swbfo/core/movement.h"
+#include "swbfo/core/world.h"
 #include "test.h"
 
-using namespace swm::core;
-using swm::test::near;
+using namespace swbfo::core;
+using swbfo::test::near;
 
 namespace {
 
@@ -273,7 +273,7 @@ void test_buildings() {
 
     // The collision file round-trips.
     walled.floors = high.floors;
-    const auto path = std::filesystem::temp_directory_path() / "swm_movement_test.collision";
+    const auto path = std::filesystem::temp_directory_path() / "swbfo_movement_test.collision";
     save_building_collision(walled, path);
     const BuildingCollision loaded = load_building_collision(path);
     std::filesystem::remove(path);
@@ -372,17 +372,17 @@ void test_map_collision() {
 
     // The file round-trips; a bake without one adds nothing.
     const auto dir = std::filesystem::temp_directory_path();
-    const auto path = map_collision_path(dir / "swm_movement_test_map");
-    CHECK(path.filename() == "swm_movement_test_map.collision");
+    const auto path = map_collision_path(dir / "swbfo_movement_test_map");
+    CHECK(path.filename() == "swbfo_movement_test_map.collision");
     save_map_collision(glass, path);
     const MapCollision loaded = load_map_collision(path);
     CHECK(loaded.triangles.size() == 12 && loaded.triangles[5].c == glass.triangles[5].c &&
           loaded.triangles[0].blocks == blocks_shots);
     World loaded_world(flat);
-    CHECK(loaded_world.add_map_collision_of(dir / "swm_movement_test_map") == 12);
+    CHECK(loaded_world.add_map_collision_of(dir / "swbfo_movement_test_map") == 12);
     CHECK(loaded_world.raycast({-50, 1, 50}, {-40, 1, 50}));
     std::filesystem::remove(path);
-    CHECK(loaded_world.add_map_collision_of(dir / "swm_movement_test_map") == 0);
+    CHECK(loaded_world.add_map_collision_of(dir / "swbfo_movement_test_map") == 0);
 }
 
 // A hole cut in the terrain (a terrain cutter): the ground there is whatever
@@ -453,7 +453,7 @@ void test_terrain_cuts() {
     CHECK(run(above, MoveInput{}, open, 30).position.y < -3);
 
     // Read from the bake's .cuts file (game space).
-    const auto prefix = std::filesystem::temp_directory_path() / "swm_movement_test_cuts";
+    const auto prefix = std::filesystem::temp_directory_path() / "swbfo_movement_test_cuts";
     std::ofstream(prefix.string() + ".json") << "{\"samples\": 2, \"spacing\": 10, \"origin_x\": 0, \"origin_z\": 0}";
     const float heights[4] = {0, 0, 0, 0};
     std::ofstream(prefix.string() + ".r32", std::ios::binary).write(reinterpret_cast<const char*>(heights), sizeof heights);
@@ -512,7 +512,7 @@ void test_terrain_holes() {
     CHECK(near(run(start, MoveInput{}, bare, 45).position.y, 0));
 
     // Saved and read back with the bake.
-    const auto prefix = std::filesystem::temp_directory_path() / "swm_movement_test_holes";
+    const auto prefix = std::filesystem::temp_directory_path() / "swbfo_movement_test_holes";
     std::ofstream(prefix.string() + ".json") << "{\"samples\": 2, \"spacing\": 100, \"origin_x\": 0, \"origin_z\": 0}";
     const float heights[4] = {0, 0, 0, 0};
     std::ofstream(prefix.string() + ".r32", std::ios::binary).write(reinterpret_cast<const char*>(heights), sizeof heights);
@@ -574,7 +574,7 @@ void test_seams() {
 void test_water() {
     // Galaxies x 0..100 (game x 0..-100): the bed falls 0.1 m per meter.
     Heightfield lake = make_ground([](double gx, double) { return 4.0 - gx * 0.1; });
-    const std::filesystem::path path = std::filesystem::temp_directory_path() / "swm_movement_test.water";
+    const std::filesystem::path path = std::filesystem::temp_directory_path() / "swbfo_movement_test.water";
     {
         std::ofstream out(path);
         out << "# test\n";
@@ -657,5 +657,5 @@ int main() {
     test_seams();
     test_water();
     test_determinism();
-    return swm::test::finish("movement_test");
+    return swbfo::test::finish("movement_test");
 }

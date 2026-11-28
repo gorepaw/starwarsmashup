@@ -36,13 +36,13 @@
 #include "swg/static_mesh.h"
 #include "swg/tre_archive.h"
 #include "swg/tre_scan.h"
-#include "swm/core/items.h"
-#include "swm/core/species.h"
+#include "swbfo/core/items.h"
+#include "swbfo/core/species.h"
 
 namespace {
 
-using namespace swm;
-using namespace swm::swg;
+using namespace swbfo;
+using namespace swbfo::swg;
 
 constexpr const char* usage = R"(usage:
   swgtool list <archive.tre>
@@ -1651,13 +1651,13 @@ int cmd_export_items(const std::vector<std::string>& args) {
     std::string catalog_path = option(args, "--catalog");
     if (catalog_path.empty()) catalog_path = "game/items/swg_catalog.ini";
     const std::vector<std::string> only = options(args, "--only");
-    swm::core::ItemCatalog catalog;
+    swbfo::core::ItemCatalog catalog;
     catalog.load(catalog_path);
     ObjectTemplates templates(lib);
 
     size_t weapon_count = 0;
-    for (const swm::core::ItemDef& w : catalog.all()) {
-        if (w.swg_template.empty() || w.kind != swm::core::ItemKind::weapon) continue;
+    for (const swbfo::core::ItemDef& w : catalog.all()) {
+        if (w.swg_template.empty() || w.kind != swbfo::core::ItemKind::weapon) continue;
         if (!only.empty() && std::find(only.begin(), only.end(), w.id) == only.end()) continue;
         if (!lib.contains(w.swg_template)) {
             std::cerr << "skipping weapon " << w.id << ": no " << w.swg_template << "\n";
@@ -1759,16 +1759,16 @@ int cmd_export_items(const std::vector<std::string>& args) {
         std::string body;        // the body's appearance prefix: hum, wke, ith
     };
     std::vector<WornJob> jobs;
-    for (const swm::core::ItemDef& item : catalog.all()) {
+    for (const swbfo::core::ItemDef& item : catalog.all()) {
         if (!item.swg_template.empty() &&
-            (item.kind == swm::core::ItemKind::armor || item.kind == swm::core::ItemKind::clothing)) {
+            (item.kind == swbfo::core::ItemKind::armor || item.kind == swbfo::core::ItemKind::clothing)) {
             jobs.push_back({item.id, item.swg_template, item.model_path, "hum"});
         }
     }
-    for (const swm::core::SpeciesArmorLook& look : catalog.species_looks()) {
+    for (const swbfo::core::SpeciesArmorLook& look : catalog.species_looks()) {
         if (look.swg_template.empty()) continue;
-        const std::string body = look.species == swm::core::Species::wookiee    ? "wke"
-                                 : look.species == swm::core::Species::ithorian ? "ith"
+        const std::string body = look.species == swbfo::core::Species::wookiee    ? "wke"
+                                 : look.species == swbfo::core::Species::ithorian ? "ith"
                                                                                 : "hum";
         jobs.push_back({std::filesystem::path(split(look.model_path).front()).parent_path().filename().string(),
                         look.swg_template, look.model_path, body});

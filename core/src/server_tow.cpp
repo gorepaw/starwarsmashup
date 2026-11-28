@@ -10,9 +10,9 @@
 #include <format>
 #include <numbers>
 
-#include "swm/core/server.h"
+#include "swbfo/core/server.h"
 
-namespace swm::core {
+namespace swbfo::core {
 
 namespace {
 
@@ -125,4 +125,4 @@ void GameServer::update_tow_cables(double dt) {
     }
 }
 
-} // namespace swm::core
+} // namespace swbfo::core

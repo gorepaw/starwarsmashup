@@ -1,11 +1,11 @@
-#include "swm/core/telemetry.h"
+#include "swbfo/core/telemetry.h"
 
 #include <algorithm>
 #include <cctype>
 #include <format>
 #include <sstream>
 
-namespace swm::core {
+namespace swbfo::core {
 
 namespace {
 
@@ -160,4 +160,4 @@ std::string format_telemetry_report(const TelemetryReport& r) {
     return out;
 }
 
-} // namespace swm::core
+} // namespace swbfo::core

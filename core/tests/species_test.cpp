@@ -1,9 +1,9 @@
-#include "swm/core/species.h"
+#include "swbfo/core/species.h"
 
 #include "test.h"
 
-using namespace swm::core;
-using swm::test::near;
+using namespace swbfo::core;
+using swbfo::test::near;
 
 int main() {
     CHECK(all_species().size() == 10);
@@ -52,5 +52,5 @@ int main() {
     CHECK(tall_wke.eye_height > 2.1);
     CHECK(short_sul.height < 1.4);
 
-    return swm::test::finish("species_test");
+    return swbfo::test::finish("species_test");
 }

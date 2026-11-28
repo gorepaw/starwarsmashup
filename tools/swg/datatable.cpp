@@ -5,7 +5,7 @@
 
 #include "swg/iff.h"
 
-namespace swm::swg {
+namespace swbfo::swg {
 
 int DataTable::column(const std::string& name) const {
     for (size_t i = 0; i < columns.size(); ++i) {
@@ -86,4 +86,4 @@ DataTable parse_datatable(std::span<const uint8_t> bytes) {
     return table;
 }
 
-} // namespace swm::swg
+} // namespace swbfo::swg

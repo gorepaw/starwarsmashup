@@ -11,18 +11,18 @@
 #include <memory>
 #include <vector>
 
-#include "swm/core/bot.h"
-#include "swm/core/client.h"
-#include "swm/core/conquest.h"
-#include "swm/core/heightfield.h"
-#include "swm/core/hub.h"
-#include "swm/core/net/link.h"
-#include "swm/core/server.h"
-#include "swm/core/vehicle.h"
-#include "swm/core/world.h"
+#include "swbfo/core/bot.h"
+#include "swbfo/core/client.h"
+#include "swbfo/core/conquest.h"
+#include "swbfo/core/heightfield.h"
+#include "swbfo/core/hub.h"
+#include "swbfo/core/net/link.h"
+#include "swbfo/core/server.h"
+#include "swbfo/core/vehicle.h"
+#include "swbfo/core/world.h"
 #include "test.h"
 
-namespace swm::core {
+namespace swbfo::core {
 namespace {
 
 Heightfield flat_ground(float y = 0.0f) {
@@ -521,7 +521,7 @@ void test_vehicle_collision_bit() {
 
     // Saved and loaded (version 3), the bits stay; a version 2 file's
     // character-stopping triangles stop vehicles too.
-    const auto path = std::filesystem::temp_directory_path() / "swm_space_test.collision";
+    const auto path = std::filesystem::temp_directory_path() / "swbfo_space_test.collision";
     save_map_collision(collision, path);
     CHECK(load_map_collision(path).triangles[0].blocks == (blocks_characters | blocks_shots));
     {
@@ -535,13 +535,13 @@ void test_vehicle_collision_bit() {
 }
 
 } // namespace
-} // namespace swm::core
+} // namespace swbfo::core
 
 int main() {
-    swm::core::test_space_flight_and_hangar_landing();
-    swm::core::test_space_systems_and_scoring();
-    swm::core::test_turret_chair_and_mobile_transport();
-    swm::core::test_vehicle_collision_bit();
-    swm::core::test_exported_space_assets();
-    return swm::test::finish("space_test");
+    swbfo::core::test_space_flight_and_hangar_landing();
+    swbfo::core::test_space_systems_and_scoring();
+    swbfo::core::test_turret_chair_and_mobile_transport();
+    swbfo::core::test_vehicle_collision_bit();
+    swbfo::core::test_exported_space_assets();
+    return swbfo::test::finish("space_test");
 }

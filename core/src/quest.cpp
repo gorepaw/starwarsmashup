@@ -1,4 +1,4 @@
-#include "swm/core/quest.h"
+#include "swbfo/core/quest.h"
 
 #include <algorithm>
 #include <bit>
@@ -9,10 +9,10 @@
 #include <sstream>
 #include <stdexcept>
 
-#include "swm/core/ini.h"
-#include "swm/core/wildlife.h"
+#include "swbfo/core/ini.h"
+#include "swbfo/core/wildlife.h"
 
-namespace swm::core {
+namespace swbfo::core {
 namespace {
 
 bool same_ci(std::string_view a, std::string_view b) {
@@ -814,4 +814,4 @@ QuestEffects QuestBook::abandon(std::vector<QuestProgress>& journal, std::string
     return effects;
 }
 
-} // namespace swm::core
+} // namespace swbfo::core

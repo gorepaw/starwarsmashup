@@ -1,4 +1,4 @@
-#include "swm/core/world.h"
+#include "swbfo/core/world.h"
 
 #include <algorithm>
 #include <cmath>
@@ -8,9 +8,9 @@
 #include <numbers>
 #include <stdexcept>
 
-#include "swm/core/net/bytes.h"
+#include "swbfo/core/net/bytes.h"
 
-namespace swm::core {
+namespace swbfo::core {
 
 namespace {
 
@@ -938,4 +938,4 @@ std::shared_ptr<const World> load_world(const std::filesystem::path& bake) {
     return std::shared_ptr<const World>(owned, &owned->world);
 }
 
-} // namespace swm::core
+} // namespace swbfo::core

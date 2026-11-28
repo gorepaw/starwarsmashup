@@ -4,7 +4,7 @@
 
 #include "swg/iff.h"
 
-namespace swm::swg {
+namespace swbfo::swg {
 namespace {
 
 // NODE -> 0000 -> DATA (52 bytes): id, parent id, template index, cell index,
@@ -62,4 +62,4 @@ std::vector<SnapshotNode> parse_world_snapshot(std::span<const uint8_t> bytes) {
     return nodes;
 }
 
-} // namespace swm::swg
+} // namespace swbfo::swg

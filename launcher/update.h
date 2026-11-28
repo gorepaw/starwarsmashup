@@ -10,7 +10,7 @@
 #include <string>
 #include <vector>
 
-namespace swm::launcher {
+namespace swbfo::launcher {
 
 // A channel's release manifest (docs/DISTRIBUTION.md, Updates):
 //   channels/<channel>/latest.json      this, signed by latest.json.sig (Ed25519, hex)
@@ -110,4 +110,4 @@ std::string apply_update(const Remote& remote, const UpdatePlan& plan, const std
 
 std::optional<ReleaseManifest> installed_manifest(const std::filesystem::path& install_dir);
 
-} // namespace swm::launcher
+} // namespace swbfo::launcher

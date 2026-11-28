@@ -7,7 +7,7 @@
 #include "swg/animation_clip.h"
 #include "swg/skeleton.h"
 
-namespace swm::retarget {
+namespace swbfo::retarget {
 
 // One Galaxies joint driven by one Battlefront bone. The aim joints define
 // each bone's direction in its rest pose (from the joint toward the aim
@@ -48,4 +48,4 @@ swg::AnimationClip retarget_animation(const swg::Skeleton& target, const bf2::An
                                       const bf2::Animation& animation, const std::vector<BoneMapping>& mapping,
                                       std::string name);
 
-} // namespace swm::retarget
+} // namespace swbfo::retarget

@@ -3,7 +3,7 @@
 #   tools\install_terrain3d.ps1 -Source E:\godot\terrain3d-1.1.0
 #
 # Build Terrain3D first, in its own checkout, against our double-precision API dump
-# (see docs/BUILDING.md). Like swm.gdextension, the installed .gdextension lists only
+# (see docs/BUILDING.md). Like swbfo.gdextension, the installed .gdextension lists only
 # double-precision libraries, so a single-precision editor refuses to load it.
 param(
     [Parameter(Mandatory = $true)][string]$Source

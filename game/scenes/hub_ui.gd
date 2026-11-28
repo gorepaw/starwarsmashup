@@ -283,7 +283,7 @@ func set_catalog(catalog: Array, store: Object, species: String, gender: String,
 		_quest_screen.catalog = catalog
 
 
-# The profession roster (SwmCharacterStore.get_professions()) and the store
+# The profession roster (SwbfoCharacterStore.get_professions()) and the store
 # that knows its level curve.
 func set_professions(professions: Array, store: Object) -> void:
 	_professions = professions

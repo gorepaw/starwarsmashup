@@ -6,7 +6,7 @@
 
 #include "swg/tre_library.h"
 
-namespace swm::swg {
+namespace swbfo::swg {
 
 // Writes a particle effect (.prt) as <out_dir>/<stem>.json, and its
 // textures as PNGs beside it, for the client to draw (game/rendering/
@@ -21,4 +21,4 @@ namespace swm::swg {
 std::string export_particle_effect(TreLibrary& library, const std::string& prt_path,
                                    const std::filesystem::path& out_dir, std::ostream& log);
 
-} // namespace swm::swg
+} // namespace swbfo::swg

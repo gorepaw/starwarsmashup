@@ -195,8 +195,8 @@ func _start_interactive(cfg: Dictionary) -> void:
 
 func start_session(config: Dictionary) -> bool:
 	_config = config.duplicate(true)
-	if not ClassDB.class_exists("SwmClient"):
-		printerr("SwmClient GDExtension not loaded")
+	if not ClassDB.class_exists("SwbfoClient"):
+		printerr("SwbfoClient GDExtension not loaded")
 		_emit_or_menu(2)
 		return false
 	var default_bake := "imported_assets/terrain/tatooine" if FileAccess.file_exists("res://imported_assets/terrain/tatooine.json") else "imported_assets/terrain/tatooine_mos_eisley"
@@ -239,7 +239,7 @@ func start_session(config: Dictionary) -> bool:
 	var battlefield := str(_config.get("battlefield", ""))
 	var host_val: Variant = _config.get("host", null)
 	if host_val != null and str(host_val) != "":
-		_server = ClassDB.instantiate("SwmServer")
+		_server = ClassDB.instantiate("SwbfoServer")
 		var database := str(_config.get("db", ""))
 		if database != "":
 			_server.set_database(_os_path(database))
@@ -283,7 +283,7 @@ func start_session(config: Dictionary) -> bool:
 		if bool(_config.get("server_thread", true)) and _server.has_method("run_in_background"):
 			_server.run_in_background()
 
-	_client = ClassDB.instantiate("SwmClient")
+	_client = ClassDB.instantiate("SwbfoClient")
 	_client.set_simulated_network(float(_config.get("lag", 0.0)), float(_config.get("jitter", 0.0)),
 			float(_config.get("loss", 0.0)))
 	if collision != "" and _client.add_building(collision, building_position, building_yaw) != OK:
@@ -1872,7 +1872,7 @@ func _add_terrain(bake: String, meta: Dictionary, use_terrain3d: bool) -> void:
 		return
 	if use_terrain3d:
 		printerr("Terrain3D isn't installed (tools/install_terrain3d.ps1); using a mesh")
-	if not Bf2Map.is_bf2(meta) and ClassDB.class_exists("SwmTerrain"):
+	if not Bf2Map.is_bf2(meta) and ClassDB.class_exists("SwbfoTerrain"):
 		var streamer := SwgTerrainStreamer.new()
 		streamer.name = "SwgTerrainStreamer"
 		if streamer.setup(bake, meta):
@@ -2072,8 +2072,8 @@ func _setup_scene() -> void:
 	_hub_ui.terminal_closed.connect(func() -> void:
 		if _bot == "" and (_pause_menu == null or not _pause_menu.visible):
 			_capture_mouse(true))
-	if ClassDB.class_exists("SwmCharacterStore") and FileAccess.file_exists(_os_path("items/swg_catalog.ini")):
-		_catalog_store = ClassDB.instantiate("SwmCharacterStore")
+	if ClassDB.class_exists("SwbfoCharacterStore") and FileAccess.file_exists(_os_path("items/swg_catalog.ini")):
+		_catalog_store = ClassDB.instantiate("SwbfoCharacterStore")
 		if FileAccess.file_exists(_os_path("professions/professions.ini")) \
 				and _catalog_store.load_professions(_os_path("professions/professions.ini")) == OK:
 			_hub_ui.set_professions(_catalog_store.get_professions(), _catalog_store)

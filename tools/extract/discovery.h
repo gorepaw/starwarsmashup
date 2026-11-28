@@ -6,7 +6,7 @@
 #include <string>
 #include <vector>
 
-namespace swm::extract {
+namespace swbfo::extract {
 
 enum class SourceKind {
     bf2,              // Battlefront II (2005): its GameData\Data\_lvl_pc
@@ -51,4 +51,4 @@ std::vector<FoundSource> find_sources(const SearchOptions& options);
 void write_sources_file(const std::filesystem::path& file, const std::filesystem::path& manifest,
                         const std::vector<std::filesystem::path>& folders);
 
-} // namespace swm::extract
+} // namespace swbfo::extract

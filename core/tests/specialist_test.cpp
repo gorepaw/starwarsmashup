@@ -11,22 +11,22 @@
 #include <set>
 #include <vector>
 
-#include "swm/core/client.h"
-#include "swm/core/crafting.h"
-#include "swm/core/heightfield.h"
-#include "swm/core/items.h"
-#include "swm/core/net/link.h"
-#include "swm/core/net/protocol.h"
-#include "swm/core/persistence.h"
-#include "swm/core/profession.h"
-#include "swm/core/server.h"
-#include "swm/core/specialist.h"
-#include "swm/core/vehicle.h"
-#include "swm/core/world.h"
+#include "swbfo/core/client.h"
+#include "swbfo/core/crafting.h"
+#include "swbfo/core/heightfield.h"
+#include "swbfo/core/items.h"
+#include "swbfo/core/net/link.h"
+#include "swbfo/core/net/protocol.h"
+#include "swbfo/core/persistence.h"
+#include "swbfo/core/profession.h"
+#include "swbfo/core/server.h"
+#include "swbfo/core/specialist.h"
+#include "swbfo/core/vehicle.h"
+#include "swbfo/core/world.h"
 #include "test.h"
 
-using namespace swm::core;
-using swm::test::near;
+using namespace swbfo::core;
+using swbfo::test::near;
 
 namespace {
 
@@ -2186,5 +2186,5 @@ int main() {
     test_droid_engineer(root, book, professions, catalog);
     test_droid_operations(book, professions, catalog);
     test_match(book, professions);
-    return swm::test::finish("specialist_test");
+    return swbfo::test::finish("specialist_test");
 }

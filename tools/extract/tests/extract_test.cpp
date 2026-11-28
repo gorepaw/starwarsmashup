@@ -19,7 +19,7 @@
 #include "extract/recipe.h"
 
 namespace fs = std::filesystem;
-using namespace swm::extract;
+using namespace swbfo::extract;
 
 namespace {
 
@@ -51,7 +51,7 @@ void test_command_line_round_trips() {
 }
 
 void test_recipe_runs_and_resumes() {
-    const fs::path root = fs::temp_directory_path() / "swm_extract_test";
+    const fs::path root = fs::temp_directory_path() / "swbfo_extract_test";
     fs::remove_all(root);
     wchar_t system[MAX_PATH] = {};
     GetSystemDirectoryW(system, MAX_PATH);
@@ -132,7 +132,7 @@ void test_placeholders() {
 }
 
 void test_classify_folders() {
-    const fs::path root = fs::temp_directory_path() / "swm_classify_test";
+    const fs::path root = fs::temp_directory_path() / "swbfo_classify_test";
     fs::remove_all(root);
     // Battlefront II's game folder (GameData\Data\_lvl_pc is found from it).
     write(root / "Star Wars Battlefront II Classic" / "GameData" / "Data" / "_lvl_pc" / "ingame.lvl", "x");

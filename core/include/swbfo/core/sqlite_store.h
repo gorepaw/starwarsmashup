@@ -1,0 +1,97 @@
+#pragma once
+
+#include <filesystem>
+
+#include "swbfo/core/persistence.h"
+
+struct sqlite3;
+struct sqlite3_stmt;
+
+namespace swbfo::core {
+
+// CharacterStore in a SQLite database file, created if missing. Lives in its
+// own library (swbfo_sqlite_store) so core/ itself doesn't depend on SQLite; a
+// Postgres store would sit beside it. Not thread-safe: one per thread.
+class SqliteCharacterStore : public CharacterStore {
+public:
+    explicit SqliteCharacterStore(const std::filesystem::path& path);
+    ~SqliteCharacterStore() override;
+    SqliteCharacterStore(const SqliteCharacterStore&) = delete;
+    SqliteCharacterStore& operator=(const SqliteCharacterStore&) = delete;
+
+    std::optional<CharacterRecord> find(PersistentId id) override;
+    std::optional<CharacterRecord> find_by_name(const std::string& name) override;
+    std::vector<CharacterRecord> list_all() override;
+    CharacterRecord create_character(const CharacterRecord& record) override;
+    void save(std::span<const CharacterRecord> characters) override;
+    bool remove(PersistentId id) override;
+
+    std::vector<ItemInstance> list_items(PersistentId owner_id) override;
+    ItemInstance grant_item(const ItemInstance& item) override;
+    bool remove_item(PersistentId item_id) override;
+    bool update_item_quantity(PersistentId item_id, int quantity) override;
+    std::vector<CharacterLoadout> list_loadouts(PersistentId owner_id) override;
+    void save_loadout(PersistentId owner_id, const CharacterLoadout& loadout) override;
+    void update_economy(PersistentId id, int64_t credits, int64_t faction_points, int64_t experience,
+                        int active_loadout) override;
+    std::vector<QuestProgress> list_quests(PersistentId owner_id) override;
+    void save_quests(PersistentId owner_id, std::span<const QuestProgress> quests) override;
+    std::vector<ProfessionProgress> list_professions(PersistentId owner_id) override;
+    void save_professions(PersistentId owner_id, std::span<const ProfessionProgress> professions) override;
+    std::string get_extra(PersistentId owner_id, const std::string& key) override;
+    void set_extra(PersistentId owner_id, const std::string& key, const std::string& value) override;
+    bool update_item_colors(PersistentId item_id, const std::string& color_json) override;
+    std::vector<MaterialStack> list_materials(PersistentId owner_id) override;
+    void save_materials(PersistentId owner_id, std::span<const MaterialStack> materials) override;
+    std::vector<RecipePreset> list_presets(PersistentId owner_id) override;
+    void save_preset(PersistentId owner_id, const RecipePreset& preset) override;
+    bool delete_preset(PersistentId owner_id, const std::string& name) override;
+    std::map<std::string, int64_t> list_reputation(PersistentId owner_id) override;
+    void save_reputation(PersistentId owner_id, const std::map<std::string, int64_t>& reputation) override;
+    int64_t record_match(const MatchTelemetry& match) override;       // Stage 11
+    std::vector<MatchTelemetry> list_matches(size_t limit) override;  // Stage 11
+
+    // The schema version this build writes (PRAGMA user_version).
+    static constexpr int schema_version = 10;
+
+private:
+    void close();
+    void exec(const char* sql);
+    std::optional<CharacterRecord> find_one(sqlite3_stmt* statement);
+    static CharacterRecord read_row(sqlite3_stmt* statement);
+
+    sqlite3* db_ = nullptr;
+    sqlite3_stmt* find_ = nullptr;
+    sqlite3_stmt* find_by_name_ = nullptr;
+    sqlite3_stmt* list_all_ = nullptr;
+    sqlite3_stmt* insert_ = nullptr;
+    sqlite3_stmt* update_ = nullptr;
+    sqlite3_stmt* delete_ = nullptr;
+    sqlite3_stmt* list_items_ = nullptr;
+    sqlite3_stmt* grant_item_ = nullptr;
+    sqlite3_stmt* remove_item_ = nullptr;
+    sqlite3_stmt* update_item_quantity_ = nullptr;
+    sqlite3_stmt* remove_items_by_owner_ = nullptr;
+    sqlite3_stmt* list_loadouts_ = nullptr;
+    sqlite3_stmt* save_loadout_ = nullptr;
+    sqlite3_stmt* remove_loadouts_by_owner_ = nullptr;
+    sqlite3_stmt* update_economy_ = nullptr;
+    sqlite3_stmt* list_quests_ = nullptr;
+    sqlite3_stmt* insert_quest_ = nullptr;
+    sqlite3_stmt* remove_quests_by_owner_ = nullptr;
+    sqlite3_stmt* list_professions_ = nullptr;
+    sqlite3_stmt* insert_profession_ = nullptr;
+    sqlite3_stmt* remove_professions_by_owner_ = nullptr;
+    sqlite3_stmt* list_materials_ = nullptr;
+    sqlite3_stmt* insert_material_ = nullptr;
+    sqlite3_stmt* remove_materials_by_owner_ = nullptr;
+    sqlite3_stmt* list_presets_ = nullptr;
+    sqlite3_stmt* save_preset_ = nullptr;
+    sqlite3_stmt* delete_preset_ = nullptr;
+    sqlite3_stmt* remove_presets_by_owner_ = nullptr;
+    sqlite3_stmt* list_reputation_ = nullptr;
+    sqlite3_stmt* insert_reputation_ = nullptr;
+    sqlite3_stmt* remove_reputation_by_owner_ = nullptr;
+};
+
+} // namespace swbfo::core

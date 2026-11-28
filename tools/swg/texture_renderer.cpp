@@ -6,7 +6,7 @@
 #include "swg/iff.h"
 #include "swg/manifest.h"
 
-namespace swm::swg {
+namespace swbfo::swg {
 namespace {
 
 std::string tag_of(uint32_t tag) {
@@ -147,4 +147,4 @@ TextureRenderer parse_texture_renderer(std::span<const uint8_t> bytes) {
     return renderer;
 }
 
-} // namespace swm::swg
+} // namespace swbfo::swg

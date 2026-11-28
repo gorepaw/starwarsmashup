@@ -1,4 +1,4 @@
-#include "swm/core/sqlite_store.h"
+#include "swbfo/core/sqlite_store.h"
 
 #include <algorithm>
 #include <array>
@@ -8,7 +8,7 @@
 
 #include <sqlite3.h>
 
-namespace swm::core {
+namespace swbfo::core {
 
 namespace {
 
@@ -1116,4 +1116,4 @@ std::vector<MatchTelemetry> SqliteCharacterStore::list_matches(size_t limit) {
     return out;
 }
 
-} // namespace swm::core
+} // namespace swbfo::core

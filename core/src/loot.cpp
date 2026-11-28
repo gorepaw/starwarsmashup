@@ -1,14 +1,14 @@
-#include "swm/core/loot.h"
+#include "swbfo/core/loot.h"
 
 #include <algorithm>
 #include <cctype>
 #include <sstream>
 #include <stdexcept>
 
-#include "swm/core/ini.h"
-#include "swm/core/items.h"
+#include "swbfo/core/ini.h"
+#include "swbfo/core/items.h"
 
-namespace swm::core {
+namespace swbfo::core {
 namespace {
 
 bool same_ci(std::string_view a, std::string_view b) {
@@ -145,4 +145,4 @@ RolledLoot LootTableSet::roll(std::string_view table_id, uint64_t& rng_state) co
     return out;
 }
 
-} // namespace swm::core
+} // namespace swbfo::core

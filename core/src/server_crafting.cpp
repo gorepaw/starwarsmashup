@@ -4,9 +4,9 @@
 #include <cmath>
 #include <format>
 
-#include "swm/core/server.h"
+#include "swbfo/core/server.h"
 
-namespace swm::core {
+namespace swbfo::core {
 
 bool item_equipped_in_loadouts(const std::vector<CharacterLoadout>& loadouts, uint64_t item_id) {
     for (const CharacterLoadout& cl : loadouts) {
@@ -711,4 +711,4 @@ void GameServer::handle_craft_request(Client& client, const net::CraftRequest& r
     }
 }
 
-} // namespace swm::core
+} // namespace swbfo::core

@@ -3,9 +3,9 @@
 #include <algorithm>
 #include <format>
 
-#include "swm/core/server.h"
+#include "swbfo/core/server.h"
 
-namespace swm::core {
+namespace swbfo::core {
 
 const std::vector<ProfessionProgress>* GameServer::professions_of(uint32_t entity) const {
     const Client* client = find(entity);
@@ -163,4 +163,4 @@ void GameServer::apply_professions(const Client& client, const CharacterLoadout&
     fill_specialist_loadout(client, cl, loadout);
 }
 
-} // namespace swm::core
+} // namespace swbfo::core

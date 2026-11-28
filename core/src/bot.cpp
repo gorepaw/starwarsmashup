@@ -1,4 +1,4 @@
-#include "swm/core/bot.h"
+#include "swbfo/core/bot.h"
 
 #include <algorithm>
 #include <cmath>
@@ -6,11 +6,11 @@
 #include <limits>
 #include <numbers>
 
-#include "swm/core/nav.h"
-#include "swm/core/vehicle.h"
-#include "swm/core/world.h"
+#include "swbfo/core/nav.h"
+#include "swbfo/core/vehicle.h"
+#include "swbfo/core/world.h"
 
-namespace swm::core {
+namespace swbfo::core {
 
 namespace {
 
@@ -1520,4 +1520,4 @@ void BotPlayers::disconnect() {
     }
 }
 
-} // namespace swm::core
+} // namespace swbfo::core

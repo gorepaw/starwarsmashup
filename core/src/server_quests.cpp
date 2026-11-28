@@ -5,9 +5,9 @@
 #include <cmath>
 #include <format>
 
-#include "swm/core/server.h"
+#include "swbfo/core/server.h"
 
-namespace swm::core {
+namespace swbfo::core {
 namespace {
 
 constexpr double talk_reach = 6;  // meters from a quest NPC
@@ -502,4 +502,4 @@ void GameServer::send_quest_sync(Client& client) {
     client.quest_sync_tick = tick_;
 }
 
-} // namespace swm::core
+} // namespace swbfo::core

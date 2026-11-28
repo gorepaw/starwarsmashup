@@ -6,14 +6,14 @@
 Uploads `git archive <ref>`, then runs that commit's
 server/deploy/deploy_remote.sh on the server over SSH: an incremental build,
 a new release in /opt/swm/releases, `current` switched to it, the galaxy
-restarted (it saves everyone first) and joined with swm_probe; if that fails,
+restarted (it saves everyone first) and joined with swbfo_probe; if that fails,
 the previous release comes back. Builds from the commit, never from
 uncommitted changes.
 
 --assets also uploads the server's part of a local imported_assets
 (server_assets.py), for the first deploy or after re-exporting.
 
-The host comes from --host or SWM_SERVER_HOST; SSH uses --key (default
+The host comes from --host or SWBFO_SERVER_HOST; SSH uses --key (default
 ~/.ssh/swm_vps_ed25519) as --user (default ops).
 """
 import argparse
@@ -33,14 +33,14 @@ def git(*args):
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
-    ap.add_argument("--host", default=os.environ.get("SWM_SERVER_HOST"), help="the server's address")
+    ap.add_argument("--host", default=os.environ.get("SWBFO_SERVER_HOST"), help="the server's address")
     ap.add_argument("--user", default="ops")
     ap.add_argument("--key", default=os.path.join(os.path.expanduser("~"), ".ssh", "swm_vps_ed25519"))
     ap.add_argument("--ref", default="HEAD", help="the commit to deploy")
     ap.add_argument("--assets", help="imported_assets to upload the server's part of")
     args = ap.parse_args()
     if not args.host:
-        sys.exit("no host: --host or SWM_SERVER_HOST")
+        sys.exit("no host: --host or SWBFO_SERVER_HOST")
 
     commit = git("rev-parse", "--short=12", args.ref).decode().strip()
     subject = git("log", "-1", "--format=%s", commit).decode().strip()

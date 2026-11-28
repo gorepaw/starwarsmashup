@@ -9,7 +9,7 @@
 
 #include "bf2/odf.h"
 
-namespace swm::bf2 {
+namespace swbfo::bf2 {
 
 namespace {
 
@@ -783,4 +783,4 @@ bool merge_sky_sublevel(const UcfbNode& root, uint32_t sublevel_hash, LevelSky& 
     return found;
 }
 
-} // namespace swm::bf2
+} // namespace swbfo::bf2

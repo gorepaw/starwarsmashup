@@ -45,7 +45,7 @@ func _initialize() -> void:
 		return
 	_prefix = args[0]
 	var wanted: Array = Array(args.slice(1))
-	var store: Object = ClassDB.instantiate("SwmCharacterStore")
+	var store: Object = ClassDB.instantiate("SwbfoCharacterStore")
 	_store = store
 	if store.load_catalog(ProjectSettings.globalize_path("res://items/swg_catalog.ini"),
 			ProjectSettings.globalize_path("res://imported_assets/items")) != OK:

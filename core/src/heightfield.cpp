@@ -1,4 +1,4 @@
-#include "swm/core/heightfield.h"
+#include "swbfo/core/heightfield.h"
 
 #include <algorithm>
 #include <cmath>
@@ -9,7 +9,7 @@
 #include <stdexcept>
 #include <string>
 
-namespace swm::core {
+namespace swbfo::core {
 
 Heightfield::Heightfield(int samples, double spacing, double origin_x, double origin_z, std::vector<float> heights)
     : samples_(samples), spacing_(spacing), origin_x_(origin_x), origin_z_(origin_z), heights_(std::move(heights)) {
@@ -337,4 +337,4 @@ std::optional<double> Heightfield::water_at(double x, double z) const {
     return std::nullopt;
 }
 
-} // namespace swm::core
+} // namespace swbfo::core

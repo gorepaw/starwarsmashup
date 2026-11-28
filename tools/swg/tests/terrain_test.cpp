@@ -5,7 +5,7 @@
 
 #include "swg/terrain.h"
 
-using namespace swm::swg;
+using namespace swbfo::swg;
 
 namespace {
 

@@ -15,11 +15,11 @@ func _init() -> void:
 		printerr("FAIL: engine is not a double-precision build")
 		failures += 1
 
-	if not ClassDB.class_exists("SwmInfo"):
-		printerr("FAIL: SwmInfo not registered (GDExtension did not load)")
+	if not ClassDB.class_exists("SwbfoInfo"):
+		printerr("FAIL: SwbfoInfo not registered (GDExtension did not load)")
 		failures += 1
 	else:
-		var info: Object = ClassDB.instantiate("SwmInfo")
+		var info: Object = ClassDB.instantiate("SwbfoInfo")
 		var version: String = info.get_core_version()
 		var real_size: int = info.get_real_size()
 		print("core version: ", version)
@@ -31,7 +31,7 @@ func _init() -> void:
 			printerr("FAIL: extension is not built with double precision")
 			failures += 1
 
-	for class_name_ in ["SwmClient", "SwmServer"]:
+	for class_name_ in ["SwbfoClient", "SwbfoServer"]:
 		if not ClassDB.class_exists(class_name_):
 			printerr("FAIL: ", class_name_, " not registered")
 			failures += 1

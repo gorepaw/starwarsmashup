@@ -9,21 +9,21 @@
 #include <numbers>
 #include <vector>
 
-#include "swm/core/client.h"
-#include "swm/core/combat.h"
-#include "swm/core/net/protocol.h"
-#include "swm/core/persistence.h"
-#include "swm/core/heightfield.h"
-#include "swm/core/items.h"
-#include "swm/core/net/link.h"
-#include "swm/core/profession.h"
-#include "swm/core/server.h"
-#include "swm/core/sqlite_store.h"
-#include "swm/core/world.h"
+#include "swbfo/core/client.h"
+#include "swbfo/core/combat.h"
+#include "swbfo/core/net/protocol.h"
+#include "swbfo/core/persistence.h"
+#include "swbfo/core/heightfield.h"
+#include "swbfo/core/items.h"
+#include "swbfo/core/net/link.h"
+#include "swbfo/core/profession.h"
+#include "swbfo/core/server.h"
+#include "swbfo/core/sqlite_store.h"
+#include "swbfo/core/world.h"
 #include "test.h"
 
-using namespace swm::core;
-using swm::test::near;
+using namespace swbfo::core;
+using swbfo::test::near;
 
 namespace {
 
@@ -538,7 +538,7 @@ void test_triggers() {
 // killing blow, and kills in a chain with a carbine.
 void test_server_triggers() {
     const auto root = repo_root();
-    const auto db_path = std::filesystem::temp_directory_path() / "swm_perk_trigger_test.sqlite";
+    const auto db_path = std::filesystem::temp_directory_path() / "swbfo_perk_trigger_test.sqlite";
     std::filesystem::remove(db_path);
     ItemCatalog catalog;
     catalog.load(root / "game" / "items" / "swg_catalog.ini");
@@ -1427,7 +1427,7 @@ void test_server_melee() {
 
 void test_server_professions() {
     const auto root = repo_root();
-    const auto db_path = std::filesystem::temp_directory_path() / "swm_profession_test.sqlite";
+    const auto db_path = std::filesystem::temp_directory_path() / "swbfo_profession_test.sqlite";
     std::filesystem::remove(db_path);
     ItemCatalog catalog;
     catalog.load(root / "game" / "items" / "swg_catalog.ini");
@@ -1580,5 +1580,5 @@ int main() {
         std::printf("FAIL: %s\n", error.what());
         return 1;
     }
-    return swm::test::finish("profession_test");
+    return swbfo::test::finish("profession_test");
 }

@@ -1,4 +1,4 @@
-#include "swm/core/server.h"
+#include "swbfo/core/server.h"
 
 #include <algorithm>
 #include <chrono>
@@ -7,10 +7,10 @@
 #include <numbers>
 #include <sstream>
 
-#include "swm/core/net/bytes.h"
-#include "swm/core/net/protocol.h"
+#include "swbfo/core/net/bytes.h"
+#include "swbfo/core/net/protocol.h"
 
-namespace swm::core {
+namespace swbfo::core {
 
 namespace {
 
@@ -3620,4 +3620,4 @@ void GameServer::drop_silent(double now) {
     });
 }
 
-} // namespace swm::core
+} // namespace swbfo::core

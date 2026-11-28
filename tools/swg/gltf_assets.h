@@ -13,7 +13,7 @@
 #include "swg/static_mesh.h"
 #include "swg/tre_library.h"
 
-namespace swm::swg {
+namespace swbfo::swg {
 
 // After mirroring X into glTF space, SWG's triangles face inward (verified by
 // rendering), so each triangle's winding is reversed.
@@ -89,4 +89,4 @@ private:
 // Throws std::runtime_error for other appearance types.
 StaticMesh load_static_appearance(TreLibrary& library, const std::string& path);
 
-} // namespace swm::swg
+} // namespace swbfo::swg

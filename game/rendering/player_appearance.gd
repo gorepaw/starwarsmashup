@@ -21,8 +21,8 @@ static var _invisible_material: Material
 static func _ensure_species_table() -> void:
 	if not _species_by_id.is_empty():
 		return
-	if ClassDB.class_exists("SwmCharacterStore"):
-		var list: Array = SwmCharacterStore.get_species_list()
+	if ClassDB.class_exists("SwbfoCharacterStore"):
+		var list: Array = SwbfoCharacterStore.get_species_list()
 		for sp: Dictionary in list:
 			_species_by_id[str(sp.get("id", ""))] = sp
 

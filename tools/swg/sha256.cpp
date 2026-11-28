@@ -3,7 +3,7 @@
 #include <algorithm>
 #include <cstring>
 
-namespace swm::swg {
+namespace swbfo::swg {
 namespace {
 
 constexpr std::array<uint32_t, 64> round_constants = {
@@ -138,4 +138,4 @@ void Sha256::process_block(const uint8_t* block) {
     state_[7] += h;
 }
 
-} // namespace swm::swg
+} // namespace swbfo::swg

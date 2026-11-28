@@ -1,6 +1,6 @@
 // Standalone game server: core/ only, no Godot.
 //
-//   swm_server [--bake <prefix>] [--db <file>] [--port 7777] [--spawn <swg_x> <swg_z>] [--seconds <n>]
+//   swbfo_server [--bake <prefix>] [--db <file>] [--port 7777] [--spawn <swg_x> <swg_z>] [--seconds <n>]
 //              [--building <file.collision> <swg_x> <swg_y> <swg_z> <yaw_degrees>]... [--loadout <file.ini>]
 //              [--battlefield <file.ini>] [--bots <n>] [--hub <file.ini>]
 //
@@ -35,7 +35,7 @@
 // Each finished battle's telemetry (map, mode, era, sides, winner, tickets,
 // duration, players and bots, kills by weapon) is recorded in the --db file.
 //
-//   swm_server --telemetry <db file> [--last <n>]
+//   swbfo_server --telemetry <db file> [--last <n>]
 //
 // prints what that telemetry says: win rates by faction, mode and map, K/D,
 // and the deadliest weapons, over the last n battles (default: all).
@@ -61,29 +61,29 @@
 #include <timeapi.h>
 #endif
 
-#include "swm/core/bot.h"
-#include "swm/core/build_info.h"
-#include "swm/core/client.h"
-#include "swm/core/combat.h"
-#include "swm/core/conquest.h"
-#include "swm/core/heightfield.h"
-#include "swm/core/galaxy.h"
-#include "swm/core/hub.h"
-#include "swm/core/net/udp.h"
-#include "swm/core/server.h"
-#include "swm/core/sqlite_store.h"
-#include "swm/core/world.h"
+#include "swbfo/core/bot.h"
+#include "swbfo/core/build_info.h"
+#include "swbfo/core/client.h"
+#include "swbfo/core/combat.h"
+#include "swbfo/core/conquest.h"
+#include "swbfo/core/heightfield.h"
+#include "swbfo/core/galaxy.h"
+#include "swbfo/core/hub.h"
+#include "swbfo/core/net/udp.h"
+#include "swbfo/core/server.h"
+#include "swbfo/core/sqlite_store.h"
+#include "swbfo/core/world.h"
 
 namespace {
 
 std::atomic<bool> stop_requested = false;
 
 int usage() {
-    std::cerr << "usage: swm_server [--bake <prefix>] [--db <file>] [--port 7777] [--spawn <swg_x> <swg_z>] "
+    std::cerr << "usage: swbfo_server [--bake <prefix>] [--db <file>] [--port 7777] [--spawn <swg_x> <swg_z>] "
                  "[--seconds <n>] [--building <file.collision> <swg_x> <swg_y> <swg_z> <yaw_degrees>]... "
                  "[--loadout <file.ini>] [--battlefield <file.ini>] [--bots <n>] "
                  "[--hub <file.ini>] [--galaxy <galaxy.ini>] [--ports <first>-<last>]\n"
-                 "       swm_server --telemetry <db file> [--last <n>]\n";
+                 "       swbfo_server --telemetry <db file> [--last <n>]\n";
     return 2;
 }
 
@@ -96,9 +96,9 @@ int telemetry_report(int argc, char** argv) {
         return usage();
     }
     try {
-        swm::core::SqliteCharacterStore store(argv[2]);
+        swbfo::core::SqliteCharacterStore store(argv[2]);
         const auto matches = store.list_matches(last);
-        std::cout << swm::core::format_telemetry_report(swm::core::summarize_telemetry(matches));
+        std::cout << swbfo::core::format_telemetry_report(swbfo::core::summarize_telemetry(matches));
         return 0;
     } catch (const std::exception& error) {
         std::cerr << "error: " << error.what() << "\n";
@@ -124,7 +124,7 @@ int main(int argc, char** argv) {
     std::string battlefield;
     std::string hub_file;
     std::string galaxy_file;
-    std::optional<swm::core::GalaxyConfig> galaxy_config;
+    std::optional<swbfo::core::GalaxyConfig> galaxy_config;
     int bot_count = 0;
     int port = 7777;
     int ports_first = 0, ports_last = 0;  // --ports
@@ -183,9 +183,9 @@ int main(int argc, char** argv) {
     }
     if (!galaxy_file.empty()) {
         try {
-            galaxy_config = swm::core::load_galaxy(galaxy_file);
+            galaxy_config = swbfo::core::load_galaxy(galaxy_file);
         } catch (const std::exception& error) {
-            std::cerr << "swm_server: " << error.what() << "\n";
+            std::cerr << "swbfo_server: " << error.what() << "\n";
             return 1;
         }
         if (bake.empty()) bake = galaxy_config->planets[0].bake.string();
@@ -197,9 +197,9 @@ int main(int argc, char** argv) {
     }
 
     try {
-        swm::core::ServerConfig config;
+        swbfo::core::ServerConfig config;
         if (!battlefield.empty()) {
-            config.battlefield = swm::core::load_battlefield(battlefield);
+            config.battlefield = swbfo::core::load_battlefield(battlefield);
         }
         if (bake.empty() && config.battlefield && !config.battlefield->terrain.empty()) {
             bake = config.battlefield->terrain.string();
@@ -207,11 +207,11 @@ int main(int argc, char** argv) {
         if (bake.empty()) {
             return usage();
         }
-        const swm::core::Heightfield ground = swm::core::load_bake(bake);
+        const swbfo::core::Heightfield ground = swbfo::core::load_bake(bake);
         if (!loadout.empty()) {
-            config.loadout = swm::core::load_loadout(loadout);
+            config.loadout = swbfo::core::load_loadout(loadout);
             std::cout << std::format("loadout {}: {} health\n", config.loadout.name,
-                                     swm::core::stats_for(config.loadout, config.base_stats).max_health);
+                                     swbfo::core::stats_for(config.loadout, config.base_stats).max_health);
         }
         if (config.battlefield) {
             const auto& field = *config.battlefield;
@@ -223,13 +223,13 @@ int main(int argc, char** argv) {
                 db.clear();
             }
         }
-        std::optional<swm::core::HubConfig> hub_config;
-        const swm::core::BotSkill skill = swm::core::BotSkill::preset("hard");
+        std::optional<swbfo::core::HubConfig> hub_config;
+        const swbfo::core::BotSkill skill = swbfo::core::BotSkill::preset("hard");
         if (galaxy_config) {
             config.planet = galaxy_config->planets[0].name;
         }
         if (!hub_file.empty()) {
-            hub_config = swm::core::load_hub(hub_file);
+            hub_config = swbfo::core::load_hub(hub_file);
             hub_config->bot_skill = skill;
             if (galaxy_config) {
                 hub_config->planet = galaxy_config->planets[0].stem();
@@ -240,61 +240,61 @@ int main(int argc, char** argv) {
         } else if (hub_config && hub_config->spawn) {
             config.spawn = *hub_config->spawn;
         } else {
-            const swm::core::Vec3 corner = ground.clamp({-1e9, 0, 1e9});
-            const swm::core::Vec3 other = ground.clamp({1e9, 0, -1e9});
+            const swbfo::core::Vec3 corner = ground.clamp({-1e9, 0, 1e9});
+            const swbfo::core::Vec3 other = ground.clamp({1e9, 0, -1e9});
             config.spawn = (corner + other) * 0.5;
         }
-        std::unique_ptr<swm::core::SqliteCharacterStore> store;
+        std::unique_ptr<swbfo::core::SqliteCharacterStore> store;
         if (!db.empty()) {
-            store = std::make_unique<swm::core::SqliteCharacterStore>(db);
+            store = std::make_unique<swbfo::core::SqliteCharacterStore>(db);
         }
-        swm::core::ItemCatalog catalog;
+        swbfo::core::ItemCatalog catalog;
         if (!catalog_path.empty()) {
             catalog.load(catalog_path, bf2_items_dir);
             config.catalog = &catalog;
         }
-        swm::core::net::UdpLink link{uint16_t(port)};
-        swm::core::World world(ground);
+        swbfo::core::net::UdpLink link{uint16_t(port)};
+        swbfo::core::World world(ground);
         // A Battlefront map's props (bf2tool export-map), next to its bake.
         if (const size_t triangles = world.add_map_collision_of(bake); triangles > 0) {
             std::cout << std::format("map collision: {} triangles\n", triangles);
         }
         for (const BuildingArg& building : buildings) {
-            const auto collision = swm::core::load_building_collision(building.path);
+            const auto collision = swbfo::core::load_building_collision(building.path);
             world.add_building(collision,
-                               swm::core::placement_from_galaxies(building.x, building.y, building.z, building.yaw));
+                               swbfo::core::placement_from_galaxies(building.x, building.y, building.z, building.yaw));
             std::cout << std::format("building {}: {} floor triangles, {} walls\n", building.path,
                                      collision.floors.size(), collision.walls.size());
         }
-        swm::core::GameServer server(link, world, config, store.get());
+        swbfo::core::GameServer server(link, world, config, store.get());
         const auto start = std::chrono::steady_clock::now();
         server.log = [&](const std::string& line) {
             std::cout << std::format("[{:8.2f}] {}\n", seconds_since(start), line) << std::flush;
         };
         // Bots: clients like any other, on their own sockets.
-        swm::core::ClientConfig bot_config;
-        bot_config.server = *swm::core::net::parse_endpoint(std::format("127.0.0.1:{}", link.port()));
+        swbfo::core::ClientConfig bot_config;
+        bot_config.server = *swbfo::core::net::parse_endpoint(std::format("127.0.0.1:{}", link.port()));
         bot_config.loadout = config.loadout;
         bot_config.base_stats = config.base_stats;
         bot_config.battlefield = config.battlefield;
-        swm::core::BotPlayers bots(bot_count, world, bot_config, {}, skill);
-        swm::core::UdpHubNetwork hub_network = ports_first > 0
-                                                   ? swm::core::UdpHubNetwork(uint16_t(ports_first), uint16_t(ports_last))
-                                                   : swm::core::UdpHubNetwork();
-        std::unique_ptr<swm::core::Hub> hub;
+        swbfo::core::BotPlayers bots(bot_count, world, bot_config, {}, skill);
+        swbfo::core::UdpHubNetwork hub_network = ports_first > 0
+                                                   ? swbfo::core::UdpHubNetwork(uint16_t(ports_first), uint16_t(ports_last))
+                                                   : swbfo::core::UdpHubNetwork();
+        std::unique_ptr<swbfo::core::Hub> hub;
         if (hub_config) {
             std::cout << std::format("hub {}: {} war terminal(s), battles on {} battlefields, {} per team\n", hub_config->name,
                                      hub_config->recruiters.size(), hub_config->battlefields.size(), hub_config->team_size);
-            hub = std::make_unique<swm::core::Hub>(server, link.port(), world, std::move(*hub_config), hub_network);
+            hub = std::make_unique<swbfo::core::Hub>(server, link.port(), world, std::move(*hub_config), hub_network);
             hub->log = server.log;
         }
-        std::unique_ptr<swm::core::Galaxy> galaxy;
+        std::unique_ptr<swbfo::core::Galaxy> galaxy;
         if (galaxy_config && hub) {
-            galaxy = std::make_unique<swm::core::Galaxy>(server, link.port(), *galaxy_config, config, store.get(),
+            galaxy = std::make_unique<swbfo::core::Galaxy>(server, link.port(), *galaxy_config, config, store.get(),
                                                           hub_network, server.log);
         }
-        std::cout << std::format("swm_server {}: UDP port {}, {} Hz, spawn ({:.1f}, {:.1f}) in Galaxies coordinates, {}\n",
-                                 swm::core::version(), link.port(), config.tick_rate, -config.spawn.x, config.spawn.z,
+        std::cout << std::format("swbfo_server {}: UDP port {}, {} Hz, spawn ({:.1f}, {:.1f}) in Galaxies coordinates, {}\n",
+                                 swbfo::core::version(), link.port(), config.tick_rate, -config.spawn.x, config.spawn.z,
                                  db.empty() ? std::string("not saving") : "saving to " + db)
                   << std::flush;
         std::signal(SIGINT, [](int) { stop_requested = true; });
@@ -330,7 +330,7 @@ int main(int argc, char** argv) {
                 next_status += 10;
                 server.log(std::format("tick {}, {} client(s){}", server.tick(), server.client_count(), positions()));
                 // What the ticks cost (Stage 13 server audit).
-                const swm::core::ServerPerf perf = server.take_perf(now);
+                const swbfo::core::ServerPerf perf = server.take_perf(now);
                 if (perf.ticks > 0) {
                     const double secs = std::max(perf.window, 1e-6);
                     std::string wildlife;
@@ -358,7 +358,7 @@ int main(int argc, char** argv) {
         bots.disconnect();
         if (galaxy) {
             for (const auto& planet : galaxy_config->planets) {
-                if (swm::core::GameServer* other = galaxy->server(planet.name); other && other != &server) {
+                if (swbfo::core::GameServer* other = galaxy->server(planet.name); other && other != &server) {
                     other->save_all();
                 }
             }
@@ -369,7 +369,7 @@ int main(int argc, char** argv) {
         server.log(std::format("stopped; saved {} connected character(s){}", store ? server.client_count() : 0,
                                store ? positions() : ""));
     } catch (const std::exception& error) {
-        std::cerr << "swm_server: " << error.what() << "\n";
+        std::cerr << "swbfo_server: " << error.what() << "\n";
         return 1;
     }
     return 0;
