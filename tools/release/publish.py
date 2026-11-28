@@ -76,6 +76,14 @@ class Server:
             req.add_header("Content-Length", str(length))
         return urllib.request.urlopen(req, timeout=300)
 
+    def guard(self):
+        """The Worker's usage guard verdict (src/guard.js)."""
+        req = urllib.request.Request(self.base.rsplit("/", 1)[0] + "/guard", method="GET")
+        req.add_header("Authorization", "Bearer " + self.token)
+        req.add_header("User-Agent", "swbfo-publish/1")
+        with urllib.request.urlopen(req, timeout=60) as r:
+            return json.load(r)
+
     def existing_blobs(self):
         keys, cursor = set(), None
         while True:
@@ -164,12 +172,25 @@ def main():
         return
 
     server = Server(args.url, AREAS[args.channel], token)
+    # The usage guard: never publish what would cross a budget (R2's free
+    # allowance is the hard limit: an outage beats an excess charge). Its
+    # numbers lag by up to ~10 minutes, so this publish's own size is added.
+    guard = server.guard()
+    if not guard.get("writes_open"):
+        sys.exit("the usage guard has closed uploads: %s" % guard.get("reason") or "unknown")
     have = server.existing_blobs()
     by_hash = {}
     for f in files:
         by_hash.setdefault(f["sha256"], f["path"])
     missing = [(h, p) for h, p in by_hash.items() if h not in have]
     size = sum(os.path.getsize(os.path.join(stage, p)) for _, p in missing)
+    usage, budgets = guard["usage"], guard["budgets"]
+    if usage["storage_bytes"] + size >= budgets["storage_bytes"]:
+        sys.exit("refusing: R2 storage would reach %.2f GB, over its %.2f GB budget (delete old releases first)"
+                 % ((usage["storage_bytes"] + size) / 1e9, budgets["storage_bytes"] / 1e9))
+    if usage["class_a"] + len(missing) + 10 >= budgets["class_a"]:
+        sys.exit("refusing: %d uploads would cross this month's R2 write budget (%d of %d used)"
+                 % (len(missing), usage["class_a"], budgets["class_a"]))
     print("uploading %d new blobs (%.0f MB); %d already there" % (len(missing), size / 1e6, len(by_hash) - len(missing)),
           flush=True)
 

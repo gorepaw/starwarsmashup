@@ -50,6 +50,14 @@ def make_handler(root, publish_token, portable_token):
 
         def do_GET(self):
             area, key, query = self._route()
+            if area == "guard" and key == "":
+                # The usage guard's verdict: always open, nothing used (no budgets locally).
+                if not hmac.compare_digest(self._token(), publish_token):
+                    return self._send(401, b"unauthorized\n")
+                verdict = {"reads_open": True, "writes_open": True, "reason": "",
+                           "usage": {"class_a": 0, "class_b": 0, "storage_bytes": 0},
+                           "budgets": {"class_a": 800000, "class_b": 8000000, "storage_bytes": 8e9}}
+                return self._send(200, json.dumps(verdict).encode(), "application/json")
             if area not in ("public", "private"):
                 return self._send(404, b"not found\n")
             if key == "list":

@@ -80,6 +80,16 @@ sudo chown -R root:root "$REL.new" && sudo chmod -R a+rX,go-w "$REL.new"
 sudo rm -rf "$REL" && sudo mv "$REL.new" "$REL"
 
 PREVIOUS=$(readlink /opt/swm/current 2>/dev/null || true)
+# Releases from before the SWBFO rename have bin/swm_server and swm_probe; the
+# unit installed below starts bin/swbfo_server, so give them those names too
+# (else a rollback to one of them wouldn't start).
+for old in /opt/swm/releases/*/bin; do
+  for tool in server probe; do
+    if [ -e "$old/swm_$tool" ] && [ ! -e "$old/swbfo_$tool" ]; then
+      sudo ln -s "swm_$tool" "$old/swbfo_$tool"
+    fi
+  done
+done
 switch_to() {
   sudo ln -sfn "$1" /opt/swm/current.new && sudo mv -T /opt/swm/current.new /opt/swm/current
 }

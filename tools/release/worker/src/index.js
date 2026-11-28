@@ -18,6 +18,13 @@
 // The server can add backups but can't read, replace or delete them, so a
 // compromised server can't destroy its own history. The bucket's lifecycle
 // rules expire them (daily/ after 30 days, weekly/ after 180).
+//
+// Usage guard (src/guard.js): every route that touches R2 first checks the
+// guard's verdict; spent budgets, or no fresh verdict, mean 503.
+//
+//   GET      /guard                          the verdict and usage: PUBLISH_TOKEN
+
+import { check, current } from "./guard.js";
 
 const KEY = /^(channels\/[a-z0-9_-]{1,32}\/[A-Za-z0-9._-]{1,64}|blobs\/[0-9a-f]{2}\/[0-9a-f]{64})$/;
 const BACKUP_KEY = /^(daily|weekly)\/[A-Za-z0-9._-]{1,96}$/;
@@ -27,12 +34,16 @@ async function backups(request, env, url, key) {
   if (request.method === "PUT") {
     if (!tokenIs(token, env.BACKUP_TOKEN)) return text(401, "unauthorized");
     if (!BACKUP_KEY.test(key)) return text(404, "not found");
+    const guard = await current(env);
+    if (!guard.writes_open) return text(503, guard.reason);
     if (await env.BACKUPS.head(key)) return text(409, "exists");
     await env.BACKUPS.put(key, request.body, { httpMetadata: { contentType: "application/octet-stream" } });
     return text(201, "stored");
   }
   if (request.method !== "GET") return text(405, "method not allowed");
   if (!tokenIs(token, env.PUBLISH_TOKEN)) return text(401, "unauthorized");
+  const guard = await current(env);
+  if (!(key === "list" ? guard.writes_open : guard.reads_open)) return text(503, guard.reason);
   if (key === "list") {
     const prefix = url.searchParams.get("prefix") || "";
     const listed = await env.BACKUPS.list({ prefix, cursor: url.searchParams.get("cursor") || undefined, limit: 1000 });
@@ -72,12 +83,20 @@ function text(status, body) {
 }
 
 export default {
+  async scheduled(_event, env, ctx) {
+    ctx.waitUntil(check(env));
+  },
+
   async fetch(request, env) {
     const url = new URL(request.url);
     const parts = url.pathname.split("/").filter(Boolean);
     const area = parts.shift();
     const key = parts.join("/");
     if (area === "backups") return backups(request, env, url, key);
+    if (area === "guard" && key === "" && request.method === "GET") {
+      if (!tokenIs(bearer(request), env.PUBLISH_TOKEN)) return text(401, "unauthorized");
+      return Response.json(await current(env));
+    }
     const bucket = area === "public" ? env.PUBLIC : area === "private" ? env.PRIVATE : null;
     if (!bucket) return text(404, "not found");
     const token = bearer(request);
@@ -85,6 +104,8 @@ export default {
 
     if (request.method === "GET" && key === "list") {
       if (!publisher) return text(401, "unauthorized");
+      const guard = await current(env);
+      if (!guard.writes_open) return text(503, guard.reason); // listing is a Class A operation
       const listed = await bucket.list({ prefix: "blobs/", cursor: url.searchParams.get("cursor") || undefined, limit: 1000 });
       return Response.json({
         keys: listed.objects.map((o) => o.key),
@@ -95,6 +116,8 @@ export default {
 
     if (request.method === "PUT") {
       if (!publisher) return text(401, "unauthorized");
+      const guard = await current(env);
+      if (!guard.writes_open) return text(503, guard.reason);
       await bucket.put(key, request.body, {
         httpMetadata: { contentType: key.endsWith(".json") ? "application/json" : "application/octet-stream" },
       });
@@ -107,6 +130,8 @@ export default {
     if (area === "private" && !publisher && !tokenIs(token, env.PORTABLE_TOKEN)) {
       return text(401, "unauthorized");
     }
+    const guard = await current(env);
+    if (!guard.reads_open) return text(503, guard.reason);
     const object = request.method === "HEAD" ? await bucket.head(key) : await bucket.get(key);
     if (!object) return text(404, "not found");
     const headers = new Headers();

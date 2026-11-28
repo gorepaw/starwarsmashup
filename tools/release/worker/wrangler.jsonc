@@ -1,16 +1,22 @@
 {
   // The update server (docs/DISTRIBUTION.md). Deploy: npx wrangler deploy
-  // Secrets: npx wrangler secret put PUBLISH_TOKEN / PORTABLE_TOKEN / BACKUP_TOKEN
+  // Secrets: npx wrangler secret put PUBLISH_TOKEN / PORTABLE_TOKEN / BACKUP_TOKEN,
+  // and for the usage guard (src/guard.js) CF_ACCOUNT_ID / CF_ANALYTICS_TOKEN.
   "$schema": "./node_modules/wrangler/config-schema.json",
   "name": "swm-updates",
   "main": "src/index.js",
   "compatibility_date": "2026-11-01",
   "workers_dev": true,
-  "observability": { "enabled": true },
+  // Workers Logs is metered separately: log 1% of invocations, far under the
+  // included amount even at the Workers request cap.
+  "observability": { "enabled": true, "head_sampling_rate": 0.01 },
+  // The usage guard measures R2 usage every 10 minutes.
+  "triggers": { "crons": ["*/10 * * * *"] },
   "r2_buckets": [
     // The player build's channel (no game assets).
     { "binding": "PUBLIC", "bucket_name": "swm-public" },
-    // The portable build's channel: holds game assets, never public.
+    // The portable build's channel: holds game assets, never public. Also the
+    // usage guard's verdict (guard/state.json, not servable).
     { "binding": "PRIVATE", "bucket_name": "swm-private" },
     // The game server's database backups: write-only for the server.
     { "binding": "BACKUPS", "bucket_name": "swm-backups" }

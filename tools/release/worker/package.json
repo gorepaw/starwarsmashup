@@ -4,9 +4,11 @@
   "description": "The update server (docs/DISTRIBUTION.md)",
   "scripts": {
     "deploy": "wrangler deploy",
-    "dev": "wrangler dev"
+    "dev": "wrangler dev",
+    "test": "node --test test/guard.test.mjs"
   },
   "devDependencies": {
     "wrangler": "^4.169.0"
-  }
+  },
+  "type": "module"
 }
