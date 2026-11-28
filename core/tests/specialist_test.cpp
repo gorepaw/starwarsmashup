@@ -317,6 +317,8 @@ void test_server(const std::filesystem::path& root, const SpecialistBook& book, 
                     "ent_perk_musician,ent_perk_flourish,ent_perk_holo_emitter,ent_perk_band_leader,ent_perk_virtuoso");
     // Bio-Engineer's licence: the sampling button.
     store.set_extra(vet.id, "perks:bio_engineer", "bio_perk_sampling");
+    // Creature Handler's: the taming button.
+    store.set_extra(vet.id, "perks:creature_handler", "ch_perk_tamer,ch_perk_steady");
     store.save_professions(vet.id, progress);
     store.create("Buyer", {3, 0, 3}, 0);
 
@@ -376,8 +378,8 @@ void test_server(const std::filesystem::path& root, const SpecialistBook& book, 
     const auto in_kit = [&](std::string_view id) {
         return std::any_of(kit.begin(), kit.end(), [&](const net::AbilityStatus& a) { return a.id == id; });
     };
-    CHECK(in_kit("ent_perform") && in_kit("bio_sample") && in_kit("bh_toxin_dart") && in_kit("ch_tame") &&
-          in_kit("ch_tranq_dart"));
+    CHECK(in_kit("ent_perform") && in_kit("bio_sample") && in_kit("bh_toxin_dart") && in_kit("ch_tame"));
+    CHECK(!in_kit("ch_tranq_dart"));  // (folded into Steady Hand)
     CHECK(!in_kit("doc_heal_dart") && !in_kit("doc_cleanse"));  // never learned
 
     // A toxin dart: it poisons the creature, not us.
@@ -433,15 +435,14 @@ void test_server(const std::filesystem::path& root, const SpecialistBook& book, 
     run(2.1);
     CHECK(spec && !spec->performing);
 
-    // DNA from the wounded rat, then taming the other: a tranquilizer, a bonding.
+    // DNA from the wounded rat, then taming it: Steady Hand drugs it as the bonding begins.
     use("bio_sample", rat, {});
     run(3.5);
     CHECK(spec && spec->samples.size() == 1 && spec->samples[0].template_id == "womp_rat");
-    use("ch_tranq_dart", rat, {});
-    run(0.5);
     for (int attempt = 0; attempt < 5 && spec && spec->companions.empty(); ++attempt) {
         use("ch_tame", rat, {});
-        run(11);
+        run(3.4);  // (Steady Hand's 3 s bonding)
+        if (spec && spec->companions.empty()) run(7.5);  // its cooldown
     }
     CHECK(spec && spec->companions.size() == 1 && spec->companions[0].template_id == "womp_rat");
     const auto tamed = server.npc_info(rat);
@@ -1175,6 +1176,73 @@ void test_merchant(const SpecialistBook& book, const ProfessionBook& professions
     CHECK(merchant_xp() > after_buy);
 }
 
+// A handler with The Pack fields two creatures at once (a third sends the
+// first back); Pack Leader's are tougher; one stored, the other stays out.
+void test_creature_handler(const SpecialistBook& book, const ProfessionBook& professions, const ItemCatalog& catalog) {
+    Heightfield ground{201, 2.0, -200, -200, std::vector<float>(201 * 201, 0.0f)};
+    World world{ground};
+    MemoryCharacterStore store;
+    const CharacterRecord rec = store.create("Handler", {0, 0, 0}, 0);
+    store.save_professions(rec.id, std::vector<ProfessionProgress>{{"creature_handler", professions.xp_for_level(100), 0}});
+    store.set_extra(rec.id, "perks:creature_handler", "ch_perk_tamer,ch_perk_mend,ch_perk_pack_leader,ch_perk_recovery,ch_perk_pack");
+    std::string datapad;
+    for (uint64_t id = 1; id <= 3; ++id) {
+        datapad += format_companion({id, "womp_rat", std::format("Biter {}", id), "tamed", 0.5, 1, 1, 1, 0, {}, false}) + "\n";
+    }
+    store.set_extra(rec.id, "datapad", datapad);
+    net::LoopbackHub links;
+    net::Endpoint server_ep{1, 1};
+    net::LoopbackLink srv_link{links, server_ep};
+    net::LoopbackLink link{links, {2, 1}};
+    ServerConfig config;
+    config.catalog = &catalog;
+    config.professions = &professions;
+    config.specialists = &book;
+    config.pvp_enabled = false;
+    config.spawn = {0, 0, 0};
+    GameServer server(srv_link, world, config, &store);
+    server.set_looks({"object/mobile/shared_womp_rat.iff"});
+    GameClient client(link, world, ClientConfig{.server = server_ep, .name = "Handler"});
+    double now = 0;
+    const auto run = [&](double seconds) {
+        for (const double end = now + seconds; now < end; now += 1.0 / 30.0) {
+            server.update(now);
+            client.update(now);
+        }
+    };
+    run(1.0);
+    CHECK(client.status() == GameClient::Status::connected);
+    const SpecialistState* spec = server.specialist_state(client.entity_id());
+    CHECK(spec && spec->companions.size() == 3);
+    if (spec == nullptr || spec->companions.size() != 3) return;
+    const auto order = [&](net::SpecialistRequest::Action action, int64_t amount) {
+        net::SpecialistRequest r;
+        r.action = action;
+        r.amount = amount;
+        client.specialist_request(r);
+        run(0.4);
+    };
+    order(net::SpecialistRequest::companion_summon, 1);
+    order(net::SpecialistRequest::companion_summon, 2);
+    CHECK(spec->active_companion == 1 && spec->second_companion == 2);
+    CHECK(spec->companion_entity != 0 && spec->second_entity != 0 && spec->companion_entity != spec->second_entity);
+    CHECK(client.specialist().second_companion == 2);  // (sent)
+    // Pack Leader's: 15% tougher than its handler's level alone makes it.
+    const CompanionTemplate* rat = book.companion("womp_rat");
+    const auto pet = server.npc_info(spec->companion_entity);
+    CHECK(rat && pet && near(pet->max_health, rat->health * 1.0 * 1.5 * 1.15, 0.5));
+    // A third: the first goes back to the datapad.
+    order(net::SpecialistRequest::companion_summon, 3);
+    CHECK(spec->active_companion == 2 && spec->second_companion == 3);
+    CHECK(!server.npc_info(pet ? pet->entity : 0) || server.npc_info(pet->entity)->hidden ||
+          server.npc_info(pet->entity)->life != Life::alive);
+    // Storing one leaves the other out.
+    order(net::SpecialistRequest::companion_dismiss, 2);
+    CHECK(spec->active_companion == 3 && spec->second_companion == 0 && spec->companion_entity != 0);
+    order(net::SpecialistRequest::companion_dismiss, 0);
+    CHECK(spec->active_companion == 0 && spec->second_companion == 0);
+}
+
 // A Field Harvester shoots banthas for their DNA (half of them give a sample),
 // engineers a Tactical Strain egg and hatches a bantha bred small.
 void test_bio_engineer(const SpecialistBook& book, const ProfessionBook& professions, const ItemCatalog& catalog) {
@@ -1184,7 +1252,7 @@ void test_bio_engineer(const SpecialistBook& book, const ProfessionBook& profess
     const CharacterRecord rec = store.create("Geneticist", {0, 0, 0}, 0);
     store.save_professions(rec.id, std::vector<ProfessionProgress>{{"bio_engineer", professions.xp_for_level(90), 0},
                                                                    {"creature_handler", professions.xp_for_level(100), 0}});
-    store.set_extra(rec.id, "trained:creature_handler", "100");
+    store.set_extra(rec.id, "perks:creature_handler", "ch_perk_breeder");
     store.set_extra(rec.id, "perks:bio_engineer", "bio_perk_harvester,bio_perk_hybrid,bio_perk_culture,bio_perk_notes,bio_perk_strain");
     ensure_starter_kit(store, rec.id);
     net::LoopbackHub links;
@@ -1520,6 +1588,7 @@ int main() {
     test_merchant(book, professions, catalog);
     test_pilot(root, book, professions, catalog);
     test_bio_engineer(book, professions, catalog);
+    test_creature_handler(book, professions, catalog);
     test_match(book, professions);
     return swm::test::finish("specialist_test");
 }

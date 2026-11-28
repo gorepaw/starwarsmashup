@@ -56,7 +56,6 @@ static func _draw(image: Image, ability: String) -> bool:
 		"pl_afterburner": _afterburner(image)
 		"pl_flare": _flares(image)
 		"bio_sample": _helix(image)
-		"ch_tranq_dart": _dart(image, "moon")
 		"ch_tame": _paw(image, false)
 		"ch_frenzy": _claws(image)
 		"ch_mend": _paw(image, true)

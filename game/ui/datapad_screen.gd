@@ -209,6 +209,7 @@ func _paint_companions(body: Rect2) -> void:
 	var list: Array = spec.get("companions", [])
 	var y := body.position.y
 	var active := int(spec.get("active_companion", 0))
+	var second := int(spec.get("second_companion", 0))  # (a Creature Handler's The Pack)
 	var slot := int(spec.get("companion_slot", 0))
 	var cooldown := float(spec.get("companion_cooldown", 0.0))
 	text("gamefont_small", "Companions %d  ·  Creature Handler %d  ·  Droid Operations %d%s" % [list.size(),
@@ -229,9 +230,9 @@ func _paint_companions(body: Rect2) -> void:
 		var id := int(c["id"])
 		var tpl := _companion_template(str(c.get("template", "")))
 		var rect := Rect2(body.position.x, y, body.size.x, 46 * u)
-		_row(rect, "", id == active)
+		_row(rect, "", id == active or id == second)
 		var title := "%s  (%s, %s)" % [str(c.get("name", "")), str(tpl.get("name", c.get("template", ""))), str(c.get("origin", ""))]
-		text("gamefont_small", title, Vector2(rect.position.x + 8 * u, y + 3 * u), "Left", ACCENT if id == active else TEXT)
+		text("gamefont_small", title, Vector2(rect.position.x + 8 * u, y + 3 * u), "Left", ACCENT if id == active or id == second else TEXT)
 		var traits := "Q%d  health x%.2f  damage x%.2f  %s%s%s" % [roundi(float(c.get("quality", 0.5)) * 100),
 				float(c.get("health", 1.0)), float(c.get("damage", 1.0)), str(tpl.get("role", "")),
 				"  ·  " + ", ".join(c.get("modules", PackedStringArray())) if not (c.get("modules", PackedStringArray()) as PackedStringArray).is_empty() else "",
@@ -243,7 +244,8 @@ func _paint_companions(body: Rect2) -> void:
 				["Slot" if slot != id else "Slotted", "slot:%d" % id]]
 		if bool(tpl.get("mountable", false)) and not bool(c.get("mount", false)):
 			buttons.append(["Train mount", "mount:%d" % id])
-		buttons.append(["Store" if id == active else "Field", ("store:%d" if id == active else "field:%d") % id])
+		var out := id == active or id == second
+		buttons.append(["Store" if out else "Field", ("store:%d" if out else "field:%d") % id])
 		for b: Array in buttons:
 			var w := 92.0 * u if str(b[0]) != "Train mount" else 120.0 * u
 			bx -= w
@@ -499,7 +501,7 @@ func _on_click(id: String, _at: Vector2) -> void:
 	elif id.begins_with("field:"):
 		_send(SUMMON, int(id.substr(6)))
 	elif id.begins_with("store:"):
-		_send(DISMISS)
+		_send(DISMISS, int(id.substr(6)))  # just that one
 	elif id.begins_with("slot:"):
 		var cid := int(id.substr(5))
 		_send(COMPANION_SLOT, 0 if int(spec.get("companion_slot", 0)) == cid else cid)

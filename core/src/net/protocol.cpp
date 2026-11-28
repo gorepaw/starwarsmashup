@@ -1492,6 +1492,8 @@ struct Encoder {
         for (size_t i = 0; i < m.companions.size() && i < 64; ++i) put_companion(out, m.companions[i]);
         out.put(m.active_companion);
         out.put(m.companion_entity);
+        out.put(m.second_companion);
+        out.put(m.second_entity);
         out.put(m.companion_cooldown);
         out.put(m.companion_mode);
         out.put(m.companion_slot);
@@ -2193,6 +2195,8 @@ Message decode(std::span<const uint8_t> packet) {
         for (size_t i = 0; i < cn; ++i) m.companions.push_back(get_companion(in));
         m.active_companion = in.get<uint64_t>();
         m.companion_entity = in.get<uint32_t>();
+        m.second_companion = in.get<uint64_t>();
+        m.second_entity = in.get<uint32_t>();
         m.companion_cooldown = in.get<float>();
         m.companion_mode = in.get<uint8_t>();
         m.companion_slot = in.get<uint64_t>();

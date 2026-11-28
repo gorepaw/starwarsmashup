@@ -834,6 +834,8 @@ godot::Dictionary SwmClient::get_specialist() const {
     out["companions"] = companions;
     out["active_companion"] = int64_t(s.active_companion);
     out["companion_entity"] = int64_t(s.companion_entity);
+    out["second_companion"] = int64_t(s.second_companion);  // a second fielded at once (The Pack)
+    out["second_entity"] = int64_t(s.second_entity);
     out["companion_cooldown"] = double(s.companion_cooldown);
     out["companion_mode"] = int64_t(s.companion_mode);
     out["companion_slot"] = int64_t(s.companion_slot);

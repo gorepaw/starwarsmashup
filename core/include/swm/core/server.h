@@ -883,6 +883,10 @@ private:
     bool is_enemy(const Client& a, uint32_t entity) const;
     void summon_companion(Client& client, uint64_t record_id);
     void dismiss_companion(Client& client, bool destroyed);
+    // Just the one fielded from `record` (a second stays out).
+    void dismiss_one(Client& client, uint64_t record);
+    // The wait after a companion falls (a Creature Handler's Quick Recovery halves it).
+    double companion_death_wait(const Client& client) const;
     void update_companions(double dt);
     void companion_died(uint32_t npc_entity);
     // A hit on an NPC, if it's a companion: nothing from its owner's side, more from electro on a droid.

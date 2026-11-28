@@ -20,7 +20,7 @@ namespace swm::core::net {
 // Every packet starts with a magic number, the protocol version and a message
 // type. Peers drop packets with another version. Bump it on any wire change.
 inline constexpr uint16_t protocol_magic = 0x4D53;  // "SM"
-inline constexpr uint16_t protocol_version = 55;
+inline constexpr uint16_t protocol_version = 56;
 // BoltState/Impact::weapon: a placed trap's shot, from that weapon slot
 // (drawn from the trap, not its owner's gun).
 inline constexpr uint8_t trap_shot_flag = 0x40;
@@ -694,6 +694,8 @@ struct SpecialistSync {
     std::vector<CompanionRecord> companions;
     uint64_t active_companion = 0;
     uint32_t companion_entity = 0;
+    uint64_t second_companion = 0;  // a Creature Handler's The Pack: a second at once
+    uint32_t second_entity = 0;
     float companion_cooldown = 0;
     uint8_t companion_mode = 0;
     uint64_t companion_slot = 0;  // the active loadout's Companion Slot

@@ -170,25 +170,25 @@ void test_training() {
     CHECK(perks_learned(book, me, PerkPool::combat) == 2);
 
     // Milestones: in order; the level-1 one is the licence.
-    me.push_back({"creature_handler", book.xp_for_level(60)});
-    CHECK(!licensed(book, me, "creature_handler"));
+    me.push_back({"droid_operations", book.xp_for_level(60)});
+    CHECK(!licensed(book, me, "droid_operations"));
     CHECK(licensed(book, me, "rifles") && licensed(book, me, "heavy_armor"));  // fighting needs none
-    CHECK(!learn_milestone(book, me, "creature_handler", 25, 10'000).ok);  // the one before first
-    r = learn_milestone(book, me, "creature_handler", 1, 0);
+    CHECK(!learn_milestone(book, me, "droid_operations", 25, 10'000).ok);  // the one before first
+    r = learn_milestone(book, me, "droid_operations", 1, 0);
     CHECK(r.ok && r.cost == 0);
-    CHECK(licensed(book, me, "creature_handler"));
-    CHECK(learn_milestone(book, me, "creature_handler", 25, 500).ok);
-    CHECK(learn_milestone(book, me, "creature_handler", 50, 2500).ok);
-    CHECK(!learn_milestone(book, me, "creature_handler", 75, 10'000).ok);  // Creature Handler 60
+    CHECK(licensed(book, me, "droid_operations"));
+    CHECK(learn_milestone(book, me, "droid_operations", 25, 500).ok);
+    CHECK(learn_milestone(book, me, "droid_operations", 50, 2500).ok);
+    CHECK(!learn_milestone(book, me, "droid_operations", 75, 10'000).ok);  // Droid Operations 60
     CHECK(!learn_milestone(book, me, "rifles", 1, 0).ok);        // rifles teach perks
     CHECK(perks_learned(book, me, PerkPool::combat) == 5);
     // Giving one up takes the last learned; learning it again is free.
-    CHECK(forget(book, me, "creature_handler").ok);
-    CHECK(find_progress(me, "creature_handler")->trained == 25 && perks_learned(book, me, PerkPool::combat) == 4);
-    r = learn_milestone(book, me, "creature_handler", 50, 0);
+    CHECK(forget(book, me, "droid_operations").ok);
+    CHECK(find_progress(me, "droid_operations")->trained == 25 && perks_learned(book, me, PerkPool::combat) == 4);
+    r = learn_milestone(book, me, "droid_operations", 50, 0);
     CHECK(r.ok && r.cost == 0);
 
-    // Ten at most in a pool: Rifles, Creature Handler and Pilot all fight.
+    // Ten at most in a pool: Rifles, Droid Operations and Pilot all fight.
     me.push_back({"pilot", book.xp_for_level(100)});
     for (const char* perk : {"pl_perk_hotshot", "pl_perk_evasive", "pl_perk_reactor", "pl_perk_flare", "pl_perk_ace"}) {
         CHECK(learn_perk(book, me, perk, 100'000).ok);
@@ -199,7 +199,7 @@ void test_training() {
     me[0].xp = book.xp_for_level(100);
     r = learn_perk(book, me, "rifles_spotter", 100'000);
     CHECK(!r.ok && r.message.find("give one up") != std::string::npos);
-    CHECK(!learn_milestone(book, me, "creature_handler", 75, 100'000).ok);
+    CHECK(!learn_milestone(book, me, "droid_operations", 75, 100'000).ok);
     // ...but the non-combat ten are their own: an Entertainer's licence still fits.
     me.push_back({"entertainer", book.xp_for_level(30)});
     CHECK(!licensed(book, me, "entertainer"));
@@ -212,8 +212,8 @@ void test_training() {
     CHECK(learn_perk(book, me, "rifles_spotter", 100'000).ok);
     CHECK(perks_learned(book, me, PerkPool::combat) == 10);
     // Giving up every milestone of a profession takes its licence too.
-    for (int i = 0; i < 3; ++i) CHECK(forget(book, me, "creature_handler").ok);
-    CHECK(!licensed(book, me, "creature_handler") && !forget(book, me, "creature_handler").ok);
+    for (int i = 0; i < 3; ++i) CHECK(forget(book, me, "droid_operations").ok);
+    CHECK(!licensed(book, me, "droid_operations") && !forget(book, me, "droid_operations").ok);
 
     // Gathering and crafting teach perks from level 1: either level-1 perk is
     // the licence, and their Bonus lines add up by name.

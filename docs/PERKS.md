@@ -1,6 +1,6 @@
 # Trainer Perks
 
-The rework of what professions teach. It replaces milestones at 1 / 25 / 50 / 75 / 100 ([Professions](PROFESSIONS.md)) with two perks to choose between at each tier. Weapons and armor were first; then Squad Leader, Doctor and Entertainer, gathering and crafting, Bounty Hunter, Smuggler, Ranger, Merchant, Pilot and Bio-Engineer (2026-11-27). The other advanced professions follow one by one and keep their milestones until their turn.
+The rework of what professions teach. It replaces milestones at 1 / 25 / 50 / 75 / 100 ([Professions](PROFESSIONS.md)) with two perks to choose between at each tier. Weapons and armor were first; then Squad Leader, Doctor and Entertainer, gathering and crafting, Bounty Hunter, Smuggler, Ranger, Merchant, Pilot, Bio-Engineer and Creature Handler (2026-11-27). The other advanced professions follow one by one and keep their milestones until their turn.
 
 Status: **built** (see Order of work): the rules, the cap, trainers, licences, and all 90 perks. The tags say what each needed: nothing new, a trigger (**T**), or a new mechanic (**N**; [Mechanics](#mechanics)).
 
@@ -228,6 +228,18 @@ A licence at 1 (you can't do the profession without samples); one button at most
 | 45 | **Gene Splicer**: a two-sample egg takes the better quality | **Tissue Culture**: crafted tissues and additives two at a time |
 | 65 | **Mutation**: one egg in seven +15% health, damage or speed | **Geneticist's Notes**: 25% more Bio-Engineer experience |
 | 85 | **Master Geneticist**: eggs +10% quality, samples +5% | **Tactical Strain**: hatched creatures bred small (`CompanionRecord::tactical`; drawn at `EntityState::scale`), tactical-sized, so they go into battles |
+
+### Creature Handler
+
+A licence at 1 (no creature without it); two buttons at most. The tier you can tame and mounts (50) stay levels; commands are free keys. The Tranquilizer Dart button is gone (Steady Hand).
+
+| Level | A | B |
+|---|---|---|
+| 1 | **Beast Tamer** *(button)*: Tame | **Breeder**: no taming; hatched creatures +10% health and damage |
+| 25 | **Frenzy** *(button)*: your creatures hit half again as hard for 10 s | **Mend Companion** *(button)*: a third of their health back |
+| 45 | **Pack Leader**: your creatures +15% health | **Fierce Bond**: your creatures +15% damage |
+| 65 | **Steady Hand**: Tame drugs it as it begins, bonding in 3 s | **Quick Recovery**: half the wait after a companion falls (`companion_death_wait`) |
+| 85 | **Beast Master**: taming +15% likelier, tamed +10% quality | **The Pack**: two companions out at once in the open world (`SpecialistSync::second_companion`; a third sends the first back) |
 
 ## Triggers
 

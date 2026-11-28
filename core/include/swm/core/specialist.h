@@ -623,6 +623,8 @@ struct SpecialistState {
     std::vector<DnaSample> samples;
     uint64_t active_companion = 0;   // the fielded one's record (0: none)
     uint32_t companion_entity = 0;
+    uint64_t second_companion = 0;   // a second fielded at once (a Creature Handler's The Pack; 0: none)
+    uint32_t second_entity = 0;
     double companion_cooldown = 0;   // seconds until another can be fielded
     std::vector<Contract> contracts;  // accepted
     std::vector<Contract> offers;     // what the last terminal offered

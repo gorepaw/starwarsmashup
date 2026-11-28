@@ -46,8 +46,8 @@ func _initialize() -> void:
 	var survey: Dictionary = roster.filter(func(p: Dictionary) -> bool: return p["id"] == "surveying")[0]
 	assert(str(survey["pool"]) == "noncombat" and int(survey["first_perk"]) == 1 and (survey["perks"] as Array).size() == 10)
 	assert(is_equal_approx(float(store.perk_bonus(PackedStringArray(["survey_prospectors_scanner", "survey_rich_veins"]), "yield")), 0.35))
-	var handler: Dictionary = roster.filter(func(p: Dictionary) -> bool: return p["id"] == "creature_handler")[0]
-	assert((handler["milestones"] as Array).size() == 5 and (handler["perks"] as Array).is_empty())
+	var operator: Dictionary = roster.filter(func(p: Dictionary) -> bool: return p["id"] == "droid_operations")[0]
+	assert((operator["milestones"] as Array).size() == 5 and (operator["perks"] as Array).is_empty())
 	var entertainer: Dictionary = roster.filter(func(p: Dictionary) -> bool: return p["id"] == "entertainer")[0]
 	assert(str(entertainer["pool"]) == "noncombat" and int(entertainer["first_perk"]) == 1)
 	var lv: Dictionary = store.profession_level(215 + 50)
@@ -60,9 +60,9 @@ func _initialize() -> void:
 	_screen.professions = roster
 	_screen.store = store
 	_screen.cap = int(store.get_perk_cap())
-	_screen.progress = {"rifles": 21000, "medium_armor": 4000, "pistols": 300, "creature_handler": 9000}
+	_screen.progress = {"rifles": 21000, "medium_armor": 4000, "pistols": 300, "droid_operations": 9000}
 	_screen.known = {"rifles": ["rifles_long_barrel", "rifles_braced"], "medium_armor": ["medium_conditioning"]}
-	_screen.trained = {"creature_handler": 25}
+	_screen.trained = {"droid_operations": 25}
 	_screen.open_screen()
 	assert(_screen._learned().size() == 5, "known: %s" % [_screen._learned()])
 	_screen._on_click("row:6", Vector2.ZERO)  # Rifles, in Combat

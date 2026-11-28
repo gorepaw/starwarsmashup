@@ -631,7 +631,12 @@ void GameServer::handle_specialist_request(Client& client, const net::Specialist
         summon_companion(client, uint64_t(std::max<int64_t>(0, request.amount)));
         return;
     case R::companion_dismiss:
-        if (client.spec.active_companion != 0) {
+        // (A record: just that one; else every one fielded.)
+        if (request.amount > 0 && (uint64_t(request.amount) == client.spec.active_companion ||
+                                   uint64_t(request.amount) == client.spec.second_companion)) {
+            dismiss_one(client, uint64_t(request.amount));
+            notify(client.entity, "Companion stored");
+        } else if (client.spec.active_companion != 0 || client.spec.second_companion != 0) {
             dismiss_companion(client, false);
             notify(client.entity, "Companion stored");
         }
@@ -1156,30 +1161,35 @@ bool GameServer::use_ability(Client& client, const AbilityDef& a, uint32_t targe
     }
     case AbilityEffect::companion_repair:
     case AbilityEffect::companion_overcharge: {
-        ActiveCompanion* comp = nullptr;
+        // Every one fielded of its kind (two with a Creature Handler's The Pack).
+        const bool for_droids = profession == "droid_operations";
+        bool any = false, other_kind = false, reached = false;
         for (ActiveCompanion& c : companions_) {
-            if (c.owner == me) comp = &c;
-        }
-        Npc* npc = comp ? find_npc(comp->entity) : nullptr;
-        if (comp == nullptr || npc == nullptr || npc->life != Life::alive) {
-            notify(client.entity, "No companion fielded");
-            return false;
-        }
-        const CompanionTemplate* tpl = config_.specialists->companion(comp->template_id);
-        const bool droid = tpl && tpl->kind == CompanionKind::droid;
-        if ((profession == "droid_operations") != droid) {
-            notify(client.entity, droid ? "That's for creatures" : "That's for droids");
-            return false;
-        }
-        if (a.effect == AbilityEffect::companion_repair) {
-            if (!in_reach(npc->state.position)) {
-                notify(client.entity, "Your companion is out of reach");
-                return false;
+            Npc* npc = c.owner == me ? find_npc(c.entity) : nullptr;
+            if (npc == nullptr || npc->life != Life::alive) continue;
+            const CompanionTemplate* tpl = config_.specialists->companion(c.template_id);
+            if ((tpl && tpl->kind == CompanionKind::droid) != for_droids) {
+                other_kind = true;
+                continue;
             }
-            npc->health = std::min(npc->max_health, npc->health + npc->max_health * std::clamp(a.amount, 0.0, 1.0));
-        } else {
-            comp->overcharge = std::max(1.0, a.duration);
-            comp->overcharge_factor = std::max(1.0, a.amount);
+            any = true;
+            if (a.effect == AbilityEffect::companion_repair) {
+                if (!in_reach(npc->state.position)) continue;
+                reached = true;
+                npc->health = std::min(npc->max_health, npc->health + npc->max_health * std::clamp(a.amount, 0.0, 1.0));
+            } else {
+                reached = true;
+                c.overcharge = std::max(1.0, a.duration);
+                c.overcharge_factor = std::max(1.0, a.amount);
+            }
+        }
+        if (!any) {
+            notify(client.entity, other_kind ? (for_droids ? "That's for droids" : "That's for creatures") : "No companion fielded");
+            return false;
+        }
+        if (!reached) {
+            notify(client.entity, "Your companion is out of reach");
+            return false;
         }
         earn_specialist_xp(client, profession, a.xp);
         return true;
@@ -1290,6 +1300,12 @@ bool GameServer::use_ability(Client& client, const AbilityDef& a, uint32_t targe
         client.spec.channel = a.id;
         client.spec.channel_target = target;
         client.spec.channel_remaining = std::max(0.5, a.channel);
+        // A Creature Handler's Steady Hand: drugged as the bonding begins (the old
+        // tranquilizer dart's), and over in 3 s.
+        if (!sampling && granted(client, "creature_handler", "steady_hand")) {
+            snare_npc(target, 20, 0.5, 0, true);
+            client.spec.channel_remaining = std::min(client.spec.channel_remaining, 3.0);
+        }
         client.spec.channel_from = from;
         notify(client.entity, sampling ? "Sampling... hold still" : "Bonding... hold still");
         return true;
@@ -1330,7 +1346,9 @@ void GameServer::finish_channel(Client& client) {
     const int level = specialist_level(client, "creature_handler");
     const bool tranq = std::any_of(npc_effects_.begin(), npc_effects_.end(),
                                    [&](const NpcEffect& e) { return e.entity == target && e.tranquilized; });
-    const double chance = tame_chance(*tpl, level, tranq, n->max_health > 0 ? n->health / n->max_health : 1);
+    const bool beast_master = granted(client, "creature_handler", "beast_master");
+    double chance = tame_chance(*tpl, level, tranq, n->max_health > 0 ? n->health / n->max_health : 1);
+    if (beast_master && chance > 0) chance = std::min(0.95, chance + 0.15);
     if (random_unit() >= chance) {
         n->last_attacker = client.entity;  // it takes offense
         n->last_damaged_tick = tick_;
@@ -1343,7 +1361,7 @@ void GameServer::finish_channel(Client& client) {
     r.template_id = tpl->id;
     r.name = tpl->name;
     r.origin = "tamed";
-    r.quality = 0.35 + random_unit() * 0.3;
+    r.quality = std::min(1.0, 0.35 + random_unit() * 0.3 + (beast_master ? 0.1 : 0.0));
     r.health = 0.9 + r.quality * 0.2;
     r.damage = 0.9 + r.quality * 0.2;
     r.colors = n->colors;
@@ -1398,12 +1416,26 @@ void GameServer::summon_companion(Client& client, uint64_t record_id) {
         return;
     }
     const double shrink = strain ? std::min({1.0, 2.0 / std::max(0.1, tpl->height), 0.9 / std::max(0.1, tpl->radius)}) : 1.0;
-    if (client.spec.active_companion != 0) dismiss_companion(client, false);
+    // One out at a time; a Creature Handler's The Pack fields two in the open world
+    // (a third sends the longest out back to the datapad).
+    if (record->id == client.spec.active_companion || record->id == client.spec.second_companion) {
+        notify(client.entity, std::format("{} is already at your side", record->name));
+        return;
+    }
+    const bool pack = !conquest_ && granted(client, "creature_handler", "two_companions");
+    if (!pack) {
+        if (client.spec.active_companion != 0 || client.spec.second_companion != 0) dismiss_companion(client, false);
+    } else if (client.spec.active_companion != 0 && client.spec.second_companion != 0) {
+        dismiss_one(client, client.spec.active_companion);
+    }
     uint8_t look = 0;
     if (const auto it = std::find(looks_.begin(), looks_.end(), tpl->look); it != looks_.end()) {
         look = uint8_t(it - looks_.begin() + 1);
     }
-    const CompanionStats stats = companion_stats(*book, *tpl, *record, level);
+    CompanionStats stats = companion_stats(*book, *tpl, *record, level);
+    // A Creature Handler's Pack Leader and Fierce Bond: their creatures tougher, fiercer.
+    if (!droid && granted(client, "creature_handler", "pack_leader")) stats.max_health *= 1.15;
+    if (!droid && granted(client, "creature_handler", "fierce_bond")) stats.damage *= 1.15;
     NpcCombatSpec spec;
     spec.actor_kind = 4;
     spec.max_health = stats.max_health;
@@ -1414,7 +1446,8 @@ void GameServer::summon_companion(Client& client, uint64_t record_id) {
     spec.run_speed = stats.speed;
     // Beside its owner, clear of them: a bantha's flank is 1.7 m from its middle.
     const double yaw = client.state.yaw;
-    const double side = 1.2 + tpl->radius * shrink;
+    // (A second on the other side.)
+    const double side = (1.2 + tpl->radius * shrink) * (client.spec.active_companion != 0 ? -1.0 : 1.0);
     const Vec3 beside = client.state.position + Vec3{std::cos(yaw) * side, 0, -std::sin(yaw) * side};
     const uint32_t entity = add_combat_npc(record->name, beside, yaw, look, spec, record->colors);
     if (Npc* n = strain ? find_npc(entity) : nullptr) n->scale = uint8_t(std::clamp<long>(std::lround(shrink * 100), 10, 100));
@@ -1426,8 +1459,13 @@ void GameServer::summon_companion(Client& client, uint64_t record_id) {
     active.name = record->name;
     active.stats = stats;
     companions_.push_back(active);
-    client.spec.active_companion = record->id;
-    client.spec.companion_entity = entity;
+    if (client.spec.active_companion == 0) {
+        client.spec.active_companion = record->id;
+        client.spec.companion_entity = entity;
+    } else {
+        client.spec.second_companion = record->id;
+        client.spec.second_entity = entity;
+    }
     ++client.spec.revision;
     client.spec.sync_tick = 0;
     notify(client.entity, std::format("{} is at your side", record->name));
@@ -1440,11 +1478,38 @@ void GameServer::dismiss_companion(Client& client, bool destroyed) {
     std::erase_if(companions_, [&](const ActiveCompanion& c) { return c.owner == client.entity; });
     client.spec.active_companion = 0;
     client.spec.companion_entity = 0;
+    client.spec.second_companion = 0;
+    client.spec.second_entity = 0;
     if (destroyed) {
-        client.spec.companion_cooldown = conquest_ ? companion_match_death_cooldown : companion_death_cooldown;
+        client.spec.companion_cooldown = companion_death_wait(client);
     }
     ++client.spec.revision;
     client.spec.sync_tick = 0;
+}
+
+void GameServer::dismiss_one(Client& client, uint64_t record) {
+    for (const ActiveCompanion& c : companions_) {
+        if (c.owner == client.entity && c.record == record) remove_npc(c.entity);
+    }
+    std::erase_if(companions_, [&](const ActiveCompanion& c) { return c.owner == client.entity && c.record == record; });
+    SpecialistState& spec = client.spec;
+    if (spec.active_companion == record) {
+        // The second moves up.
+        spec.active_companion = spec.second_companion;
+        spec.companion_entity = spec.second_entity;
+        spec.second_companion = 0;
+        spec.second_entity = 0;
+    } else if (spec.second_companion == record) {
+        spec.second_companion = 0;
+        spec.second_entity = 0;
+    }
+    ++spec.revision;
+    spec.sync_tick = 0;
+}
+
+double GameServer::companion_death_wait(const Client& client) const {
+    const double wait = conquest_ ? companion_match_death_cooldown : companion_death_cooldown;
+    return granted(client, "creature_handler", "quick_recovery") ? wait * 0.5 : wait;
 }
 
 void GameServer::companion_died(uint32_t npc_entity) {
@@ -1453,7 +1518,7 @@ void GameServer::companion_died(uint32_t npc_entity) {
         if (Client* owner = find(c.owner)) {
             notify(owner->entity, std::format("{} has fallen", c.name));
             // Taken out of the world once its fall has shown (next tick).
-            owner->spec.companion_cooldown = conquest_ ? companion_match_death_cooldown : companion_death_cooldown;
+            owner->spec.companion_cooldown = companion_death_wait(*owner);
         }
         return;
     }
@@ -1484,11 +1549,19 @@ void GameServer::update_companions(double dt) {
             const bool destroyed = npc != nullptr && npc->life != Life::alive;
             if (npc != nullptr) remove_npc(c.entity);
             if (owner != nullptr) {
-                owner->spec.active_companion = 0;
-                owner->spec.companion_entity = 0;
+                // (Its slot: the second moves up if it was the first.)
+                SpecialistState& os = owner->spec;
+                if (os.active_companion == c.record) {
+                    os.active_companion = os.second_companion;
+                    os.companion_entity = os.second_entity;
+                    os.second_companion = 0;
+                    os.second_entity = 0;
+                } else if (os.second_companion == c.record) {
+                    os.second_companion = 0;
+                    os.second_entity = 0;
+                }
                 if (destroyed) {
-                    owner->spec.companion_cooldown = std::max(
-                        owner->spec.companion_cooldown, conquest_ ? companion_match_death_cooldown : companion_death_cooldown);
+                    os.companion_cooldown = std::max(os.companion_cooldown, companion_death_wait(*owner));
                 }
                 ++owner->spec.revision;
                 owner->spec.sync_tick = 0;
@@ -2717,7 +2790,7 @@ void GameServer::datapad_action(Client& client, const net::SpecialistRequest& re
     case R::companion_release:
         if (!world) return;
         if (CompanionRecord* r = record(request.amount)) {
-            if (spec.active_companion == r->id) dismiss_companion(client, false);
+            if (spec.active_companion == r->id || spec.second_companion == r->id) dismiss_one(client, r->id);
             notify(client.entity, std::format("You release {}", r->name));
             std::erase_if(spec.companions, [&](const CompanionRecord& c) { return int64_t(c.id) == request.amount; });
             for (CharacterLoadout& cl : client.char_loadouts) {
@@ -2738,8 +2811,8 @@ void GameServer::datapad_action(Client& client, const net::SpecialistRequest& re
             return;
         }
         const ProfessionStanding ch = standing("creature_handler");
-        if (ch.level < 50 || ch.trained < 50) {
-            notify(client.entity, "Training mounts takes the Mounts milestone (Creature Handler 50)");
+        if (ch.trained < 1 || ch.level < 50) {
+            notify(client.entity, "Training mounts takes Creature Handler 50");
             return;
         }
         r->mount = true;
@@ -2823,6 +2896,11 @@ void GameServer::datapad_action(Client& client, const net::SpecialistRequest& re
         if (!consume(item->id)) return;
         r->id = spec.next_companion_id++;
         r->mount = false;
+        // A Creature Handler's Breeder: what they hatch, 10% stronger.
+        if (!droid && granted(client, "creature_handler", "breeder")) {
+            r->health *= 1.1;
+            r->damage *= 1.1;
+        }
         if (r->name.empty()) r->name = tpl->name;
         spec.companions.push_back(*r);
         notify(client.entity, std::format("{} joins your datapad", r->name));
@@ -3083,6 +3161,8 @@ void GameServer::send_specialist_sync(Client& client) {
     }
     sync.active_companion = spec.active_companion;
     sync.companion_entity = spec.companion_entity;
+    sync.second_companion = spec.second_companion;
+    sync.second_entity = spec.second_entity;
     sync.companion_cooldown = float(spec.companion_cooldown);
     for (const ActiveCompanion& c : companions_) {
         if (c.owner == client.entity) sync.companion_mode = uint8_t(c.mode);
