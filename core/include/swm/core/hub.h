@@ -142,9 +142,19 @@ public:
 
 class UdpHubNetwork : public HubNetwork {
 public:
+    // Servers (planets, battles) on any port the system gives.
+    UdpHubNetwork() = default;
+    // Servers on the first free port of [first, last], so a firewall can open
+    // exactly that range (swm_server --ports). Throws std::runtime_error when
+    // every port in it is taken.
+    UdpHubNetwork(uint16_t first, uint16_t last) : first_(first), last_(last) {}
     std::unique_ptr<net::Link> open_server(uint16_t& port) override;
     std::unique_ptr<net::Link> open_client() override;
     net::Endpoint local(uint16_t port) const override;
+
+private:
+    uint16_t first_ = 0;
+    uint16_t last_ = 0;
 };
 
 // A hub: an open-world server (Mos Eisley) whose war terminals queue players

@@ -30,6 +30,8 @@
 // names, each a hub on a world server of its own in this process: the first
 // on --port (its bake and hub are --bake and --hub's, unless given), the
 // others on free ports, with starships between their starports (Stage 13).
+// --ports <first>-<last> takes those free ports (other planets', battles')
+// from that range, so a firewall can open exactly it; without it, any port.
 // Each finished battle's telemetry (map, mode, era, sides, winner, tickets,
 // duration, players and bots, kills by weapon) is recorded in the --db file.
 //
@@ -80,7 +82,7 @@ int usage() {
     std::cerr << "usage: swm_server [--bake <prefix>] [--db <file>] [--port 7777] [--spawn <swg_x> <swg_z>] "
                  "[--seconds <n>] [--building <file.collision> <swg_x> <swg_y> <swg_z> <yaw_degrees>]... "
                  "[--loadout <file.ini>] [--battlefield <file.ini>] [--bots <n>] "
-                 "[--hub <file.ini>] [--galaxy <galaxy.ini>]\n"
+                 "[--hub <file.ini>] [--galaxy <galaxy.ini>] [--ports <first>-<last>]\n"
                  "       swm_server --telemetry <db file> [--last <n>]\n";
     return 2;
 }
@@ -125,6 +127,7 @@ int main(int argc, char** argv) {
     std::optional<swm::core::GalaxyConfig> galaxy_config;
     int bot_count = 0;
     int port = 7777;
+    int ports_first = 0, ports_last = 0;  // --ports
     bool has_spawn = false;
     double spawn_x = 0, spawn_z = 0, run_for = 0;
     struct BuildingArg {
@@ -154,6 +157,15 @@ int main(int argc, char** argv) {
             db = argv[++i];
         } else if (arg == "--port" && i + 1 < argc) {
             port = std::atoi(argv[++i]);
+        } else if (arg == "--ports" && i + 1 < argc) {
+            const std::string range = argv[++i];
+            const size_t dash = range.find('-');
+            ports_first = dash == std::string::npos ? 0 : std::atoi(range.substr(0, dash).c_str());
+            ports_last = dash == std::string::npos ? 0 : std::atoi(range.substr(dash + 1).c_str());
+            if (ports_first < 1 || ports_last < ports_first || ports_last > 65535) {
+                std::cerr << "--ports wants <first>-<last>, e.g. 7778-7899\n";
+                return usage();
+            }
         } else if (arg == "--spawn" && i + 2 < argc) {
             has_spawn = true;
             spawn_x = std::atof(argv[++i]);
@@ -266,7 +278,9 @@ int main(int argc, char** argv) {
         bot_config.base_stats = config.base_stats;
         bot_config.battlefield = config.battlefield;
         swm::core::BotPlayers bots(bot_count, world, bot_config, {}, skill);
-        swm::core::UdpHubNetwork hub_network;
+        swm::core::UdpHubNetwork hub_network = ports_first > 0
+                                                   ? swm::core::UdpHubNetwork(uint16_t(ports_first), uint16_t(ports_last))
+                                                   : swm::core::UdpHubNetwork();
         std::unique_ptr<swm::core::Hub> hub;
         if (hub_config) {
             std::cout << std::format("hub {}: {} war terminal(s), battles on {} battlefields, {} per team\n", hub_config->name,

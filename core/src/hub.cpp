@@ -410,9 +410,21 @@ HubConfig load_hub(const std::filesystem::path& path) {
 }
 
 std::unique_ptr<net::Link> UdpHubNetwork::open_server(uint16_t& port) {
-    auto link = std::make_unique<net::UdpLink>();
-    port = link->port();
-    return link;
+    if (first_ == 0) {
+        auto link = std::make_unique<net::UdpLink>();
+        port = link->port();
+        return link;
+    }
+    for (uint32_t p = first_; p <= last_; ++p) {
+        try {
+            auto link = std::make_unique<net::UdpLink>(uint16_t(p));
+            port = link->port();
+            return link;
+        } catch (const std::runtime_error&) {
+            // taken: try the next
+        }
+    }
+    throw std::runtime_error(std::format("no free UDP port in {}-{}", first_, last_));
 }
 
 std::unique_ptr<net::Link> UdpHubNetwork::open_client() {

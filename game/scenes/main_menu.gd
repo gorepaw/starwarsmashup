@@ -50,6 +50,11 @@ var _flyby_time := 4.0           # s into a pass (the first soon after the menu 
 var _flyby_from := Vector3.ZERO
 var _flyby_dir := Vector3.FORWARD
 var _status_msg := ""
+var _join_screen: Control
+# The server to join instead of hosting one ("ip:port"); empty: play locally.
+# `-- --connect <host[:port]>` on the command line sets it for every launch.
+var _join_address := ""
+var _connect_address := ""
 
 
 func _ready() -> void:
@@ -59,6 +64,12 @@ func _ready() -> void:
 	Bf2Art.apply_cursor(_art)
 	_audio = Bf2Audio.new(self, AUDIO_DIR)
 	_audio.apply_volumes(_settings)
+	var args := OS.get_cmdline_user_args()
+	var connect_at := args.find("--connect")
+	if connect_at >= 0 and connect_at + 1 < args.size():
+		_connect_address = resolve_server(args[connect_at + 1])
+		if _connect_address == "":
+			_status_msg = "Can't find server " + args[connect_at + 1]
 
 	if ClassDB.class_exists("SwmCharacterStore"):
 		_store = ClassDB.instantiate("SwmCharacterStore")
@@ -231,7 +242,13 @@ func _setup_ui() -> void:
 	_settings_screen.closed.connect(func() -> void: _show_mode("main"))
 	layer.add_child(_settings_screen)
 
-	for scr: Control in [_menu_overlay, _load_screen, _creator_screen, _settings_screen]:
+	_join_screen = JoinServerScreen.new(_art)
+	_join_screen.visible = false
+	_join_screen.closed.connect(func() -> void: _show_mode("main"))
+	_join_screen.address_chosen.connect(_on_join_address)
+	layer.add_child(_join_screen)
+
+	for scr: Control in [_menu_overlay, _load_screen, _creator_screen, _settings_screen, _join_screen]:
 		scr.clicked.connect(func(_id: String) -> void:
 			if _audio != null:
 				_audio.play_2d("shell_select_unit"))
@@ -246,10 +263,12 @@ func _show_mode(mode: String) -> void:
 	_load_screen.visible = mode == "load"
 	_creator_screen.visible = mode == "create"
 	_settings_screen.visible = mode == "settings"
+	_join_screen.visible = mode == "join"
 	_stage.visible = mode == "create"
 	_backdrop.visible = mode != "create"
 	match mode:
 		"main":
+			_join_address = _connect_address
 			_menu_overlay.set("status_text", _status_msg)
 			_menu_overlay.queue_redraw()
 		"load":
@@ -259,6 +278,8 @@ func _show_mode(mode: String) -> void:
 			_creator_screen.open(_store, _stage)
 		"settings":
 			_settings_screen.open(_settings)
+		"join":
+			_join_screen.call("open", _settings.server_address)
 
 
 func _on_menu_action(action: String) -> void:
@@ -269,6 +290,8 @@ func _on_menu_action(action: String) -> void:
 			_show_mode("load")
 		"settings":
 			_show_mode("settings")
+		"join":
+			_show_mode("join")
 		"quit":
 			get_tree().quit(0)
 
@@ -296,16 +319,102 @@ func _launch_character(record: Dictionary) -> void:
 		"appearance": str(record.get("appearance", "{}")),
 		"return_to_menu": true,
 	}
+	var subtitle := "Entering as %s..." % char_name
+	if _join_address != "":
+		# Join that server instead of hosting one: it keeps the character.
+		GameSession.pending_config.erase("host")
+		GameSession.pending_config.erase("db")
+		GameSession.pending_config["server"] = _join_address
+		subtitle = "Joining %s as %s..." % [_join_address, char_name]
 	LoadingScreen.pending = {
 		"title": "MOS EISLEY, TATOOINE",
-		"subtitle": "Entering as %s..." % char_name,
+		"subtitle": subtitle,
 		"icon": "hud_flag_icon",
 	}
 	if _loading_screen != null and not DisplayServer.get_name().to_lower().contains("headless"):
-		_loading_screen.show_loading("MOS EISLEY, TATOOINE", "Entering as %s..." % char_name, "hud_flag_icon")
+		_loading_screen.show_loading("MOS EISLEY, TATOOINE", subtitle, "hud_flag_icon")
 		await get_tree().process_frame
 		await get_tree().process_frame
 	get_tree().change_scene_to_file("res://scenes/game_session.tscn")
+
+
+func _on_join_address(typed: String) -> void:
+	var resolved := resolve_server(typed)
+	if resolved == "":
+		_join_screen.set("error_text", "Can't find that server. Use host:port, e.g. 203.0.113.5:7777.")
+		_join_screen.queue_redraw()
+		return
+	_settings.server_address = typed.strip_edges()
+	_settings.save_file()
+	_show_mode("load")
+	_join_address = resolved  # after _show_mode: "main" would reset it
+
+
+# "host[:port]" (port 7777 if left out; host a name or an IPv4 address) as
+# "a.b.c.d:port", or "" if it doesn't parse or the name doesn't resolve.
+static func resolve_server(typed: String) -> String:
+	var text := typed.strip_edges()
+	if text == "":
+		return ""
+	var host := text
+	var port := 7777
+	var colon := text.rfind(":")
+	if colon > 0:
+		host = text.substr(0, colon)
+		var port_text := text.substr(colon + 1)
+		if not port_text.is_valid_int() or int(port_text) < 1 or int(port_text) > 65535:
+			return ""
+		port = int(port_text)
+	if not host.is_valid_ip_address():
+		host = IP.resolve_hostname(host, IP.TYPE_IPV4)
+		if host == "" or not host.is_valid_ip_address():
+			return ""
+	if host.contains(":"):  # IPv6: the server's sockets are IPv4
+		return ""
+	return "%s:%d" % [host, port]
+
+
+# Asks for the address of a server to join; the character is picked next.
+class JoinServerScreen extends Bf2Screen:
+	signal address_chosen(address: String)
+	signal closed
+	var error_text := ""
+	var _address: LineEdit
+
+	func _init(shared_art: RefCounted = null) -> void:
+		super._init(shared_art)
+		_address = LineEdit.new()
+		_address.placeholder_text = "host:port"
+		_address.text_submitted.connect(func(t: String) -> void: address_chosen.emit(t))
+		add_child(_address)
+
+	func open(remembered: String) -> void:
+		error_text = ""
+		_address.text = remembered
+		queue_redraw()
+		_address.grab_focus.call_deferred()
+
+	func _paint() -> void:
+		var box := centered(420, 230)
+		frame(box)
+		text("gamefont_large", "JOIN SERVER", Vector2(box.get_center().x, box.position.y + 22 * u), "Center", ACCENT)
+		text("gamefont_small", "The server's address. Your character is kept there.",
+				Vector2(box.get_center().x, box.position.y + 58 * u), "Center", DIM)
+		_address.position = Vector2(box.position.x + 40 * u, box.position.y + 84 * u)
+		_address.size = Vector2(box.size.x - 80 * u, 28 * u)
+		var w := 150.0 * u
+		button(Rect2(box.get_center().x - w - 8 * u, box.end.y - 64 * u, w, 38 * u), "Continue", "continue")
+		button(Rect2(box.get_center().x + 8 * u, box.end.y - 64 * u, w, 38 * u), "Back", "back", false, true)
+		if error_text != "":
+			text("gamefont_small", error_text, Vector2(box.get_center().x, box.position.y + 128 * u), "Center",
+					Color(1.0, 0.35, 0.3))
+
+	func _on_click(id: String, _at: Vector2) -> void:
+		match id:
+			"continue":
+				address_chosen.emit(_address.text)
+			"back":
+				closed.emit()
 
 
 class MainMenuOverlay extends Bf2Screen:
@@ -313,7 +422,7 @@ class MainMenuOverlay extends Bf2Screen:
 	var status_text := ""
 
 	func _paint() -> void:
-		var box := centered(360, 340)
+		var box := centered(360, 390)
 		frame(box)
 		text("gamefont_large", "STAR WARS MASHUP", Vector2(box.get_center().x, box.position.y + 22 * u),
 				"Center", ACCENT)
@@ -324,8 +433,9 @@ class MainMenuOverlay extends Bf2Screen:
 		var y := box.position.y + 96 * u
 		button(Rect2(x, y, w, 38 * u), "New Character", "new")
 		button(Rect2(x, y + 50 * u, w, 38 * u), "Load Character", "load")
-		button(Rect2(x, y + 100 * u, w, 38 * u), "Settings", "settings")
-		button(Rect2(x, y + 150 * u, w, 38 * u), art.localize("common.quit"), "quit", false, true)
+		button(Rect2(x, y + 100 * u, w, 38 * u), "Join Server", "join")
+		button(Rect2(x, y + 150 * u, w, 38 * u), "Settings", "settings")
+		button(Rect2(x, y + 200 * u, w, 38 * u), art.localize("common.quit"), "quit", false, true)
 		if status_text != "":
 			text("gamefont_small", status_text, Vector2(box.get_center().x, box.end.y - 28 * u),
 					"Center", Color(1.0, 0.35, 0.3))

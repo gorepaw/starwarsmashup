@@ -167,10 +167,41 @@ void test_starships_between_planets() {
     std::filesystem::remove_all(dir);
 }
 
+// --ports: planets and battles take the first free port of the range, a
+// released one is taken again, and a full range says so.
+void test_port_range() {
+    swm::core::UdpHubNetwork network(47811, 47813);
+    uint16_t a = 0, b = 0, c = 0;
+    auto first = network.open_server(a);
+    auto second = network.open_server(b);
+    auto third = network.open_server(c);
+    CHECK(a == 47811);
+    CHECK(b == 47812);
+    CHECK(c == 47813);
+    uint16_t d = 0;
+    bool full = false;
+    try {
+        network.open_server(d);
+    } catch (const std::runtime_error&) {
+        full = true;
+    }
+    CHECK(full);
+    second.reset();
+    uint16_t again = 0;
+    auto reopened = network.open_server(again);
+    CHECK(again == 47812);
+    // Without a range: any port.
+    swm::core::UdpHubNetwork any;
+    uint16_t free_port = 0;
+    auto link = any.open_server(free_port);
+    CHECK(free_port != 0);
+}
+
 } // namespace
 
 int main() {
     try {
+        test_port_range();
         test_starships_between_planets();
     } catch (const std::exception& error) {
         std::printf("FAIL: %s\n", error.what());

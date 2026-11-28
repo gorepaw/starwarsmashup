@@ -65,6 +65,7 @@ var master_volume := 0.8
 var sfx_volume := 1.0
 var music_volume := 0.65
 var voice_volume := 1.0
+var server_address := ""     # the last server joined ("host:port"); empty: none yet
 # The specialist ability bar (SpecialistUI.resolve_bar): what the player put on
 # each of its six keys ("" leaves a key to fill itself, "-" leaves it empty),
 # and the abilities they took off it, which stay off the keys left to fill.
@@ -90,6 +91,7 @@ func load_file() -> void:
 		sfx_volume = clampf(float(file.get_value("audio", "sfx", sfx_volume)), 0.0, 1.0)
 		music_volume = clampf(float(file.get_value("audio", "music", music_volume)), 0.0, 1.0)
 		voice_volume = clampf(float(file.get_value("audio", "voice", voice_volume)), 0.0, 1.0)
+		server_address = str(file.get_value("network", "server", server_address))
 		for action: Array in ACTIONS:
 			bindings[action[0]] = file.get_value("controls", action[0], bindings[action[0]])
 		var layout: Variant = file.get_value("bar", "layout", bar_layout)
@@ -111,6 +113,7 @@ func save_file() -> void:
 	file.set_value("audio", "sfx", sfx_volume)
 	file.set_value("audio", "music", music_volume)
 	file.set_value("audio", "voice", voice_volume)
+	file.set_value("network", "server", server_address)
 	for action: Array in ACTIONS:
 		file.set_value("controls", action[0], bindings[action[0]])
 	file.set_value("bar", "layout", bar_layout)
