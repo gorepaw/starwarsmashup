@@ -701,6 +701,9 @@ private:
     // Whether a character holds a profession's licence (docs/PERKS.md); tells
     // them to see a trainer when not.
     bool require_licence(Client& client, const std::string& profession);
+    // Gathering and crafting perks (docs/PERKS.md): a haul's size, an order's pay.
+    int64_t gathered_amount(Client& client, const std::string& profession, int64_t base);
+    int64_t order_pay(const Client& client, const std::string& profession, int64_t base) const;
     void save_bank(Client& client);
     const net::Vendor* service_near(const Client& client, const std::string& kind, const std::string& detail = "") const;
     int combat_level_of(const Client& client) const;

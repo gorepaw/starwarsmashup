@@ -183,9 +183,14 @@ public:
     // The grade odds: its materials' score (0..1), its crafter's level (and
     // Lv 75 Experimentation milestone), its modules (0..2) and its focus all
     // move them toward the better grades.
-    static ExperimentOdds grade_odds(double material_score, int crafter_level, int enhancement_count, int focus_pct);
+    // grade_bonus: where the roll centers moves up (a crafting perk's
+    // Experimentation: 0.15 each); exceptional_mult: the Exceptional odds
+    // times that, the rest scaled to fit (Masterwork: 2).
+    static ExperimentOdds grade_odds(double material_score, int crafter_level, int enhancement_count, int focus_pct,
+                                     double grade_bonus = 0.0, double exceptional_mult = 1.0);
     CraftPreview preview_craft(const SchematicDef& schematic, std::span<const std::string> resource_ids,
-                               int enhancement_count, int crafter_level, uint8_t focus_pct) const;
+                               int enhancement_count, int crafter_level, uint8_t focus_pct,
+                               double grade_bonus = 0.0, double exceptional_mult = 1.0) const;
     // A craft's grade for a 0..1 roll (Flawed to Exceptional).
     static ItemGrade roll_craft_grade(const CraftPreview& preview, double unit_roll);
 
@@ -193,7 +198,8 @@ public:
         std::vector<MaterialStack> materials;
         int64_t xp = 0;
     };
-    SalvageResult salvage_yield(const ItemDef& def, int salvaging_level) const;
+    // yield_bonus: a Salvaging perk's more from each salvage (0.2: 20%).
+    SalvageResult salvage_yield(const ItemDef& def, int salvaging_level, double yield_bonus = 0.0) const;
 
 private:
     std::vector<ResourceDef> resources_;

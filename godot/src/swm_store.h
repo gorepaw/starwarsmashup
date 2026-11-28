@@ -87,7 +87,9 @@ public:
     // {material_score, material_mult, flawed, standard, fine, exceptional}.
     godot::Dictionary preview_craft(const godot::String& schematic_id, const godot::PackedStringArray& resource_ids,
                                     int64_t enhancement_count, int64_t crafter_level,
-                                    int64_t focus_pct) const;
+                                    int64_t focus_pct, const godot::PackedStringArray& perks) const;
+    // The sum of a perk Bonus key across perk ids (docs/PERKS.md).
+    double perk_bonus(const godot::PackedStringArray& perks, const godot::String& key) const;
 
     static godot::Array get_species_list();
 

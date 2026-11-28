@@ -1368,9 +1368,12 @@ func _sync_screen_data(client: Object) -> void:
 		_workbench_screen.inventory = inv
 		_workbench_screen.loadouts = los
 		var prof_xp := {}
+		var prof_perks := {}
 		for p: Dictionary in client.get_professions():
 			prof_xp[str(p["id"])] = int(p["xp"])
+			prof_perks[str(p["id"])] = PackedStringArray(p.get("perks", []))
 		_workbench_screen.professions = prof_xp
+		_workbench_screen.perks = prof_perks
 		if _workbench_screen.visible:
 			_workbench_screen.queue_redraw()
 

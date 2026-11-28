@@ -73,6 +73,7 @@ var blueprints: PackedStringArray = []  # `Blueprint = yes` schematics learned (
 var inventory: Array = []
 var loadouts: Array = []
 var professions: Dictionary = {}
+var perks: Dictionary = {}  # profession id -> PackedStringArray of the perks known in it
 var feedback := ""
 var station_kind := "general"  # a station's kind; "none" away from one (nothing is made)
 var station_title := ""
@@ -118,6 +119,21 @@ func _rebuild_lookups() -> void:
 	_cat_by_id.clear()
 	for d: Dictionary in catalog:
 		_cat_by_id[str(d.get("id", ""))] = d
+
+
+# A crafting profession's perks' fewer materials, each in turn (as the server).
+func _material_mult(prof: String) -> float:
+	var mult := 1.0
+	if store == null:
+		return mult
+	for id: String in perks.get(prof, PackedStringArray()):
+		mult *= clampf(1.0 - float(store.perk_bonus(PackedStringArray([id]), "materials")), 0.0, 1.0)
+	return mult
+
+
+# What a slot takes with its mark, focus and the crafter's perks.
+func _slot_need(sch: Dictionary, amount: int, mark: int) -> int:
+	return maxi(1, ceili(_craft_amount(amount, mark, _focus(sch)) * _material_mult(str(sch.get("profession", ""))) - 0.000001))
 
 
 func _prof_level(id: String) -> int:
@@ -461,7 +477,7 @@ func _paint_workbench(rect: Rect2) -> void:
 		var rid := str(_slot_resources[i]) if i < _slot_resources.size() else ""
 		var r: Dictionary = _res_by_id.get(rid, {})
 		var have := _vault_amount(rid) if rid != "" else 0
-		var need := _craft_amount(int(sl.get("amount", 1)), mark, _focus(sch))
+		var need := _slot_need(sch, int(sl.get("amount", 1)), mark)
 		var sr := Rect2(cx, cy, center.size.x - 24 * u, 42 * u)
 		frame(sr, "border_3_pieces", Color(1, 1, 1, 0.85))
 		region(sr, "cslot:%d" % i)
@@ -520,7 +536,7 @@ func _paint_workbench(rect: Rect2) -> void:
 	var graded := bool(output_def.get("graded", false)) and int(output_def.get("grade", -1)) < 0
 	var focus := _focus(sch)
 	var prev: Dictionary = store.preview_craft(str(sch.get("id", "")), PackedStringArray(_slot_resources),
-			enh_count, lv, focus) if store != null and graded else {}
+			enh_count, lv, focus, perks.get(prof, PackedStringArray())) if store != null and graded else {}
 	if not prev.is_empty():
 		text("gamefont_small", "Materials: %d%%" % roundi(float(prev["material_score"]) * 100.0),
 				Vector2(rx, ry), "Left", TEXT)
@@ -559,7 +575,7 @@ func _paint_workbench(rect: Rect2) -> void:
 	var ready := lv >= req and station_kind != "none"
 	for i in slots.size():
 		var rid := str(_slot_resources[i]) if i < _slot_resources.size() else ""
-		if rid == "" or _vault_amount(rid) < _craft_amount(int((slots[i] as Dictionary).get("amount", 1)), mark, _focus(sch)):
+		if rid == "" or _vault_amount(rid) < _slot_need(sch, int((slots[i] as Dictionary).get("amount", 1)), mark):
 			ready = false
 	var by := right.end.y - 42 * u
 	button(Rect2(rx, by, 86 * u, 30 * u), "Craft x1", "craft:1", false, true, ready)

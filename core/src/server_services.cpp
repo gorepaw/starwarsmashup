@@ -157,9 +157,20 @@ void GameServer::load_services_data(Client& client) {
             }
             if (def.chooses() && p.trained > 0) {
                 // An old save's milestones, from before perks (docs/PERKS.md):
-                // what they cost is refunded, and they're gone.
+                // what they cost is refunded, and they're gone. A licence
+                // milestone becomes the licence perk (its first A), free.
                 for (const int level : {1, 25, 50, 75, 100}) {
                     if (level <= p.trained) refund += milestone_cost(level);
+                }
+                if (def.first_perk_level == 1 && p.perks.empty()) {
+                    for (const ProfessionPerkDef& perk : def.perks) {
+                        if (perk.level == 1 && perk.choice == 'A') {
+                            p.perks.push_back(perk.id);
+                            p.paid_perks.push_back(perk.id);
+                            store_->set_extra(client.character, "perks:" + def.id, perk.id);
+                            store_->set_extra(client.character, "paid_perks:" + def.id, perk.id);
+                        }
+                    }
                 }
                 p.trained = 0;
                 p.paid = 0;
@@ -171,7 +182,7 @@ void GameServer::load_services_data(Client& client) {
             client.credits += refund;
             store_->update_economy(client.character, client.credits, client.faction_points, client.experience,
                                    int(client.loadout));
-            say(std::format("{}: {} Cr refunded for weapon and armor milestones (now perks)", client.name, refund));
+            say(std::format("{}: {} Cr refunded for milestones (now perks)", client.name, refund));
         }
     }
     client.bank_credits = std::atoll(store_->get_extra(client.character, "bank_credits").c_str());

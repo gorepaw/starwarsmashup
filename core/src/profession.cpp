@@ -256,6 +256,18 @@ void ProfessionBook::parse(const Ini& ini, const std::string& where) {
             for (const auto& [key, value] : s.values) {
                 if (same(key, "Ability")) perk.abilities.push_back(value);
                 if (same(key, "Grants")) perk.grants.push_back(value);
+                if (same(key, "Bonus")) {
+                    const size_t sp = value.find_last_of(" \t");
+                    char* end = nullptr;
+                    const std::string num = sp == std::string::npos ? std::string() : value.substr(sp + 1);
+                    const double v = num.empty() ? 0.0 : std::strtod(num.c_str(), &end);
+                    if (sp == std::string::npos || end == nullptr || *end != '\0') {
+                        throw std::runtime_error(at + ": perk " + perk.id + "'s Bonus is <key> <number>");
+                    }
+                    std::string k = value.substr(0, sp);
+                    while (!k.empty() && (k.back() == ' ' || k.back() == '\t')) k.pop_back();
+                    perk.bonuses.emplace_back(std::move(k), v);
+                }
             }
             const std::string choice = s.get("Choice").value_or("");
             if (choice != "A" && choice != "B") {
@@ -472,6 +484,24 @@ int perks_learned(const ProfessionBook& book, std::span<const ProfessionProgress
         }
     }
     return count;
+}
+
+double perk_bonus(const ProfessionBook& book, std::span<const std::string> perks, std::string_view key) {
+    double total = 0.0;
+    for (const std::string& id : perks) {
+        if (const ProfessionPerkDef* perk = book.find_perk(id)) {
+            for (const auto& [k, v] : perk->bonuses) {
+                if (k == key) total += v;
+            }
+        }
+    }
+    return total;
+}
+
+double perk_bonus(const ProfessionBook& book, std::span<const ProfessionProgress> progress, std::string_view profession,
+                  std::string_view key) {
+    const ProfessionProgress* p = find_progress(progress, profession);
+    return p == nullptr ? 0.0 : perk_bonus(book, std::span<const std::string>(p->perks), key);
 }
 
 bool has_grant(const ProfessionBook& book, std::span<const ProfessionProgress> progress, std::string_view profession,

@@ -76,6 +76,10 @@ struct ProfessionPerkDef {
     // name (Grants = <flag>: band_leader, field_commander ...).
     std::vector<std::string> abilities;
     std::vector<std::string> grants;
+    // Numbers the server sums by name across a profession's known perks
+    // (Bonus = <key> <value>): gathering's yield, double_haul; crafting's
+    // grade, exceptional, materials, extra_item, order_pay; anyone's xp.
+    std::vector<std::pair<std::string, double>> bonuses;
     // Working only on something (Trigger = ...): what, and what it does.
     // Its slots and modifiers are filled in for a loadout.
     std::optional<TriggeredPerk> trigger;
@@ -167,6 +171,11 @@ int perks_learned(const ProfessionBook& book, std::span<const ProfessionProgress
 // (Doctor: medicine is crafted from level 1) need no licence.
 bool licensed(const ProfessionBook& book, std::span<const ProfessionProgress> progress, std::string_view id);
 // Whether a perk the character knows in a profession Grants this flag.
+// The sum of a Bonus key across the perks known in a profession (or in a
+// list of perk ids); 0 with none.
+double perk_bonus(const ProfessionBook& book, std::span<const ProfessionProgress> progress, std::string_view profession,
+                  std::string_view key);
+double perk_bonus(const ProfessionBook& book, std::span<const std::string> perks, std::string_view key);
 bool has_grant(const ProfessionBook& book, std::span<const ProfessionProgress> progress, std::string_view profession,
                std::string_view grant);
 

@@ -78,8 +78,10 @@ void test_roster() {
                 CHECK(perk.level == tiers[i / 2] && perk.choice == (i % 2 == 0 ? 'A' : 'B'));
                 CHECK(!perk.name.empty() && !perk.description.empty());
                 if (!combat) {
-                    // An advanced profession's: an ability, a flag or a modifier.
-                    CHECK(!perk.abilities.empty() || !perk.grants.empty() || !perk.perk.empty());
+                    // An advanced, gathering or crafting profession's: an
+                    // ability, a flag, a modifier or a bonus.
+                    CHECK(!perk.abilities.empty() || !perk.grants.empty() || !perk.perk.empty() ||
+                          !perk.bonuses.empty());
                     continue;
                 }
                 // One that works changes something, always or on its trigger;
@@ -106,7 +108,7 @@ void test_roster() {
     const ProfessionDef* doc = book.find("doctor");
     const ProfessionDef* ent = book.find("entertainer");
     CHECK(sl && sl->chooses() && sl->first_perk_level == 1 && sl->pool == PerkPool::combat);
-    CHECK(doc && doc->chooses() && doc->first_perk_level == 5 && doc->pool == PerkPool::combat);
+    CHECK(doc && doc->chooses() && doc->first_perk_level == 1 && doc->pool == PerkPool::combat);
     CHECK(ent && ent->chooses() && ent->first_perk_level == 1 && ent->pool == PerkPool::noncombat);
     CHECK(book.find("surveying") && book.find("surveying")->pool == PerkPool::noncombat);
     CHECK(book.find("merchant") && book.find("merchant")->pool == PerkPool::noncombat);
@@ -213,12 +215,44 @@ void test_training() {
     for (int i = 0; i < 3; ++i) CHECK(forget(book, me, "ranger").ok);
     CHECK(!licensed(book, me, "ranger") && !forget(book, me, "ranger").ok);
 
+    // Gathering and crafting teach perks from level 1: either level-1 perk is
+    // the licence, and their Bonus lines add up by name.
+    {
+        const ProfessionDef* survey = book.find("surveying");
+        const ProfessionDef* smith = book.find("weaponsmith");
+        CHECK(survey && survey->chooses() && survey->first_perk_level == 1 && survey->pool == PerkPool::noncombat);
+        CHECK(smith && smith->chooses() && smith->first_perk_level == 1 && smith->pool == PerkPool::noncombat);
+        for (const char* id : {"surveying", "foraging", "salvaging", "weaponsmith", "armorsmith", "tailor", "chef",
+                               "architect"}) {
+            const ProfessionDef* def = book.find(id);
+            CHECK(def && def->perks.size() == 10 && def->milestones.empty());
+            for (const ProfessionPerkDef& perk : def->perks) CHECK(perk.bonuses.size() == 1);
+        }
+        std::vector<ProfessionProgress> gatherer{{"surveying", book.xp_for_level(90)}};
+        CHECK(!licensed(book, gatherer, "surveying"));
+        CHECK(learn_perk(book, gatherer, "survey_rich_veins", 100'000).ok);  // learnable, but no licence
+        CHECK(!licensed(book, gatherer, "surveying"));
+        const TrainResult lic = learn_perk(book, gatherer, "survey_prospectors_scanner", 0);
+        CHECK(lic.ok && lic.cost == 0 && licensed(book, gatherer, "surveying"));
+        CHECK(learn_perk(book, gatherer, "survey_master_prospector", 100'000).ok);
+        CHECK(std::abs(perk_bonus(book, gatherer, "surveying", "yield") - 0.75) < 1e-9);  // 15 + 20 + 40
+        CHECK(perk_bonus(book, gatherer, "surveying", "double_haul") == 0.0);
+        CHECK(perk_bonus(book, gatherer, "foraging", "yield") == 0.0);
+        CHECK(perks_learned(book, gatherer, PerkPool::noncombat) == 3 && perks_learned(book, gatherer, PerkPool::combat) == 0);
+        const std::vector<std::string> ids{"wsmith_weapon_experimentation", "wsmith_master_experimenter"};
+        CHECK(std::abs(perk_bonus(book, std::span<const std::string>(ids), "grade") - 0.3) < 1e-9);
+        // Doctor's first tier is its licence too.
+        const ProfessionDef* doc = book.find("doctor");
+        CHECK(doc && doc->first_perk_level == 1);
+        std::vector<ProfessionProgress> medic{{"doctor", book.xp_for_level(10)}};
+        CHECK(!licensed(book, medic, "doctor"));
+        CHECK(learn_perk(book, medic, "doc_perk_field_dressing", 0).ok && licensed(book, medic, "doctor"));
+    }
     // An advanced profession of perks: a level-1 perk is its licence (Squad
-    // Leader); one whose perks start at 5 needs none (Doctor: medicine is
-    // crafted from level 1).
+    // Leader, Doctor); its later tiers wait for the level.
     std::vector<ProfessionProgress> sl{{"squad_leader", book.xp_for_level(30)}, {"doctor", 0}};
-    CHECK(!licensed(book, sl, "squad_leader") && licensed(book, sl, "doctor"));
-    CHECK(!learn_perk(book, sl, "doc_perk_heal_dart", 10'000).ok);  // Doctor 1: its perks start at 5
+    CHECK(!licensed(book, sl, "squad_leader") && !licensed(book, sl, "doctor"));
+    CHECK(!learn_perk(book, sl, "doc_perk_cleanse", 10'000).ok);  // Doctor 1: not yet 25
     CHECK(learn_perk(book, sl, "sl_perk_steady_rally", 0).ok);
     CHECK(licensed(book, sl, "squad_leader"));
     CHECK(!learn_perk(book, sl, "sl_perk_rally", 0).ok);  // the other kind of rally

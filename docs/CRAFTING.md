@@ -100,7 +100,7 @@ A crafted weapon, armor piece or Deflector Shield rolls its grade ([DESIGN.md](D
 
 - **Odds:** `CraftingBook::grade_odds` places the roll's center from Flawed (0) to Exceptional (3), and spreads it as a bell (0.75 wide). The center starts at 0.3 and goes up with:
   - **materials:** +1.2 × their score, 0 to 1 (their stats, as the schematic weighs them)
-  - **crafter level:** +0.6 from level 1 to 100, and +0.15 more from the Lv 75 Experimentation milestone
+  - **crafter level:** +0.6 from level 1 to 100, and +0.15 for each Experimentation perk ([Perks](PERKS.md#gathering-and-crafting)); a Masterwork perk doubles the Exceptional odds
   - **modules:** +0.2 each, up to 2
   - **Experimentation Focus:** +0.8 at 100%
 

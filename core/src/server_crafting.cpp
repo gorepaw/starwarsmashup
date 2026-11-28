@@ -99,6 +99,23 @@ bool GameServer::learn_blueprint(Client& client, const ItemDef& def, uint64_t it
     return true;
 }
 
+// A haul with a gathering profession's perks: more from each (Bonus =
+// yield), and a chance of it twice (double_haul).
+int64_t GameServer::gathered_amount(Client& client, const std::string& profession, int64_t base) {
+    if (config_.professions == nullptr) return base;
+    const double more = perk_bonus(*config_.professions, client.professions, profession, "yield");
+    int64_t qty = std::max<int64_t>(1, int64_t(std::llround(double(base) * (1.0 + std::max(0.0, more)))));
+    if (random_unit() < perk_bonus(*config_.professions, client.professions, profession, "double_haul")) qty *= 2;
+    return qty;
+}
+
+// What an order pays a crafter, with their profession's order_pay perks.
+int64_t GameServer::order_pay(const Client& client, const std::string& profession, int64_t base) const {
+    if (config_.professions == nullptr) return base;
+    const double more = perk_bonus(*config_.professions, client.professions, profession, "order_pay");
+    return int64_t(std::llround(double(base) * (1.0 + std::max(0.0, more))));
+}
+
 void GameServer::handle_gather_request(Client& client, const net::GatherRequest& req, double now) {
     if (config_.crafting == nullptr || client.life != Life::alive) return;
     const CraftingBook& book = *config_.crafting;
@@ -163,7 +180,7 @@ void GameServer::handle_gather_request(Client& client, const net::GatherRequest&
         }
         if (choices.empty()) return;
         const ResourceDef* picked = choices[size_t(corpse_id) % choices.size()];
-        const int64_t qty = std::max<int64_t>(3, 4 + lv / 12);
+        const int64_t qty = gathered_amount(client, prof, std::max<int64_t>(3, 4 + lv / 12));
         add_material(client.materials, picked->id, qty);
         save_materials(client);
         ++client.crafting_rev;
@@ -188,10 +205,15 @@ void GameServer::handle_gather_request(Client& client, const net::GatherRequest&
         if (def == nullptr || def->kind == ItemKind::quest) return;
 
         const int lv = profession_level(config_.professions, client.professions, "salvaging");
-        const auto yield = book.salvage_yield(*def, lv);
+        const double bonus =
+            config_.professions ? perk_bonus(*config_.professions, client.professions, "salvaging", "yield") : 0.0;
+        auto yield = book.salvage_yield(*def, lv, bonus);
         if (!store_->remove_item(item_id)) return;
         client.items.erase(it);
-        for (const MaterialStack& st : yield.materials) {
+        const bool twice = config_.professions != nullptr &&
+                           random_unit() < perk_bonus(*config_.professions, client.professions, "salvaging", "double_haul");
+        for (MaterialStack& st : yield.materials) {
+            if (twice) st.amount *= 2;
             add_material(client.materials, st.resource_id, st.amount);
         }
         save_materials(client);
@@ -223,8 +245,8 @@ void GameServer::finish_extraction(Client& client, ResourceCategory cat) {
     client.last_extract_site = client.state.position;
     const std::string prof = cat == ResourceCategory::flora ? "foraging" : "surveying";
     const int lv = profession_level(config_.professions, client.professions, prof);
-    const double yield_bonus = 1.0 + double(lv) * 0.01 + (lv >= 50 ? 0.20 : 0.0);
-    const int64_t qty = std::max<int64_t>(2, int64_t(std::llround((4.0 + 14.0 * conc) * yield_bonus)));
+    const double yield_bonus = 1.0 + double(lv) * 0.01;
+    const int64_t qty = gathered_amount(client, prof, std::max<int64_t>(2, int64_t(std::llround((4.0 + 14.0 * conc) * yield_bonus))));
     add_material(client.materials, res->id, qty);
     save_materials(client);
     ++client.crafting_rev;
@@ -301,13 +323,14 @@ void GameServer::handle_craft_request(Client& client, const net::CraftRequest& r
             store_->remove_item(id);
             std::erase_if(client.items, [&](const ItemInstance& inst) { return inst.id == id; });
         }
-        client.credits += order->reward_credits;
+        const int64_t pay = order_pay(client, order->profession, order->reward_credits);
+        client.credits += pay;
         client.faction_points += int64_t(std::llround(double(order->reward_fp) * client.stats.faction_gain));
         save_economy(client);
         ++client.inventory_rev;
         client.last_sync_tick = 0;
         earn_profession_xp(client, order->profession, order->reward_xp);
-        notify(client.entity, std::format("Work order complete: +{} Cr, +{} FP, +{} {} XP", order->reward_credits,
+        notify(client.entity, std::format("Work order complete: +{} Cr, +{} FP, +{} {} XP", pay,
                                           order->reward_fp, order->reward_xp, order->profession));
         return;
     }
@@ -413,6 +436,19 @@ void GameServer::handle_craft_request(Client& client, const net::CraftRequest& r
             notify(client.entity, "Fill every material slot first.");
             return;
         }
+        // A crafting perk's fewer materials (each in turn: 20% and 20% is 36%).
+        double material_mult = 1.0;
+        if (config_.professions != nullptr) {
+            if (const ProfessionProgress* p = find_progress(client.professions, sch->profession)) {
+                for (const std::string& id : p->perks) {
+                    if (const ProfessionPerkDef* perk = config_.professions->find_perk(id)) {
+                        for (const auto& [k, v] : perk->bonuses) {
+                            if (k == "materials") material_mult *= std::clamp(1.0 - v, 0.0, 1.0);
+                        }
+                    }
+                }
+            }
+        }
         std::map<std::string, int64_t> needed;
         for (size_t i = 0; i < sch->slots.size(); ++i) {
             const ResourceDef* r = book.find_resource(req.resource_ids[i]);
@@ -420,7 +456,9 @@ void GameServer::handle_craft_request(Client& client, const net::CraftRequest& r
                 notify(client.entity, "Invalid material for schematic slot.");
                 return;
             }
-            needed[r->id] += int64_t(craft_material_amount(sch->slots[i].amount, mark, focus)) * batch;
+            needed[r->id] += int64_t(std::max(1.0, std::ceil(double(craft_material_amount(sch->slots[i].amount, mark, focus)) *
+                                                             material_mult - 1e-6))) *
+                             batch;
         }
         for (const auto& [rid, amt] : needed) {
             if (material_amount(client.materials, rid) < amt) {
@@ -461,19 +499,30 @@ void GameServer::handle_craft_request(Client& client, const net::CraftRequest& r
         const bool pharmacologist = sch->profession == "doctor" && config_.professions != nullptr &&
                                     has_grant(*config_.professions, client.professions, "doctor", "pharmacologist");
         const int modules = std::min(2, int(enh_ids.size()) + (pharmacologist ? 1 : 0));
-        const CraftPreview preview = book.preview_craft(*sch, req.resource_ids, modules, lv, uint8_t(focus));
+        const auto bonus = [&](std::string_view key) {
+            return config_.professions ? perk_bonus(*config_.professions, client.professions, sch->profession, key) : 0.0;
+        };
+        const CraftPreview preview = book.preview_craft(*sch, req.resource_ids, modules, lv, uint8_t(focus), bonus("grade"),
+                                                        1.0 + bonus("exceptional"));
+        const double extra_chance = bonus("extra_item");
         std::array<int, item_grade_count> made{};
         const int unit_count = sch->output_count > 1 ? sch->output_count
                                                      : (out_def && out_def->kind == ItemKind::ammo ? out_def->ammo_batch : 1);
+        int extras = 0;
         for (int i = 0; i < batch; ++i) {
             const ItemGrade grade =
                 graded ? CraftingBook::roll_craft_grade(preview, random_unit()) : ItemGrade::standard;
-            ++made[size_t(grade)];
-            if (out_def != nullptr && (unit_count > 1 || out_def->kind == ItemKind::ammo)) {
-                grant_stacked_item(client, *out_def, unit_count, grade);
-            } else {
-                client.items.push_back(store_->grant_item(
-                    {0, client.character, sch->output_item, grade, "", with_item_json_field("{}", "mods", mods), 1, mark}));
+            // A crafting perk's chance of one more, of the same grade.
+            const int copies = extra_chance > 0.0 && random_unit() < extra_chance ? 2 : 1;
+            extras += copies - 1;
+            for (int c = 0; c < copies; ++c) {
+                ++made[size_t(grade)];
+                if (out_def != nullptr && (unit_count > 1 || out_def->kind == ItemKind::ammo)) {
+                    grant_stacked_item(client, *out_def, unit_count, grade);
+                } else {
+                    client.items.push_back(store_->grant_item({0, client.character, sch->output_item, grade, "",
+                                                               with_item_json_field("{}", "mods", mods), 1, mark}));
+                }
             }
         }
         save_materials(client);
@@ -489,9 +538,9 @@ void GameServer::handle_craft_request(Client& client, const net::CraftRequest& r
             if (made[size_t(g)] == 0) continue;
             const std::string_view name = item_grade_name(ItemGrade(g));
             grades += (grades.empty() ? "" : ", ") +
-                      (batch > 1 ? std::format("{} {}", made[size_t(g)], name) : std::string(name));
+                      (batch + extras > 1 ? std::format("{} {}", made[size_t(g)], name) : std::string(name));
         }
-        notify(client.entity, std::format("Crafted {}x {}{}", batch,
+        notify(client.entity, std::format("Crafted {}x {}{}", batch + extras,
                                           out_def ? item_display_name(*out_def, mark) : sch->name,
                                           grades.empty() ? "" : " (" + grades + ")"));
     }

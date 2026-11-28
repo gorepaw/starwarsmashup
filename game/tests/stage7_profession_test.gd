@@ -39,10 +39,13 @@ func _initialize() -> void:
 	assert(first["id"] == "rifles_long_barrel" and first["choice"] == "A" and int(first["level"]) == 5)
 	assert(first["perks"] == ["20% longer full-damage range"], "perk words: %s" % [first["perks"]])
 	assert(int(first["cost"]) == 500 and str(first["needs"]) == "")
-	# An advanced profession of perks (from 5: no licence), and one still of milestones.
+	# An advanced profession of perks (a level-1 licence), and one still of milestones.
 	var doctor: Dictionary = roster.filter(func(p: Dictionary) -> bool: return p["id"] == "doctor")[0]
 	assert((doctor["milestones"] as Array).is_empty() and (doctor["perks"] as Array).size() == 10)
-	assert(str(doctor["pool"]) == "combat" and int(doctor["first_perk"]) == 5)
+	assert(str(doctor["pool"]) == "combat" and int(doctor["first_perk"]) == 1)
+	var survey: Dictionary = roster.filter(func(p: Dictionary) -> bool: return p["id"] == "surveying")[0]
+	assert(str(survey["pool"]) == "noncombat" and int(survey["first_perk"]) == 1 and (survey["perks"] as Array).size() == 10)
+	assert(is_equal_approx(float(store.perk_bonus(PackedStringArray(["survey_prospectors_scanner", "survey_rich_veins"]), "yield")), 0.35))
 	var ranger: Dictionary = roster.filter(func(p: Dictionary) -> bool: return p["id"] == "ranger")[0]
 	assert((ranger["milestones"] as Array).size() == 5 and (ranger["perks"] as Array).is_empty())
 	var entertainer: Dictionary = roster.filter(func(p: Dictionary) -> bool: return p["id"] == "entertainer")[0]

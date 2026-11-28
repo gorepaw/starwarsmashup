@@ -1,6 +1,6 @@
 # Trainer Perks
 
-The rework of what professions teach. It replaces milestones at 1 / 25 / 50 / 75 / 100 ([Professions](PROFESSIONS.md)) with two perks to choose between at each tier. Weapons and armor were first; the advanced professions follow one by one (Squad Leader, Doctor and Entertainer so far, 2026-11-27), then gathering and crafting. The rest keep their milestones until their turn.
+The rework of what professions teach. It replaces milestones at 1 / 25 / 50 / 75 / 100 ([Professions](PROFESSIONS.md)) with two perks to choose between at each tier. Weapons and armor were first; then Squad Leader, Doctor and Entertainer, and gathering and crafting (2026-11-27). The other advanced professions follow one by one and keep their milestones until their turn.
 
 Status: **built** (see Order of work): the rules, the cap, trainers, licences, and all 90 perks. The tags say what each needed: nothing new, a trigger (**T**), or a new mechanic (**N**; [Mechanics](#mechanics)).
 
@@ -14,7 +14,7 @@ The old milestones were a fixed chain of small multipliers that every character 
 - **Choose A or B.** Each perk level offers two perks, and a character can know one of them. That's at most five perks per profession.
 - **No chain.** A perk needs only its profession's level. Dropping one never takes others with it, so a Melee 85 perk can be learned alone. That's why the 85 perks are the most defining, not the strongest.
 - **Ten combat perks and ten non-combat perks per character** (2026-11-27; it was ten in all), across all three loadouts. Combat: weapons, armor, Bounty Hunter, Smuggler, Squad Leader, Doctor, Ranger, Pilot, Creature Handler, Droid Operations. Non-combat: gathering, crafting, Entertainer, Merchant, Bio-Engineer, Droid Engineer (`Pool =` in professions.ini). Milestones count toward their profession's pool the same way, level 1 included. A fighter no longer gives up gathering or crafting to fight well, but within a pool nothing is free.
-- **Advanced trees.** An advanced profession's perks are abilities (`Ability =`), switches the server looks for (`Grants =`), or stat changes. Its tiers are 5 / 25 / 45 / 65 / 85, or **1** / 25 / 45 / 65 / 85 (`FirstPerk = 1`) when you can't do it at all without its first perk: then either level-1 perk is its licence, and it's free (Squad Leader: two kinds of rally; Entertainer: Musician or Dancer). Doctor's start at 5: medicine is crafted from level 1 with no perk.
+- **Advanced trees.** An advanced profession's perks are abilities (`Ability =`), switches the server looks for (`Grants =`), or stat changes. Its tiers are 5 / 25 / 45 / 65 / 85, or **1** / 25 / 45 / 65 / 85 (`FirstPerk = 1`) when you can't do it at all without its first perk: then either level-1 perk is its licence, and it's free (Squad Leader: two kinds of rally; Doctor: a healing dart or field dressing, which also licenses medicine; Entertainer: Musician or Dancer). Tiers from 5 (`FirstPerk = 5`, the default) are for a profession you can practise without a perk; none does now.
 - **The level-1 perk is the licence.** A non-combat or specialist profession's level-1 milestone is what lets you do its activity at all: survey and harvest, craft its schematics, heal, tame, perform. Without it you can't, and you earn none of its experience. To level a profession you hold its level-1 perk while you do it; give it up later and you keep the level, and learning it again is free.
 - **No slots.** Active Specialization Slots are gone. What a character has learned works everywhere: a weapon perk whenever you fight with that profession's weapons, an armor perk whenever your armor is that class, a specialist's abilities in every loadout. The cap does the limiting the slots did. Levelling stays uncapped: every profession can reach 100.
 - **Trainers.**
@@ -124,6 +124,37 @@ Block and parry already work against melee.
 | 45 | **Blast Padding**: 8% more explosive resistance | **Shoulder Charge**: sprint into an enemy to stagger them for 0.8 s, every 4 s at most (N) |
 | 65 | **Reactive Plating**: 25% of the explosive damage you take refills your shield (N) | **Ablative**: the first hit within 5 s of your shield breaking does half damage (T) |
 | 85 | **Juggernaut**: immune to snares and stagger (N) | **Last Stand**: under 25% health, 20% more mitigation and faster reloads (T) |
+
+### Gathering and crafting
+
+Every one starts at **1**: either level-1 perk is its licence (gather, or craft its schematics and fill its work orders) and is free. Its perks are numbers the server sums by name (`Bonus = <key> <value>`), the same five per kind, named for each profession.
+
+Gathering (Surveying, Foraging, Salvaging):
+
+| Level | A | B |
+|---|---|---|
+| 1 | Licence, and 15% more per haul (`yield`) | Licence, and 25% more experience (`xp`) |
+| 25 | 20% more per haul | 15% chance of a double haul (`double_haul`) |
+| 45 | 25% more experience | 20% more per haul |
+| 65 | 15% chance of a double haul | 25% more experience |
+| 85 | 40% more per haul | 30% chance of a double haul |
+
+Crafting (Weaponsmith, Armorsmith, Tailor, Chef, Architect):
+
+| Level | A | B |
+|---|---|---|
+| 1 | Licence, and Experimentation: better grades (`grade` 0.15) | Licence, and 20% fewer materials (`materials`) |
+| 25 | 15% chance of one more each craft (`extra_item`) | Work orders and artisan orders pay 50% more (`order_pay`) |
+| 45 | 25% more experience | 20% fewer materials |
+| 65 | Better grades again | 25% chance of one more |
+| 85 | Masterwork: Exceptional twice as likely (`exceptional`) | 35% fewer materials |
+
+- A haul is an extraction, a corpse harvested or salvaged, or an item broken down.
+- `grade` moves the grade roll's center up ([Crafting](CRAFTING.md)); `exceptional` multiplies the Exceptional odds and scales the rest to fit.
+- Fewer materials apply each in turn (20%, 20% and 35% together leave 42%), and a slot never takes less than 1.
+- An extra item has the same grade as the one rolled.
+- `xp` works for any profession's perk.
+- Old saves' gathering and crafting milestones are refunded, and a licence milestone becomes the A licence perk.
 
 ## Triggers
 

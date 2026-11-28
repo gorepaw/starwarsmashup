@@ -2040,6 +2040,9 @@ void GameServer::update_contracts(Client& client) {
         if (done && c.kind == ContractKind::gig && granted(client, "entertainer", "encore")) {
             c.reward += c.reward / 2;  // an Encore's
         }
+        if (done && c.kind == ContractKind::craft_order) {
+            c.reward = order_pay(client, c.profession, c.reward);  // a crafter's order_pay perks
+        }
         if (done) {
             client.credits += c.reward;
             save_economy(client);

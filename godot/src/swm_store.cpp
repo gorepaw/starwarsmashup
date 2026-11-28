@@ -602,15 +602,20 @@ godot::PackedStringArray SwmCharacterStore::auto_fill_schematic(const godot::Str
 godot::Dictionary SwmCharacterStore::preview_craft(const godot::String& schematic_id,
                                                    const godot::PackedStringArray& resource_ids,
                                                    int64_t enhancement_count, int64_t crafter_level,
-                                                   int64_t focus_pct) const {
+                                                   int64_t focus_pct, const godot::PackedStringArray& perks) const {
     godot::Dictionary out;
     const core::SchematicDef* s = crafting_.find_schematic(to_std(schematic_id));
     if (s == nullptr) return out;
     std::vector<std::string> rids;
     rids.reserve(size_t(resource_ids.size()));
     for (int i = 0; i < resource_ids.size(); ++i) rids.push_back(to_std(resource_ids[i]));
-    const core::CraftPreview p = crafting_.preview_craft(*s, rids, int(enhancement_count), int(crafter_level),
-                                                         uint8_t(std::clamp<int64_t>(focus_pct, 0, 100)));
+    // The crafter's perks in its profession (docs/PERKS.md): Experimentation, Masterwork.
+    std::vector<std::string> known;
+    for (int i = 0; i < perks.size(); ++i) known.push_back(to_std(perks[i]));
+    const core::CraftPreview p = crafting_.preview_craft(
+        *s, rids, int(enhancement_count), int(crafter_level), uint8_t(std::clamp<int64_t>(focus_pct, 0, 100)),
+        core::perk_bonus(professions_, std::span<const std::string>(known), "grade"),
+        1.0 + core::perk_bonus(professions_, std::span<const std::string>(known), "exceptional"));
     out["material_score"] = p.material_score;
     out["material_mult"] = p.material_mult;
     out["flawed"] = p.odds.flawed;
@@ -618,6 +623,12 @@ godot::Dictionary SwmCharacterStore::preview_craft(const godot::String& schemati
     out["fine"] = p.odds.fine;
     out["exceptional"] = p.odds.exceptional;
     return out;
+}
+
+double SwmCharacterStore::perk_bonus(const godot::PackedStringArray& perks, const godot::String& key) const {
+    std::vector<std::string> known;
+    for (int i = 0; i < perks.size(); ++i) known.push_back(to_std(perks[i]));
+    return core::perk_bonus(professions_, std::span<const std::string>(known), to_std(key));
 }
 
 godot::String SwmCharacterStore::grade_name(int64_t grade) {
@@ -1011,8 +1022,10 @@ void SwmCharacterStore::_bind_methods() {
                          &SwmCharacterStore::scan_terrain, DEFVAL(60.0), DEFVAL(17));
     ClassDB::bind_method(D_METHOD("auto_fill_schematic", "schematic_id", "materials", "mode", "mark", "focus_pct"),
                          &SwmCharacterStore::auto_fill_schematic, DEFVAL(0), DEFVAL(0));
-    ClassDB::bind_method(D_METHOD("preview_craft", "schematic_id", "resource_ids", "enhancement_count", "crafter_level", "focus_pct"),
-                         &SwmCharacterStore::preview_craft);
+    ClassDB::bind_method(D_METHOD("preview_craft", "schematic_id", "resource_ids", "enhancement_count", "crafter_level", "focus_pct",
+                                  "perks"),
+                         &SwmCharacterStore::preview_craft, DEFVAL(godot::PackedStringArray()));
+    ClassDB::bind_method(D_METHOD("perk_bonus", "perks", "key"), &SwmCharacterStore::perk_bonus);
     ClassDB::bind_static_method("SwmCharacterStore", D_METHOD("get_species_list"),
                                 &SwmCharacterStore::get_species_list);
 }

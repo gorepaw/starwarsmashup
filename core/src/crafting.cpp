@@ -462,7 +462,7 @@ std::vector<std::string> CraftingBook::auto_fill(const SchematicDef& schematic, 
 }
 
 ExperimentOdds CraftingBook::grade_odds(double material_score, int crafter_level, int enhancement_count,
-                                        int focus_pct) {
+                                        int focus_pct, double grade_bonus, double exceptional_mult) {
     // Where the roll centers, from Flawed (0) to Exceptional (3), spread
     // around it as a bell: a fresh crafter on average materials makes mostly
     // Standard; a master on great ones, two modules and full focus mostly
@@ -470,7 +470,7 @@ ExperimentOdds CraftingBook::grade_odds(double material_score, int crafter_level
     const double t = std::clamp(double(crafter_level - 1) / 99.0, 0.0, 1.0);
     const double center = 0.3 + 1.2 * std::clamp(material_score, 0.0, 1.0) + 0.6 * t +
                           0.2 * std::clamp(enhancement_count, 0, 2) + 0.8 * double(std::clamp(focus_pct, 0, 100)) / 100.0 +
-                          (crafter_level >= 75 ? 0.15 : 0.0);  // the Lv 75 Experimentation milestone
+                          std::max(0.0, grade_bonus);  // crafting perks' Experimentation
     constexpr double spread = 0.75;
     std::array<double, 4> w{};
     double total = 0.0;
@@ -479,11 +479,19 @@ ExperimentOdds CraftingBook::grade_odds(double material_score, int crafter_level
         w[k] = std::exp(-d * d / (2.0 * spread * spread));
         total += w[k];
     }
-    return {w[0] / total, w[1] / total, w[2] / total, w[3] / total};
+    ExperimentOdds odds{w[0] / total, w[1] / total, w[2] / total, w[3] / total};
+    if (exceptional_mult > 1.0 && odds.exceptional < 1.0) {
+        // More Exceptional, the rest in proportion.
+        const double ex = std::min(1.0, odds.exceptional * exceptional_mult);
+        const double rest = (1.0 - ex) / (1.0 - odds.exceptional);
+        odds = {odds.flawed * rest, odds.standard * rest, odds.fine * rest, ex};
+    }
+    return odds;
 }
 
 CraftPreview CraftingBook::preview_craft(const SchematicDef& schematic, std::span<const std::string> resource_ids,
-                                         int enhancement_count, int crafter_level, uint8_t focus_pct) const {
+                                         int enhancement_count, int crafter_level, uint8_t focus_pct,
+                                         double grade_bonus, double exceptional_mult) const {
     double weighted_sum = 0.0;
     double weight_total = 0.0;
     for (size_t i = 0; i < schematic.slots.size(); ++i) {
@@ -505,7 +513,7 @@ CraftPreview CraftingBook::preview_craft(const SchematicDef& schematic, std::spa
     CraftPreview out;
     out.material_score = weight_total > 0.0 ? weighted_sum / weight_total : 0.5;
     out.material_mult = focus_material_mult(focus_pct);
-    out.odds = grade_odds(out.material_score, crafter_level, enhancement_count, focus_pct);
+    out.odds = grade_odds(out.material_score, crafter_level, enhancement_count, focus_pct, grade_bonus, exceptional_mult);
     return out;
 }
 
@@ -519,10 +527,9 @@ ItemGrade CraftingBook::roll_craft_grade(const CraftPreview& preview, double uni
     return ItemGrade::flawed;
 }
 
-CraftingBook::SalvageResult CraftingBook::salvage_yield(const ItemDef& def, int salvaging_level) const {
+CraftingBook::SalvageResult CraftingBook::salvage_yield(const ItemDef& def, int salvaging_level, double yield_bonus) const {
     SalvageResult res;
-    const double mult = 1.0 + std::clamp(double(salvaging_level - 1) / 99.0, 0.0, 1.0) * 0.75 +
-                        (salvaging_level >= 50 ? 0.25 : 0.0);
+    const double mult = (1.0 + std::clamp(double(salvaging_level - 1) / 99.0, 0.0, 1.0) * 0.75) * (1.0 + std::max(0.0, yield_bonus));
     const int64_t base_qty = def.kind == ItemKind::junk ? 3 : 6;
     const int64_t qty = std::max<int64_t>(2, int64_t(std::llround(double(base_qty) * mult)));
 

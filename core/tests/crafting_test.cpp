@@ -87,7 +87,12 @@ void test_crafting_book() {
         CHECK(better(CraftingBook::grade_odds(0.5, 60, 0, 0)));
         CHECK(better(CraftingBook::grade_odds(0.5, 1, 2, 0)));
         CHECK(better(CraftingBook::grade_odds(0.5, 1, 0, 100)));
-        CHECK(CraftingBook::grade_odds(0.5, 75, 0, 0).exceptional > CraftingBook::grade_odds(0.5, 74, 0, 0).exceptional);
+        // A crafting perk's Experimentation moves them up; Masterwork doubles Exceptional.
+        CHECK(better(CraftingBook::grade_odds(0.5, 1, 0, 0, 0.15)));
+        const ExperimentOdds plain = CraftingBook::grade_odds(0.7, 50, 1, 50);
+        const ExperimentOdds masterwork = CraftingBook::grade_odds(0.7, 50, 1, 50, 0.0, 2.0);
+        CHECK(std::abs(masterwork.exceptional - 2.0 * plain.exceptional) < 1e-9);
+        CHECK(std::abs(masterwork.flawed + masterwork.standard + masterwork.fine + masterwork.exceptional - 1.0) < 1e-9);
         const ExperimentOdds master = CraftingBook::grade_odds(0.9, 100, 2, 100);
         CHECK(master.exceptional > 0.6 && master.flawed < 0.01);
     }
@@ -198,11 +203,11 @@ void test_server_client_crafting_loopback() {
         run(0.5);
         CHECK(client.crafting().materials.empty());
         CHECK(client.player_status().notice.find("Learn Surveying") != std::string::npos);
-        // The licences, from trainers: each level-1 milestone is free.
+        // The licences, from trainers: a level-1 perk each, free.
         server.set_vendors({{"Survey Trainer", "trainer", {0, 0, 0}, 4, "surveying,salvaging"},
                             {"Weaponsmith Trainer", "trainer", {0, 0, 0}, 4, "weaponsmith"}});
-        for (const char* id : {"surveying", "salvaging", "weaponsmith"}) {
-            client.service(net::ServiceRequest::train, id, 1, 0);
+        for (const char* id : {"survey_survey_training", "salvage_tinkerers_eye", "wsmith_weapon_experimentation"}) {
+            client.service(net::ServiceRequest::learn_perk, id, 0, 0);
             run(0.3);
         }
 
@@ -509,13 +514,14 @@ void test_marks_modules_and_dyes() {
     World world{ground};
     {
         SqliteCharacterStore store(db_path);
-        // A level-20 weaponsmith (licensed: its first milestone learned), with
-        // plenty in the vault, a module, the wrong module and a shirt.
+        // A level-20 weaponsmith (licensed: Thrifty Gunsmith, a level-1 perk,
+        // 20% fewer materials), with plenty in the vault, a module, the wrong
+        // module and a shirt.
         const CharacterRecord smith = store.create("Smith", {0, 0, 0}, 0.0f);
         const std::vector<ProfessionProgress> progress{{"weaponsmith", professions.xp_for_level(20)}};
         store.save_professions(smith.id, progress);
-        store.set_extra(smith.id, "trained:weaponsmith", "1");
-        store.set_extra(smith.id, "trained:tailor", "1");
+        store.set_extra(smith.id, "perks:weaponsmith", "wsmith_thrifty_gunsmith");
+        store.set_extra(smith.id, "perks:tailor", "tailor_fine_stitching");
         std::vector<MaterialStack> vault;
         for (const ResourceDef& r : crafting.resources()) vault.push_back({r.id, 200});
         store.save_materials(smith.id, vault);
@@ -569,15 +575,18 @@ void test_marks_modules_and_dyes() {
         client.craft_item(sch->id, rids, {plating.id}, 0, 1, 2);
         run(0.4);
         CHECK(owned("wp_pistol_dh17").empty() && owned("mod_armor_plating").size() == 1);
-        // Mk II with the barrel: tuned, the barrel used, half again the materials.
+        // Mk II with the barrel: tuned, the barrel used, half again the
+        // materials (less Thrifty's 20%).
         client.craft_item(sch->id, rids, {barrel.id}, 0, 1, 2);
         run(0.4);
         const auto pistols = owned("wp_pistol_dh17");
         CHECK(pistols.size() == 1 && pistols[0].mark == 2);
         CHECK(item_modules(pistols[0]) == std::vector<std::string>{"mod_precision_barrel"});
         CHECK(owned("mod_precision_barrel").empty());
-        CHECK(material_amount(client.crafting().materials, rids[0]) ==
-              mineral_before - mark_material_amount(sch->slots[0].amount, 2));
+        const int64_t thrifty = std::max<int64_t>(
+            1, int64_t(std::ceil(double(mark_material_amount(sch->slots[0].amount, 2)) * 0.8 - 1e-6)));
+        CHECK(thrifty < mark_material_amount(sch->slots[0].amount, 2));
+        CHECK(material_amount(client.crafting().materials, rids[0]) == mineral_before - thrifty);
         // By default, the highest it may make: Mk II at level 20.
         client.craft_item(sch->id, rids, {}, 0, 1);
         run(0.4);

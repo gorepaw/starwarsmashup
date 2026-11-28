@@ -137,16 +137,16 @@ func _process(delta: float) -> bool:
 					printerr("FAIL: client did not spawn in desert hub")
 					_cleanup(1)
 				return false
-			# Extracting takes Surveying's licence (docs/PERKS.md): its first milestone, free.
-			client.service(0, "surveying", 1, 0)
+			# Extracting takes Surveying's licence (docs/PERKS.md): a level-1 perk, free.
+			client.service(8, "survey_prospectors_scanner", 0, 0)
 			_next("licensed")
 		"licensed":
 			var client: Object = _session.get_client()
-			var trained := 0
+			var licensed := false
 			for p: Dictionary in client.get_professions():
 				if str(p["id"]) == "surveying":
-					trained = int(p.get("trained", 0))
-			if trained < 1:
+					licensed = "survey_prospectors_scanner" in (p.get("perks", []) as Array)
+			if not licensed:
 				if _phase_sec > 5.0:
 					printerr("FAIL: the Survey Trainer didn't teach the licence")
 					_cleanup(1)
