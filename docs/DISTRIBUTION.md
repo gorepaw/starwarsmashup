@@ -144,6 +144,8 @@ python -I tools\release\publish.py --stage E:\swm_stage\player --channel stable 
 
 `E:\swm_build\release` is a CMake build dir configured with `-DGODOTCPP_TARGET=template_release`. One-time Cloudflare setup: `npx wrangler login`, `npx wrangler r2 bucket create swm-public` and `swm-private`, then in `tools/release/worker`: `npx wrangler secret put PUBLISH_TOKEN`, `npx wrangler secret put PORTABLE_TOKEN`, `npx wrangler deploy`.
 
+Deployed 2026-11-28 (tokens in `%USERPROFILE%\.swm\`, beside the signing key). First releases, both `2026.11.28.1`: `stable` (558 files, 117 MB) and `portable` (33,585 files, 5.3 GB in 15,008 unique blobs). Bootstrapping each from its zip into an empty folder over the internet installed every file with a matching hash; the portable install took 9.5 minutes.
+
 ### 8. The portable build
 
 The same launcher with `portable.flag` and `portable.token` next to it. It skips discovery and extraction, follows the `portable` channel, and installs into its own folder (a USB drive works). To set up a new machine, unzip `StarWarsMashup-portable.zip`, put `portable.token` (a text file holding the token) next to `launcher.exe`, and run it.
@@ -161,13 +163,6 @@ The same launcher with `portable.flag` and `portable.token` next to it. It skips
 
 Each milestone keeps the dev workflow working: the editor still reads `game/imported_assets` and `rebuild_imported_assets.py` still runs as before.
 
-## Backend (later)
+## Backend
 
-To be planned in detail after distribution ships. Starting points from [Architecture](ARCHITECTURE.md#networking):
-
-- **Accounts and auth.** Website sign-up; the launcher signs in and gets a session token; the game server checks it.
-- **Backend service.** Characters, inventory, economy and housing state move from per-server SQLite to Postgres behind a service (the write-behind queue from the [server audit](SERVER_AUDIT.md)).
-- **Hosting.** A paid VPS running `swm_server` instances (hubs, match instances) plus the backend service; Cloudflare in front for the website and API, R2 for downloads.
-- **Website.** Project page, download (player build only), account management, patch notes from the release manifests.
-- **Operations.** Deploys, backups, monitoring, the per-server perf line (`GameServer::take_perf`), cost limits.
-- **Non-commercial.** No paid access or donations tied to access (see Architecture's legal rules). Hosting costs are the developer's.
+Accounts, the website and hosted game servers: see [Backend](BACKEND.md).
