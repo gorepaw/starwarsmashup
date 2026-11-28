@@ -187,6 +187,10 @@ public:
                             int exp_quality_pct);
     void delete_recipe_preset(const std::string& name);
     void talk_to(uint32_t npc_entity);
+    // Uses one of a quest's objects (net::QuestObject::index).
+    void use_quest_object(const std::string& quest_id, int index);
+    // The comm messages heard since the last call, oldest first (each once).
+    std::vector<net::QuestComm> take_comms();
     void use_mission_terminal(int index);
     void accept_quest(const std::string& id);
     void abandon_quest(const std::string& id);
@@ -273,6 +277,8 @@ private:
     std::vector<net::MissionTerminal> mission_terminals_;
     std::vector<net::Workbench> workbenches_;
     net::QuestSync quests_;
+    uint32_t last_comm_ = 0;  // the newest comm heard (QuestComm::id, this connection's)
+    std::vector<net::QuestComm> new_comms_;
     net::ProfessionSync professions_;
     net::SpecialistSync specialist_;
     net::FieldState field_;

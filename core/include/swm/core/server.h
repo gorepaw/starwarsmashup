@@ -491,6 +491,8 @@ private:
         std::string offer_source;
         std::string offer_note;  // the last giver offered nothing: why
         uint16_t offer_serial = 0;
+        std::vector<net::QuestComm> comms;  // the latest few comm messages (QuestSync::comms)
+        uint32_t comm_serial = 0;
         uint32_t notice_tick = UINT32_MAX;  // when the notice was last set
         bool use_held = false;              // the use button, last input
         std::vector<ProfessionProgress> professions;

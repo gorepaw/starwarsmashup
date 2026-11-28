@@ -183,7 +183,8 @@ public:
     // {revision, active: [quest], completed: [title], offers: [quest],
     // offer_source, offer_serial}, a quest being {id, title, giver, summary,
     // steps: [text], step, count, needed, waypoint (or absent), credits,
-    // experience, faction_points, items: [def id], mission}.
+    // experience, faction_points, items: [def id], mission, objects: [{index,
+    // name, look, position, has_height, reach}] (a use step's not used yet)}.
     godot::Array get_quest_npcs() const;
     godot::Array get_mission_terminals() const;
     godot::Dictionary get_quests() const;
@@ -221,6 +222,9 @@ public:
                             const godot::PackedStringArray& enhancement_defs, int64_t exp_quality_pct);
     void delete_recipe_preset(const godot::String& name);
     void talk_to(int64_t npc_entity);
+    void use_quest_object(const godot::String& quest_id, int64_t index);
+    // The comm messages heard since the last call: [{quest_id, from, text}].
+    godot::Array take_comms();
     void use_mission_terminal(int64_t index);
     void accept_quest(const godot::String& id);
     void abandon_quest(const godot::String& id);

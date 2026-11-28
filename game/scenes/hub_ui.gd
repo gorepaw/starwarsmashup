@@ -125,6 +125,16 @@ var _known_quests := {}            # active quest ids last seen (a new one is tr
 var _offer_serial := -1            # the offer serial when we asked; -1: not waiting
 var _offer_at := Vector3.ZERO      # where the offer was asked for
 var _marker_nodes: Dictionary = {}  # key -> Sprite3D: the objective chevrons over people and mobs
+# Quests' objects to use (a use step's: a terminal, a datapad, a crate).
+var _quest_object_nodes := {}       # "quest id:index" -> Node3D standing there
+var _quest_object_floors := {}      # "quest id:index" -> where it stands (one without a height: on the floor)
+var _look_models := {}              # an object template (no "shared_") -> its model in the planet's city export
+var _look_models_prefix := ""       # the bake they were read from
+var _look_scenes := {}              # model file -> its loaded scene (null: it failed), copied for each object
+# Comm messages (a quest step's Comm), shown one at a time.
+var _comm_queue: Array = []
+var _comm_active := {}
+var _comm_time := 0.0
 var _single_chevron: AtlasTexture   # one of the objective icon's chevrons
 
 
@@ -310,6 +320,11 @@ func is_any_screen_open() -> bool:
 
 
 func try_open_terminal(client: Object) -> bool:
+	# A quest's object first: it was put there to be used.
+	var quest_object := at_quest_object(client)
+	if not quest_object.is_empty():
+		client.use_quest_object(str(quest_object["quest_id"]), int(quest_object["index"]))
+		return false  # what it did comes back as a notice
 	# Talking to someone a quest names counts, whatever else they do (the
 	# junk dealer buys junk too).
 	var person := at_quest_npc(client)
@@ -655,6 +670,11 @@ func clear_recruiters() -> void:
 		if is_instance_valid(node):
 			node.queue_free()
 	_marker_nodes.clear()
+	for node: Node in _quest_object_nodes.values():
+		if is_instance_valid(node):
+			node.queue_free()
+	_quest_object_nodes.clear()
+	_quest_object_floors.clear()
 	for entry: Dictionary in _target_nodes.values():
 		var r: Variant = entry.get("root")
 		if r is Node and is_instance_valid(r):
@@ -787,6 +807,29 @@ func at_quest_npc(client: Object) -> Dictionary:
 		if d <= best_d:
 			best_d = d
 			best = npc
+	return best
+
+
+# The nearest of our quests' objects in reach (a use step's), with its
+# quest's id; a little short of the server's reach, which measures from
+# where it has us.
+func at_quest_object(client: Object) -> Dictionary:
+	if client == null or not client.is_spawned():
+		return {}
+	var position: Vector3 = client.get_presented()["position"]
+	var best := {}
+	var best_d := INF
+	for q: Dictionary in client.get_quests().get("active", []):
+		for o: Dictionary in q.get("objects", []):
+			var at: Vector3 = o["position"]
+			var d := Vector2(position.x - at.x, position.z - at.z).length()
+			if d > float(o.get("reach", 3.0)) - 0.3 or d >= best_d:
+				continue
+			if bool(o.get("has_height", false)) and absf(position.y - at.y) > 2.8:
+				continue
+			best_d = d
+			best = o.duplicate()
+			best["quest_id"] = q["id"]
 	return best
 
 
@@ -1009,11 +1052,105 @@ func _update_objective_markers(client: Object) -> void:
 			seen[key] = true
 			_place_marker(key, _single_chevron, 0.0012, _mission_terminal_color(str(t.get("kind", "general"))),
 					at + Vector3.UP * _height_over_prop(key, at, CHEVRON_OVER_PROP, TERMINAL_CHEVRON_HEIGHT))
+	_update_quest_objects(client, own, full, seen)
 	for key: String in _marker_nodes.keys():
 		if not seen.has(key):
 			if is_instance_valid(_marker_nodes[key]):
 				(_marker_nodes[key] as Node).queue_free()
 			_marker_nodes.erase(key)
+
+
+# Our quests' objects (a use step's, not used yet): each stands in the world
+# (its template's model if the planet's city export has one, else a marker)
+# with a quest chevron over it. One without a height is put on the floor
+# there, from the player's height down, once they're near.
+func _update_quest_objects(client: Object, own: Vector3, chevron: Texture2D, seen: Dictionary) -> void:
+	var wanted := {}
+	for q: Dictionary in client.get_quests().get("active", []):
+		for o: Dictionary in q.get("objects", []):
+			var key := "%s:%d" % [str(q["id"]), int(o["index"])]
+			var at: Vector3 = o["position"]
+			if Vector2(at.x - own.x, at.z - own.z).length() > MARKER_RANGE:
+				continue
+			if not _quest_object_floors.has(key):
+				if bool(o.get("has_height", false)):
+					_quest_object_floors[key] = at
+				else:
+					var from := Vector3(at.x, own.y + 3.0, at.z)
+					var to := Vector3(at.x, own.y - 40.0, at.z)
+					var t := float(client.raycast(from, to))
+					if t < 0.0:
+						continue  # (not loaded there yet)
+					_quest_object_floors[key] = from.lerp(to, t)
+			var floor_at: Vector3 = _quest_object_floors[key]
+			wanted[key] = true
+			var node: Node3D = _quest_object_nodes.get(key)
+			if node == null or not is_instance_valid(node):
+				node = _quest_object_model(client, str(o.get("look", "")))
+				_world_root.add_child(node)
+				_quest_object_nodes[key] = node
+			node.position = floor_at
+			seen["qo" + key] = true
+			_place_marker("qo" + key, chevron, 0.0009, GIVER_COLOR, floor_at + Vector3.UP * 1.6)
+	for key: String in _quest_object_nodes.keys():
+		if not wanted.has(key):
+			if is_instance_valid(_quest_object_nodes[key]):
+				(_quest_object_nodes[key] as Node).queue_free()
+			_quest_object_nodes.erase(key)
+			_quest_object_floors.erase(key)
+
+
+# A quest object's look: its template's model, as the planet's city export
+# has it (most terminals, crates and datapads stand somewhere in a town),
+# else a small hologram.
+func _quest_object_model(client: Object, look: String) -> Node3D:
+	if look != "":
+		var file := _look_model_file(client, look)
+		if file != "":
+			if not _look_scenes.has(file):
+				_look_scenes[file] = SwgCity._load_model(file)
+			if _look_scenes[file] != null:
+				return (_look_scenes[file] as Node3D).duplicate() as Node3D
+	var holo := MeshInstance3D.new()
+	var mesh := CylinderMesh.new()
+	mesh.top_radius = 0.22
+	mesh.bottom_radius = 0.3
+	mesh.height = 0.9
+	holo.mesh = mesh
+	holo.position = Vector3.UP * 0.45
+	var material := StandardMaterial3D.new()
+	material.albedo_color = Color(GIVER_COLOR, 0.55)
+	material.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	material.emission_enabled = true
+	material.emission = GIVER_COLOR
+	material.emission_energy_multiplier = 1.5
+	material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	holo.material_override = material
+	var root := Node3D.new()
+	root.add_child(holo)
+	return root
+
+
+static func _template_key(template: String) -> String:
+	var file := template.get_file().to_lower().trim_prefix("shared_")
+	return template.get_base_dir().to_lower().path_join(file)
+
+
+func _look_model_file(client: Object, look: String) -> String:
+	var prefix := "res://" + ProjectSettings.localize_path(str(client.get_bake())).trim_prefix("res://")
+	if prefix != _look_models_prefix:
+		_look_models_prefix = prefix
+		_look_models.clear()
+		var parsed: Variant = JSON.parse_string(FileAccess.get_file_as_string(prefix + ".objects.json"))
+		if parsed is Dictionary:
+			var dir := prefix.get_base_dir()
+			for object: Dictionary in parsed.get("objects", []):
+				if object.get("building", false) or object.get("particles", false) or object.get("creature", false):
+					continue
+				var key := _template_key(str(object.get("template", "")))
+				if not _look_models.has(key) and str(object.get("model", "")) != "":
+					_look_models[key] = dir.path_join(str(object["model"]))
+	return str(_look_models.get(_template_key(look), ""))
 
 
 # Whether a quest wants this one killed: by name, in the step's area if it has one.
@@ -1544,6 +1681,19 @@ func update_hub(client: Object, world: Node3D, delta: float, pause_visible: bool
 			if _loot_screen != null and _loot_screen.visible:
 				_loot_screen.feedback = incoming
 
+	# Comms, one at a time, each long enough to read; and in the log.
+	for comm: Dictionary in client.take_comms():
+		_comm_queue.append(comm)
+		var from := str(comm.get("from", ""))
+		_notice_lines.append(("%s (comm): %s" % [from, comm["text"]]) if from != "" else "Comm: " + str(comm["text"]))
+	_comm_time = maxf(0.0, _comm_time - delta)
+	if _comm_time <= 0.0:
+		_comm_active = {}
+		if not _comm_queue.is_empty():
+			_comm_active = _comm_queue.pop_front()
+		if not _comm_active.is_empty():
+			_comm_time = clampf(4.0 + str(_comm_active["text"]).length() / 14.0, 7.0, 18.0)
+
 	_sync_screen_data(client)
 
 	if _hub_hud == null or _terminal_screen == null:
@@ -1559,6 +1709,7 @@ func update_hub(client: Object, world: Node3D, delta: float, pause_visible: bool
 	var corpse: Dictionary = at_lootable_corpse(client) if in_hub else {}
 	var quest_npc: Dictionary = at_quest_npc(client) if in_hub else {}
 	var mission_terminal: Dictionary = at_mission_terminal(client) if in_hub else {}
+	var quest_object: Dictionary = at_quest_object(client) if in_hub else {}
 	if _terminal_screen.visible and terminal.is_empty():
 		close_all_screens()
 	if _qm_screen != null and _qm_screen.visible and qm.is_empty():
@@ -1601,7 +1752,9 @@ func update_hub(client: Object, world: Node3D, delta: float, pause_visible: bool
 		_terminal_screen.queue_redraw()
 	_hub_hud.visible = in_hub and not (pause_visible or is_any_screen_open())
 	var tip := ""
-	if not terminal.is_empty() and queued < 0:
+	if not quest_object.is_empty():
+		tip = "Press %s to use the %s" % [_key_name("interact"), quest_object["name"]]
+	elif not terminal.is_empty() and queued < 0:
 		tip = "Press %s to use the %s" % [_key_name("interact"), terminal["name"]]
 	elif not qm.is_empty():
 		tip = "Press %s to talk to %s" % [_key_name("interact"), qm["name"]]
@@ -1646,6 +1799,9 @@ func update_hub(client: Object, world: Node3D, delta: float, pause_visible: bool
 		_hub_hud.switching = {}
 	_hub_hud.notice = _notice
 	_hub_hud.notice_alpha = clampf(_notice_time, 0.0, 1.0)
+	_hub_hud.comm = {} if _comm_active.is_empty() else {"from": str(_comm_active.get("from", "")),
+			"text": str(_comm_active.get("text", "")), "alpha": clampf(_comm_time, 0.0, 1.0),
+			"waiting": _comm_queue.size()}
 	_hub_hud.level_up = {} if _level_up_active.is_empty() else {
 		"title": _level_up_active.get("title", "PROFESSION LEVEL UP"),
 		"detail": _level_up_active.get("detail", ""),

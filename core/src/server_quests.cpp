@@ -11,6 +11,7 @@ namespace swm::core {
 namespace {
 
 constexpr double talk_reach = 6;  // meters from a quest NPC
+constexpr size_t comms_kept = 4;  // QuestSync::comms
 
 double flat_distance(Vec3 a, Vec3 b) {
     return std::hypot(a.x - b.x, a.z - b.z);
@@ -99,11 +100,15 @@ void GameServer::save_economy(Client& client) {
 void GameServer::apply_quests(Client& client, QuestEffects effects) {
     if (quest_book_ == nullptr) return;
     std::vector<std::string> notes;
-    std::vector<std::string> comms;
     bool changed = false;
+    // Comms go to the client's comm window, with the journal.
     const auto hear = [&](const std::vector<QuestEffects::Comm>& from) {
         for (const QuestEffects::Comm& comm : from) {
-            comms.push_back(comm.from.empty() ? "Comm: " + comm.text : comm.from + " (comm): " + comm.text);
+            client.comms.push_back({++client.comm_serial, comm.quest_id, comm.from, comm.text});
+            changed = true;
+        }
+        if (client.comms.size() > comms_kept) {
+            client.comms.erase(client.comms.begin(), client.comms.end() - std::ptrdiff_t(comms_kept));
         }
     };
     // An effect may finish what the next step waits on (a delivery's reward
@@ -218,10 +223,6 @@ void GameServer::apply_quests(Client& client, QuestEffects effects) {
                 say(std::format("quest save error for {}: {}", client.name, error.what()));
             }
         }
-    }
-    // Comms first (until the comm window, Legacy phase 1b, they share the notice line).
-    for (const std::string& comm : comms) {
-        notify(client.entity, comm);
     }
     if (!notes.empty()) {
         // The newest few, newest last (a notice is one line).
@@ -348,6 +349,12 @@ void GameServer::handle_quest_request(Client& client, const net::QuestRequest& r
         apply_quests(client, std::move(effects));
         break;
     }
+    case net::QuestRequest::use: {
+        if (client.life != Life::alive) return;
+        apply_quests(client, quest_book_->on_use(client.quests, request.quest_id, int(request.target),
+                                                 client.state.position));
+        break;
+    }
     }
 }
 
@@ -360,6 +367,7 @@ std::string GameServer::step_text(const QuestStep& step) const {
     case QuestStepKind::talk_to: return "Talk to " + step.npc;
     case QuestStepKind::deliver: return "Bring " + item_name(step.target) + " to " + step.npc;
     case QuestStepKind::event: return "Do: " + step.target;
+    case QuestStepKind::use: return "Use the " + step.target;
     }
     return {};
 }
@@ -396,13 +404,29 @@ net::QuestInfo GameServer::describe_quest(const Client& client, const QuestDef& 
     if (progress) {
         const int have = step.kind == QuestStepKind::collect || step.kind == QuestStepKind::deliver
                              ? held_count(client, step.target)
-                             : progress->count;
+                         : step.kind == QuestStepKind::use ? QuestBook::objects_used(progress->count)
+                                                           : progress->count;
         info.count = uint16_t(std::clamp(have, 0, int(info.needed)));
     }
     if (quest_book_ != nullptr && !quest_book_->here(step)) {
         return info;  // no waypoint or targets for a step on another planet
     }
-    if (step.where) {
+    if (step.kind == QuestStepKind::use && progress) {
+        // The objects not used yet; the waypoint is the nearest of them.
+        double nearest = 1e300;
+        for (size_t i = 0; i < step.spots.size(); ++i) {
+            if (QuestBook::object_used(progress->count, int(i))) continue;
+            const Vec3 spot = step.spots[i];
+            info.objects.push_back({uint8_t(i), step.target, step.look,
+                                    step.spot_heights ? spot : Vec3{spot.x, 0, spot.z}, step.spot_heights,
+                                    float(step.radius)});
+            if (const double d = flat_distance(spot, client.state.position); d < nearest) {
+                nearest = d;
+                info.has_waypoint = true;
+                info.waypoint = step.spot_heights ? spot : Vec3{spot.x, 0, spot.z};
+            }
+        }
+    } else if (step.where) {
         info.has_waypoint = true;
         info.waypoint = *step.where;
     } else if (!step.npc.empty()) {
@@ -458,6 +482,7 @@ void GameServer::send_quest_sync(Client& client) {
     sync.offer_source = client.offer_source;
     sync.offer_serial = client.offer_serial;
     sync.offer_note = client.offer_note;
+    sync.comms = client.comms;
     if (quest_book_ != nullptr) {
         const int level = combat_level_of(client);
         for (const std::string& giver : quest_book_->givers()) {

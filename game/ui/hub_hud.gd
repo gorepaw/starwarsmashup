@@ -21,6 +21,7 @@ var tracker := {}     # the tracked quest: {title, step, progress, distance, log
 # angle (radians: which way it lies, off screen), distance}; empty: none.
 var waypoint := {}
 var scanner := {}     # {mode, resource_name, concentration, peak_distance, cooldown, hint}; empty: off
+var comm := {}        # a comm message being shown: {from, text, alpha, waiting (more after it)}; empty: none
 
 
 func _init(shared_art: RefCounted = null) -> void:
@@ -43,6 +44,8 @@ func _paint() -> void:
 		_paint_queue()
 	if not switching.is_empty():
 		_paint_switching()
+	if not comm.is_empty() and float(comm.get("alpha", 0.0)) > 0.0:
+		_paint_comm()
 	if notice != "" and notice_alpha > 0:
 		_paint_notice()
 	if not level_up.is_empty() and float(level_up.get("alpha", 0.0)) > 0.0:
@@ -86,6 +89,26 @@ func _paint_tracker() -> void:
 	for line in lines:
 		text("gamefont_tiny", line, Vector2(box.position.x + 12 * u, y), "Left", TEXT)
 		y += 15 * u
+
+
+# A comm message, at the left under the loadout box: an incoming
+# transmission, who it's from, and what they say.
+func _paint_comm() -> void:
+	var alpha := clampf(float(comm.get("alpha", 0.0)), 0.0, 1.0)
+	var lines := _wrap_line(str(comm.get("text", "")), 316 * u)
+	var lh: float = art.line_height("gamefont_tiny", u) + 3 * u
+	var box := Rect2(Vector2(14, 82) * u, Vector2(340 * u, 50 * u + lines.size() * lh))
+	frame(box, "border_3_pieces", Color(1, 1, 1, alpha))
+	var waiting := int(comm.get("waiting", 0))
+	text("gamefont_tiny", "Incoming transmission" + ("  (+%d)" % waiting if waiting > 0 else ""),
+			box.position + Vector2(12, 8) * u, "Left", Color(DIM, alpha))
+	var from := str(comm.get("from", ""))
+	text("gamefont_small", from if from != "" else "Unknown", box.position + Vector2(12, 22) * u, "Left",
+			Color(ACCENT, alpha))
+	var y := box.position.y + 42 * u
+	for line in lines:
+		text("gamefont_tiny", line, Vector2(box.position.x + 12 * u, y), "Left", Color(TEXT, alpha))
+		y += lh
 
 
 func _wrap_line(value: String, width: float, font_name := "gamefont_tiny") -> PackedStringArray:

@@ -20,7 +20,7 @@ namespace swm::core::net {
 // Every packet starts with a magic number, the protocol version and a message
 // type. Peers drop packets with another version. Bump it on any wire change.
 inline constexpr uint16_t protocol_magic = 0x4D53;  // "SM"
-inline constexpr uint16_t protocol_version = 60;
+inline constexpr uint16_t protocol_version = 61;
 // BoltState/Impact::weapon: a placed trap's shot, from that weapon slot
 // (drawn from the trap, not its owner's gun).
 inline constexpr uint8_t trap_shot_flag = 0x40;
@@ -114,6 +114,29 @@ struct Workbench {
     friend bool operator==(const Workbench&, const Workbench&) = default;
 };
 
+// One of a quest step's objects to use (a terminal, a datapad, a crate):
+// the player uses it with the interact key, in reach of it.
+struct QuestObject {
+    uint8_t index = 0;   // which of the step's objects (QuestRequest::target)
+    std::string name;    // "Data Terminal"
+    std::string look;    // a Galaxies object template; empty: a marker
+    Vec3 position;       // game space
+    bool has_height = false;  // false: y is unknown, it stands on the floor there
+    float reach = 3;
+
+    friend bool operator==(const QuestObject&, const QuestObject&) = default;
+};
+
+// A comm message (a quest step's Comm): who calls, and what they say.
+struct QuestComm {
+    uint32_t id = 0;  // counts up per connection: clients show each once
+    std::string quest_id;
+    std::string from;
+    std::string text;
+
+    friend bool operator==(const QuestComm&, const QuestComm&) = default;
+};
+
 // A quest as the quest log, the tracker and an offer show it.
 struct QuestInfo {
     std::string id;
@@ -132,6 +155,7 @@ struct QuestInfo {
     std::string step_npc;            // the current step's person (talk_to, deliver)
     std::vector<std::string> targets;  // the current step's kill (or drop) targets, by the names they go by
     float area_radius = 0;           // > 0: they count only this near `waypoint`
+    std::vector<QuestObject> objects;  // the current step's objects not used yet (a use step's)
 
     friend bool operator==(const QuestInfo&, const QuestInfo&) = default;
 };
@@ -546,6 +570,7 @@ struct QuestSync {
     std::string offer_note;     // offering nothing: why (QuestBook::why_none)
     std::vector<std::string> ready_givers;  // the quest givers with something for this player now
     std::vector<std::string> waiting_givers;  // those with work that isn't open to them yet (or is under way)
+    std::vector<QuestComm> comms;  // the latest few comm messages, oldest first
 
     friend bool operator==(const QuestSync&, const QuestSync&) = default;
 };
@@ -556,9 +581,10 @@ struct QuestAck {
 };
 
 // Client -> server: talk to a quest NPC (by entity), use a mission
-// terminal (by index), or accept or abandon a quest (by id).
+// terminal (by index), accept or abandon a quest (by id), or use one of a
+// quest's objects (QuestObject::index of quest `quest_id`).
 struct QuestRequest {
-    enum Action : uint8_t { talk = 0, terminal = 1, accept = 2, abandon = 3 };
+    enum Action : uint8_t { talk = 0, terminal = 1, accept = 2, abandon = 3, use = 4 };
     Action action = talk;
     uint32_t target = 0;
     std::string quest_id;

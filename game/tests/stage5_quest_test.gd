@@ -11,6 +11,7 @@ const Bf2Art = preload("res://ui/bf2_art.gd")
 const QuestScreen = preload("res://ui/quest_screen.gd")
 const HubHud = preload("res://ui/hub_hud.gd")
 const GameSession = preload("res://scenes/game_session.gd")
+const HubUi = preload("res://scenes/hub_ui.gd")
 
 var _session: GameSession
 var _db := ""
@@ -51,7 +52,13 @@ func _initialize() -> void:
 	hud.tracker = {"title": "Pests at the Gate", "step": "Kill kreetles", "progress": "2/5", "distance": "120 m",
 			"log_key": "L"}
 	hud.waypoint = {"at": Vector2(1200, 60), "onscreen": false, "angle": -0.3, "distance": "120 m"}
+	# Legacy phase 1b's comm window.
+	hud.comm = {"from": "Han Solo", "text": "Hey kid, I hear you're looking for work. Meet me at the cantina.",
+			"alpha": 1.0, "waiting": 1}
 	hud.queue_redraw()
+	# A quest object's look finds its model however the template is written.
+	assert(HubUi._template_key("object/tangible/terminal/shared_terminal_mission.iff")
+			== HubUi._template_key("Object/Tangible/Terminal/terminal_mission.iff"), "template keys differ")
 	print("Stage 5 quest screens: OK")
 
 	_db = ProjectSettings.globalize_path("res://stage5_quest_temp.sqlite")

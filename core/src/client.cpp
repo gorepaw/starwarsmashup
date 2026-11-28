@@ -112,6 +112,17 @@ void GameClient::talk_to(uint32_t npc_entity) {
     }
 }
 
+void GameClient::use_quest_object(const std::string& quest_id, int index) {
+    if (status_ == Status::connected && index >= 0 && !quest_id.empty() && quest_id.size() <= 255) {
+        link_.send(config_.server,
+                   net::encode(net::QuestRequest{net::QuestRequest::use, uint32_t(index), quest_id}));
+    }
+}
+
+std::vector<net::QuestComm> GameClient::take_comms() {
+    return std::exchange(new_comms_, {});
+}
+
 void GameClient::use_mission_terminal(int index) {
     if (status_ == Status::connected && index >= 0) {
         link_.send(config_.server, net::encode(net::QuestRequest{net::QuestRequest::terminal, uint32_t(index), ""}));
@@ -354,6 +365,7 @@ void GameClient::handle(const net::Datagram& datagram, double now) {
             workbenches_ = welcome->workbenches;
             factions_ = welcome->factions;
             looks_ = welcome->looks;
+            last_comm_ = 0;  // a new server counts its comms from 1
         }
         return;
     }
@@ -407,6 +419,12 @@ void GameClient::handle(const net::Datagram& datagram, double now) {
         if (status_ == Status::connected) {
             if (sync->revision >= quests_.revision) {
                 quests_ = *sync;
+                for (const net::QuestComm& comm : sync->comms) {
+                    if (comm.id > last_comm_) {
+                        last_comm_ = comm.id;
+                        new_comms_.push_back(comm);
+                    }
+                }
             }
             link_.send(config_.server, net::encode(net::QuestAck{sync->revision}));
         }

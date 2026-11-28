@@ -1,6 +1,7 @@
 #include "swm/core/quest.h"
 
 #include <algorithm>
+#include <bit>
 #include <cctype>
 #include <cmath>
 #include <format>
@@ -109,6 +110,7 @@ std::optional<QuestStepKind> quest_step_kind_from_name(std::string_view name) {
     if (same_ci(name, "talk_to") || same_ci(name, "talk")) return QuestStepKind::talk_to;
     if (same_ci(name, "deliver")) return QuestStepKind::deliver;
     if (same_ci(name, "event") || same_ci(name, "do")) return QuestStepKind::event;
+    if (same_ci(name, "use")) return QuestStepKind::use;
     return std::nullopt;
 }
 
@@ -120,6 +122,7 @@ std::string_view quest_step_kind_name(QuestStepKind kind) {
     case QuestStepKind::talk_to: return "talk_to";
     case QuestStepKind::deliver: return "deliver";
     case QuestStepKind::event: return "event";
+    case QuestStepKind::use: return "use";
     }
     return "go_to";
 }
@@ -239,12 +242,38 @@ void QuestBook::load(const std::filesystem::path& path) {
             const auto need = [&](bool ok, const char* what) {
                 if (!ok) throw std::runtime_error(where + ": " + current->id + ": a " + kind + " step needs " + what);
             };
+            if (step.kind == QuestStepKind::use) {
+                // Each Position is an object ("x z", or "x z height" for one
+                // off the ground: up a floor, down in a bunker).
+                step.target = s.get("Object").value_or(step.target);
+                step.look = s.get("Template").value_or("");
+                step.gives = s.get("Gives").value_or("");
+                int heights = 0;
+                for (const auto& [key, value] : s.values) {
+                    if (!same_ci(key, "Position")) continue;
+                    std::istringstream in(value);
+                    double x = 0, z = 0, y = 0;
+                    if (!(in >> x >> z)) {
+                        throw std::runtime_error(where + ": " + current->id + ": bad Position '" + value + "'");
+                    }
+                    if (in >> y) ++heights;
+                    step.spots.push_back({-x, y, z});
+                }
+                need(!step.target.empty(), "an Object");
+                need(!step.spots.empty() && int(step.spots.size()) <= max_quest_objects, "1 to 16 Positions");
+                need(heights == 0 || heights == int(step.spots.size()), "a height on every Position or on none");
+                step.spot_heights = heights > 0;
+                step.where = step.spots.front();
+                step.radius = s.number("Radius", 3);
+                step.count = std::clamp(int(s.number("Count", double(step.spots.size()))), 1, int(step.spots.size()));
+            }
             switch (step.kind) {
             case QuestStepKind::go_to: need(step.where.has_value(), "a Position"); break;
             case QuestStepKind::kill: need(!step.target.empty(), "a Target"); break;
             case QuestStepKind::collect: need(!step.target.empty(), "an Item"); break;
             case QuestStepKind::talk_to: need(!step.npc.empty(), "an Npc"); break;
             case QuestStepKind::deliver: need(!step.target.empty() && !step.npc.empty(), "an Item and an Npc"); break;
+            default: break;
             }
             current->steps.push_back(std::move(step));
         }
@@ -573,6 +602,14 @@ std::vector<const QuestDef*> QuestBook::missions(double now, const std::vector<Q
     return out;
 }
 
+int QuestBook::objects_used(int count) {
+    return std::popcount(uint32_t(count));
+}
+
+bool QuestBook::object_used(int count, int index) {
+    return index >= 0 && index < 32 && (uint32_t(count) >> index & 1u) != 0;
+}
+
 bool QuestBook::matches(const QuestStep& step, const KillTags& tags, Vec3 at) {
     return step.kind == QuestStepKind::kill && target_matches(step.target, tags) && inside(step, at);
 }
@@ -717,6 +754,37 @@ QuestEffects QuestBook::on_inventory(std::vector<QuestProgress>& journal,
             }
             break;
         }
+    }
+    tidy(journal, *this);
+    return effects;
+}
+
+QuestEffects QuestBook::on_use(std::vector<QuestProgress>& journal, std::string_view id, int index, Vec3 at) const {
+    QuestEffects effects;
+    for (QuestProgress& p : journal) {
+        if (p.done || p.id != id) continue;
+        const QuestDef* def = find(p.id);
+        if (def == nullptr || p.step >= int(def->steps.size())) break;
+        const QuestStep& step = def->steps[size_t(p.step)];
+        if (step.kind != QuestStepKind::use || !here(step) || index < 0 || index >= int(step.spots.size()) ||
+            object_used(p.count, index)) {
+            break;
+        }
+        const Vec3 spot = step.spots[size_t(index)];
+        // Reach: across, and up or down when the object has a height (a
+        // floor above or below doesn't count).
+        if (flat_distance(spot, at) > step.radius || (step.spot_heights && std::abs(spot.y - at.y) > 3)) break;
+        p.count |= int(1u << index);
+        effects.changed = true;
+        if (!step.gives.empty()) effects.grant.push_back(step.gives);
+        const int used = objects_used(p.count);
+        if (used >= step.count) {
+            advance(p, *def, effects);
+        } else {
+            const std::string& text = step.text.empty() ? step.target : step.text;
+            effects.notes.push_back({def->id, std::format("{}: {}/{}", text, used, step.count)});
+        }
+        break;
     }
     tidy(journal, *this);
     return effects;

@@ -25,7 +25,12 @@ enum class QuestStepKind : uint8_t {
     deliver = 4,  // talk to `npc` carrying `count` of item `target`: they're handed over
     event = 5,    // do something, `count` times: `target` names it (extract, craft, learn, bank, bind,
                   // heal, sell, buy, mission)
+    use = 6,      // use `count` of the quest objects at `spots` (a terminal, a datapad, a crate), each once:
+                  // `target` is what they're called
 };
+
+// A use step's most objects (its progress is a mask of those used).
+inline constexpr int max_quest_objects = 16;
 
 std::optional<QuestStepKind> quest_step_kind_from_name(std::string_view name);
 std::string_view quest_step_kind_name(QuestStepKind kind);
@@ -52,6 +57,14 @@ struct QuestStep {
     // who from (CommFrom) and what (Comm).
     std::string comm_from;
     std::string comm;
+    // A use step's objects: where each stands (game space; y is a height
+    // only if `spot_heights`, else the object stands on the floor there),
+    // what they look like (a Galaxies object template; empty: a marker), and
+    // the item each use gives (Gives; empty: none). `radius` is the reach.
+    std::vector<Vec3> spots;
+    bool spot_heights = false;
+    std::string look;
+    std::string gives;
 };
 
 struct QuestReward {
@@ -82,7 +95,8 @@ struct QuestDef {
 };
 
 // One quest a character has taken: on step `step`, `count` of its steps'
-// count done; or done (completed; kept for prerequisites and the log).
+// count done (a use step's: a mask of the objects used); or done
+// (completed; kept for prerequisites and the log).
 struct QuestProgress {
     std::string id;
     int step = 0;
@@ -192,6 +206,9 @@ public:
                          const std::function<int(const std::string&)>& held) const;
     QuestEffects on_inventory(std::vector<QuestProgress>& journal,
                               const std::function<int(const std::string&)>& held) const;
+    // Uses object `index` of quest `id`'s current step (a use step), from
+    // `at`: within the step's reach, each object once.
+    QuestEffects on_use(std::vector<QuestProgress>& journal, std::string_view id, int index, Vec3 at) const;
     // Starts a quest (after can_accept). Its first step may be done already:
     // call on_position and on_inventory after.
     QuestEffects accept(std::vector<QuestProgress>& journal, const QuestDef& def) const;
@@ -199,6 +216,10 @@ public:
 
     // Whether a kill counts for a step's target.
     static bool matches(const QuestStep& step, const KillTags& tags, Vec3 at);
+    // How many of a use step's objects a progress count (a mask) has used,
+    // and whether it has used object `index`.
+    static int objects_used(int count);
+    static bool object_used(int count, int index);
 
 private:
     const QuestDef* mission(std::string_view id) const;

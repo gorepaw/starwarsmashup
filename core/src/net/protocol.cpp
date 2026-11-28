@@ -89,6 +89,16 @@ void put_quest(ByteWriter& out, const QuestInfo& q) {
         out.put_string(q.targets[i]);
     }
     out.put(q.area_radius);
+    out.put(uint8_t(std::min<size_t>(q.objects.size(), 16)));
+    for (size_t i = 0; i < q.objects.size() && i < 16; ++i) {
+        const QuestObject& o = q.objects[i];
+        out.put(o.index);
+        out.put_string(o.name);
+        out.put_string(o.look);
+        put_vec3(out, o.position);
+        out.put(uint8_t(o.has_height));
+        out.put(o.reach);
+    }
 }
 
 QuestInfo get_quest(ByteReader& in) {
@@ -126,6 +136,18 @@ QuestInfo get_quest(ByteReader& in) {
         q.targets.push_back(in.get_string());
     }
     q.area_radius = in.get<float>();
+    const size_t objects = in.get<uint8_t>();
+    if (objects > 16) throw PacketError("too many quest objects");
+    for (size_t i = 0; i < objects; ++i) {
+        QuestObject o;
+        o.index = in.get<uint8_t>();
+        o.name = in.get_string();
+        o.look = in.get_string();
+        o.position = get_vec3(in);
+        o.has_height = in.get<uint8_t>() != 0;
+        o.reach = in.get<float>();
+        q.objects.push_back(std::move(o));
+    }
     return q;
 }
 
@@ -1360,6 +1382,13 @@ struct Encoder {
         for (size_t i = 0; i < m.waiting_givers.size() && i < 255; ++i) {
             out.put_string(m.waiting_givers[i]);
         }
+        out.put(uint8_t(std::min<size_t>(m.comms.size(), 16)));
+        for (size_t i = 0; i < m.comms.size() && i < 16; ++i) {
+            out.put(m.comms[i].id);
+            out.put_string(m.comms[i].quest_id);
+            out.put_string(m.comms[i].from);
+            out.put_long_string(m.comms[i].text);
+        }
     }
     void operator()(const QuestAck& m) {
         out.put(uint8_t(Type::quest_ack));
@@ -2036,6 +2065,16 @@ Message decode(std::span<const uint8_t> packet) {
         for (size_t i = 0; i < waiting; ++i) {
             m.waiting_givers.push_back(in.get_string());
         }
+        const size_t comms = in.get<uint8_t>();
+        if (comms > 16) throw PacketError("too many comms");
+        for (size_t i = 0; i < comms; ++i) {
+            QuestComm c;
+            c.id = in.get<uint32_t>();
+            c.quest_id = in.get_string();
+            c.from = in.get_string();
+            c.text = in.get_long_string();
+            m.comms.push_back(std::move(c));
+        }
         message = std::move(m);
         break;
     }
@@ -2045,7 +2084,7 @@ Message decode(std::span<const uint8_t> packet) {
     case Type::quest_request: {
         QuestRequest m;
         const uint8_t action = in.get<uint8_t>();
-        if (action > QuestRequest::abandon) throw PacketError("bad quest action");
+        if (action > QuestRequest::use) throw PacketError("bad quest action");
         m.action = QuestRequest::Action(action);
         m.target = in.get<uint32_t>();
         m.quest_id = in.get_string();

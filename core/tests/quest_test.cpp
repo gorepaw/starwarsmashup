@@ -522,6 +522,68 @@ void test_legacy_book() {
     std::filesystem::remove_all(dir);
 }
 
+// Legacy phase 1b: use steps (quest objects), each object once, in reach.
+void test_use_steps() {
+    const auto dir = std::filesystem::temp_directory_path() / "swm_use_quests";
+    std::filesystem::remove_all(dir);
+    std::filesystem::create_directories(dir);
+    const auto load = [&](const std::string& text) {
+        std::ofstream(dir / "q.ini") << text;
+        QuestBook book;
+        book.load(dir / "q.ini");
+        return book;
+    };
+    QuestBook book = load(
+        "[quest]\nId = crates\nTitle = Crates\nPlanet = tatooine\n"
+        "[step]\nKind = use\nObject = Supply Crate\nTemplate = object/tangible/container/shared_crate.iff\n"
+        "Gives = datadisk\nCount = 2\nPosition = 10 0\nPosition = 20 0\nPosition = 30 0\n"
+        "[step]\nKind = use\nObject = Bomb\nPosition = 0 50 -12\nRadius = 4\n");
+    book.set_planet("tatooine");
+    const QuestDef* def = book.find("crates");
+    CHECK(def != nullptr && def->steps[0].kind == QuestStepKind::use && def->steps[0].spots.size() == 3);
+    CHECK(def != nullptr && def->steps[0].count == 2 && def->steps[0].radius == 3 && !def->steps[0].spot_heights);
+    CHECK(def != nullptr && def->steps[0].spots[1].x == -20 && def->steps[0].look.ends_with("shared_crate.iff"));
+    CHECK(def != nullptr && def->steps[1].spot_heights && def->steps[1].spots[0].y == -12 && def->steps[1].radius == 4);
+    if (def == nullptr) return;
+
+    std::vector<QuestProgress> journal;
+    book.accept(journal, *def);
+    CHECK(!book.on_use(journal, "crates", 0, {-15, 0, 0}).changed);  // 5 m away: out of reach
+    CHECK(!book.on_use(journal, "crates", 3, {-10, 0, 0}).changed);  // no such object
+    CHECK(!book.on_use(journal, "other", 0, {-10, 0, 0}).changed);
+    QuestEffects first = book.on_use(journal, "crates", 0, {-11, 0, 1});
+    CHECK(first.changed && first.grant == std::vector<std::string>{"datadisk"} && journal[0].step == 0);
+    CHECK(QuestBook::objects_used(journal[0].count) == 1 && QuestBook::object_used(journal[0].count, 0));
+    CHECK(!book.on_use(journal, "crates", 0, {-10, 0, 0}).changed);  // each once
+    QuestEffects second = book.on_use(journal, "crates", 2, {-30, 0, 0});
+    CHECK(second.changed && journal[0].step == 1 && journal[0].count == 0);  // 2 of 3 is enough
+    // An object with a height: a floor above or below it is out of reach.
+    CHECK(!book.on_use(journal, "crates", 0, {0, 0, 50}).changed);
+    CHECK(book.on_use(journal, "crates", 0, {0, -11, 50}).completed == std::vector<std::string>{"crates"});
+
+    // On another planet nothing is used.
+    QuestBook naboo = load(
+        "[quest]\nId = far\nTitle = Far\nPlanet = naboo\n[step]\nKind = use\nObject = Panel\nPosition = 0 0\n");
+    naboo.set_planet("tatooine");
+    std::vector<QuestProgress> far;
+    naboo.accept(far, *naboo.find("far"));
+    CHECK(!naboo.on_use(far, "far", 0, {0, 0, 0}).changed);
+
+    // Malformed use steps.
+    const auto fails = [&](const std::string& text) {
+        try {
+            load("[quest]\nId = bad\nTitle = Bad\n[step]\nKind = use\n" + text);
+        } catch (const std::runtime_error&) {
+            return true;
+        }
+        return false;
+    };
+    CHECK(fails("Object = Panel\n"));                                   // no Position
+    CHECK(fails("Position = 1 2\n"));                                   // no Object
+    CHECK(fails("Object = Panel\nPosition = 1 2\nPosition = 1 2 3\n"));  // a height on only one
+    std::filesystem::remove_all(dir);
+}
+
 // Next = through a server: completing a quest starts the next one by itself,
 // with its comm.
 void test_server_chain() {
@@ -589,6 +651,79 @@ void test_server_chain() {
           client.player_status().notice.find("Respect") != std::string::npos);
     const auto journal = server.quests_of(client.entity_id());
     CHECK(journal != nullptr && journal->size() == 2 && journal->at(1).id == "respect" && !journal->at(1).done);
+    // Respect's comm reaches the comm window, once.
+    const auto comms = client.take_comms();
+    CHECK(comms.size() == 1 && comms[0].from == "Bib Fortuna" && comms[0].text == "You work for Jabba now." &&
+          comms[0].quest_id == "respect");
+    run(0.3);
+    CHECK(client.take_comms().empty());
+    client.disconnect();
+    run(0.1);
+}
+
+// A use step through a server: its objects in the log, used in reach.
+void test_server_use() {
+    const auto root = repo_root();
+    ItemCatalog catalog;
+    catalog.load(root / "game" / "items" / "swg_catalog.ini");
+    Heightfield ground{201, 2.0, -200, -200, std::vector<float>(201 * 201, 0.0f)};
+    World world{ground};
+    QuestBook book;
+    {
+        QuestDef search;
+        search.id = "search";
+        search.title = "The Search";
+        search.giver = "Vourk";
+        QuestStep use;
+        use.kind = QuestStepKind::use;
+        use.target = "Datapad";
+        use.look = "object/tangible/loot/shared_datapad.iff";
+        use.spots = {Vec3{1, 0, 0}, Vec3{60, 0, 0}};
+        use.where = use.spots[0];
+        use.radius = 3;
+        use.count = 1;
+        search.steps = {use};
+        book.add(search);
+    }
+    net::LoopbackHub links;
+    net::Endpoint server_ep{1, 1}, client_ep{2, 1};
+    net::LoopbackLink srv_link{links, server_ep};
+    net::LoopbackLink cli_link{links, client_ep};
+    ServerConfig config;
+    config.catalog = &catalog;
+    config.pvp_enabled = false;
+    config.spawn = {0, 0, 0};
+    GameServer server(srv_link, world, config, nullptr);
+    server.set_looks({"object/mobile/shared_dressed_commoner_tatooine_rodian_male_01.iff"});
+    const uint32_t vourk = server.add_npc("Vourk", {3, 0, 0}, 0, 1);
+    server.set_quests(&book, {{vourk, "Vourk", {3, 0, 0}, true}}, {});
+    GameClient client(cli_link, world, ClientConfig{.server = server_ep, .name = "Searcher"});
+    double now = 0;
+    const auto run = [&](double seconds) {
+        for (const double end = now + seconds; now < end; now += 1.0 / 60.0) {
+            server.update(now);
+            client.update(now);
+        }
+    };
+    run(0.5);
+    client.talk_to(vourk);
+    run(0.3);
+    client.accept_quest("search");
+    run(0.3);
+    CHECK(client.quests().active.size() == 1);
+    if (client.quests().active.size() == 1) {
+        const net::QuestInfo& q = client.quests().active[0];
+        CHECK(q.objects.size() == 2 && q.objects[0].name == "Datapad" && q.objects[1].index == 1);
+        CHECK(q.objects.size() == 2 && q.objects[0].look.ends_with("shared_datapad.iff") && !q.objects[0].has_height);
+        CHECK(q.has_waypoint && q.waypoint.x == 1);  // the nearer
+        CHECK(q.steps.size() == 1 && q.steps[0] == "Use the Datapad");
+    }
+    client.use_quest_object("search", 1);  // 60 m away
+    run(0.3);
+    CHECK(client.quests().active.size() == 1 && client.quests().completed.empty());
+    client.use_quest_object("search", 0);
+    run(0.3);
+    CHECK(client.quests().active.empty() && client.quests().completed.size() == 1);
     client.disconnect();
     run(0.1);
 }
@@ -603,5 +738,7 @@ int main() {
     test_server_quest();
     test_legacy_book();
     test_server_chain();
+    test_use_steps();
+    test_server_use();
     return swm::test::finish("quest_test");
 }

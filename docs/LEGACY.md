@@ -58,8 +58,8 @@ Nym's Themepark is **not** part of it (only swgr.org links them). Part 18 needs 
 | Several quest files per hub, and a folder (`Quests =` repeated) | the legacy folder | 1a |
 | `Excludes =`: quests that rule each other out | Bib's offer, the mayor's three chains, Rebel/Imperial contacts, Typho's routes, Runaways space/ground | 1a |
 | `Next =`: completing a quest starts the next by itself | the chain's hand-offs; quests given by comm | 1a |
-| `Comm =` on a quest or step: a message from a named speaker when it starts | Han, Bib, Jabba, Panaka, Joth, Taarna, ... | 1a (shown as a notice); a comm window comes in 1b |
-| `use` steps: interact with a quest object placed in the world (terminal, datapad, crate, bomb, panel) | in most quests | 1b (protocol, client, objects) |
+| `Comm =` on a quest or step: a message from a named speaker when it starts | Han, Bib, Jabba, Panaka, Joth, Taarna, ... | 1a; the comm window, 1b |
+| `use` steps: interact with a quest object placed in the world (terminal, datapad, crate, bomb, panel) | in most quests | 1b |
 | Choosing one reward item from several | about 20 quests | 1c |
 | `battle` steps: queue a space battle, with Skip | the 4 space legs | 1d |
 | Timers, checkpoint races, follow-without-attacking, fights that end in surrender, don't-kill rules, click-to-spawn ambushes, photographing a target, using an item on an NPC, quests offered only to Rebels or Imperials | where they occur | 1e, when the content needs them |
@@ -80,7 +80,12 @@ Nym's Themepark is **not** part of it (only swgr.org links them). Part 18 needs 
    - [x] 1a. Quests across planets, `Excludes`, `Next`, `Comm`, several quest files per hub, and the `tidy` fix. Core only, with tests (`quest_test`: `test_legacy_book`, `test_server_chain`).
      - New keys: `[quest]` takes `Planet`, `Excludes`, `Next`; `[step]` takes `Planet`, `CommFrom`, `Comm`. A hub's `Quests =` can repeat and can name a folder.
      - A hub run on its own, without the galaxy, has no planet. It treats every quest as local, so another planet's Legacy steps would count there.
-   - [ ] 1b. `use` steps and quest objects. This needs a protocol message, client interaction, and objects spawned from quest data. A comm window too.
+   - [x] 1b. `use` steps and quest objects, and the comm window (protocol 61). Tests: `quest_test` (`test_use_steps`, `test_server_use`, and comms in `test_server_chain`); `stage5_quest_test.gd` draws the comm window.
+     - A use step: `Kind = use`, `Object =` (its name), one `Position =` per object (`x z`, or `x z height` for one up a floor or down in a bunker), and optionally `Template =` (its look), `Count =` (how many of them; default all), `Gives =` (an item each use gives) and `Radius =` (reach, default 3 m). The quest file header in `tatooine_quests.ini` lists the keys.
+     - Each object can be used once. The step's progress is a mask of the objects used, so the journal's saved format doesn't change. The log sends the current step's unused objects, and the waypoint points at the nearest.
+     - Objects are per player: only someone on that step sees them. The client puts the template's model there if the planet's city export has that template anywhere (most terminals, crates and datapads stand in some town), else a small hologram, with a quest chevron over it. An object without a height stands on the floor under it, measured down from the player's height.
+     - Comms reach the client in the quest sync (the latest 4, each with an id, so each is shown once). They're shown one at a time in a panel at the left ("Incoming transmission", the speaker, the text), and go to the log.
+     - Still to do: a model export for templates no town has; timed uses (a progress bar) are 1e.
    - [ ] 1c. Reward choice.
    - [ ] 1d. `battle` steps and Skip.
    - [ ] 1e. The special mechanics, each when its content comes up.

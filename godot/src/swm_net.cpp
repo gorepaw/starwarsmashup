@@ -649,6 +649,18 @@ godot::Dictionary quest_dictionary(const core::net::QuestInfo& q) {
     for (const std::string& name : q.targets) targets.push_back(godot::String::utf8(name.c_str()));
     out["targets"] = targets;
     out["area_radius"] = double(q.area_radius);
+    godot::Array objects;
+    for (const core::net::QuestObject& o : q.objects) {
+        godot::Dictionary object;
+        object["index"] = int64_t(o.index);
+        object["name"] = godot::String::utf8(o.name.c_str());
+        object["look"] = godot::String::utf8(o.look.c_str());
+        object["position"] = to_godot(o.position);
+        object["has_height"] = o.has_height;
+        object["reach"] = double(o.reach);
+        objects.push_back(object);
+    }
+    out["objects"] = objects;
     return out;
 }
 
@@ -1169,6 +1181,26 @@ void SwmClient::talk_to(int64_t npc_entity) {
     if (client()) {
         client()->talk_to(uint32_t(npc_entity));
     }
+}
+
+void SwmClient::use_quest_object(const godot::String& quest_id, int64_t index) {
+    if (client()) {
+        client()->use_quest_object(to_std(quest_id), int(index));
+    }
+}
+
+godot::Array SwmClient::take_comms() {
+    godot::Array out;
+    if (client()) {
+        for (const core::net::QuestComm& comm : client()->take_comms()) {
+            godot::Dictionary entry;
+            entry["quest_id"] = godot::String::utf8(comm.quest_id.c_str());
+            entry["from"] = godot::String::utf8(comm.from.c_str());
+            entry["text"] = godot::String::utf8(comm.text.c_str());
+            out.push_back(entry);
+        }
+    }
+    return out;
 }
 
 void SwmClient::use_mission_terminal(int64_t index) {
@@ -2168,6 +2200,8 @@ void SwmClient::_bind_methods() {
                          &SwmClient::save_recipe_preset);
     ClassDB::bind_method(D_METHOD("delete_recipe_preset", "name"), &SwmClient::delete_recipe_preset);
     ClassDB::bind_method(D_METHOD("talk_to", "npc_entity"), &SwmClient::talk_to);
+    ClassDB::bind_method(D_METHOD("use_quest_object", "quest_id", "index"), &SwmClient::use_quest_object);
+    ClassDB::bind_method(D_METHOD("take_comms"), &SwmClient::take_comms);
     ClassDB::bind_method(D_METHOD("use_mission_terminal", "index"), &SwmClient::use_mission_terminal);
     ClassDB::bind_method(D_METHOD("accept_quest", "id"), &SwmClient::accept_quest);
     ClassDB::bind_method(D_METHOD("abandon_quest", "id"), &SwmClient::abandon_quest);
