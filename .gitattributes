@@ -2,3 +2,8 @@
 
 # Manifests are data compared byte-for-byte across machines.
 tools/manifests/*.tsv text eol=lf
+
+# Copied to the Linux server as they are: Unix line endings even on Windows.
+*.sh text eol=lf
+server/deploy/** text eol=lf
+.github/** text eol=lf
