@@ -61,6 +61,7 @@ static func _draw(image: Image, ability: String) -> bool:
 		"ch_mend": _paw(image, true)
 		"do_remote_repair": _remote_repair(image)
 		"do_overcharge": _overcharge(image)
+		"do_self_destruct": _burst(image)
 		_: return false
 	return true
 

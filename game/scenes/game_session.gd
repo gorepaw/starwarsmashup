@@ -2064,7 +2064,6 @@ func _setup_scene() -> void:
 	_hub_ui.preset_saved.connect(func(pname: String, sid: String, rids: PackedStringArray, edefs: PackedStringArray, qpct: int) -> void:
 		_client.save_recipe_preset(pname, sid, rids, edefs, qpct))
 	_hub_ui.preset_deleted.connect(func(pname: String) -> void: _client.delete_recipe_preset(pname))
-	_hub_ui.work_order_fulfilled.connect(func(oid: String) -> void: _client.fulfill_work_order(oid))
 	_hub_ui.item_salvaged.connect(func(iid: int) -> void: _client.salvage_item(iid))
 	_hub_ui.service_requested.connect(func(action: int, id: String, amount: int, item_id: int) -> void:
 		_client.service(action, id, amount, item_id))

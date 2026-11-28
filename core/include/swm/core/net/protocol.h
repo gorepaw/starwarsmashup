@@ -20,7 +20,7 @@ namespace swm::core::net {
 // Every packet starts with a magic number, the protocol version and a message
 // type. Peers drop packets with another version. Bump it on any wire change.
 inline constexpr uint16_t protocol_magic = 0x4D53;  // "SM"
-inline constexpr uint16_t protocol_version = 57;
+inline constexpr uint16_t protocol_version = 58;
 // BoltState/Impact::weapon: a placed trap's shot, from that weapon slot
 // (drawn from the trap, not its owner's gun).
 inline constexpr uint8_t trap_shot_flag = 0x40;
@@ -473,7 +473,7 @@ struct InventorySync {
 // cloning terminal) you stand at.
 struct ServiceRequest {
     enum Action : uint8_t {
-        train = 0,                 // `id`: the profession, `amount`: the milestone's level
+        // 0 was training a milestone (they're perks now).
         bank_deposit_credits = 1,  // `amount`
         bank_withdraw_credits = 2,
         bank_deposit_item = 3,     // `item_id`: yours
@@ -482,7 +482,7 @@ struct ServiceRequest {
         bind = 6,
         travel = 7,                // `id`: the travel point (a "travel" service's name) to fly to (Stage 13)
         learn_perk = 8,            // `id`: the perk (docs/PERKS.md)
-        forget = 9,                // `id`: a perk, or a profession (its last milestone learned)
+        forget = 9,                // `id`: a perk
         leave_match = 10,          // in a match a hub sent you to: back to that hub now (the pause menu's)
     };
     uint8_t action = 0;
@@ -602,9 +602,10 @@ struct GatherRequest {
     uint64_t target_id = 0;
 };
 
-// Client -> server: craft item(s), manage recipe presets, or fulfill a Hub Work Order.
+// Client -> server: craft item(s), manage recipe presets, or dye.
 struct CraftRequest {
-    enum Action : uint8_t { craft = 0, save_preset = 1, delete_preset = 2, fulfill_order = 3, dye = 4 };
+    // (3 was a workbench's work order: they're the artisan terminals' orders now.)
+    enum Action : uint8_t { craft = 0, save_preset = 1, delete_preset = 2, dye = 4 };
     Action action = craft;
     std::string schematic_id;
     std::vector<std::string> resource_ids;
@@ -613,7 +614,6 @@ struct CraftRequest {
     uint8_t exp_quality_pct = 50;
     uint8_t batch_count = 1;
     std::string preset_name;
-    std::string order_id;
     // A craft's mark (docs/CRAFTING.md, Mk tiers): top_mark for the highest
     // its crafter may make.
     static constexpr uint8_t top_mark = 255;

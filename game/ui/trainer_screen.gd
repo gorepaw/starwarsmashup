@@ -1,21 +1,19 @@
 # A skill trainer's screen, in Battlefront II's frame (docs/PERKS.md): each
-# profession they teach and what it offers. A weapon or armor profession
-# offers two perks at each of levels 5/25/45/65/85, of which you know one;
-# any other profession its milestones, learned in order. Learning costs
+# profession they teach and what it offers: two perks at each of its five
+# tiers (5 or 1, then 25/45/65/85), of which you know one. Learning costs
 # credits the first time and is free after; giving up is always free. A
-# character knows at most `cap` perks and milestones in all.
+# character knows at most `cap` perks in each pool.
 #
-#   screen.trainer_name = ...; screen.professions = [{id, name, perks: [...], milestones: [...]}]
+#   screen.trainer_name = ...; screen.professions = [{id, name, perks: [...]}]
 #   screen.progress = {profession id: {level, trained, paid, perks, paid_perks}}
 #   screen.credits = ...; screen.known_counts = ...; screen.cap = ...
 #   screen.open_trainer()   # signal service_requested(action, id, amount):
-#                           # 0 train (profession, level), 8 learn_perk (perk), 9 forget (perk or profession)
+#                           # 8 learn_perk (perk), 9 forget (perk)
 extends "res://ui/bf2_screen.gd"
 
 signal service_requested(action: int, id: String, amount: int)
 signal closed
 
-const TRAIN := 0
 const LEARN_PERK := 8
 const FORGET := 9
 const DONE := Color(0.5, 0.9, 0.55)
@@ -25,7 +23,7 @@ var trainer_name := "Trainer"
 var professions: Array = []      # the ones this trainer teaches (their defs)
 var progress := {}               # profession id -> {level, trained, paid, perks, paid_perks}
 var credits := 0
-var known_counts := {"combat": 0, "noncombat": 0}  # perks and milestones known, by pool (cap in each)
+var known_counts := {"combat": 0, "noncombat": 0}  # perks known, by pool (cap in each)
 var cap := 10
 var feedback := ""
 
@@ -64,17 +62,6 @@ func _build_rows() -> void:
 		while at + 1 < perks.size():
 			_rows.append({"kind": "pair", "profession": id, "a": perks[at], "b": perks[at + 1], "level": level})
 			at += 2
-		var trained := int(mine.get("trained", 0))
-		var next_level := 0  # the next milestone not yet learned
-		for m: Dictionary in p.get("milestones", []):
-			if int(m["level"]) > trained and (next_level == 0 or int(m["level"]) < next_level):
-				next_level = int(m["level"])
-		for m: Dictionary in p.get("milestones", []):
-			var lv := int(m["level"])
-			var state := "learned" if lv <= trained else ("ready" if lv == next_level and lv <= level else
-					("later" if lv == next_level else "after"))
-			_rows.append({"kind": "milestone", "profession": id, "milestone": m, "state": state, "level": level,
-					"last": lv == trained})
 
 
 # Words laid into at most `most` lines no wider than `width` pixels.
@@ -146,8 +133,6 @@ func _paint() -> void:
 				_paint_perk(Rect2(x, ry, half, h), str(row["profession"]), a, b, int(row["level"]))
 				_paint_perk(Rect2(x + half + gap, ry, half, h), str(row["profession"]), b, a, int(row["level"]))
 				_paint_or(Vector2(x + half + gap * 0.5, ry + h * 0.5))
-			_:
-				_paint_milestone(Rect2(x, ry, width, h), row)
 		ry += h + 3 * u
 	if _scroll > 0 or more:
 		text("gamefont_tiny", "Scroll for more (row %d of %d)" % [_scroll + 1, _rows.size()],
@@ -211,43 +196,9 @@ func _paint_perk(rect: Rect2, profession: String, perk: Dictionary, other: Dicti
 		button(button_rect, "Learn" if cost == 0 else "Learn %d Cr" % cost, "perk:" + id, false, false, credits >= cost)
 
 
-func _paint_milestone(rect: Rect2, row: Dictionary) -> void:
-	var m: Dictionary = row["milestone"]
-	var mine: Dictionary = progress.get(str(row["profession"]), {})
-	frame(rect, "border_3_pieces", Color(0.85, 0.85, 0.9))
-	var state := str(row["state"])
-	var color := DIM if state == "after" or state == "later" else (DONE if state == "learned" else TEXT)
-	var ry := rect.position.y
-	text("gamefont_small", "Lv %d   %s" % [int(m["level"]), str(m["name"])], Vector2(rect.position.x + 12 * u, ry + 5 * u),
-			"Left", color)
-	text("gamefont_tiny", str(m.get("description", "")), Vector2(rect.position.x + 12 * u, ry + 25 * u), "Left", DIM)
-	var cost := 0 if int(m["level"]) <= int(mine.get("paid", 0)) else int(m.get("cost", 0))
-	var button_rect := Rect2(rect.end.x - 170 * u, ry + 8 * u, 150 * u, 28 * u)
-	var label_at := Vector2(button_rect.get_center().x, ry + 14 * u)
-	match state:
-		"learned":
-			if bool(row.get("last", false)):
-				button(button_rect, "Give up", "forget:" + str(row["profession"]))
-			else:
-				text("gamefont_small", "Learned", Vector2(button_rect.get_center().x, ry + 12 * u), "Center", color)
-		"ready":
-			if _full(str(row["profession"])):
-				text("gamefont_tiny", "Give one up first", label_at, "Center", DIM)
-			else:
-				button(button_rect, "Learn" if cost == 0 else "Learn  %d Cr" % cost,
-						"learn:%s:%d" % [row["profession"], int(m["level"])], false, false, credits >= cost)
-		"later":
-			text("gamefont_tiny", "Needs level %d" % int(m["level"]), label_at, "Center", DIM)
-		_:
-			text("gamefont_tiny", "Learn the one before", label_at, "Center", DIM)
-
-
 func _on_click(id: String, _at: Vector2) -> void:
 	if id == "close":
 		closed.emit()
-	elif id.begins_with("learn:"):
-		var parts := id.split(":")
-		service_requested.emit(TRAIN, parts[1], int(parts[2]))
 	elif id.begins_with("perk:"):
 		service_requested.emit(LEARN_PERK, id.substr(5), 0)
 	elif id.begins_with("forget:"):

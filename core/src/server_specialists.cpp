@@ -1179,7 +1179,9 @@ bool GameServer::use_ability(Client& client, const AbilityDef& a, uint32_t targe
                 npc->health = std::min(npc->max_health, npc->health + npc->max_health * std::clamp(a.amount, 0.0, 1.0));
             } else {
                 reached = true;
-                c.overcharge = std::max(1.0, a.duration);
+                // (A Droid Operator's Combat Programming: twice as long.)
+                const bool programmed = for_droids && granted(client, "droid_operations", "combat_programming");
+                c.overcharge = std::max(1.0, a.duration) * (programmed ? 2.0 : 1.0);
                 c.overcharge_factor = std::max(1.0, a.amount);
             }
         }
@@ -1192,6 +1194,30 @@ bool GameServer::use_ability(Client& client, const AbilityDef& a, uint32_t targe
             return false;
         }
         earn_specialist_xp(client, profession, a.xp);
+        return true;
+    }
+    case AbilityEffect::companion_self_destruct: {
+        // A Droid Operator's droids blow up where they stand, then go back to
+        // the datapad with the wait of one destroyed.
+        std::vector<uint64_t> gone;
+        size_t hits = 0;
+        for (const ActiveCompanion& c : companions_) {
+            const Npc* npc = c.owner == me ? find_npc(c.entity) : nullptr;
+            if (npc == nullptr || npc->life != Life::alive || !c.template_id.starts_with("droid_")) continue;
+            const Vec3 at = npc->state.position;
+            const std::vector<uint32_t> hit = enemies_near(at, std::max(0.5, a.radius));
+            for (const uint32_t e : hit) hurt(e, a.amount, a.damage_type);
+            hits += hit.size();
+            explosions_.push_back({me, net::droid_explosion_weapon, at, {0, 1, 0}, float(std::max(1.0, a.radius))});
+            gone.push_back(c.record);
+        }
+        if (gone.empty()) {
+            notify(client.entity, "No droid fielded");
+            return false;
+        }
+        for (const uint64_t record : gone) dismiss_one(client, record);
+        client.spec.companion_cooldown = std::max(client.spec.companion_cooldown, companion_death_wait(client, true));
+        earn_specialist_xp(client, profession, hits == 0 ? a.xp / 4 : a.xp * int64_t(std::min<size_t>(hits, 4)));
         return true;
     }
     case AbilityEffect::perform:
@@ -1422,8 +1448,18 @@ void GameServer::summon_companion(Client& client, uint64_t record_id) {
         notify(client.entity, std::format("{} is already at your side", record->name));
         return;
     }
+    // Beside the newer one out: The Pack's two creatures, a Droid Commander's
+    // two droids, and one of each with either (none in a battle).
     const bool pack = !conquest_ && granted(client, "creature_handler", "two_companions");
-    if (!pack) {
+    const bool commander = !conquest_ && granted(client, "droid_operations", "two_droids");
+    const uint64_t keep = client.spec.second_companion != 0 ? client.spec.second_companion : client.spec.active_companion;
+    bool pair = false;
+    for (const ActiveCompanion& c : companions_) {
+        if (keep == 0 || c.owner != client.entity || c.record != keep) continue;
+        const bool kept_droid = c.template_id.starts_with("droid_");
+        pair = kept_droid == droid ? (droid ? commander : pack) : (pack || commander);
+    }
+    if (!pair) {
         if (client.spec.active_companion != 0 || client.spec.second_companion != 0) dismiss_companion(client, false);
     } else if (client.spec.active_companion != 0 && client.spec.second_companion != 0) {
         dismiss_one(client, client.spec.active_companion);
@@ -1436,6 +1472,10 @@ void GameServer::summon_companion(Client& client, uint64_t record_id) {
     // A Creature Handler's Pack Leader and Fierce Bond: their creatures tougher, fiercer.
     if (!droid && granted(client, "creature_handler", "pack_leader")) stats.max_health *= 1.15;
     if (!droid && granted(client, "creature_handler", "fierce_bond")) stats.damage *= 1.15;
+    // A Droid Operator's Reinforced Frame, Targeting Uplink and Combat Programming.
+    if (droid && granted(client, "droid_operations", "reinforced_frame")) stats.max_health *= 1.15;
+    if (droid && granted(client, "droid_operations", "targeting_uplink")) stats.damage *= 1.15;
+    if (droid && granted(client, "droid_operations", "combat_programming")) stats.attack_cooldown /= 1.25;
     NpcCombatSpec spec;
     spec.actor_kind = 4;
     spec.max_health = stats.max_health;
@@ -1473,8 +1513,11 @@ void GameServer::summon_companion(Client& client, uint64_t record_id) {
 }
 
 void GameServer::dismiss_companion(Client& client, bool destroyed) {
+    bool droid = false;
     for (const ActiveCompanion& c : companions_) {
-        if (c.owner == client.entity) remove_npc(c.entity);
+        if (c.owner != client.entity) continue;
+        remove_npc(c.entity);
+        droid = droid || c.template_id.starts_with("droid_");
     }
     std::erase_if(companions_, [&](const ActiveCompanion& c) { return c.owner == client.entity; });
     client.spec.active_companion = 0;
@@ -1482,7 +1525,7 @@ void GameServer::dismiss_companion(Client& client, bool destroyed) {
     client.spec.second_companion = 0;
     client.spec.second_entity = 0;
     if (destroyed) {
-        client.spec.companion_cooldown = companion_death_wait(client);
+        client.spec.companion_cooldown = companion_death_wait(client, droid);
     }
     ++client.spec.revision;
     client.spec.sync_tick = 0;
@@ -1508,9 +1551,11 @@ void GameServer::dismiss_one(Client& client, uint64_t record) {
     spec.sync_tick = 0;
 }
 
-double GameServer::companion_death_wait(const Client& client) const {
+double GameServer::companion_death_wait(const Client& client, bool droid) const {
     const double wait = conquest_ ? companion_match_death_cooldown : companion_death_cooldown;
-    return granted(client, "creature_handler", "quick_recovery") ? wait * 0.5 : wait;
+    const bool quick = droid ? granted(client, "droid_operations", "quick_reboot")
+                             : granted(client, "creature_handler", "quick_recovery");
+    return quick ? wait * 0.5 : wait;
 }
 
 void GameServer::companion_died(uint32_t npc_entity) {
@@ -1519,7 +1564,7 @@ void GameServer::companion_died(uint32_t npc_entity) {
         if (Client* owner = find(c.owner)) {
             notify(owner->entity, std::format("{} has fallen", c.name));
             // Taken out of the world once its fall has shown (next tick).
-            owner->spec.companion_cooldown = companion_death_wait(*owner);
+            owner->spec.companion_cooldown = companion_death_wait(*owner, c.template_id.starts_with("droid_"));
         }
         return;
     }
@@ -1563,7 +1608,8 @@ void GameServer::update_companions(double dt) {
                     os.second_entity = 0;
                 }
                 if (destroyed) {
-                    os.companion_cooldown = std::max(os.companion_cooldown, companion_death_wait(*owner));
+                    os.companion_cooldown =
+                        std::max(os.companion_cooldown, companion_death_wait(*owner, c.template_id.starts_with("droid_")));
                 }
                 ++owner->spec.revision;
                 owner->spec.sync_tick = 0;
@@ -1576,6 +1622,11 @@ void GameServer::update_companions(double dt) {
         c.overcharge = std::max(0.0, c.overcharge - dt);
         c.recall_cooldown = std::max(0.0, c.recall_cooldown - dt);
         c.pulse -= dt;
+        // A Droid Operator's Self-Repair Routines: 2% a second, 5 s clear of a fight.
+        if (c.target == 0 && npc->health < npc->max_health && tick_ - npc->last_damaged_tick > 150 &&
+            c.template_id.starts_with("droid_") && granted(*owner, "droid_operations", "self_repair")) {
+            npc->health = std::min(npc->max_health, npc->health + npc->max_health * 0.02 * dt);
+        }
         const Vec3 me = npc->state.position;
         const Vec3 home = owner->state.position;
         // How big it is: it keeps its flank, not its middle, near its owner.
@@ -1630,9 +1681,11 @@ void GameServer::update_companions(double dt) {
         // Support: heal its owner and their side nearby. Recon: spot enemies.
         if (c.pulse <= 0) {
             c.pulse = c.stats.role == CompanionRole::support ? 3.0 : 2.0;
+            // (A Droid Operator's Sensor Link: further.)
+            const bool linked = c.template_id.starts_with("droid_") && granted(*owner, "droid_operations", "sensor_link");
             if (c.stats.role == CompanionRole::support) {
                 for (Client& t : clients_) {
-                    if (t.life == Life::alive && flat_distance(t.state.position, me) <= 8 &&
+                    if (t.life == Life::alive && flat_distance(t.state.position, me) <= (linked ? 12 : 8) &&
                         (&t == owner || (conquest_ ? allied(t.team, owner->team) : true))) {
                         heal(t, 25 * (c.overcharge > 0 ? c.overcharge_factor : 1));
                     }
@@ -1640,7 +1693,8 @@ void GameServer::update_companions(double dt) {
             } else if (c.stats.role == CompanionRole::recon) {
                 const int team = field_team(*owner);
                 for (const Client& t : clients_) {
-                    if (t.life == Life::alive && flat_distance(t.state.position, me) <= 25 && is_enemy(*owner, t.entity) &&
+                    if (t.life == Life::alive && flat_distance(t.state.position, me) <= (linked ? 40 : 25) &&
+                        is_enemy(*owner, t.entity) &&
                         !hidden_from(owner->entity, t.entity)) {
                         mark_entity(t.entity, team, owner->entity, 3, net::FieldMark::marked);
                     }
@@ -2307,6 +2361,31 @@ void GameServer::offer_contracts(Client& client, size_t terminal) {
             spec.offers.push_back(dressed(c));
             made.erase(made.begin() + std::ptrdiff_t(k));
         }
+        // Survey missions (Surveying): a resource kind, at a concentration
+        // that climbs with the surveyor's level, out past the town.
+        const int tier = std::clamp(
+            1 + (config_.professions ? profession_standing(*config_.professions, client.professions, "surveying").level : 1) / 25,
+            1, 5);
+        static constexpr std::array<ResourceCategory, 4> kinds{ResourceCategory::mineral, ResourceCategory::chemical,
+                                                               ResourceCategory::gas, ResourceCategory::water};
+        size_t first = size_t(random_unit() * double(kinds.size())) % kinds.size();
+        for (size_t i = 0; i < 2; ++i) {
+            const ResourceCategory cat = kinds[(first + i * 2) % kinds.size()];
+            Contract c;
+            c.kind = ContractKind::survey;
+            c.profession = "surveying";
+            c.item = std::string(resource_category_name(cat));
+            c.needed = std::min(0.9, 0.35 + 0.1 * tier);
+            c.waypoint = t.position;
+            c.radius = survey_mission_distance;
+            c.target_name = t.name;
+            c.tier = tier;
+            c.title = std::format("Survey: extract {} at {}% concentration or richer, {} m or more from {}",
+                                  resource_category_label(cat), int(std::lround(c.needed * 100)), int(c.radius), t.name);
+            c.reward = contract_reward(c.kind, tier, 0);
+            c.xp = 100 + 40 * tier;
+            spec.offers.push_back(dressed(c));
+        }
     }
     if (t.kind == "general" || t.kind == "bounty" || t.kind == "artisan") {
         for (int i = 0; i < 2; ++i) {
@@ -2371,6 +2450,8 @@ void GameServer::update_contracts(Client& client) {
             if (done && granted(client, "smuggler", "smooth_talker")) c.reward += c.reward / 2;
         } else if (c.kind == ContractKind::gig) {
             done = c.progress >= c.needed;
+        } else if (c.kind == ContractKind::survey) {
+            done = c.progress >= c.needed - 1e-9 && client.life == Life::alive;  // (finish_extraction's)
         } else if (c.kind == ContractKind::craft_order) {
             // How many of its item are held (not in a loadout); handed in at the terminal.
             int have = 0;
@@ -2434,8 +2515,8 @@ void GameServer::update_contracts(Client& client) {
         if (done && c.kind == ContractKind::gig && granted(client, "entertainer", "encore")) {
             c.reward += c.reward / 2;  // an Encore's
         }
-        if (done && c.kind == ContractKind::craft_order) {
-            c.reward = order_pay(client, c.profession, c.reward);  // a crafter's order_pay perks
+        if (done && (c.kind == ContractKind::craft_order || c.kind == ContractKind::survey)) {
+            c.reward = order_pay(client, c.profession, c.reward);  // an artisan's order_pay perks
         }
         if (done) {
             client.credits += c.reward;

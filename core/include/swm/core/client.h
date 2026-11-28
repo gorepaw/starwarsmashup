@@ -186,7 +186,6 @@ public:
                             std::vector<std::string> resource_ids, std::vector<std::string> enhancement_defs,
                             int exp_quality_pct);
     void delete_recipe_preset(const std::string& name);
-    void fulfill_work_order(const std::string& order_id);
     void talk_to(uint32_t npc_entity);
     void use_mission_terminal(int index);
     void accept_quest(const std::string& id);

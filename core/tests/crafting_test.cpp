@@ -40,7 +40,6 @@ void test_crafting_book() {
     book.load_schematics(root / "game" / "crafting" / "schematics.ini");
     CHECK(book.resources().size() == 16);
     CHECK(book.schematics().size() > 300);  // the hand-written ones, and the families' (test_families)
-    CHECK(book.work_orders().size() == 5);
     // (Plain ammo is never spent, so only effect ammo is crafted.)
     CHECK(book.find_schematic("sch_ammo_tibanna_standard") == nullptr);
     const SchematicDef* burn_ammo_sch = book.find_schematic("sch_ammo_tibanna_burning");
@@ -208,7 +207,7 @@ void test_server_client_crafting_loopback() {
         // The licences, from trainers: a level-1 perk each, free.
         server.set_vendors({{"Survey Trainer", "trainer", {0, 0, 0}, 4, "surveying,salvaging"},
                             {"Weaponsmith Trainer", "trainer", {0, 0, 0}, 4, "weaponsmith"}});
-        for (const char* id : {"survey_survey_training", "salvage_tinkerers_eye", "wsmith_weapon_experimentation"}) {
+        for (const char* id : {"survey_quick_extraction", "salvage_tinkerers_eye", "wsmith_weapon_experimentation"}) {
             client.service(net::ServiceRequest::learn_perk, id, 0, 0);
             run(0.3);
         }
@@ -246,7 +245,7 @@ void test_server_client_crafting_loopback() {
         client.craft_item("sch_wp_pistol_d18", {min_id, gas_id}, {}, 0, 3);
         run(0.4);
         CHECK(client.items().size() == inv_before);
-        // ...but at a Weapon & Droid one: 3x D-18 Blaster Pistols (2 for wo_pistols_militia, 1 to salvage).
+        // ...but at a Weapon & Droid one: 3x D-18 Blaster Pistols (one to salvage).
         // Full focus would take 10x the materials, more than the vault holds.
         server.set_crafting(&crafting, {{"Weapon & Droid Crafting Station", {3, 0, 3}, 4.0, "weapon"}});
         client.craft_item("sch_wp_pistol_d18", {min_id, gas_id}, {}, 100, 3);
@@ -256,13 +255,6 @@ void test_server_client_crafting_loopback() {
         run(0.4);
         CHECK(client.items().size() == inv_before + 3);
         CHECK(profession_xp(client.professions().professions, "weaponsmith") >= 225);
-
-        // Fulfill Hub Work Order (needs 2x wp_pistol_d18).
-        const int64_t credits_before = client.player_status().credits;
-        client.fulfill_work_order("wo_pistols_militia");
-        run(0.4);
-        CHECK(client.items().size() == inv_before + 1);
-        CHECK(client.player_status().credits > credits_before);
 
         // Salvage the remaining crafted D-18 pistol.
         uint64_t spare_id = 0;
@@ -275,7 +267,7 @@ void test_server_client_crafting_loopback() {
         CHECK(spare_id != 0);
         client.salvage_item(spare_id);
         run(0.4);
-        CHECK(client.items().size() == inv_before);
+        CHECK(client.items().size() == inv_before + 2);
         CHECK(profession_xp(client.professions().professions, "salvaging") > 0);
 
         // Delete the preset.

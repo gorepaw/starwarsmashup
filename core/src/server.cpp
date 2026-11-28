@@ -639,9 +639,11 @@ void GameServer::detach_corpse_loot(uint32_t npc_entity) {
 }
 
 void GameServer::npc_melee(uint32_t attacker_entity, uint32_t victim_entity, double raw_damage, DamageType type) {
-    Client* victim = find(victim_entity);
-    if (!victim || victim->life != Life::alive) return;
-    damage(*victim, raw_damage, type, attacker_entity);
+    if (Client* victim = find(victim_entity)) {
+        if (victim->life == Life::alive) damage(*victim, raw_damage, type, attacker_entity);
+    } else if (Npc* npc = find_npc(victim_entity); npc && npc->life == Life::alive) {
+        damage_npc(*npc, raw_damage, type, attacker_entity);  // (another NPC: a companion, say)
+    }
 }
 
 void GameServer::award_xp(uint32_t entity, int64_t xp) {
@@ -1751,8 +1753,8 @@ void GameServer::step() {
                 ? float(std::clamp(1.0 - client.switch_remaining / loadout_switch_time, 0.0, 1.0))
                 : 0.0f;
         client.status.extract_progress =
-            client.extract_started >= 0.0 && config_.extract_time > 0.0
-                ? float(std::clamp((now_ - client.extract_started) / config_.extract_time, 0.0, 1.0))
+            client.extract_started >= 0.0 && extract_time_for(client) > 0.0
+                ? float(std::clamp((now_ - client.extract_started) / extract_time_for(client), 0.0, 1.0))
                 : -1.0f;
         const uint8_t new_combat_level = uint8_t(std::clamp(combat_level_of(client), 1, 100));
         if (new_combat_level != client.status.combat_level) {

@@ -185,7 +185,7 @@ int64_t GameServer::gathered_amount(Client& client, const std::string& professio
     return qty;
 }
 
-// What an order pays a crafter, with their profession's order_pay perks.
+// What an artisan terminal's order pays, with the profession's order_pay perks.
 int64_t GameServer::order_pay(const Client& client, const std::string& profession, int64_t base) const {
     if (config_.professions == nullptr) return base;
     const double more = perk_bonus(*config_.professions, client.professions, profession, "order_pay");
@@ -207,9 +207,14 @@ void GameServer::handle_gather_request(Client& client, const net::GatherRequest&
         if (client.has_extracted) {
             const Vec3 d = client.state.position - client.last_extract_site;
             const double apart = std::hypot(d.x, d.z);
-            if (apart < config_.extract_spacing) {
+            // (A Surveyor's Close Spacing: 10 m.)
+            const double spacing = cat != ResourceCategory::flora && config_.professions != nullptr &&
+                                           has_grant(*config_.professions, client.professions, "surveying", "close_spacing")
+                                       ? std::min(10.0, config_.extract_spacing)
+                                       : config_.extract_spacing;
+            if (apart < spacing) {
                 notify(client.entity, std::format("This ground is worked out: move {} m from where you last extracted.",
-                                                  int(std::ceil(config_.extract_spacing - apart))));
+                                                  int(std::ceil(spacing - apart))));
                 return;
             }
         }
@@ -322,15 +327,70 @@ void GameServer::finish_extraction(Client& client, ResourceCategory cat) {
     const std::string prof = cat == ResourceCategory::flora ? "foraging" : "surveying";
     const int lv = profession_level(config_.professions, client.professions, prof);
     const double yield_bonus = 1.0 + double(lv) * 0.01;
-    const int64_t qty = gathered_amount(client, prof, std::max<int64_t>(2, int64_t(std::llround((4.0 + 14.0 * conc) * yield_bonus))));
+    int64_t qty = gathered_amount(client, prof, std::max<int64_t>(2, int64_t(std::llround((4.0 + 14.0 * conc) * yield_bonus))));
+    const auto surveyor = [&](std::string_view grant) {
+        return prof == "surveying" && config_.professions != nullptr &&
+               has_grant(*config_.professions, client.professions, "surveying", grant);
+    };
+    // A Surveyor's Rich Veins and Mother Lode: more from the rich ground.
+    if (conc >= 0.6 && surveyor("rich_veins")) qty = int64_t(std::llround(double(qty) * 1.3));
+    if (conc >= 0.8 && surveyor("mother_lode")) qty *= 2;
     add_material(client.materials, res->id, qty);
+    std::string extra;
+    // Core Sample: a quarter as much of the richest other resource here.
+    if (surveyor("core_sample")) {
+        const ResourceDef* other = nullptr;
+        double best = 0.0;
+        for (const ResourceCategory c2 : {ResourceCategory::mineral, ResourceCategory::chemical, ResourceCategory::gas,
+                                          ResourceCategory::water}) {
+            if (c2 == cat) continue;
+            const auto [r2, conc2] = book.best_resource_at(c2, client.state.position.x, client.state.position.z);
+            if (r2 != nullptr && conc2 > best) {
+                other = r2;
+                best = conc2;
+            }
+        }
+        if (other != nullptr) {
+            const int64_t n = std::max<int64_t>(1, qty / 4);
+            add_material(client.materials, other->id, n);
+            extra += std::format(", {}x {}", n, other->name);
+        }
+    }
+    // Rare Finds: one in 20, a few of the finest of its kind on the planet.
+    if (surveyor("rare_finds") && random_unit() < 0.05) {
+        const ResourceDef* finest = nullptr;
+        for (const ResourceDef& r : book.resources()) {
+            if (r.category == cat && (finest == nullptr || r.stats[size_t(ResourceStat::quality)] >
+                                                               finest->stats[size_t(ResourceStat::quality)])) {
+                finest = &r;
+            }
+        }
+        if (finest != nullptr) {
+            const int64_t n = 3 + lv / 25;
+            add_material(client.materials, finest->id, n);
+            extra += std::format(", and a rare find: {}x {}", n, finest->name);
+        }
+    }
     save_materials(client);
     ++client.crafting_rev;
     client.crafting_sync_tick = 0;
     const int64_t xp = 15 + int64_t(std::llround(conc * 25.0));
     earn_profession_xp(client, prof, xp);
-    notify(client.entity, std::format("Extracted {}x {} ({}% concentration)", qty, res->name, int(conc * 100.0)));
+    notify(client.entity, std::format("Extracted {}x {} ({}% concentration){}", qty, res->name, int(conc * 100.0), extra));
     quest_event(client, "extract");
+    // An artisan terminal's survey mission: this kind, rich enough, far enough out.
+    for (Contract& c : client.spec.contracts) {
+        if (c.kind != ContractKind::survey || c.item != resource_category_name(cat)) continue;
+        if (std::hypot(client.state.position.x - c.waypoint.x, client.state.position.z - c.waypoint.z) < c.radius) {
+            notify(client.entity, std::format("Too near the terminal for {}: {} m out at least", c.title, int(c.radius)));
+            continue;
+        }
+        if (conc > c.progress) {
+            c.progress = conc;
+            ++client.spec.revision;
+            client.spec.sync_tick = 0;
+        }
+    }
 }
 
 // Extractions under way: done after `extract_time` standing where they began;
@@ -343,10 +403,16 @@ void GameServer::update_extractions(double now) {
         if (client.life != Life::alive || std::hypot(d.x, d.z) > 1.0 || client.state.vehicle >= 0) {
             client.extract_started = -1.0;
             notify(client.entity, "Extraction broken off: you moved.");
-        } else if (now - client.extract_started >= config_.extract_time) {
+        } else if (now - client.extract_started >= extract_time_for(client)) {
             finish_extraction(client, client.extract_category);
         }
     }
+}
+
+double GameServer::extract_time_for(const Client& client) const {
+    const bool quick = client.extract_category != ResourceCategory::flora && config_.professions != nullptr &&
+                       has_grant(*config_.professions, client.professions, "surveying", "quick_extraction");
+    return quick ? std::min(4.0, config_.extract_time) : config_.extract_time;
 }
 
 void GameServer::handle_craft_request(Client& client, const net::CraftRequest& req) {
@@ -376,38 +442,6 @@ void GameServer::handle_craft_request(Client& client, const net::CraftRequest& r
             ++client.crafting_rev;
             client.crafting_sync_tick = 0;
         }
-        return;
-    }
-
-    if (req.action == net::CraftRequest::fulfill_order) {
-        if (store_ == nullptr || client.character == 0 || config_.catalog == nullptr) return;
-        const WorkOrder* order = book.find_work_order(req.order_id);
-        if (order == nullptr || !require_licence(client, order->profession)) return;
-        std::vector<uint64_t> matching_ids;
-        for (const ItemInstance& inst : client.items) {
-            if (inst.def_id == order->output_item && !item_equipped_in_loadouts(client.char_loadouts, inst.id)) {
-                matching_ids.push_back(inst.id);
-                if (int(matching_ids.size()) >= order->count) break;
-            }
-        }
-        if (int(matching_ids.size()) < order->count) {
-            notify(client.entity, std::format("Need {} unequipped {} to fulfill this work order.", order->count,
-                                              item_name(order->output_item)));
-            return;
-        }
-        for (const uint64_t id : matching_ids) {
-            store_->remove_item(id);
-            std::erase_if(client.items, [&](const ItemInstance& inst) { return inst.id == id; });
-        }
-        const int64_t pay = order_pay(client, order->profession, order->reward_credits);
-        client.credits += pay;
-        client.faction_points += int64_t(std::llround(double(order->reward_fp) * client.stats.faction_gain));
-        save_economy(client);
-        ++client.inventory_rev;
-        client.last_sync_tick = 0;
-        earn_profession_xp(client, order->profession, order->reward_xp);
-        notify(client.entity, std::format("Work order complete: +{} Cr, +{} FP, +{} {} XP", pay,
-                                          order->reward_fp, order->reward_xp, order->profession));
         return;
     }
 

@@ -22,7 +22,7 @@ namespace swm::core {
 // specialist and companion professions do, as data (game/professions/
 // specialists.ini) and as the rules the server plays them by:
 //
-//   - abilities: a profession's active kit, unlocked at its milestones
+//   - abilities: a profession's active kit, taught by its perks
 //     (healing darts, bolas, cloaks, spawn beacons, performances...);
 //   - timed effects: buffs and debuffs on characters (and the gear they make);
 //   - companions: tamed or hatched creatures and assembled droids, kept in a
@@ -65,6 +65,7 @@ enum class AbilityEffect : uint8_t {
     blind,         // enemy players within `radius` see white, no HUD, for `duration` (Smuggler)
     vehicle_boost,   // the user's modifiers while driving, for `duration` (a Pilot's Afterburner)
     vehicle_flare,   // explosives do nothing to the user's vehicle for `duration` (a Pilot's Flares)
+    companion_self_destruct,  // the user's droids explode: `amount` within `radius` (Droid Operations)
 };
 
 // Who an ability is aimed at.
@@ -86,7 +87,7 @@ struct AbilityDef {
     std::string name;
     std::string description;
     std::string profession;  // whose kit it is
-    int level = 1;           // the profession level (a milestone: it must be trained) it needs
+    int level = 1;           // the profession level it needs (its perk's tier)
     AbilityEffect effect = AbilityEffect::buff;
     AbilityTarget target = AbilityTarget::self;
     DeployKind deploy = DeployKind::none;
@@ -221,7 +222,7 @@ private:
     std::vector<InspirationDef> inspirations_;
 };
 
-// A profession's level and the highest milestone learned for it.
+// A profession's level, and the highest perk tier known (1: licensed; 0: not).
 struct ProfessionStanding {
     int level = 0;
     int trained = 0;
@@ -229,8 +230,8 @@ struct ProfessionStanding {
 ProfessionStanding profession_standing(const ProfessionBook& professions, std::span<const ProfessionProgress> progress,
                                        std::string_view id);
 
-// The abilities a character brings to every loadout: each profession's at
-// the character's level and with its milestone learned. `in_match` leaves out
+// The abilities a character brings to every loadout: those its known perks
+// teach. `in_match` leaves out
 // world-only abilities, else match-only ones.
 std::vector<std::string> unlocked_abilities(const SpecialistBook& book, const ProfessionBook& professions,
                                             std::span<const ProfessionProgress> progress, bool in_match);
@@ -373,6 +374,7 @@ enum class ContractKind : uint8_t {
     track,       // find a creature and get close (Ranger)
     gig,         // perform at a venue for a while (Entertainer)
     craft_order, // bring crafted items back to the terminal (a crafting profession: Doctor so far)
+    survey,      // extract a resource kind (`item`) at `needed` concentration or richer, `radius` m or more from the terminal
 };
 std::string_view contract_kind_name(ContractKind kind);
 std::optional<ContractKind> contract_kind_from_name(std::string_view name);
@@ -407,6 +409,8 @@ struct Contract {
 // The crafting professions artisan terminals take orders for (every one,
 // one day).
 inline constexpr std::array<std::string_view, 1> artisan_order_professions{"doctor"};
+// How far from its terminal a survey mission's extraction must be.
+inline constexpr double survey_mission_distance = 300;
 int64_t contract_reward(ContractKind kind, int tier, double distance);
 
 // A bounty a player put up on an opted-in player (docs/PROFESSIONS.md,

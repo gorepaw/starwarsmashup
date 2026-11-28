@@ -428,20 +428,7 @@ godot::Array SwmCharacterStore::get_professions() const {
         entry["earns"] = godot::String::utf8(def.earns.c_str());
         entry["pool"] = godot::String::utf8(std::string(core::perk_pool_name(def.pool)).c_str());  // whose cap
         entry["first_perk"] = int64_t(def.first_perk_level);  // 1: its first tier is its licence
-        entry["rank_every"] = int64_t(def.rank_every);
-        entry["rank"] = perk_lines(def.rank);
-        godot::Array milestones;
-        for (const core::ProfessionMilestone& m : def.milestones) {
-            godot::Dictionary ms;
-            ms["level"] = int64_t(m.level);
-            ms["name"] = godot::String::utf8(m.name.c_str());
-            ms["description"] = godot::String::utf8(m.description.c_str());
-            ms["perks"] = perk_lines(m.perk);
-            ms["cost"] = int64_t(core::milestone_cost(m.level));  // what a trainer asks for teaching it
-            milestones.push_back(ms);
-        }
-        entry["milestones"] = milestones;
-        // A weapon or armor profession's perks (docs/PERKS.md): two at each level.
+        // Its perks (docs/PERKS.md): two at each level.
         godot::Array perks;
         for (const core::ProfessionPerkDef& p : def.perks) {
             godot::Dictionary pk;
@@ -455,7 +442,7 @@ godot::Array SwmCharacterStore::get_professions() const {
             pk["trigger"] = godot::String::utf8(
                 p.trigger ? std::string(core::perk_trigger_name(p.trigger->trigger)).c_str() : "");
             pk["perks"] = perk_lines(p.perk);
-            pk["cost"] = int64_t(core::milestone_cost(p.level));
+            pk["cost"] = int64_t(core::perk_cost(p.level));  // what a trainer asks for teaching it
             perks.push_back(pk);
         }
         entry["perks"] = perks;
@@ -537,23 +524,6 @@ godot::Array SwmCharacterStore::get_schematics() const {
         }
         d["slots"] = slots;
         d["weights"] = weights;
-        out.push_back(d);
-    }
-    return out;
-}
-
-godot::Array SwmCharacterStore::get_work_orders() const {
-    godot::Array out;
-    for (const core::WorkOrder& wo : crafting_.work_orders()) {
-        godot::Dictionary d;
-        d["id"] = godot::String::utf8(wo.id.c_str());
-        d["title"] = godot::String::utf8(wo.title.c_str());
-        d["profession"] = godot::String::utf8(wo.profession.c_str());
-        d["output_item"] = godot::String::utf8(wo.output_item.c_str());
-        d["count"] = int64_t(wo.count);
-        d["reward_credits"] = wo.reward_credits;
-        d["reward_fp"] = wo.reward_fp;
-        d["reward_xp"] = wo.reward_xp;
         out.push_back(d);
     }
     return out;
@@ -1025,7 +995,6 @@ void SwmCharacterStore::_bind_methods() {
                          &SwmCharacterStore::load_crafting);
     ClassDB::bind_method(D_METHOD("get_resources"), &SwmCharacterStore::get_resources);
     ClassDB::bind_method(D_METHOD("get_schematics"), &SwmCharacterStore::get_schematics);
-    ClassDB::bind_method(D_METHOD("get_work_orders"), &SwmCharacterStore::get_work_orders);
     ClassDB::bind_method(D_METHOD("scan_terrain", "category", "x", "z", "radius", "grid_n"),
                          &SwmCharacterStore::scan_terrain, DEFVAL(60.0), DEFVAL(17));
     ClassDB::bind_method(D_METHOD("auto_fill_schematic", "schematic_id", "materials", "mode", "mark", "focus_pct"),

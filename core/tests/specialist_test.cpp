@@ -8,6 +8,7 @@
 #include <cmath>
 #include <filesystem>
 #include <format>
+#include <set>
 #include <vector>
 
 #include "swm/core/client.h"
@@ -45,20 +46,15 @@ bool has(const std::vector<std::string>& list, std::string_view id) {
 
 void test_shipped_data(const SpecialistBook& book, const ProfessionBook& professions, const ItemCatalog& catalog) {
     CHECK(book.abilities().size() >= 30);
-    // Every ability belongs to a real, available profession: at one of its
-    // milestones, or taught by one of its perks (at the perk's level).
+    // Every ability belongs to a real, available profession, taught by one
+    // of its perks (at the perk's level).
     for (const AbilityDef& a : book.abilities()) {
         const ProfessionDef* def = professions.find(a.profession);
         CHECK(def != nullptr && def->available);
         if (def == nullptr) continue;
-        if (def->chooses()) {
-            CHECK(std::any_of(def->perks.begin(), def->perks.end(), [&](const ProfessionPerkDef& p) {
-                return p.level == a.level && std::find(p.abilities.begin(), p.abilities.end(), a.id) != p.abilities.end();
-            }));
-        } else {
-            CHECK(std::any_of(def->milestones.begin(), def->milestones.end(),
-                              [&](const ProfessionMilestone& m) { return m.level == a.level; }));
-        }
+        CHECK(std::any_of(def->perks.begin(), def->perks.end(), [&](const ProfessionPerkDef& p) {
+            return p.level == a.level && std::find(p.abilities.begin(), p.abilities.end(), a.id) != p.abilities.end();
+        }));
     }
     // ...and every perk's ability is one.
     for (const ProfessionDef& def : professions.all()) {
@@ -92,8 +88,8 @@ void test_shipped_data(const SpecialistBook& book, const ProfessionBook& profess
 }
 
 void test_rules(const SpecialistBook& book, const ProfessionBook& professions) {
-    // Abilities: every profession's in every loadout (no slots), each once its
-    // milestone is learned (docs/PERKS.md).
+    // Abilities: every profession's in every loadout (no slots), each once a
+    // perk teaching it is learned (docs/PERKS.md).
     const int64_t master = professions.xp_for_level(100);
     std::vector<ProfessionProgress> progress{
         {"bounty_hunter", master, 0, 0, {"bh_perk_seeker", "bh_perk_toxin_dart"}},
@@ -654,6 +650,131 @@ void test_craft_orders(const std::filesystem::path& root, const SpecialistBook& 
     CHECK(mine && profession_xp(*mine, "doctor") > xp);
 }
 
+// A Surveyor with Quick Extraction, Close Spacing, Twin Seams, Core Sample
+// and Mother Lode: extractions in 4 s, 10 m apart; an artisan terminal's
+// survey mission done at a far peak, with a second resource from the core.
+void test_surveying(const std::filesystem::path& root, const SpecialistBook& book, const ProfessionBook& professions,
+                    const ItemCatalog& catalog) {
+    CraftingBook crafting;
+    crafting.load_resources(root / "game" / "crafting" / "resources.ini");
+    crafting.load_schematics(root / "game" / "crafting" / "schematics.ini");
+    // Big enough for Tatooine's resource peaks.
+    Heightfield ground{2001, 8.0, -8000, -8000, std::vector<float>(2001 * 2001, 0.0f)};
+    World world{ground};
+    MemoryCharacterStore store;
+    const CharacterRecord rec = store.create("Surveyor", {0, 0, 0}, 0);
+    const int64_t master = professions.xp_for_level(100);
+    store.save_professions(rec.id, std::vector<ProfessionProgress>{{"surveying", master, 0}});
+    store.set_extra(rec.id, "perks:surveying",
+                    "survey_quick_extraction,survey_close_spacing,survey_twin_seams,survey_core_sample,survey_mother_lode");
+    net::LoopbackHub links;
+    net::Endpoint server_ep{1, 1};
+    net::LoopbackLink srv_link{links, server_ep};
+    net::LoopbackLink link{links, {2, 1}};
+    ServerConfig config;
+    config.catalog = &catalog;
+    config.professions = &professions;
+    config.specialists = &book;
+    config.crafting = &crafting;
+    config.pvp_enabled = false;
+    config.spawn = {0, 0, 0};
+    GameServer server(srv_link, world, config, &store);
+    server.set_crafting(&crafting, {});
+    server.set_quests(nullptr, {}, {{"Artisan Terminal", {2, 0, 0}, 3, "artisan"}});
+    GameClient client(link, world, ClientConfig{.server = server_ep, .name = "Surveyor"});
+    double now = 0;
+    const auto run = [&](double seconds) {
+        for (const double end = now + seconds; now < end; now += 1.0 / 30.0) {
+            server.update(now);
+            client.update(now);
+        }
+    };
+    const auto total = [&] {
+        int64_t sum = 0;
+        if (const auto* m = server.materials_of(client.entity_id())) {
+            for (const MaterialStack& st : *m) sum += st.amount;
+        }
+        return sum;
+    };
+    const auto move_to = [&](double x, double z) {
+        MoveState s = *server.state_of(client.entity_id());
+        s.position = {x, 0, z};
+        server.set_state(client.entity_id(), s);
+        run(0.5);
+    };
+    run(1.0);
+    CHECK(client.status() == GameClient::Status::connected);
+    // A survey mission from the terminal: a master's asks for 85%.
+    net::SpecialistRequest ask;
+    ask.action = net::SpecialistRequest::contracts;
+    client.specialist_request(ask);
+    run(0.5);
+    std::vector<Contract> surveys;
+    for (const Contract& c : client.specialist().offers) {
+        if (c.kind == ContractKind::survey) surveys.push_back(c);
+    }
+    CHECK(surveys.size() == 2);
+    if (surveys.empty()) return;
+    const Contract mission = surveys[0];
+    CHECK(mission.profession == "surveying" && near(mission.needed, 0.85, 1e-3) && mission.reward > 0);
+    const auto cat = resource_category_from_name(mission.item);
+    CHECK(cat.has_value() && *cat != ResourceCategory::flora);
+    if (!cat) return;
+    net::SpecialistRequest take;
+    take.action = net::SpecialistRequest::contract_accept;
+    take.amount = int64_t(mission.id);
+    client.specialist_request(take);
+    run(0.5);
+    CHECK(client.specialist().contracts.size() == 1);
+
+    // Quick Extraction: done in 4 s (not 6), out past the town's edge.
+    move_to(60, 0);
+    client.gather_extract(*cat);
+    run(4.4);
+    const int64_t first = total();
+    CHECK(first > 0);
+    // Close Spacing: 12 m on is fresh ground.
+    move_to(72, 0);
+    client.gather_extract(*cat);
+    run(4.4);
+    CHECK(total() > first);
+    CHECK(client.specialist().contracts.size() == 1);  // (not rich enough here)
+
+    // At the richest peak of its kind, far from the terminal: the mission's done.
+    const ResourceDef* peak = nullptr;
+    double best = 0;
+    for (const ResourceDef& r : crafting.resources()) {
+        if (r.category != *cat) continue;
+        const double c = crafting.concentration_at(r, r.peak_x, r.peak_z);
+        if (c > best) {
+            best = c;
+            peak = &r;
+        }
+    }
+    CHECK(peak != nullptr && best >= 0.85);
+    if (peak == nullptr) return;
+    move_to(peak->peak_x, peak->peak_z);
+    const int64_t credits = client.player_status().credits;
+    std::set<std::string> kinds_before;
+    for (const MaterialStack& st : *server.materials_of(client.entity_id())) kinds_before.insert(st.resource_id);
+    client.gather_extract(*cat);
+    run(4.4);
+    run(1.0);
+    CHECK(client.specialist().contracts.empty());
+    CHECK(client.player_status().credits > credits);
+    // Core Sample: another kind with it, where there's any.
+    bool other_here = false;
+    for (const ResourceCategory c2 : {ResourceCategory::mineral, ResourceCategory::chemical, ResourceCategory::gas,
+                                      ResourceCategory::water}) {
+        if (c2 == *cat) continue;
+        const auto [r2, conc2] = crafting.best_resource_at(c2, peak->peak_x, peak->peak_z);
+        other_here = other_here || (r2 != nullptr && conc2 > 0);
+    }
+    std::set<std::string> kinds_after;
+    for (const MaterialStack& st : *server.materials_of(client.entity_id())) kinds_after.insert(st.resource_id);
+    CHECK(!other_here || kinds_after.size() >= kinds_before.size() + 1);
+}
+
 // A Doctor's heals: Field Triage reaching everyone near, Lingering Bacta
 // after, and the Defibrillator bringing back the just-fallen.
 void test_doctor_heals(const SpecialistBook& book, const ProfessionBook& professions, const ItemCatalog& catalog) {
@@ -1212,9 +1333,10 @@ void test_droid_engineer(const std::filesystem::path& root, const SpecialistBook
     MemoryCharacterStore store;
     const CharacterRecord rec = store.create("Engineer", {0, 0, 0}, 0);
     const int64_t master = professions.xp_for_level(100);
-    store.save_professions(rec.id, std::vector<ProfessionProgress>{{"droid_engineer", master, 0}, {"droid_operations", master, 5}});
+    store.save_professions(rec.id, std::vector<ProfessionProgress>{{"droid_engineer", master, 0}, {"droid_operations", master, 0}});
     store.set_extra(rec.id, "perks:droid_engineer",
                     "de_perk_precision,de_perk_extra_bay,de_perk_hardened,de_perk_refit,de_perk_industry");
+    store.set_extra(rec.id, "perks:droid_operations", "do_perk_repair");
     std::vector<MaterialStack> vault;
     for (const ResourceDef& r : crafting.resources()) vault.push_back({r.id, 200});
     store.save_materials(rec.id, vault);
@@ -1305,6 +1427,108 @@ void test_droid_engineer(const std::filesystem::path& root, const SpecialistBook
     run(0.4);
     const auto fielded = server.companion_of(client.entity_id());
     CHECK(fielded && fielded->hardened);
+}
+
+// A Droid Operator with Self-Repair, Self-Destruct, Reinforced Frame, Quick
+// Reboot and Droid Commander: no button at 1; two droids out, or a droid
+// beside a creature (without The Pack); a droid mends itself out of a fight;
+// both blow up on an enemy, and come back after half the wait.
+void test_droid_operations(const SpecialistBook& book, const ProfessionBook& professions, const ItemCatalog& catalog) {
+    Heightfield ground{201, 2.0, -200, -200, std::vector<float>(201 * 201, 0.0f)};
+    World world{ground};
+    MemoryCharacterStore store;
+    const CharacterRecord rec = store.create("Operator", {0, 0, 0}, 0);
+    const int64_t master = professions.xp_for_level(100);
+    store.save_professions(rec.id, std::vector<ProfessionProgress>{{"droid_operations", master, 0},
+                                                                   {"creature_handler", master, 0}});
+    store.set_extra(rec.id, "perks:droid_operations",
+                    "do_perk_self_repair,do_perk_self_destruct,do_perk_frame,do_perk_reboot,do_perk_commander");
+    store.set_extra(rec.id, "perks:creature_handler", "ch_perk_tamer");
+    std::string datapad;
+    datapad += format_companion({1, "droid_probe", "Probe", "assembled", 0.5, 1, 1, 1, 0, {}, false}) + "\n";
+    datapad += format_companion({2, "droid_mse6", "Mouse", "assembled", 0.5, 1, 1, 1, 0, {}, false}) + "\n";
+    datapad += format_companion({3, "womp_rat", "Biter", "tamed", 0.5, 1, 1, 1, 0, {}, false}) + "\n";
+    store.set_extra(rec.id, "datapad", datapad);
+    net::LoopbackHub links;
+    net::Endpoint server_ep{1, 1};
+    net::LoopbackLink srv_link{links, server_ep};
+    net::LoopbackLink link{links, {2, 1}};
+    ServerConfig config;
+    config.catalog = &catalog;
+    config.professions = &professions;
+    config.specialists = &book;
+    config.pvp_enabled = false;
+    config.spawn = {0, 0, 0};
+    GameServer server(srv_link, world, config, &store);
+    server.set_looks({"object/mobile/shared_probot.iff", "object/mobile/shared_womp_rat.iff"});
+    GameClient client(link, world, ClientConfig{.server = server_ep, .name = "Operator"});
+    double now = 0;
+    const auto run = [&](double seconds) {
+        for (const double end = now + seconds; now < end; now += 1.0 / 30.0) {
+            server.update(now);
+            client.update(now);
+        }
+    };
+    run(1.0);
+    CHECK(client.status() == GameClient::Status::connected);
+    const auto has_button = [&](const char* id) {
+        const auto& list = client.specialist().abilities;
+        return std::any_of(list.begin(), list.end(), [&](const net::AbilityStatus& s) { return s.id == id; });
+    };
+    // Self-Repair Routines: licensed, no button; Self-Destruct the one.
+    CHECK(!has_button("do_remote_repair") && has_button("do_self_destruct") && !has_button("do_overcharge"));
+    const SpecialistState* spec = server.specialist_state(client.entity_id());
+    CHECK(spec && spec->companions.size() == 3);
+    if (spec == nullptr || spec->companions.size() != 3) return;
+    const auto order = [&](net::SpecialistRequest::Action action, int64_t amount) {
+        net::SpecialistRequest r;
+        r.action = action;
+        r.amount = amount;
+        client.specialist_request(r);
+        run(0.4);
+    };
+    // Two droids at once: Droid Commander.
+    order(net::SpecialistRequest::companion_summon, 1);
+    order(net::SpecialistRequest::companion_summon, 2);
+    CHECK(spec->active_companion == 1 && spec->second_companion == 2);
+    const CompanionTemplate* probe = book.companion("droid_probe");
+    const auto first = server.npc_info(spec->companion_entity);
+    CHECK(probe && first && near(first->max_health, probe->health * 1.0 * 1.5 * 1.15, 0.5));  // Reinforced Frame
+    // A creature beside the newer droid (no The Pack needed with Droid Commander).
+    order(net::SpecialistRequest::companion_summon, 3);
+    CHECK(spec->active_companion == 2 && spec->second_companion == 3);
+    // The other way about: a droid beside the creature.
+    order(net::SpecialistRequest::companion_summon, 1);
+    CHECK(spec->active_companion == 3 && spec->second_companion == 1);
+    order(net::SpecialistRequest::companion_dismiss, 0);
+    order(net::SpecialistRequest::companion_summon, 1);
+    order(net::SpecialistRequest::companion_summon, 2);
+    CHECK(spec->active_companion == 1 && spec->second_companion == 2);
+    // A bantha hits the probe; out of the fight, it mends itself.
+    GameServer::NpcCombatSpec bantha;
+    bantha.actor_kind = 2;
+    bantha.max_health = 2000;
+    bantha.hit_radius = 1.35;
+    bantha.hit_height = 2.8;
+    const uint32_t beast = server.add_combat_npc("Bantha", {0, 0, 2.5}, 0, 1, bantha);
+    server.npc_melee(beast, spec->companion_entity, 200, DamageType::melee);
+    const auto hurt = server.npc_info(spec->companion_entity);
+    CHECK(hurt && hurt->health < hurt->max_health - 100);
+    run(9.0);
+    const auto mended = server.npc_info(spec->companion_entity);
+    CHECK(hurt && mended && mended->health > hurt->health + 20);
+    // Self-Destruct: both droids blow up on the bantha; half the wait after.
+    const double before = server.npc_info(beast) ? server.npc_info(beast)->health : 0;
+    net::SpecialistRequest boom;
+    boom.action = net::SpecialistRequest::use_ability;
+    boom.id = "do_self_destruct";
+    client.specialist_request(boom);
+    run(0.4);
+    const auto after = server.npc_info(beast);
+    CHECK(after && before - after->health >= 300 - 1e-6);
+    CHECK(spec->active_companion == 0 && spec->second_companion == 0);
+    CHECK(spec->companion_cooldown > companion_death_cooldown * 0.5 - 1 &&
+          spec->companion_cooldown <= companion_death_cooldown * 0.5);  // Quick Reboot
 }
 
 // A handler with The Pack fields two creatures at once (a third sends the
@@ -1712,6 +1936,7 @@ int main() {
     test_wire();
     test_server(root, book, professions, catalog);
     test_craft_orders(root, book, professions, catalog);
+    test_surveying(root, book, professions, catalog);
     test_bounties(book, professions, catalog);
     test_doctor_heals(book, professions, catalog);
     test_smuggler(book, professions, catalog);
@@ -1721,6 +1946,7 @@ int main() {
     test_bio_engineer(book, professions, catalog);
     test_creature_handler(book, professions, catalog);
     test_droid_engineer(root, book, professions, catalog);
+    test_droid_operations(book, professions, catalog);
     test_match(book, professions);
     return swm::test::finish("specialist_test");
 }

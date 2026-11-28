@@ -73,7 +73,6 @@ signal craft_requested(schematic_id: String, resource_ids: PackedStringArray, en
 signal dye_requested(item_id: int, dye: String)
 signal preset_saved(name: String, schematic_id: String, resource_ids: PackedStringArray, enhancement_defs: PackedStringArray, exp_quality_pct: int)
 signal preset_deleted(name: String)
-signal work_order_fulfilled(order_id: String)
 signal item_salvaged(item_id: int)
 signal service_requested(action: int, id: String, amount: int, item_id: int)
 
@@ -201,7 +200,6 @@ func setup(layer: CanvasLayer, world_root: Node3D, art: RefCounted, settings: Se
 	_workbench_screen.preset_saved.connect(func(pname: String, sid: String, rids: PackedStringArray, edefs: PackedStringArray, qpct: int) -> void:
 		preset_saved.emit(pname, sid, rids, edefs, qpct))
 	_workbench_screen.preset_deleted.connect(func(pname: String) -> void: preset_deleted.emit(pname))
-	_workbench_screen.work_order_fulfilled.connect(func(oid: String) -> void: work_order_fulfilled.emit(oid))
 	_workbench_screen.item_salvaged.connect(func(iid: int) -> void: item_salvaged.emit(iid))
 	_workbench_screen.closed.connect(close_all_screens)
 	layer.add_child(_workbench_screen)
@@ -249,7 +247,6 @@ func set_crafting(store: Object) -> void:
 		if store != null:
 			_workbench_screen.resources = store.get_resources()
 			_workbench_screen.schematics = store.get_schematics()
-			_workbench_screen.work_orders = store.get_work_orders()
 
 
 func set_catalog(catalog: Array, store: Object, species: String, gender: String, appearance: String) -> void:
@@ -1367,14 +1364,11 @@ func _sync_screen_data(client: Object) -> void:
 			_vendor_screen.queue_redraw()
 	if _profession_screen != null:
 		var progress := {}
-		var taught := {}
 		var known := {}
 		for p: Dictionary in client.get_professions():
 			progress[str(p["id"])] = int(p["xp"])
-			taught[str(p["id"])] = int(p.get("trained", 0))
 			known[str(p["id"])] = p.get("perks", [])
 		_profession_screen.progress = progress
-		_profession_screen.trained = taught
 		_profession_screen.known = known
 		if _profession_screen.visible:
 			_profession_screen.queue_redraw()
@@ -1418,7 +1412,7 @@ func _sync_screen_data(client: Object) -> void:
 			_workbench_screen.queue_redraw()
 
 
-# How many perks and milestones the character knows in each pool, combat
+# How many perks the character knows in each pool, combat
 # and noncombat (docs/PERKS.md: at most the store's perk cap in each).
 func _known_count(client: Object) -> Dictionary:
 	var counts := {"combat": 0, "noncombat": 0}
@@ -1429,9 +1423,6 @@ func _known_count(client: Object) -> Dictionary:
 				continue
 			var pool := str(def.get("pool", "combat"))
 			var count := (p.get("perks", []) as Array).size()
-			for m: Dictionary in def.get("milestones", []):
-				if int(m.get("level", 0)) <= int(p.get("trained", 0)):
-					count += 1
 			counts[pool] = int(counts.get(pool, 0)) + count
 	return counts
 

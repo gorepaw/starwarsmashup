@@ -1,6 +1,6 @@
 # Headless checks for the professions (docs/PROFESSIONS.md, docs/PERKS.md):
 # 1. The roster loads through SwmCharacterStore (29 professions; weapon and
-#    armor ones with their perks, the rest with milestones, in words; the
+#    armor ones and the rest with their perks, in words; the
 #    level curve and the perk cap), and the planner draws what's known
 #    against the cap, and a trainer's screen its perks and their buttons.
 # 2. A live Mos Eisley session: the planner opens with the client's
@@ -34,20 +34,21 @@ func _initialize() -> void:
 	var roster: Array = store.get_professions()
 	assert(roster.size() == 29, "expected 29 professions, got %d" % roster.size())
 	var rifles: Dictionary = roster.filter(func(p: Dictionary) -> bool: return p["id"] == "rifles")[0]
-	assert((rifles["milestones"] as Array).is_empty() and (rifles["perks"] as Array).size() == 10)
+	assert(not rifles.has("milestones") and (rifles["perks"] as Array).size() == 10)
 	var first: Dictionary = rifles["perks"][0]
 	assert(first["id"] == "rifles_long_barrel" and first["choice"] == "A" and int(first["level"]) == 5)
 	assert(first["perks"] == ["20% longer full-damage range"], "perk words: %s" % [first["perks"]])
 	assert(int(first["cost"]) == 500 and str(first["needs"]) == "")
-	# An advanced profession of perks (a level-1 licence), and one still of milestones.
+	# Advanced professions of perks (a level-1 licence): milestones are gone.
 	var doctor: Dictionary = roster.filter(func(p: Dictionary) -> bool: return p["id"] == "doctor")[0]
-	assert((doctor["milestones"] as Array).is_empty() and (doctor["perks"] as Array).size() == 10)
+	assert((doctor["perks"] as Array).size() == 10)
 	assert(str(doctor["pool"]) == "combat" and int(doctor["first_perk"]) == 1)
 	var survey: Dictionary = roster.filter(func(p: Dictionary) -> bool: return p["id"] == "surveying")[0]
 	assert(str(survey["pool"]) == "noncombat" and int(survey["first_perk"]) == 1 and (survey["perks"] as Array).size() == 10)
-	assert(is_equal_approx(float(store.perk_bonus(PackedStringArray(["survey_prospectors_scanner", "survey_rich_veins"]), "yield")), 0.35))
+	assert(is_equal_approx(float(store.perk_bonus(PackedStringArray(["survey_prospectors_scanner", "survey_twin_seams"]), "yield")), 0.15))
+	assert(is_equal_approx(float(store.perk_bonus(PackedStringArray(["survey_prospectors_scanner", "survey_twin_seams"]), "double_haul")), 0.15))
 	var operator: Dictionary = roster.filter(func(p: Dictionary) -> bool: return p["id"] == "droid_operations")[0]
-	assert((operator["milestones"] as Array).size() == 5 and (operator["perks"] as Array).is_empty())
+	assert((operator["perks"] as Array).size() == 10 and str(operator["pool"]) == "combat" and int(operator["first_perk"]) == 1)
 	var entertainer: Dictionary = roster.filter(func(p: Dictionary) -> bool: return p["id"] == "entertainer")[0]
 	assert(str(entertainer["pool"]) == "noncombat" and int(entertainer["first_perk"]) == 1)
 	var lv: Dictionary = store.profession_level(215 + 50)
@@ -61,8 +62,8 @@ func _initialize() -> void:
 	_screen.store = store
 	_screen.cap = int(store.get_perk_cap())
 	_screen.progress = {"rifles": 21000, "medium_armor": 4000, "pistols": 300, "droid_operations": 9000}
-	_screen.known = {"rifles": ["rifles_long_barrel", "rifles_braced"], "medium_armor": ["medium_conditioning"]}
-	_screen.trained = {"droid_operations": 25}
+	_screen.known = {"rifles": ["rifles_long_barrel", "rifles_braced"], "medium_armor": ["medium_conditioning"],
+			"droid_operations": ["do_perk_repair", "do_perk_overcharge"]}
 	_screen.open_screen()
 	assert(_screen._learned().size() == 5, "known: %s" % [_screen._learned()])
 	_screen._on_click("row:6", Vector2.ZERO)  # Rifles, in Combat

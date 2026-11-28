@@ -1,5 +1,5 @@
 # Headless checks for Stage 7's gathering, Material Vault, Multi-Scanner, and Unified Workbench:
-# 1. Crafting data loads through SwmCharacterStore (16 resources, 21 schematics, 5 work orders),
+# 1. Crafting data loads through SwmCharacterStore (16 resources, the schematics),
 #    scan_terrain / auto_fill_schematic / preview_craft work, and WorkbenchScreen renders.
 # 2. Live solo Mos Eisley session: workbenches arrive, a trainer teaches Surveying's licence,
 #    the Multi-Scanner extracts into the Material Vault,
@@ -33,10 +33,8 @@ func _initialize() -> void:
 
 	var res: Array = store.get_resources()
 	var sch: Array = store.get_schematics()
-	var wo: Array = store.get_work_orders()
 	assert(res.size() == 16, "expected 16 resources, got %d" % res.size())
 	assert(sch.size() >= 26, "expected at least 26 schematics, got %d" % sch.size())
-	assert(wo.size() == 5, "expected 5 work orders, got %d" % wo.size())
 
 	var scan: Dictionary = store.scan_terrain("mineral", -3520.0, -4790.0, 60.0, 17)
 	assert(not scan.is_empty() and str(scan.get("resource_id", "")) != "", "scan_terrain failed: %s" % scan)
@@ -64,7 +62,6 @@ func _initialize() -> void:
 	_screen.catalog = store.get_catalog()
 	_screen.resources = res
 	_screen.schematics = sch
-	_screen.work_orders = wo
 	_screen.materials = vault
 	_screen.open_screen()
 	_screen.queue_redraw()

@@ -160,7 +160,7 @@ void GameServer::load_services_data(Client& client) {
                 // what they cost is refunded, and they're gone. A licence
                 // milestone becomes the licence perk (its first A), free.
                 for (const int level : {1, 25, 50, 75, 100}) {
-                    if (level <= p.trained) refund += milestone_cost(level);
+                    if (level <= p.trained) refund += perk_cost(level);
                 }
                 if (def.first_perk_level == 1 && p.perks.empty()) {
                     for (const ProfessionPerkDef& perk : def.perks) {
@@ -273,11 +273,9 @@ void GameServer::handle_service_request(Client& client, const net::ServiceReques
                                int(client.loadout));
     };
     switch (req.action) {
-    case net::ServiceRequest::train:
     case net::ServiceRequest::learn_perk:
     case net::ServiceRequest::forget: {
-        // A trainer teaches and takes back their own professions' perks and
-        // milestones (docs/PERKS.md).
+        // A trainer teaches and takes back their own professions' perks (docs/PERKS.md).
         const ProfessionBook* book = config_.professions;
         if (book == nullptr) return;
         const ProfessionDef* def = nullptr;
@@ -286,18 +284,9 @@ void GameServer::handle_service_request(Client& client, const net::ServiceReques
             notify(client.entity, "There's no one here to teach that.");
             return;
         }
-        TrainResult result;
-        switch (req.action) {
-        case net::ServiceRequest::train:
-            result = learn_milestone(*book, client.professions, def->id, int(req.amount), client.credits);
-            break;
-        case net::ServiceRequest::learn_perk:
-            result = learn_perk(*book, client.professions, req.id, client.credits);
-            break;
-        default:
-            result = forget(*book, client.professions, req.id);
-            break;
-        }
+        const TrainResult result = req.action == net::ServiceRequest::learn_perk
+                                       ? learn_perk(*book, client.professions, req.id, client.credits)
+                                       : forget(*book, client.professions, req.id);
         notify(client.entity, result.message);
         if (!result.ok) return;
         if (result.cost > 0) {

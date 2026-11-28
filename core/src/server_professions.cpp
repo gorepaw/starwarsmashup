@@ -1,5 +1,5 @@
 // Professions on the server (docs/PROFESSIONS.md, docs/PERKS.md): experience
-// from what players do, levels, and the perks and milestones they've learned.
+// from what players do, levels, and the perks they've learned.
 #include <algorithm>
 #include <format>
 
@@ -58,11 +58,6 @@ void GameServer::earn_profession_xp(Client& client, const std::string& id, int64
         return;
     }
     std::string text = std::format("{} reached level {}", def->name, after);
-    for (const ProfessionMilestone& m : def->milestones) {
-        if (m.level > before && m.level <= after) {
-            text += std::format(": a trainer can teach you {}", m.name);
-        }
-    }
     for (const int level : def->perk_tiers()) {
         if (def->chooses() && level > before && level <= after) {
             text += std::format(": a trainer can teach you a level-{} perk", level);
@@ -70,15 +65,6 @@ void GameServer::earn_profession_xp(Client& client, const std::string& id, int64
     }
     notify(client.entity, text);
     save_professions(client);
-    // Ranks grow with the level (none now; kept for data that has them).
-    if (def->rank_every > 0) {
-        rebuild_client_loadouts(client);
-        ++client.inventory_rev;
-        client.last_sync_tick = 0;
-        client.stats = stats_for(loadout_of(client), client.species, config_.base_stats);
-        client.health = std::min(client.health, client.stats.max_health);
-        client.shield = std::min(client.shield, client.stats.shield_capacity);
-    }
 }
 
 void GameServer::route_xp(Client& client, int64_t xp) {

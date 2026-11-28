@@ -2,7 +2,7 @@
 
 What crafters make, and how, next to the equipment in the item catalog. The
 gathering and one-step crafting loop (resources, the Material Vault, presets,
-batches, work orders, salvage) is in [PROFESSIONS.md](PROFESSIONS.md); this
+batches, artisan terminal orders, salvage) is in [PROFESSIONS.md](PROFESSIONS.md); this
 covers what gets made: schematics for the whole catalog, Mk tiers, modules
 and dyes.
 
@@ -232,6 +232,5 @@ The Tailor has 152 pieces of Galaxies' clothing to make, in addition to the orig
 
 - City quartermasters' spots are 3 m off each town's quest giver (or bazaar terminal), a measured offset rather than a placement checked in the city; some may stand in a wall or off an Ewok platform. Check each in play and move it.
 - Blueprints from loot drops, and city reputation from more sources (supplying the quartermaster, hunting nearby).
-- Work orders for the new families (only the first five exist).
 - Female-only clothing (gowns, skirts) wants a gender rule for items.
 - Tuning: levels, material amounts and the module trade-offs, in play.

@@ -119,19 +119,19 @@ uint64_t to_uint(const std::string& text) {
     }
 }
 
-constexpr std::array<std::string_view, 28> effect_names{
+constexpr std::array<std::string_view, 29> effect_names{
     "buff",          "heal",        "heal_area", "damage_area",      "hazard",
     "cleanse",       "revive",      "cloak",     "mark",             "snare",
     "jump",          "deploy",      "strike",    "supply",           "vehicle_repair",
     "vehicle_guard", "companion_repair", "companion_overcharge", "perform", "track",
     "seeker",        "hvt",         "tranquilize", "tame",           "sample_dna",
-    "blind",         "vehicle_boost", "vehicle_flare",
+    "blind",         "vehicle_boost", "vehicle_flare", "companion_self_destruct",
 };
 constexpr std::array<std::string_view, 5> target_names{"self", "ally", "enemy", "ground", "creature"};
 constexpr std::array<std::string_view, 7> deploy_names{"none",         "heal_aura", "buff_aura", "sensor",
                                                        "trap",         "spawn_beacon", "camp"};
-constexpr std::array<std::string_view, 6> contract_names{"npc_mark", "pvp_mark", "contraband", "track", "gig",
-                                                         "craft_order"};
+constexpr std::array<std::string_view, 7> contract_names{"npc_mark", "pvp_mark", "contraband", "track", "gig",
+                                                         "craft_order", "survey"};
 
 template <typename E, size_t N>
 std::optional<E> from_names(const std::array<std::string_view, N>& names, std::string_view name) {
@@ -398,8 +398,7 @@ ProfessionStanding profession_standing(const ProfessionBook& professions, std::s
     for (const ProfessionProgress& p : progress) {
         if (p.id == id) {
             out.level = professions.level_for(p.xp);
-            out.trained = p.trained;
-            // A profession of perks: licensed, and the highest tier known.
+            // Licensed, and the highest tier known.
             if (const ProfessionDef* def = professions.find(id); def != nullptr && def->chooses()) {
                 out.trained = licensed(professions, progress, id) ? 1 : 0;
                 for (const std::string& known : p.perks) {
@@ -422,18 +421,13 @@ std::vector<std::string> unlocked_abilities(const SpecialistBook& book, const Pr
         if ((in_match && a.world_only) || (!in_match && a.match_only)) continue;
         const ProfessionDef* def = professions.find(a.profession);
         if (def == nullptr || !def->available) continue;
-        if (def->chooses()) {
-            // A profession of perks: the abilities its known perks teach.
-            const ProfessionProgress* p = find_progress(progress, def->id);
-            const bool taught = p != nullptr && std::any_of(p->perks.begin(), p->perks.end(), [&](const std::string& id) {
-                const ProfessionPerkDef* perk = professions.find_perk(id);
-                return perk != nullptr && std::find(perk->abilities.begin(), perk->abilities.end(), a.id) != perk->abilities.end();
-            });
-            if (taught) out.push_back(a.id);
-            continue;
-        }
-        const ProfessionStanding st = profession_standing(professions, progress, def->id);
-        if (st.level >= a.level && st.trained >= a.level) out.push_back(a.id);
+        // The abilities its known perks teach.
+        const ProfessionProgress* p = find_progress(progress, def->id);
+        const bool taught = p != nullptr && std::any_of(p->perks.begin(), p->perks.end(), [&](const std::string& id) {
+            const ProfessionPerkDef* perk = professions.find_perk(id);
+            return perk != nullptr && std::find(perk->abilities.begin(), perk->abilities.end(), a.id) != perk->abilities.end();
+        });
+        if (taught) out.push_back(a.id);
     }
     return out;
 }
@@ -655,6 +649,7 @@ int64_t contract_reward(ContractKind kind, int tier, double distance) {
     case ContractKind::track: return int64_t(80 + d * 0.4);
     case ContractKind::gig: return 300;
     case ContractKind::craft_order: return int64_t(60 * std::max(1, tier));
+    case ContractKind::survey: return int64_t(120 + 80 * std::max(1, tier));
     }
     return 0;
 }

@@ -101,7 +101,7 @@ WeaponModifier parse_weapon_modifier(const std::string& text, const std::string&
 }
 
 // "Modifier = <stat> ..." and "Weapon = <field> * <n>" lines with a prefix
-// ("" for a milestone's, "Rank" for the rank's).
+// (only "" now: a perk's).
 void read_perk(const Ini::Section& section, std::string_view prefix, ProfessionPerk& perk, const std::string& where) {
     for (const auto& [key, value] : section.values) {
         if (!(key.size() > prefix.size() && same(std::string_view(key).substr(0, prefix.size()), prefix))) {
@@ -213,26 +213,7 @@ void ProfessionBook::parse(const Ini& ini, const std::string& where) {
             if (def.first_perk_level != 1 && def.first_perk_level != perk_levels[0]) {
                 throw std::runtime_error(at + ": FirstPerk is 1 or 5");
             }
-            def.rank_every = int(s.number("RankEvery", 0));
-            read_perk(s, "Rank", def.rank, at);
-            if (def.rank_every <= 0 && !def.rank.empty()) {
-                throw std::runtime_error(at + ": rank perks need RankEvery");
-            }
             professions_.push_back(std::move(def));
-        } else if (same(s.name, "milestone")) {
-            if (professions_.empty()) {
-                throw std::runtime_error(where + ": a [milestone] before any [profession]");
-            }
-            ProfessionDef& def = professions_.back();
-            ProfessionMilestone m;
-            m.level = int(s.number("Level", 0));
-            if (m.level < 1 || m.level > profession_max_level) {
-                throw std::runtime_error(where + " (" + def.id + "): a milestone's Level is 1 to 100");
-            }
-            m.name = s.get("Name").value_or("");
-            m.description = s.get("Description").value_or("");
-            read_perk(s, "", m.perk, where + " (" + def.id + ")");
-            def.milestones.push_back(std::move(m));
         } else if (same(s.name, "perk")) {
             if (professions_.empty()) {
                 throw std::runtime_error(where + ": a [perk] before any [profession]");
@@ -353,13 +334,8 @@ void ProfessionBook::parse(const Ini& ini, const std::string& where) {
         }
     }
     for (ProfessionDef& def : professions_) {
-        std::stable_sort(def.milestones.begin(), def.milestones.end(),
-                         [](const ProfessionMilestone& a, const ProfessionMilestone& b) { return a.level < b.level; });
         if (!def.chooses()) {
             continue;
-        }
-        if (!def.milestones.empty()) {
-            throw std::runtime_error(where + " (" + def.id + "): perks or milestones, not both");
         }
         std::stable_sort(def.perks.begin(), def.perks.end(), [](const ProfessionPerkDef& a, const ProfessionPerkDef& b) {
             return a.level != b.level ? a.level < b.level : a.choice < b.choice;
@@ -468,12 +444,8 @@ ProfessionProgress& progress_for(std::vector<ProfessionProgress>& progress, std:
     return progress.back();
 }
 
-int learned_count(const ProfessionDef& def, const ProfessionProgress& progress) {
-    if (def.chooses()) {
-        return int(progress.perks.size());
-    }
-    return int(std::count_if(def.milestones.begin(), def.milestones.end(),
-                             [&](const ProfessionMilestone& m) { return m.level <= progress.trained; }));
+int learned_count(const ProfessionDef&, const ProfessionProgress& progress) {
+    return int(progress.perks.size());
 }
 
 int perks_learned(const ProfessionBook& book, std::span<const ProfessionProgress> progress, PerkPool pool) {
@@ -521,17 +493,15 @@ bool licensed(const ProfessionBook& book, std::span<const ProfessionProgress> pr
     const ProfessionDef* def = book.find(id);
     if (def == nullptr || !def->available) return false;
     if (def->category == ProfessionCategory::weapon || def->category == ProfessionCategory::armor) return true;
+    if (!def->chooses()) return false;  // (nothing to learn)
+    // A licence tier (FirstPerk = 1): one of its level-1 perks; else none needed.
+    if (def->first_perk_level > 1) return true;
     const ProfessionProgress* p = find_progress(progress, id);
-    if (def->chooses()) {
-        // A licence tier (FirstPerk = 1): one of its level-1 perks; else none needed.
-        if (def->first_perk_level > 1) return true;
-        if (p == nullptr) return false;
-        return std::any_of(p->perks.begin(), p->perks.end(), [&](const std::string& known) {
-            const ProfessionPerkDef* perk = book.find_perk(known);
-            return perk != nullptr && perk->level == def->first_perk_level;
-        });
-    }
-    return p != nullptr && p->trained >= 1;
+    if (p == nullptr) return false;
+    return std::any_of(p->perks.begin(), p->perks.end(), [&](const std::string& known) {
+        const ProfessionPerkDef* perk = book.find_perk(known);
+        return perk != nullptr && perk->level == def->first_perk_level;
+    });
 }
 
 namespace {
@@ -575,7 +545,7 @@ TrainResult learn_perk(const ProfessionBook& book, std::vector<ProfessionProgres
     }
     const bool paid_before = mine != nullptr && std::find(mine->paid_perks.begin(), mine->paid_perks.end(), perk->id) !=
                                                     mine->paid_perks.end();
-    const int64_t cost = paid_before ? 0 : milestone_cost(perk->level);
+    const int64_t cost = paid_before ? 0 : perk_cost(perk->level);
     if (credits < cost) {
         return refused(std::format("{} Cr to learn {}.", cost, perk->name));
     }
@@ -585,40 +555,6 @@ TrainResult learn_perk(const ProfessionBook& book, std::vector<ProfessionProgres
     return {true, cost,
             cost > 0 ? std::format("Learned {} ({}) for {} Cr", perk->name, def->name, cost)
                      : std::format("Learned {} ({})", perk->name, def->name)};
-}
-
-TrainResult learn_milestone(const ProfessionBook& book, std::vector<ProfessionProgress>& progress,
-                            std::string_view profession_id, int level, int64_t credits) {
-    const ProfessionDef* def = book.find(profession_id);
-    if (def == nullptr || !def->available || def->chooses()) {
-        return refused("There's no one here to teach that.");
-    }
-    const ProfessionProgress* mine = find_progress(progress, def->id);
-    const int trained = mine ? mine->trained : 0;
-    const ProfessionMilestone* next = nullptr;  // the next one not yet learned
-    for (const ProfessionMilestone& m : def->milestones) {
-        if (m.level > trained && (next == nullptr || m.level < next->level)) next = &m;
-    }
-    if (next == nullptr || next->level != level) {
-        return refused("You've learned that already, or must learn what comes before it.");
-    }
-    if (book.level_for(mine ? mine->xp : 0) < level) {
-        return refused(std::format("You need {} level {}.", def->name, level));
-    }
-    if (perks_learned(book, progress, def->pool) >= perk_cap) {
-        return refused(full_message(book, progress, def->pool));
-    }
-    const bool paid_before = mine != nullptr && mine->paid >= level;
-    const int64_t cost = paid_before ? 0 : milestone_cost(level);
-    if (credits < cost) {
-        return refused(std::format("{} Cr to learn {}.", cost, next->name));
-    }
-    ProfessionProgress& p = progress_for(progress, def->id);
-    p.trained = level;
-    p.paid = std::max(p.paid, level);
-    return {true, cost,
-            cost > 0 ? std::format("Learned {} ({}) for {} Cr", next->name, def->name, cost)
-                     : std::format("Learned {} ({})", next->name, def->name)};
 }
 
 TrainResult forget(const ProfessionBook& book, std::vector<ProfessionProgress>& progress, std::string_view id) {
@@ -633,25 +569,7 @@ TrainResult forget(const ProfessionBook& book, std::vector<ProfessionProgress>& 
         }
         return refused(std::format("You don't know {}.", perk->name));
     }
-    def = book.find(id);
-    if (def == nullptr || def->chooses()) {
-        return refused("There's nothing like that to give up.");
-    }
-    for (ProfessionProgress& p : progress) {
-        if (p.id != def->id || p.trained < 1) continue;
-        // Back to the milestone before the last learned.
-        const ProfessionMilestone* last = nullptr;
-        int before = 0;
-        for (const ProfessionMilestone& m : def->milestones) {
-            if (m.level <= p.trained) {
-                if (last != nullptr) before = last->level;
-                last = &m;
-            }
-        }
-        p.trained = before;
-        return {true, 0, std::format("Gave up {} ({})", last ? last->name : def->name, def->name)};
-    }
-    return refused(std::format("You've learned nothing of {}.", def->name));
+    return refused("There's nothing like that to give up.");
 }
 
 std::vector<std::string> routed_professions(const ProfessionBook& book, const Loadout& loadout) {
@@ -700,7 +618,7 @@ bool can_use_mark(const ProfessionBook& book, const ItemDef& def, int mark,
     return clamp_mark(mark) == 0 || level_for_item(book, def, progress) >= mark_level(mark);
 }
 
-int64_t milestone_cost(int level) {
+int64_t perk_cost(int level) {
     if (level <= 1) return 0;
     if (level <= 25) return 500;
     if (level <= 50) return 2500;
@@ -710,14 +628,6 @@ int64_t milestone_cost(int level) {
 
 ProfessionPerk profession_perks(const ProfessionDef& def, const ProfessionProgress& progress, int level) {
     ProfessionPerk perk;
-    if (def.rank_every > 0) {
-        add_perk(perk, def.rank, level / def.rank_every);
-    }
-    for (const ProfessionMilestone& m : def.milestones) {
-        if (m.level <= level && m.level <= progress.trained) {
-            add_perk(perk, m.perk);
-        }
-    }
     for (const ProfessionPerkDef& p : def.perks) {
         if (p.needs.empty() && !p.trigger && p.level <= level &&
             std::find(progress.perks.begin(), progress.perks.end(), p.id) != progress.perks.end()) {
@@ -752,11 +662,8 @@ void apply_profession_perks(Loadout& loadout, const ProfessionBook& book, std::s
         const int level = book.level_for(mine.xp);
         const ProfessionPerk perk = profession_perks(*def, mine, level);
         perks.modifiers.insert(perks.modifiers.end(), perk.stats.begin(), perk.stats.end());
-        // Handling, each to the weapons it's for: ranks and milestones to all
-        // the profession's, a perk to its own (or all).
-        ProfessionPerk shared = profession_perks(*def, ProfessionProgress{mine.id, mine.xp, mine.trained}, level);
-        std::vector<std::pair<const std::vector<std::string>*, const std::vector<WeaponModifier>*>> handling{
-            {&def->archetypes, &shared.weapons}};
+        // Handling, each perk's to the weapons it's for (its own, or all the profession's).
+        std::vector<std::pair<const std::vector<std::string>*, const std::vector<WeaponModifier>*>> handling;
         for (const ProfessionPerkDef& p : def->perks) {
             if (p.needs.empty() && !p.trigger && p.level <= level && !p.perk.weapons.empty() &&
                 std::find(mine.perks.begin(), mine.perks.end(), p.id) != mine.perks.end()) {

@@ -112,17 +112,6 @@ struct RecipePreset {
     friend bool operator==(const RecipePreset&, const RecipePreset&) = default;
 };
 
-struct WorkOrder {
-    std::string id;
-    std::string title;
-    std::string profession = "weaponsmith";
-    std::string output_item;
-    int count = 1;
-    int64_t reward_credits = 0;
-    int64_t reward_fp = 0;
-    int64_t reward_xp = 0;
-};
-
 // A craft's odds of each grade (docs/CRAFTING.md, Grades), summing to 1.
 struct ExperimentOdds {
     double flawed = 0.25;
@@ -153,7 +142,7 @@ enum class AutoFillMode : uint8_t { best_quality, best_stat, cheapest };
 class CraftingBook {
 public:
     void load_resources(const std::filesystem::path& path);
-    // Its [schematic]s and [work_order]s, and its [family]s' (docs/CRAFTING.md,
+    // Its [schematic]s, and its [family]s' (docs/CRAFTING.md,
     // Schematics): one schematic for every catalog item a family matches (by
     // kind, archetype, armor class, slot, id), unless a [schematic] makes it.
     // The catalog is its [catalog] Path, relative to the file.
@@ -165,8 +154,6 @@ public:
     const ResourceDef* find_resource(std::string_view id) const;
     const std::vector<SchematicDef>& schematics() const { return schematics_; }
     const SchematicDef* find_schematic(std::string_view id) const;
-    const std::vector<WorkOrder>& work_orders() const { return work_orders_; }
-    const WorkOrder* find_work_order(std::string_view id) const;
 
     // Deterministic 0..1 topographic concentration field for a resource at (x, z) in game space.
     double concentration_at(const ResourceDef& def, double x, double z) const;
@@ -204,7 +191,6 @@ public:
 private:
     std::vector<ResourceDef> resources_;
     std::vector<SchematicDef> schematics_;
-    std::vector<WorkOrder> work_orders_;
 };
 
 int64_t material_amount(std::span<const MaterialStack> vault, std::string_view resource_id);

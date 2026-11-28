@@ -1,6 +1,6 @@
 # Trainer Perks
 
-The rework of what professions teach. It replaces milestones at 1 / 25 / 50 / 75 / 100 ([Professions](PROFESSIONS.md)) with two perks to choose between at each tier. Weapons and armor were first; then Squad Leader, Doctor and Entertainer, gathering and crafting, Bounty Hunter, Smuggler, Ranger, Merchant, Pilot, Bio-Engineer, Creature Handler and Droid Engineer (2026-11-27). The other advanced professions follow one by one and keep their milestones until their turn.
+The rework of what professions teach. It replaces milestones at 1 / 25 / 50 / 75 / 100 ([Professions](PROFESSIONS.md)) with two perks to choose between at each tier. Weapons and armor were first; then Squad Leader, Doctor and Entertainer, gathering and crafting, Bounty Hunter, Smuggler, Ranger, Merchant, Pilot, Bio-Engineer, Creature Handler, Droid Engineer and Droid Operations (2026-11-27). Every profession teaches perks now; the milestone code is gone (`learn_milestone`, `[milestone]`, ranks).
 
 Status: **built** (see Order of work): the rules, the cap, trainers, licences, and all 90 perks. The tags say what each needed: nothing new, a trigger (**T**), or a new mechanic (**N**; [Mechanics](#mechanics)).
 
@@ -13,13 +13,13 @@ The old milestones were a fixed chain of small multipliers that every character 
 - **Perk levels: 5, 25, 45, 65, 85.** They fall between the Mk gear levels (10, 20 … 100), so every five levels brings either new gear or a new perk.
 - **Choose A or B.** Each perk level offers two perks, and a character can know one of them. That's at most five perks per profession.
 - **No chain.** A perk needs only its profession's level. Dropping one never takes others with it, so a Melee 85 perk can be learned alone. That's why the 85 perks are the most defining, not the strongest.
-- **Ten combat perks and ten non-combat perks per character** (2026-11-27; it was ten in all), across all three loadouts. Combat: weapons, armor, Bounty Hunter, Smuggler, Squad Leader, Doctor, Ranger, Pilot, Creature Handler, Droid Operations. Non-combat: gathering, crafting, Entertainer, Merchant, Bio-Engineer, Droid Engineer (`Pool =` in professions.ini). Milestones count toward their profession's pool the same way, level 1 included. A fighter no longer gives up gathering or crafting to fight well, but within a pool nothing is free.
+- **Ten combat perks and ten non-combat perks per character** (2026-11-27; it was ten in all), across all three loadouts. Combat: weapons, armor, Bounty Hunter, Smuggler, Squad Leader, Doctor, Ranger, Pilot, Creature Handler, Droid Operations. Non-combat: gathering, crafting, Entertainer, Merchant, Bio-Engineer, Droid Engineer (`Pool =` in professions.ini). Licence perks count too. A fighter no longer gives up gathering or crafting to fight well, but within a pool nothing is free.
 - **Advanced trees.** An advanced profession's perks are abilities (`Ability =`), switches the server looks for (`Grants =`), or stat changes. Its tiers are 5 / 25 / 45 / 65 / 85, or **1** / 25 / 45 / 65 / 85 (`FirstPerk = 1`) when you can't do it at all without its first perk: then either level-1 perk is its licence, and it's free (Squad Leader: two kinds of rally; Doctor: a healing dart or field dressing, which also licenses medicine; Entertainer: Musician or Dancer). Tiers from 5 (`FirstPerk = 5`, the default) are for a profession you can practise without a perk; none does now.
 - **Two buttons at most.** No profession adds more than two abilities to a character's bar: two of its tiers are a pair of buttons (one of each pair learned), the rest passives. Using a profession's abilities earns its experience. A perk's switches travel with a loadout into a match (`Loadout::grants`), so they work there too. Squad Leader's Shields Up and Press On ride on its orders; Doctor's Splash, Lingering Bacta, Defibrillator and Field Triage are what its heal does besides; Spotter and Squad Spawn Point replace Mark Target and the beacon.
-- **The level-1 perk is the licence.** A non-combat or specialist profession's level-1 milestone is what lets you do its activity at all: survey and harvest, craft its schematics, heal, tame, perform. Without it you can't, and you earn none of its experience. To level a profession you hold its level-1 perk while you do it; give it up later and you keep the level, and learning it again is free.
+- **The level-1 perk is the licence.** A non-combat or specialist profession's level-1 perk (`FirstPerk = 1`) is what lets you do its activity at all: survey and harvest, craft its schematics, heal, tame, perform. Without it you can't, and you earn none of its experience. To level a profession you hold its level-1 perk while you do it; give it up later and you keep the level, and learning it again is free.
 - **No slots.** Active Specialization Slots are gone. What a character has learned works everywhere: a weapon perk whenever you fight with that profession's weapons, an armor perk whenever your armor is that class, a specialist's abilities in every loadout. The cap does the limiting the slots did. Levelling stays uncapped: every profession can reach 100.
 - **Trainers.**
-  - Learning a perk the first time costs credits (`milestone_cost` at the perk's level: 500, 500, 2,500, 7,500, 20,000).
+  - Learning a perk the first time costs credits (`perk_cost` at the perk's level: 500, 500, 2,500, 7,500, 20,000).
   - Learning a perk you've paid for before is free.
   - Giving a perk up is free.
   - Both learning and giving up happen at that profession's trainer, so trying things costs nothing, but rebuilding a whole character means a trip around the trainers.
@@ -128,9 +128,21 @@ Block and parry already work against melee.
 
 ### Gathering and crafting
 
-Every one starts at **1**: either level-1 perk is its licence (gather, or craft its schematics and fill its work orders) and is free. Its perks are numbers the server sums by name (`Bonus = <key> <value>`), the same five per kind, named for each profession.
+Every one starts at **1**: either level-1 perk is its licence (gather, or craft its schematics and fill its artisan terminal orders) and is free. Each is being given perks of its own, one at a time (gathering first, 2026-11-28); until its turn, its perks are numbers the server sums by name (`Bonus = <key> <value>`), the same five per kind, named for each profession. A workbench's work orders are gone: crafting orders are the artisan terminals' ([Professions](PROFESSIONS.md)).
 
-Gathering (Surveying, Foraging, Salvaging):
+#### Surveying
+
+A licence at 1; no buttons. Survey missions come from artisan terminals (`ContractKind::survey`): a resource kind at a concentration that climbs with the surveyor's level (45% at tier 1 up to 85%), extracted 300 m or more from the terminal (`survey_mission_distance`).
+
+| Level | A | B |
+|---|---|---|
+| 1 | **Prospector's Scanner**: 15% more per extraction (`yield`) | **Quick Extraction**: extracting takes 4 s, not 6 (`extract_time_for`) |
+| 25 | **Rich Veins**: 30% more at 60% concentration or richer | **Close Spacing**: ground worked out for 10 m, not 25 |
+| 45 | **Twin Seams**: 15% chance of a double haul | **Survey Contracts**: survey missions pay 50% more (`order_pay`) |
+| 65 | **Core Sample**: a quarter as much again of the richest other resource there | **Seasoned Prospector**: 25% more Surveying experience |
+| 85 | **Mother Lode**: double at 80% concentration or richer | **Rare Finds**: one extraction in 20 turns up a few of the finest-quality resource of its kind on the planet |
+
+Gathering not yet given its own (Foraging, Salvaging):
 
 | Level | A | B |
 |---|---|---|
@@ -145,7 +157,7 @@ Crafting (Weaponsmith, Armorsmith, Tailor, Chef, Architect):
 | Level | A | B |
 |---|---|---|
 | 1 | Licence, and Experimentation: better grades (`grade` 0.15) | Licence, and 20% fewer materials (`materials`) |
-| 25 | 15% chance of one more each craft (`extra_item`) | Work orders and artisan orders pay 50% more (`order_pay`) |
+| 25 | 15% chance of one more each craft (`extra_item`) | Artisan terminal orders pay 50% more (`order_pay`) |
 | 45 | 25% more experience | 20% fewer materials |
 | 65 | Better grades again | 25% chance of one more |
 | 85 | Masterwork: Exceptional twice as likely (`exceptional`) | 35% fewer materials |
@@ -253,6 +265,18 @@ A licence at 1 (no assembling without it); no buttons. The chassis and modules y
 | 65 | **Refit**: change a carried droid's modules, paying for the new ones (`SpecialistRequest::refit_droid`, protocol 57) | **Speeder Mechanic**: speeders +0.15 grade odds, 25% fewer materials |
 | 85 | **Masterwork Droids**: droids +10% quality, exceptional grades twice as likely | **Heavy Industry**: 35% fewer materials |
 
+### Droid Operations
+
+A licence at 1 (no registering or fielding droids without it); two buttons at most. The chassis you can field stay levels (droidekas at 100). Its last milestones and its rank (+0.2% ion resistance every 10 levels) are gone; an old save's milestones are refunded and become Remote Repair, as every converted profession's did.
+
+| Level | A | B |
+|---|---|---|
+| 1 | **Remote Repair** *(button)*: 30% from up to 40 m | **Self-Repair Routines**: no button; droids mend 2% a second, 5 s clear of a fight |
+| 25 | **Overcharge** *(button)*: 60% more damage (or healing) for 10 s | **Self-Destruct** *(button)*: droids explode for 300 within 5 m, then the wait as if destroyed |
+| 45 | **Reinforced Frame**: droids +15% health | **Targeting Uplink**: droids +15% damage |
+| 65 | **Sensor Link**: recon droids mark to 40 m, support droids heal within 12 m | **Quick Reboot**: half the wait after a droid is destroyed (`companion_death_wait(client, droid)`) |
+| 85 | **Combat Programming**: droids attack 25% faster, Overcharge twice as long | **Droid Commander**: two droids out at once in the open world; with either it or The Pack, a droid and a creature |
+
 ## Triggers
 
 Most of the perks that matter are conditional, so one general system builds them all: a `Trigger`, what it changes while active (the same `Modifier` / `Weapon` lines other perks use), and what it does at once.
@@ -312,7 +336,7 @@ Everything a client predicts with travels in full precision (the weapons and sta
 
 ## Data
 
-`professions.ini`: a weapon or armor profession's `[milestone]`s become `[perk]`s:
+`professions.ini`: each profession's `[perk]`s (the `[milestone]` section is gone):
 
 ```ini
 [perk]
@@ -328,7 +352,7 @@ Weapon = speed * 0.77
 
 Each of the nine professions has ten perks, two at each level. The loader checks that each level has exactly one A and one B, and that a triggered perk makes sense (something to do, a `Duration` for what it changes). Other keys: `Needs = mechanic` for a perk that waits (learnable, but it applies nothing; none does now), and `Archetypes` for a perk that's for only some of its profession's weapons (its handling, and which weapons' hits and kills trigger it).
 
-Persistence: per character extras for each profession: `trained:` (the last milestone learned), `paid:` (the highest milestone ever paid for), `perks:` and `paid_perks:` (comma-separated perk ids). Old saves: the credits spent on weapon and armor milestones are refunded and those milestones dropped (ASSUMPTION: a clean start beats mapping old milestones onto new perks). An old save may know more than ten; it can't learn more until it's under the cap.
+Persistence: per character extras for each profession: `perks:` and `paid_perks:` (comma-separated perk ids); `trained:` and `paid:` are an old save's milestones, read only to refund them. Old saves: the credits spent on milestones are refunded and those milestones dropped (a licence milestone becomes the first A perk) (ASSUMPTION: a clean start beats mapping old milestones onto new perks). An old save may know more than ten; it can't learn more until it's under the cap.
 
 ## Order of work
 
@@ -339,5 +363,4 @@ Persistence: per character extras for each profession: `trained:` (the last mile
 ## Open questions
 
 - **Harvesting needs a licence now** (corpses: Foraging, or Salvaging for bandits; surveying: Surveying or Foraging for flora); looting stays open to everyone. Check this feels right in play.
-- Non-weapon, non-armor milestones stay a chain at 1 / 25 / 50 / 75 / 100 for now (each learned one counts as one perk) until their own trees are reworked.
 - **Numbers:** every percentage above is an ASSUMPTION, to be tuned in play.

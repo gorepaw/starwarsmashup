@@ -7,14 +7,12 @@ signal craft_requested(schematic_id: String, resource_ids: PackedStringArray, en
 signal dye_requested(item_id: int, dye: String)
 signal preset_saved(name: String, schematic_id: String, resource_ids: PackedStringArray, enhancement_defs: PackedStringArray, exp_quality_pct: int)
 signal preset_deleted(name: String)
-signal work_order_fulfilled(order_id: String)
 signal item_salvaged(item_id: int)
 signal closed
 
 const TABS := [
 	["workbench", "Workbench"],
 	["vault", "Material Vault"],
-	["orders", "Work Orders"],
 	["salvage", "Salvage"],
 	["dye", "Dye"],
 ]
@@ -66,7 +64,6 @@ var store: Object
 var catalog: Array = []
 var resources: Array = []
 var schematics: Array = []
-var work_orders: Array = []
 var materials: Array = []
 var presets: Array = []
 var blueprints: PackedStringArray = []  # `Blueprint = yes` schematics learned (the rest stay hidden)
@@ -353,8 +350,6 @@ func _paint() -> void:
 			_paint_workbench(body)
 		"vault":
 			_paint_vault(body)
-		"orders":
-			_paint_orders(body)
 		"salvage":
 			_paint_salvage(body)
 		"dye":
@@ -640,30 +635,6 @@ func _paint_vault(rect: Rect2) -> void:
 				Vector2(row.position.x + 380 * u, row.position.y + 9 * u), "Left", TEXT)
 
 
-func _paint_orders(rect: Rect2) -> void:
-	draw_rect(rect, Color(0.04, 0.06, 0.09, 0.65))
-	var eq := _equipped_ids()
-	var ry := rect.position.y + 10 * u
-	for wo: Dictionary in work_orders:
-		var out_id := str(wo.get("output_item", ""))
-		var need := int(wo.get("count", 1))
-		var have := 0
-		for inst: Dictionary in inventory:
-			if str(inst.get("def_id", "")) == out_id and not eq.has(int(inst.get("id", 0))):
-				have += 1
-		var row := Rect2(rect.position.x + 10 * u, ry, rect.size.x - 20 * u, 56 * u)
-		frame(row, "border_3_pieces", Color(1, 1, 1, 0.8))
-		var item_def: Dictionary = _cat_by_id.get(out_id, {})
-		text("gamefont_small", str(wo.get("title", "")), row.position + Vector2(12, 8) * u, "Left", ACCENT)
-		text("gamefont_tiny", "Deliver %dx %s (have %d)   |   +%d Cr, +%d FP, +%d %s XP" % [
-				need, str(item_def.get("name", out_id)), have, int(wo.get("reward_credits", 0)),
-				int(wo.get("reward_fp", 0)), int(wo.get("reward_xp", 0)), str(wo.get("profession", "")).capitalize()],
-				row.position + Vector2(12, 30) * u, "Left", TEXT)
-		button(Rect2(row.end.x - 116 * u, row.position.y + 13 * u, 102 * u, 30 * u),
-				"Fulfill", "order:" + str(wo.get("id", "")), false, false, have >= need)
-		ry += 64 * u
-
-
 func _paint_salvage(rect: Rect2) -> void:
 	draw_rect(rect, Color(0.04, 0.06, 0.09, 0.65))
 	var eq := _equipped_ids()
@@ -942,8 +913,6 @@ func _on_click(id: String, _at: Vector2) -> void:
 		_vault_scroll = 0
 	elif id.begins_with("vsort:"):
 		_vault_sort = id.substr(6)
-	elif id.begins_with("order:"):
-		work_order_fulfilled.emit(id.substr(6))
 	elif id.begins_with("salvage:"):
 		item_salvaged.emit(int(id.substr(8)))
 	queue_redraw()

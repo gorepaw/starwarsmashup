@@ -193,7 +193,6 @@ bool dye_values_ok(std::string_view dye) {
 
 void CraftingBook::parse_schematics(const Ini& ini, const std::string& where, const ItemCatalog* catalog) {
     schematics_.clear();
-    work_orders_.clear();
     // A schematic's common keys: [schematic]'s and [family]'s.
     const auto read_recipe = [&](const Ini::Section& s, SchematicDef& def) {
         def.group = s.get("Group").value_or("");
@@ -246,18 +245,6 @@ void CraftingBook::parse_schematics(const Ini& ini, const std::string& where, co
             if (def.output_item.empty()) throw std::runtime_error(where + " (" + def.id + "): missing Output");
             read_recipe(s, def);
             schematics_.push_back(std::move(def));
-        } else if (same(s.name, "work_order")) {
-            WorkOrder wo;
-            wo.id = s.get("Id").value_or("");
-            if (wo.id.empty()) throw std::runtime_error(where + ": [work_order] missing Id");
-            wo.title = s.get("Title").value_or(wo.id);
-            wo.profession = s.get("Profession").value_or("weaponsmith");
-            wo.output_item = s.get("Output").value_or("");
-            wo.count = std::max(1, int(s.number("Count", 1)));
-            wo.reward_credits = std::max<int64_t>(0, int64_t(s.number("Credits", 100)));
-            wo.reward_fp = std::max<int64_t>(0, int64_t(s.number("FactionPoints", 25)));
-            wo.reward_xp = std::max<int64_t>(0, int64_t(s.number("XP", 120)));
-            work_orders_.push_back(std::move(wo));
         } else {
             throw std::runtime_error(where + ": unknown section [" + s.name + "]");
         }
@@ -338,13 +325,6 @@ const ResourceDef* CraftingBook::find_resource(std::string_view id) const {
 const SchematicDef* CraftingBook::find_schematic(std::string_view id) const {
     for (const SchematicDef& s : schematics_) {
         if (s.id == id) return &s;
-    }
-    return nullptr;
-}
-
-const WorkOrder* CraftingBook::find_work_order(std::string_view id) const {
-    for (const WorkOrder& wo : work_orders_) {
-        if (wo.id == id) return &wo;
     }
     return nullptr;
 }

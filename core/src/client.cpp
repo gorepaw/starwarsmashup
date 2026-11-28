@@ -215,15 +215,6 @@ void GameClient::delete_recipe_preset(const std::string& name) {
     }
 }
 
-void GameClient::fulfill_work_order(const std::string& order_id) {
-    if (status_ == Status::connected && !order_id.empty()) {
-        net::CraftRequest req;
-        req.action = net::CraftRequest::fulfill_order;
-        req.order_id = order_id;
-        link_.send(config_.server, net::encode(req));
-    }
-}
-
 void GameClient::request_spawn(int loadout, int post) {
     spawn_request_ = net::SpawnRequest{uint8_t(std::clamp(loadout, 0, 255)), uint8_t(std::clamp(post, 0, 255))};
     last_spawn_request_ = -1e9;  // send at once

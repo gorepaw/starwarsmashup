@@ -66,12 +66,12 @@ void test_roster() {
         CHECK(def.available);  // all of them are in play since Stage 12
         CHECK(!def.name.empty() && !def.description.empty());
         const bool combat = def.category == ProfessionCategory::weapon || def.category == ProfessionCategory::armor;
-        // Weapons, armor and the advanced professions done so far teach perks,
-        // two at each tier (5, or 1 for a licence, then 25/45/65/85); the rest
-        // milestones at 1, 25, 50, 75 and 100.
+        // Every profession teaches perks, two at each tier (5, or 1 for a
+        // licence, then 25/45/65/85): milestones are gone.
         if (combat) CHECK(def.chooses() && def.first_perk_level == 5 && def.pool == PerkPool::combat);
+        CHECK(def.chooses());
         if (def.chooses()) {
-            CHECK(def.perks.size() == 10 && def.milestones.empty() && def.rank_every == 0);
+            CHECK(def.perks.size() == 10);
             const auto tiers = def.perk_tiers();
             for (size_t i = 0; i < def.perks.size(); ++i) {
                 const ProfessionPerkDef& perk = def.perks[i];
@@ -95,10 +95,6 @@ void test_roster() {
                 ++perks;
                 waiting += perk.needs.empty() ? 0 : 1;
             }
-        } else {
-            std::vector<int> levels;
-            for (const ProfessionMilestone& m : def.milestones) levels.push_back(m.level);
-            CHECK((levels == std::vector<int>{1, 25, 50, 75, 100}));
         }
     }
     CHECK(perks == 90);
@@ -153,7 +149,7 @@ void test_training() {
     CHECK(!learn_perk(book, me, "rifles_long_barrel", 100).ok);          // 500 Cr
     CHECK(!learn_perk(book, me, "nothing", 10'000).ok);
     TrainResult r = learn_perk(book, me, "rifles_long_barrel", 1000);
-    CHECK(r.ok && r.cost == milestone_cost(5) && r.cost == 500);
+    CHECK(r.ok && r.cost == perk_cost(5) && r.cost == 500);
     CHECK(!learn_perk(book, me, "rifles_long_barrel", 1000).ok);         // known already
     // A or B: the other at its level must be given up first.
     CHECK(!learn_perk(book, me, "rifles_high_velocity", 1000).ok);
@@ -169,24 +165,19 @@ void test_training() {
     CHECK(!learn_perk(book, me, "rifles_spotter", 10'000).ok);  // level 45
     CHECK(perks_learned(book, me, PerkPool::combat) == 2);
 
-    // Milestones: in order; the level-1 one is the licence.
+    // A licence: the level-1 perk, free; fighting needs none.
     me.push_back({"droid_operations", book.xp_for_level(60)});
     CHECK(!licensed(book, me, "droid_operations"));
-    CHECK(licensed(book, me, "rifles") && licensed(book, me, "heavy_armor"));  // fighting needs none
-    CHECK(!learn_milestone(book, me, "droid_operations", 25, 10'000).ok);  // the one before first
-    r = learn_milestone(book, me, "droid_operations", 1, 0);
+    CHECK(licensed(book, me, "rifles") && licensed(book, me, "heavy_armor"));
+    CHECK(learn_perk(book, me, "do_perk_overcharge", 10'000).ok);  // learnable, but no licence yet
+    CHECK(!licensed(book, me, "droid_operations"));
+    r = learn_perk(book, me, "do_perk_repair", 0);
     CHECK(r.ok && r.cost == 0);
     CHECK(licensed(book, me, "droid_operations"));
-    CHECK(learn_milestone(book, me, "droid_operations", 25, 500).ok);
-    CHECK(learn_milestone(book, me, "droid_operations", 50, 2500).ok);
-    CHECK(!learn_milestone(book, me, "droid_operations", 75, 10'000).ok);  // Droid Operations 60
-    CHECK(!learn_milestone(book, me, "rifles", 1, 0).ok);        // rifles teach perks
+    CHECK(learn_perk(book, me, "do_perk_frame", 2500).ok);
+    CHECK(!learn_perk(book, me, "do_perk_sensor", 10'000).ok);  // Droid Operations 60: not 65
+    CHECK(!forget(book, me, "droid_operations").ok);            // a perk is given up by name
     CHECK(perks_learned(book, me, PerkPool::combat) == 5);
-    // Giving one up takes the last learned; learning it again is free.
-    CHECK(forget(book, me, "droid_operations").ok);
-    CHECK(find_progress(me, "droid_operations")->trained == 25 && perks_learned(book, me, PerkPool::combat) == 4);
-    r = learn_milestone(book, me, "droid_operations", 50, 0);
-    CHECK(r.ok && r.cost == 0);
 
     // Ten at most in a pool: Rifles, Droid Operations and Pilot all fight.
     me.push_back({"pilot", book.xp_for_level(100)});
@@ -199,7 +190,7 @@ void test_training() {
     me[0].xp = book.xp_for_level(100);
     r = learn_perk(book, me, "rifles_spotter", 100'000);
     CHECK(!r.ok && r.message.find("give one up") != std::string::npos);
-    CHECK(!learn_milestone(book, me, "droid_operations", 75, 100'000).ok);
+    CHECK(!learn_perk(book, me, "do_perk_reboot", 100'000).ok);  // (60 still)
     // ...but the non-combat ten are their own: an Entertainer's licence still fits.
     me.push_back({"entertainer", book.xp_for_level(30)});
     CHECK(!licensed(book, me, "entertainer"));
@@ -211,9 +202,9 @@ void test_training() {
     CHECK(forget(book, me, "pl_perk_ace").ok);  // (a perk is given up by name)
     CHECK(learn_perk(book, me, "rifles_spotter", 100'000).ok);
     CHECK(perks_learned(book, me, PerkPool::combat) == 10);
-    // Giving up every milestone of a profession takes its licence too.
-    for (int i = 0; i < 3; ++i) CHECK(forget(book, me, "droid_operations").ok);
-    CHECK(!licensed(book, me, "droid_operations") && !forget(book, me, "droid_operations").ok);
+    // Giving up the licence perk takes the licence.
+    CHECK(forget(book, me, "do_perk_repair").ok);
+    CHECK(!licensed(book, me, "droid_operations") && !forget(book, me, "do_perk_repair").ok);
 
     // Gathering and crafting teach perks from level 1: either level-1 perk is
     // the licence, and their Bonus lines add up by name.
@@ -222,10 +213,10 @@ void test_training() {
         const ProfessionDef* smith = book.find("weaponsmith");
         CHECK(survey && survey->chooses() && survey->first_perk_level == 1 && survey->pool == PerkPool::noncombat);
         CHECK(smith && smith->chooses() && smith->first_perk_level == 1 && smith->pool == PerkPool::noncombat);
-        for (const char* id : {"surveying", "foraging", "salvaging", "weaponsmith", "armorsmith", "tailor", "chef",
-                               "architect"}) {
+        // (Those not yet given their own perks: a Bonus each.)
+        for (const char* id : {"foraging", "salvaging", "weaponsmith", "armorsmith", "tailor", "chef", "architect"}) {
             const ProfessionDef* def = book.find(id);
-            CHECK(def && def->perks.size() == 10 && def->milestones.empty());
+            CHECK(def && def->perks.size() == 10);
             for (const ProfessionPerkDef& perk : def->perks) CHECK(perk.bonuses.size() == 1);
         }
         std::vector<ProfessionProgress> gatherer{{"surveying", book.xp_for_level(90)}};
@@ -234,9 +225,10 @@ void test_training() {
         CHECK(!licensed(book, gatherer, "surveying"));
         const TrainResult lic = learn_perk(book, gatherer, "survey_prospectors_scanner", 0);
         CHECK(lic.ok && lic.cost == 0 && licensed(book, gatherer, "surveying"));
-        CHECK(learn_perk(book, gatherer, "survey_master_prospector", 100'000).ok);
-        CHECK(std::abs(perk_bonus(book, gatherer, "surveying", "yield") - 0.75) < 1e-9);  // 15 + 20 + 40
-        CHECK(perk_bonus(book, gatherer, "surveying", "double_haul") == 0.0);
+        CHECK(learn_perk(book, gatherer, "survey_twin_seams", 100'000).ok);
+        CHECK(std::abs(perk_bonus(book, gatherer, "surveying", "yield") - 0.15) < 1e-9);
+        CHECK(std::abs(perk_bonus(book, gatherer, "surveying", "double_haul") - 0.15) < 1e-9);
+        CHECK(has_grant(book, gatherer, "surveying", "rich_veins"));
         CHECK(perk_bonus(book, gatherer, "foraging", "yield") == 0.0);
         CHECK(perks_learned(book, gatherer, PerkPool::noncombat) == 3 && perks_learned(book, gatherer, PerkPool::combat) == 0);
         const std::vector<std::string> ids{"wsmith_weapon_experimentation", "wsmith_master_experimenter"};

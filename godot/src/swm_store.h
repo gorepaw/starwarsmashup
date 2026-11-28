@@ -78,7 +78,6 @@ public:
     godot::Error load_crafting(const godot::String& resources_path, const godot::String& schematics_path);
     godot::Array get_resources() const;
     godot::Array get_schematics() const;
-    godot::Array get_work_orders() const;
     godot::Dictionary scan_terrain(const godot::String& category, double x, double z, double radius = 60.0,
                                    int64_t grid_n = 17) const;
     godot::PackedStringArray auto_fill_schematic(const godot::String& schematic_id, const godot::Array& materials,

@@ -82,7 +82,7 @@ Galaxies has hundreds of weapons and dozens of armor sets. Battlefront has about
 ## Crafting and economy
 
 - **Spawning resources:** each resource has rated stats (e.g. overall quality, conductivity, decay resistance), spawns in specific areas for a limited time, then depletes.
-- **Streamlined UX:** one Unified Multi-Scanner with 3D terrain contours, a dedicated Material Vault with plain-English stat sorting, and a single-screen workbench (auto-fill, 1-step base crafting + optional enhancement slots, visible experimentation odds, Recipe Presets, and work orders/salvage instead of grind-trash).
+- **Streamlined UX:** one Unified Multi-Scanner with 3D terrain contours, a dedicated Material Vault with plain-English stat sorting, and a single-screen workbench (auto-fill, 1-step base crafting + optional enhancement slots, visible experimentation odds, Recipe Presets, and artisan terminal orders/salvage instead of grind-trash).
 - Items are mostly player-crafted. Loot supplements crafting instead of replacing it.
 - Creatures and NPCs drop credits, junk to sell to junk dealers (as in Galaxies), and now and then gear.
 - Item decay and repair keep demand alive.

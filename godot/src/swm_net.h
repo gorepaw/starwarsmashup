@@ -220,7 +220,6 @@ public:
                             const godot::PackedStringArray& resource_ids,
                             const godot::PackedStringArray& enhancement_defs, int64_t exp_quality_pct);
     void delete_recipe_preset(const godot::String& name);
-    void fulfill_work_order(const godot::String& order_id);
     void talk_to(int64_t npc_entity);
     void use_mission_terminal(int64_t index);
     void accept_quest(const godot::String& id);

@@ -1138,9 +1138,6 @@ void SwmClient::delete_recipe_preset(const godot::String& name) {
     if (client()) client()->delete_recipe_preset(to_std(name));
 }
 
-void SwmClient::fulfill_work_order(const godot::String& order_id) {
-    if (client()) client()->fulfill_work_order(to_std(order_id));
-}
 
 godot::Dictionary SwmClient::get_quests() const {
     godot::Dictionary out;
@@ -2170,7 +2167,6 @@ void SwmClient::_bind_methods() {
     ClassDB::bind_method(D_METHOD("save_recipe_preset", "name", "schematic_id", "resource_ids", "enhancement_defs", "exp_quality_pct"),
                          &SwmClient::save_recipe_preset);
     ClassDB::bind_method(D_METHOD("delete_recipe_preset", "name"), &SwmClient::delete_recipe_preset);
-    ClassDB::bind_method(D_METHOD("fulfill_work_order", "order_id"), &SwmClient::fulfill_work_order);
     ClassDB::bind_method(D_METHOD("talk_to", "npc_entity"), &SwmClient::talk_to);
     ClassDB::bind_method(D_METHOD("use_mission_terminal", "index"), &SwmClient::use_mission_terminal);
     ClassDB::bind_method(D_METHOD("accept_quest", "id"), &SwmClient::accept_quest);

@@ -844,7 +844,7 @@ Contract get_contract(ByteReader& in) {
     Contract c;
     c.id = in.get<uint64_t>();
     const uint8_t kind = in.get<uint8_t>();
-    if (kind > uint8_t(ContractKind::craft_order)) throw PacketError("bad contract kind");
+    if (kind > uint8_t(ContractKind::survey)) throw PacketError("bad contract kind");
     c.kind = ContractKind(kind);
     c.title = in.get_string();
     c.target_name = in.get_string();
@@ -1457,7 +1457,6 @@ struct Encoder {
         out.put(m.exp_quality_pct);
         out.put(m.batch_count);
         out.put_string(m.preset_name);
-        out.put_string(m.order_id);
         out.put(m.mark);
         out.put(m.item_id);
         out.put_string(m.dye_values);
@@ -2133,7 +2132,7 @@ Message decode(std::span<const uint8_t> packet) {
     case Type::craft_request: {
         CraftRequest m;
         const uint8_t action = in.get<uint8_t>();
-        if (action > uint8_t(CraftRequest::dye)) throw PacketError("bad craft action");
+        if (action > uint8_t(CraftRequest::dye) || action == 3) throw PacketError("bad craft action");
         m.action = CraftRequest::Action(action);
         m.schematic_id = in.get_string();
         const size_t rcount = in.get<uint8_t>();
@@ -2148,7 +2147,6 @@ Message decode(std::span<const uint8_t> packet) {
         m.exp_quality_pct = in.get<uint8_t>();
         m.batch_count = in.get<uint8_t>();
         m.preset_name = in.get_string();
-        m.order_id = in.get_string();
         m.mark = in.get<uint8_t>();
         m.item_id = in.get<uint64_t>();
         m.dye_values = in.get_string();

@@ -1,12 +1,11 @@
 # Professions in Battlefront II's frames, fonts and colors (docs/PROFESSIONS.md,
 # docs/PERKS.md): the planner. Each profession's level and experience, what
-# earns it more, and what it teaches: a weapon or armor profession's perks (an
-# A or a B at each of 5/25/45/65/85), any other's milestones in order. What a
-# character knows works in every loadout; they may know at most `cap` perks
-# and milestones in all, learned and given up at trainers.
-# `professions` are SwmCharacterStore.get_professions()'s; `progress` is
-# id -> experience, `trained` id -> the highest milestone learned and `known`
-# id -> the perks learned (SwmClient.get_professions()).
+# earns it more, and what it teaches: its perks (an A or a B at each tier: 5
+# or 1, then 25/45/65/85). What a character knows works in every loadout;
+# they may know at most `cap` perks in each pool, learned and given up at
+# trainers. `professions` are SwmCharacterStore.get_professions()'s;
+# `progress` is id -> experience and `known` id -> the perks learned
+# (SwmClient.get_professions()).
 extends "res://ui/bf2_screen.gd"
 
 signal closed
@@ -27,10 +26,9 @@ const ROWS := 9
 
 var professions: Array = []
 var progress: Dictionary = {}
-var trained: Dictionary = {}     # profession id -> the highest milestone level learned from a trainer
 var known: Dictionary = {}       # profession id -> [perk ids learned]
 var store: Object            # SwmCharacterStore: the level curve
-var cap := 10                # perks and milestones a character may know at once
+var cap := 10                # perks a character may know in each pool
 
 var _tab := "combat"
 var _selected := 0
@@ -71,7 +69,7 @@ func _profession(id: String) -> Dictionary:
 	return {}
 
 
-# What a character knows, in order: [{name, profession}] (a perk, or a milestone).
+# What a character knows, in order: [{name, profession, pool}].
 func _learned() -> Array:
 	var out: Array = []
 	for p: Dictionary in professions:
@@ -80,10 +78,6 @@ func _learned() -> Array:
 		for perk: Dictionary in p.get("perks", []):
 			if str(perk.get("id", "")) in mine:
 				out.append({"name": str(perk.get("name", "")), "profession": str(p.get("name", id)),
-						"pool": str(p.get("pool", "combat"))})
-		for m: Dictionary in p.get("milestones", []):
-			if int(m.get("level", 0)) <= int(trained.get(id, 0)):
-				out.append({"name": str(m.get("name", "")), "profession": str(p.get("name", id)),
 						"pool": str(p.get("pool", "combat"))})
 	return out
 
@@ -208,11 +202,10 @@ func _paint_detail(p: Dictionary, rect: Rect2) -> void:
 			add.call(line, DIM)
 	var perks: Array = p.get("perks", [])
 	if not perks.is_empty():
-		var armor := str(p.get("category", "")) == "armor"
-		add.call("Choose one perk at each level; " + ("they work while you wear its armor." if armor
-				else "they work with its weapons."), DIM)
-	elif not p.get("milestones", []).is_empty():
-		add.call("Milestones are learned in order. The first lets you do what it's about at all.", DIM)
+		var category := str(p.get("category", ""))
+		add.call("Choose one perk at each level; " + ("they work while you wear its armor." if category == "armor"
+				else ("they work with its weapons." if category == "weapon"
+				else ("the first is its licence." if int(p.get("first_perk", 5)) == 1 else "none is needed to begin."))), DIM)
 	add.call("", TEXT)
 	var mine: Array = known.get(id, [])
 	var last_level := -1
@@ -229,18 +222,6 @@ func _paint_detail(p: Dictionary, rect: Rect2) -> void:
 		add.call(head, DONE_COLOR if learned else (TEXT if reached else (ACCENT if available else LOCKED_COLOR)))
 		for line in _wrap("gamefont_tiny", str(perk.get("description", "")), rect.size.x - 18 * u):
 			add.call("      " + line, WAIT_COLOR if waits else (TEXT if available else LOCKED_COLOR))
-	for m: Dictionary in p.get("milestones", []):
-		var reached := available and int(m.get("level", 0)) <= level
-		var learned := reached and int(m.get("level", 0)) <= int(trained.get(id, 0))
-		var head := "%s Lv %d  %s%s" % ["[x]" if learned else "[ ]", int(m.get("level", 0)), str(m.get("name", "")),
-				"   (reached: a trainer teaches it)" if reached and not learned else ""]
-		add.call(head, DONE_COLOR if reached else (ACCENT if available else LOCKED_COLOR))
-		var body := str(m.get("description", ""))
-		var effects: Array = m.get("perks", [])
-		if not effects.is_empty():
-			body += "  (" + ", ".join(PackedStringArray(effects)) + ")"
-		for line in _wrap("gamefont_tiny", body, rect.size.x - 18 * u):
-			add.call("      " + line, TEXT if reached or available else LOCKED_COLOR)
 	var room := int((rect.end.y - 10 * u - y) / line_h)
 	_detail_scroll = clampi(_detail_scroll, 0, maxi(0, lines.size() - room))
 	for i in range(_detail_scroll, mini(lines.size(), _detail_scroll + room)):
