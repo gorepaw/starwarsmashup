@@ -5,3 +5,8 @@ if(WIN32)
   target_link_libraries(swm_server PRIVATE winmm)
 endif()
 swm_target_warnings(swm_server)
+
+# Joins a server as a player for a few seconds and reports what it saw.
+add_executable(swm_probe probe.cpp)
+target_link_libraries(swm_probe PRIVATE swm_core)
+swm_target_warnings(swm_probe)
