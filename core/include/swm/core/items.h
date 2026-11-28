@@ -129,6 +129,9 @@ struct ItemDef {
     // the archetype's 2).
     double heal_time = 0.0;
     int carried = 0;
+    // A jump pack (Archetype = jump_pack): how fast it lifts, m/s (`Jump`; 0:
+    // the archetype's 11), Carried hops a life (0: the archetype's 3).
+    double jump = 0.0;
     // A blueprint (a supply: `Teaches = <schematic id>`): used, its owner
     // learns that `Blueprint = yes` schematic (docs/CRAFTING.md).
     std::string teaches;
