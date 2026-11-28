@@ -155,6 +155,14 @@ void test_rules(const SpecialistBook& book, const ProfessionBook& professions) {
     CHECK(plain.template_id == "womp_rat" && plain.origin == "hatched" && plain.quality > 0.8);
     CHECK(spliced.health > plain.health && spliced.quality < plain.quality);
     CHECK(dna_quality(100, 1) > dna_quality(1, 1) && dna_quality(1, 0) >= 0.2);
+    // A Master Geneticist's better; Hybrid Vigor's spliced egg hardier and harder-hitting still.
+    CHECK(engineer_egg(a, nullptr, 50, 7, 0.1).quality > plain.quality);
+    const CompanionRecord vigor = engineer_egg(a, &b, 50, 7, 0, 0.1);
+    CHECK(vigor.health > spliced.health && vigor.damage > spliced.damage);
+    CompanionRecord bred = plain;
+    bred.tactical = true;
+    const auto bred_back = parse_companion(format_companion(bred));
+    CHECK(bred_back && bred_back->tactical && !parse_companion(format_companion(plain))->tactical);
 
     // Records survive saving, names with separators too.
     CompanionRecord r{42, "droid_battle", "Rex|One, 100%", "assembled", 0.7, 1.1, 1.2, 1, 99,
@@ -307,6 +315,8 @@ void test_server(const std::filesystem::path& root, const SpecialistBook& book, 
     // Entertainer teaches perks: a musician who leads bands and holo-records.
     store.set_extra(vet.id, "perks:entertainer",
                     "ent_perk_musician,ent_perk_flourish,ent_perk_holo_emitter,ent_perk_band_leader,ent_perk_virtuoso");
+    // Bio-Engineer's licence: the sampling button.
+    store.set_extra(vet.id, "perks:bio_engineer", "bio_perk_sampling");
     store.save_professions(vet.id, progress);
     store.create("Buyer", {3, 0, 3}, 0);
 
@@ -1165,6 +1175,110 @@ void test_merchant(const SpecialistBook& book, const ProfessionBook& professions
     CHECK(merchant_xp() > after_buy);
 }
 
+// A Field Harvester shoots banthas for their DNA (half of them give a sample),
+// engineers a Tactical Strain egg and hatches a bantha bred small.
+void test_bio_engineer(const SpecialistBook& book, const ProfessionBook& professions, const ItemCatalog& catalog) {
+    Heightfield ground{201, 2.0, -200, -200, std::vector<float>(201 * 201, 0.0f)};
+    World world{ground};
+    MemoryCharacterStore store;
+    const CharacterRecord rec = store.create("Geneticist", {0, 0, 0}, 0);
+    store.save_professions(rec.id, std::vector<ProfessionProgress>{{"bio_engineer", professions.xp_for_level(90), 0},
+                                                                   {"creature_handler", professions.xp_for_level(100), 0}});
+    store.set_extra(rec.id, "trained:creature_handler", "100");
+    store.set_extra(rec.id, "perks:bio_engineer", "bio_perk_harvester,bio_perk_hybrid,bio_perk_culture,bio_perk_notes,bio_perk_strain");
+    ensure_starter_kit(store, rec.id);
+    net::LoopbackHub links;
+    net::Endpoint server_ep{1, 1};
+    net::LoopbackLink srv_link{links, server_ep};
+    net::LoopbackLink link{links, {2, 1}};
+    ServerConfig config;
+    config.catalog = &catalog;
+    config.professions = &professions;
+    config.specialists = &book;
+    config.pvp_enabled = false;
+    config.spawn = {0, 0, 0};
+    GameServer server(srv_link, world, config, &store);
+    server.set_looks({"object/mobile/shared_bantha.iff"});
+    GameClient client(link, world, ClientConfig{.server = server_ep, .name = "Geneticist"});
+    double now = 0;
+    const auto run = [&](double seconds, auto steer) {
+        for (const double end = now + seconds; now < end; now += 1.0 / 30.0) {
+            steer();
+            server.update(now);
+            client.update(now);
+        }
+    };
+    run(1.0, [] {});
+    CHECK(client.status() == GameClient::Status::connected);
+    // No sampling button: Field Harvester is passive (the Creature Handler's buttons are its own).
+    CHECK(std::none_of(client.specialist().abilities.begin(), client.specialist().abilities.end(),
+                       [](const net::AbilityStatus& s) { return s.id == "bio_sample"; }));
+    const auto bio_xp = [&] {
+        const auto* p = server.professions_of(client.entity_id());
+        return p ? profession_xp(*p, "bio_engineer") : 0;
+    };
+    const int64_t xp0 = bio_xp();
+    // Eight banthas round about, shot one by one.
+    GameServer::NpcCombatSpec bantha;
+    bantha.actor_kind = 2;
+    bantha.max_health = 10;
+    bantha.hit_radius = 1.35;
+    bantha.hit_height = 2.8;
+    int killed = 0;
+    for (int i = 0; i < 8; ++i) {
+        const double angle = i * 0.785;
+        const Vec3 at{std::sin(angle) * 7, 0, std::cos(angle) * 7};
+        const uint32_t beast = server.add_combat_npc("Bantha", at, 0, 1, bantha);
+        for (int t = 0; t < 120; ++t) {
+            const auto info = server.npc_info(beast);
+            if (!info || info->life != Life::alive) break;
+            const Vec3 d = info->state.position + Vec3{0, 1.4, 0} - (client.predicted().position + Vec3{0, 1.6, 0});
+            const double yaw = std::atan2(-d.x, -d.z), pitch = std::atan2(d.y, std::hypot(d.x, d.z));
+            run(1.0 / 30.0, [&] { client.set_input({.yaw = yaw, .pitch = pitch, .fire = (t % 6) < 3}); });
+        }
+        const auto info = server.npc_info(beast);
+        if (info && info->life != Life::alive) ++killed;
+    }
+    run(0.3, [&] { client.set_input({}); });
+    CHECK(killed == 8);
+    const SpecialistState* spec = server.specialist_state(client.entity_id());
+    const size_t sampled = spec ? spec->samples.size() : 0;
+    CHECK(sampled >= 1 && sampled < 8);  // about half
+    CHECK(bio_xp() > xp0);
+    if (spec == nullptr || spec->samples.empty()) return;
+    CHECK(spec->samples[0].template_id == "bantha");
+    // A Tactical Strain egg, hatched: a bantha bred small.
+    net::SpecialistRequest egg_request;
+    egg_request.action = net::SpecialistRequest::engineer_egg;
+    egg_request.amount = int64_t(spec->samples[0].id);
+    client.specialist_request(egg_request);
+    run(0.5, [] {});
+    const auto egg = std::find_if(client.items().begin(), client.items().end(),
+                                  [](const ItemInstance& i) { return i.def_id == "bio_creature_egg"; });
+    CHECK(egg != client.items().end());
+    if (egg == client.items().end()) return;
+    net::SpecialistRequest hatch;
+    hatch.action = net::SpecialistRequest::hatch_egg;
+    hatch.item_id = egg->id;
+    client.specialist_request(hatch);
+    run(0.5, [] {});
+    spec = server.specialist_state(client.entity_id());
+    CHECK(spec && !spec->companions.empty() && spec->companions.back().tactical);
+    if (spec == nullptr || spec->companions.empty()) return;
+    net::SpecialistRequest summon;
+    summon.action = net::SpecialistRequest::companion_summon;
+    summon.amount = int64_t(spec->companions.back().id);
+    client.specialist_request(summon);
+    run(0.5, [] {});
+    const auto pet = server.companion_of(client.entity_id());
+    CHECK(pet.has_value());
+    bool small = false;
+    for (const net::EntityState& e : client.remotes()) {
+        if (pet && e.id == pet->entity) small = e.scale < 100 && e.scale >= 50;
+    }
+    CHECK(small);
+}
+
 // Pilots on speeder bikes: a Hotshot's goes faster, Afterburner boosts on no
 // energy, the kit is two buttons, and anyone riding earns Pilot experience.
 void test_pilot(const std::filesystem::path& root, const SpecialistBook& book, const ProfessionBook& professions,
@@ -1405,6 +1519,7 @@ int main() {
     test_ranger(book, professions, catalog);
     test_merchant(book, professions, catalog);
     test_pilot(root, book, professions, catalog);
+    test_bio_engineer(book, professions, catalog);
     test_match(book, professions);
     return swm::test::finish("specialist_test");
 }

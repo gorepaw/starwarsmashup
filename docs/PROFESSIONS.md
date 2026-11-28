@@ -90,7 +90,7 @@ Armor proficiency is completely decoupled from weapon and advanced professions. 
 
 *Live since Stage 12: companion templates (10 creatures, 6 droid chassis), droid modules and mounts are in `specialists.ini` too.*
 
-- **Bio-Engineer:** Samples DNA from Stage 5 wildlife to craft engineered **creature eggs**, organic armor tissues, and enhanced stim/chef additives.
+- **Bio-Engineer:** DNA from wildlife becomes engineered **creature eggs** (the datapad's Lab, from Bio-Engineer 25); organic armor tissues and stim additives are crafted at a workbench from resources (the Lab no longer grows them). A licence at 1, one button at most: DNA Sampling (the button) or Field Harvester (no button: half the creatures you kill give a sample, 10% lower). Perks: Hybrid Vigor (spliced eggs +10% health and damage) or Twin Clutch (one egg in five comes as two), Gene Splicer (a two-sample egg takes the better quality) or Tissue Culture (crafted tissues and additives two at a time), Mutation (one egg in seven +15% to a trait) or Geneticist's Notes, Master Geneticist (eggs +10%, samples +5%) or Tactical Strain (hatched creatures bred small: tactical-sized, even in battles) ([Perks](PERKS.md#bio-engineer)).
 - **Creature Handler:** Active wild taming, hatching/raising Bio-Engineered eggs, companion commands, behavior modules, and **creature mounts** (connecting to Stage 6).
 - **Droid Engineer:** Modular droid assembly (chassis + plug-in Core, Primary Function, and Utility modules) and repair kits.
 - **Droid Operations:** Field deployment, remote repair, overcharge abilities, and combat chassis certification—mirroring Creature Handler so pure crafters sell combat droids to frontline operators.

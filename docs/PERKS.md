@@ -1,6 +1,6 @@
 # Trainer Perks
 
-The rework of what professions teach. It replaces milestones at 1 / 25 / 50 / 75 / 100 ([Professions](PROFESSIONS.md)) with two perks to choose between at each tier. Weapons and armor were first; then Squad Leader, Doctor and Entertainer, gathering and crafting, Bounty Hunter, Smuggler, Ranger, Merchant and Pilot (2026-11-27). The other advanced professions follow one by one and keep their milestones until their turn.
+The rework of what professions teach. It replaces milestones at 1 / 25 / 50 / 75 / 100 ([Professions](PROFESSIONS.md)) with two perks to choose between at each tier. Weapons and armor were first; then Squad Leader, Doctor and Entertainer, gathering and crafting, Bounty Hunter, Smuggler, Ranger, Merchant, Pilot and Bio-Engineer (2026-11-27). The other advanced professions follow one by one and keep their milestones until their turn.
 
 Status: **built** (see Order of work): the rules, the cap, trainers, licences, and all 90 perks. The tags say what each needed: nothing new, a trigger (**T**), or a new mechanic (**N**; [Mechanics](#mechanics)).
 
@@ -216,6 +216,18 @@ Tiers from 5: anyone drives, so there's no licence. Two buttons at most: one at 
 | 45 | **Reactor Tuning**: 10% less vehicle damage | **Ejection Seat**: thrown clear alive when it's destroyed, the blast kept off for 2 s (not in space) |
 | 65 | **Afterburner** *(button)*: boost for 5 s on no energy (`vehicle_boost_drain * 0`), 30 s | **Flares** *(button)*: rockets, missiles and blasts do nothing to your vehicle for 3 s, 40 s |
 | 85 | **Ace**: each kill from your vehicle gives back 10% of its health | **Armored Hull**: a further 15% less vehicle damage |
+
+### Bio-Engineer
+
+A licence at 1 (you can't do the profession without samples); one button at most. Eggs stay a level (25), not a perk; tissues and additives are a workbench's schematics now (the Lab's were dropped).
+
+| Level | A | B |
+|---|---|---|
+| 1 | **DNA Sampling** *(button)*: sample a creature, living or dead | **Field Harvester**: no button; half the creatures you kill give a sample, 10% lower in quality |
+| 25 | **Hybrid Vigor**: a spliced egg +10% health and damage | **Twin Clutch**: one egg in five comes as two |
+| 45 | **Gene Splicer**: a two-sample egg takes the better quality | **Tissue Culture**: crafted tissues and additives two at a time |
+| 65 | **Mutation**: one egg in seven +15% health, damage or speed | **Geneticist's Notes**: 25% more Bio-Engineer experience |
+| 85 | **Master Geneticist**: eggs +10% quality, samples +5% | **Tactical Strain**: hatched creatures bred small (`CompanionRecord::tactical`; drawn at `EntityState::scale`), tactical-sized, so they go into battles |
 
 ## Triggers
 

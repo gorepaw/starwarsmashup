@@ -1697,6 +1697,7 @@ void GameServer::step() {
         entity.actor_kind = npc.actor_kind;
         entity.passive = npc.passive;
         entity.colors = npc.colors;
+        entity.scale = npc.scale;
         if (npc.actor_kind >= 2) {
             entity.name = npc.name;
         }

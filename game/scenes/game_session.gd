@@ -1192,6 +1192,10 @@ func _update_person(id: int, state: Dictionary) -> void:
 			return
 		var model := (_people[look] as Node3D).duplicate() as Node3D
 		SwgColors.apply(model, _people_colors.get(look, {}), int(state.get("colors", 0)))
+		# (A Tactical Strain companion is bred small: drawn at its scale.)
+		var drawn := float(state.get("scale", 1.0))
+		if drawn > 0.0 and drawn < 0.999:
+			model.scale = Vector3.ONE * drawn
 		add_child(model)
 		var player := model.find_child("AnimationPlayer", true, false) as AnimationPlayer
 		# Their names show when aimed at (the HUD's target name); a bandit

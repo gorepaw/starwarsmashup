@@ -580,7 +580,11 @@ void GameServer::handle_craft_request(Client& client, const net::CraftRequest& r
         };
         const CraftPreview preview = book.preview_craft(*sch, req.resource_ids, modules, lv, uint8_t(focus), bonus("grade"),
                                                         1.0 + bonus("exceptional"));
-        const double extra_chance = bonus("extra_item");
+        // (A Bio-Engineer's Tissue Culture: tissues and additives two at a time.)
+        const bool culture = (sch->output_item == "bio_tissue_organic" || sch->output_item == "bio_stim_additive") &&
+                             config_.professions != nullptr &&
+                             has_grant(*config_.professions, client.professions, "bio_engineer", "tissue_culture");
+        const double extra_chance = culture ? 1.0 : bonus("extra_item");
         std::array<int, item_grade_count> made{};
         const int unit_count = sch->output_count > 1 ? sch->output_count
                                                      : (out_def && out_def->kind == ItemKind::ammo ? out_def->ammo_batch : 1);

@@ -96,6 +96,7 @@ void describe(godot::Dictionary& out, const core::net::EntityState& entity) {
     out["passive"] = entity.passive;
     out["quiet"] = entity.quiet;
     out["colors"] = int64_t(entity.colors);  // 0: the look's own colors; else a seed to vary them by
+    out["scale"] = double(entity.scale) / 100.0;  // its drawn size (a Tactical Strain companion's smaller)
     out["species"] = godot::String::utf8(core::species_def(core::Species(entity.species)).id.c_str());
     out["gender"] = godot::String::utf8(entity.gender == 1 ? "female" : "male");
     out["name"] = godot::String::utf8(entity.name.c_str());
@@ -749,6 +750,7 @@ godot::Dictionary companion_dictionary(const core::CompanionRecord& r) {
     for (const std::string& m : r.modules) modules.push_back(godot::String::utf8(m.c_str()));
     d["modules"] = modules;
     d["mount"] = r.mount;
+    d["tactical_strain"] = r.tactical;
     return d;
 }
 

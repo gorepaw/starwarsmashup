@@ -800,7 +800,7 @@ void put_companion(ByteWriter& out, const CompanionRecord& r) {
     out.put(r.colors);
     out.put(uint8_t(std::min<size_t>(r.modules.size(), 8)));
     for (size_t i = 0; i < r.modules.size() && i < 8; ++i) out.put_string(r.modules[i]);
-    out.put(uint8_t(r.mount));
+    out.put(uint8_t(uint8_t(r.mount) | (uint8_t(r.tactical) << 1)));
 }
 
 CompanionRecord get_companion(ByteReader& in) {
@@ -817,7 +817,9 @@ CompanionRecord get_companion(ByteReader& in) {
     const size_t n = in.get<uint8_t>();
     if (n > 8) throw PacketError("too many droid modules");
     for (size_t i = 0; i < n; ++i) r.modules.push_back(in.get_string());
-    r.mount = in.get<uint8_t>() != 0;
+    const uint8_t flags = in.get<uint8_t>();
+    r.mount = (flags & 1) != 0;
+    r.tactical = (flags & 2) != 0;
     return r;
 }
 
@@ -1099,6 +1101,7 @@ struct Encoder {
             out.put(entity.actor_kind);
             out.put(uint8_t(uint8_t(entity.passive) | (uint8_t(entity.quiet) << 1)));
             out.put(entity.colors);
+            out.put(entity.scale);
             out.put(entity.species);
             out.put(entity.gender);
             out.put(entity.static_key);
@@ -1696,6 +1699,7 @@ Message decode(std::span<const uint8_t> packet) {
                 entity.quiet = (flags & 2) != 0;
             }
             entity.colors = in.get<uint16_t>();
+            entity.scale = std::max<uint8_t>(1, in.get<uint8_t>());
             entity.species = in.get<uint8_t>();
             if (entity.species >= species_count) {
                 throw PacketError("bad species");

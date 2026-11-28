@@ -5,7 +5,7 @@
 #   Companions  tamed, hatched and registered creatures and droids: field or
 #               store one, put it in the loadout's Companion Slot, train a
 #               mount, rename, release
-#   Lab         DNA samples: engineer eggs, grow tissues and additives; hatch
+#   Lab         DNA samples: engineer eggs (tissues and additives are a workbench's); hatch
 #               eggs and register droids you carry
 #   Droids      assemble a chassis with modules from the Material Vault
 #   Contracts   bounties, contraband runs, tracking jobs and gigs
@@ -273,8 +273,6 @@ func _paint_lab(body: Rect2) -> void:
 		text("gamefont_tiny", "Sample creatures with your kit's Sample DNA.", Vector2(x + 8 * u, y + 6 * u), "Left", DIM)
 	var by := body.end.y - 34 * u
 	button(Rect2(x, by, 150 * u, 28 * u), "Engineer egg", "egg", false, false, _sample_a >= 0)
-	button(Rect2(x + 156 * u, by, 120 * u, 28 * u), "Grow tissue", "tissue", false, false, _sample_a >= 0)
-	button(Rect2(x + 282 * u, by, 130 * u, 28 * u), "Grow additive", "additive", false, false, _sample_a >= 0)
 	text("gamefont_tiny", "Click a sample for A, another for B (optional: splices in its toughness).",
 			Vector2(x, by - 20 * u), "Left", DIM, 0.85)
 	# Eggs and droids carried.
@@ -533,9 +531,6 @@ func _on_click(id: String, _at: Vector2) -> void:
 		_send(ENGINEER_EGG, _sample_a, maxi(0, _sample_b))
 		_sample_a = -1
 		_sample_b = -1
-	elif id == "tissue" or id == "additive":
-		_send(GROW_TISSUE, _sample_a, 0, id)
-		_sample_a = -1
 	elif id.begins_with("hatch:"):
 		_send(HATCH_EGG, 0, int(id.substr(6)))
 	elif id.begins_with("register:"):

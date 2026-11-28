@@ -2,7 +2,9 @@
 // filling the teams, transfers there and back, and admission by ticket.
 
 #include <cmath>
+#include <chrono>
 #include <cstdio>
+#include <thread>
 #include <map>
 #include <numbers>
 #include <filesystem>
@@ -482,7 +484,10 @@ void test_wookiee_profile_in_battle() {
     bool queued = false;
     bool saw_wookiee_in_battle = false;
     double now = 0;
+    // (A millisecond of real time a tick: the hub loads the battle's world on
+    // another thread, and a busy machine shouldn't leave it unfinished.)
     for (; now < 5.0; now += 1.0 / 60) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
         session.update(now);
         hub_server.update(now);
         hub.update(now);
@@ -645,6 +650,7 @@ void test_stage4_hub_loop() {
     session.client().queue(0);
     bool checked_gear = false;
     for (double limit = now + 4.0; now < limit; now += 1.0 / 60) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));  // (as above)
         session.update(now);
         hub_server.update(now);
         hub.update(now);

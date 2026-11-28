@@ -20,7 +20,7 @@ namespace swm::core::net {
 // Every packet starts with a magic number, the protocol version and a message
 // type. Peers drop packets with another version. Bump it on any wire change.
 inline constexpr uint16_t protocol_magic = 0x4D53;  // "SM"
-inline constexpr uint16_t protocol_version = 54;
+inline constexpr uint16_t protocol_version = 55;
 // BoltState/Impact::weapon: a placed trap's shot, from that weapon slot
 // (drawn from the trap, not its owner's gun).
 inline constexpr uint8_t trap_shot_flag = 0x40;
@@ -271,6 +271,7 @@ struct EntityState {
     bool passive = false;     // a creature that leaves you be unless you hit it
     bool quiet = false;       // its shots don't show it on enemies' radar (a perk's: Low Profile)
     uint16_t colors = 0;      // a look's colors: 0 its own; else a seed the client varies them by
+    uint8_t scale = 100;      // percent of its look's size it's drawn at (a Tactical Strain companion: smaller)
     uint8_t species = 0;      // index into core::all_species() (0 = human .. 9 = ithorian)
     uint8_t gender = 0;       // 0 = male, 1 = female
     std::string name;         // player name (empty for NPCs)

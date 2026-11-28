@@ -292,6 +292,7 @@ struct CompanionRecord {
     uint16_t colors = 0;           // a seed clients vary its look's colors by (0: its own)
     std::vector<std::string> modules;  // a droid's
     bool mount = false;                // trained as a mount (its mount item granted)
+    bool tactical = false;             // a Bio-Engineer's Tactical Strain: bred small, tactical-sized
 
     friend bool operator==(const CompanionRecord&, const CompanionRecord&) = default;
 };
@@ -337,7 +338,10 @@ double dna_quality(int bio_level, double luck);
 // What an engineered egg hatches into: the first sample's creature, its
 // traits from both samples (a second of another creature brings its
 // toughness), and the engineer's level.
-CompanionRecord engineer_egg(const DnaSample& a, const DnaSample* b, int bio_level, uint16_t colors);
+// (A Bio-Engineer's perks: `quality_bonus` on its quality, Master Geneticist;
+// `hybrid_bonus` more health and damage when spliced, Hybrid Vigor.)
+CompanionRecord engineer_egg(const DnaSample& a, const DnaSample* b, int bio_level, uint16_t colors,
+                             double quality_bonus = 0.0, double hybrid_bonus = 0.0);
 
 // Records on a line each, as datapads, eggs and droid items keep them.
 std::string format_companion(const CompanionRecord& record);

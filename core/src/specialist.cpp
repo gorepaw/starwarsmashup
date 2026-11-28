@@ -566,19 +566,21 @@ double dna_quality(int bio_level, double luck) {
     return std::clamp(floor + std::clamp(luck, 0.0, 1.0) * 0.35, 0.0, 1.0);
 }
 
-CompanionRecord engineer_egg(const DnaSample& a, const DnaSample* b, int bio_level, uint16_t colors) {
+CompanionRecord engineer_egg(const DnaSample& a, const DnaSample* b, int bio_level, uint16_t colors,
+                             double quality_bonus, double hybrid_bonus) {
     CompanionRecord r;
     r.template_id = a.template_id;
     r.origin = "hatched";
     double q = b ? a.quality * 0.6 + b->quality * 0.4 : a.quality;
-    q = std::clamp(q + std::clamp(bio_level, 0, profession_max_level) * 0.001, 0.0, 1.0);
+    q = std::clamp(q + std::clamp(bio_level, 0, profession_max_level) * 0.001 + std::max(0.0, quality_bonus), 0.0, 1.0);
     r.quality = q;
     r.health = 0.85 + q * 0.35;
     r.damage = 0.85 + q * 0.3;
     r.speed = 0.95 + q * 0.1;
     if (b && b->template_id != a.template_id) {
         // Another creature's DNA spliced in: hardier, a little slower.
-        r.health += 0.1;
+        r.health += 0.1 + std::max(0.0, hybrid_bonus);
+        r.damage += std::max(0.0, hybrid_bonus);
         r.speed -= 0.03;
     }
     r.colors = colors == 0 ? 1 : colors;
@@ -591,8 +593,9 @@ std::string format_companion(const CompanionRecord& r) {
         if (i) modules += ',';
         modules += escape(r.modules[i]);
     }
-    return std::format("{}|{}|{}|{}|{:.4f}|{:.4f}|{:.4f}|{:.4f}|{}|{}|{}", r.id, escape(r.template_id), escape(r.name),
-                       escape(r.origin), r.quality, r.health, r.damage, r.speed, r.colors, modules, r.mount ? 1 : 0);
+    return std::format("{}|{}|{}|{}|{:.4f}|{:.4f}|{:.4f}|{:.4f}|{}|{}|{}|{}", r.id, escape(r.template_id), escape(r.name),
+                       escape(r.origin), r.quality, r.health, r.damage, r.speed, r.colors, modules, r.mount ? 1 : 0,
+                       r.tactical ? 1 : 0);
 }
 
 std::optional<CompanionRecord> parse_companion(std::string_view line) {
@@ -614,6 +617,7 @@ std::optional<CompanionRecord> parse_companion(std::string_view line) {
         }
     }
     r.mount = f[10] == "1";
+    r.tactical = f.size() > 11 && f[11] == "1";  // (saved before Tactical Strain: not)
     if (r.template_id.empty()) return std::nullopt;
     return r;
 }

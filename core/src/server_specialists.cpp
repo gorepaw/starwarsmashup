@@ -555,6 +555,13 @@ double GameServer::vehicle_damage_factor(uint32_t driver) const {
     return factor;
 }
 
+double GameServer::sample_quality(Client& client, bool harvested) {
+    double q = dna_quality(specialist_level(client, "bio_engineer"), random_unit());
+    if (granted(client, "bio_engineer", "master_geneticist")) q += 0.05;
+    if (harvested) q -= 0.1;
+    return std::clamp(q, 0.05, 1.0);
+}
+
 double GameServer::gunnery(uint32_t attacker) const {
     const Client* c = attacker != 0 ? find(attacker) : nullptr;
     return c != nullptr && c->state.vehicle >= 0 && granted(*c, "pilot", "gunnery") ? 1.1 : 1.0;
@@ -1309,8 +1316,7 @@ void GameServer::finish_channel(Client& client) {
         return;
     }
     if (a->effect == AbilityEffect::sample_dna) {
-        const int level = specialist_level(client, "bio_engineer");
-        DnaSample s{client.spec.next_sample_id++, tpl->id, dna_quality(level, random_unit())};
+        DnaSample s{client.spec.next_sample_id++, tpl->id, sample_quality(client, false)};
         client.spec.samples.push_back(s);
         client.spec.dirty = true;
         notify(client.entity, std::format("DNA sample: {} (quality {})", tpl->name, int(std::round(s.quality * 100))));
@@ -1385,10 +1391,13 @@ void GameServer::summon_companion(Client& client, uint64_t record_id) {
                                           tpl->level));
         return;
     }
-    if (conquest_ && !tpl->tactical()) {
+    // (Bred small by a Bio-Engineer's Tactical Strain: tactical-sized, anywhere.)
+    const bool strain = record->tactical && !tpl->tactical();
+    if (conquest_ && !tpl->tactical() && !strain) {
         notify(client.entity, std::format("A {} is too big for a battle", tpl->name));
         return;
     }
+    const double shrink = strain ? std::min({1.0, 2.0 / std::max(0.1, tpl->height), 0.9 / std::max(0.1, tpl->radius)}) : 1.0;
     if (client.spec.active_companion != 0) dismiss_companion(client, false);
     uint8_t look = 0;
     if (const auto it = std::find(looks_.begin(), looks_.end(), tpl->look); it != looks_.end()) {
@@ -1398,16 +1407,17 @@ void GameServer::summon_companion(Client& client, uint64_t record_id) {
     NpcCombatSpec spec;
     spec.actor_kind = 4;
     spec.max_health = stats.max_health;
-    spec.hit_radius = tpl->radius;
-    spec.hit_height = tpl->height;
+    spec.hit_radius = tpl->radius * shrink;
+    spec.hit_height = tpl->height * shrink;
     spec.mitigation = stats.mitigation;
     spec.walk_speed = stats.speed * 0.5;
     spec.run_speed = stats.speed;
     // Beside its owner, clear of them: a bantha's flank is 1.7 m from its middle.
     const double yaw = client.state.yaw;
-    const double side = 1.2 + tpl->radius;
+    const double side = 1.2 + tpl->radius * shrink;
     const Vec3 beside = client.state.position + Vec3{std::cos(yaw) * side, 0, -std::sin(yaw) * side};
     const uint32_t entity = add_combat_npc(record->name, beside, yaw, look, spec, record->colors);
+    if (Npc* n = strain ? find_npc(entity) : nullptr) n->scale = uint8_t(std::clamp<long>(std::lround(shrink * 100), 10, 100));
     ActiveCompanion active;
     active.entity = entity;
     active.owner = client.entity;
@@ -1616,6 +1626,23 @@ void GameServer::specialist_kill(uint32_t victim, uint32_t killer, bool npc) {
     if (npc) companion_died(victim);
     Client* hunter = find(killer);
     if (hunter == nullptr) return;
+    // A Bio-Engineer's Field Harvester: half the creatures they kill give a sample.
+    if (npc && !conquest_ && config_.specialists != nullptr && granted(*hunter, "bio_engineer", "field_harvester")) {
+        const Npc* n = find_npc(victim);
+        const CompanionTemplate* tpl = n != nullptr && n->actor_kind == 2 && n->look >= 1 && size_t(n->look) <= looks_.size()
+                                           ? config_.specialists->companion_for_look(looks_[size_t(n->look) - 1])
+                                           : nullptr;
+        if (tpl != nullptr && tpl->kind == CompanionKind::creature && hunter->spec.samples.size() < max_samples &&
+            random_unit() < 0.5) {
+            const DnaSample s{hunter->spec.next_sample_id++, tpl->id, sample_quality(*hunter, true)};
+            hunter->spec.samples.push_back(s);
+            hunter->spec.dirty = true;
+            ++hunter->spec.revision;
+            hunter->spec.sync_tick = 0;
+            notify(hunter->entity, std::format("DNA sample: {} (quality {})", tpl->name, int(std::round(s.quality * 100))));
+            earn_specialist_xp(*hunter, "bio_engineer", 30 + tpl->tier * 10);
+        }
+    }
     // Clean Getaway (a Bounty Hunter's 85): away fast after a kill, the shield already coming back.
     if (hunter->life == Life::alive && granted(*hunter, "bounty_hunter", "clean_getaway")) {
         give_effect(*hunter, {"bh_clean_getaway", "Clean Getaway", hunter->entity, 4, 4, {{Stat::run_speed, 0, 1.2}}});
@@ -2725,8 +2752,8 @@ void GameServer::datapad_action(Client& client, const net::SpecialistRequest& re
     case R::engineer_egg: {
         if (!world) return;
         const ProfessionStanding bio = standing("bio_engineer");
-        if (bio.level < 25 || bio.trained < 25) {
-            notify(client.entity, "Engineering eggs takes the Creature Eggs milestone (Bio-Engineer 25)");
+        if (professions == nullptr || !licensed(*professions, client.professions, "bio_engineer") || bio.level < 25) {
+            notify(client.entity, "Engineering eggs takes Bio-Engineer 25");
             return;
         }
         const auto sample = [&](int64_t id) -> const DnaSample* {
@@ -2737,34 +2764,42 @@ void GameServer::datapad_action(Client& client, const net::SpecialistRequest& re
         const DnaSample* b = request.item_id != 0 && int64_t(request.item_id) != request.amount ? sample(int64_t(request.item_id)) : nullptr;
         const CompanionTemplate* tpl = a && book ? book->companion(a->template_id) : nullptr;
         if (tpl == nullptr) return;
-        CompanionRecord egg = engineer_egg(*a, b, bio.level, uint16_t(1 + random_unit() * 65534));
-        egg.name = tpl->name;
+        // A Bio-Engineer's perks: Gene Splicer takes the better sample's quality.
+        DnaSample first = *a;
+        std::optional<DnaSample> second;
+        if (b) second = *b;
+        if (second && granted(client, "bio_engineer", "gene_splicer")) {
+            first.quality = second->quality = std::max(first.quality, second->quality);
+        }
+        const double quality_bonus = granted(client, "bio_engineer", "master_geneticist") ? 0.1 : 0.0;
+        const double hybrid_bonus = granted(client, "bio_engineer", "hybrid_vigor") ? 0.1 : 0.0;
+        const bool twins = granted(client, "bio_engineer", "twin_clutch") && random_unit() < 0.2;
+        const bool mutation = granted(client, "bio_engineer", "mutation");
+        const bool strain = granted(client, "bio_engineer", "tactical_strain");
         const uint64_t a_id = a->id, b_id = b ? b->id : 0;
         std::erase_if(spec.samples, [&](const DnaSample& s) { return s.id == a_id || (b_id && s.id == b_id); });
-        grant("bio_creature_egg", std::format("{} Egg", tpl->name), companion_payload(egg));
-        notify(client.entity, std::format("Engineered a {} egg (quality {})", tpl->name, int(std::round(egg.quality * 100))));
+        for (int n = 0; n < (twins ? 2 : 1); ++n) {
+            CompanionRecord egg = engineer_egg(first, second ? &*second : nullptr, bio.level,
+                                               uint16_t(1 + random_unit() * 65534), quality_bonus, hybrid_bonus);
+            egg.name = tpl->name;
+            egg.tactical = strain;
+            std::string mutated;
+            if (mutation && random_unit() < 1.0 / 7.0) {
+                const int which = std::min(2, int(random_unit() * 3));
+                double& trait = which == 0 ? egg.health : which == 1 ? egg.damage : egg.speed;
+                trait *= 1.15;
+                mutated = std::format(", mutated: +15% {}", which == 0 ? "health" : which == 1 ? "damage" : "speed");
+            }
+            grant("bio_creature_egg", std::format("{} Egg", tpl->name), companion_payload(egg));
+            notify(client.entity, std::format("Engineered a {} egg (quality {}{}{})", tpl->name,
+                                              int(std::round(egg.quality * 100)), mutated, n == 1 ? ", a twin" : ""));
+        }
         earn_specialist_xp(client, "bio_engineer", 120 + tpl->tier * 20);
         changed();
         return;
     }
-    case R::grow_tissue: {
-        if (!world) return;
-        const bool additive = request.id == "additive";
-        const ProfessionStanding bio = standing("bio_engineer");
-        const int need = additive ? 75 : 50;
-        if (bio.level < need || bio.trained < need) {
-            notify(client.entity, std::format("That takes Bio-Engineer {}", need));
-            return;
-        }
-        const auto it = std::find_if(spec.samples.begin(), spec.samples.end(),
-                                     [&](const DnaSample& s) { return int64_t(s.id) == request.amount; });
-        if (it == spec.samples.end()) return;
-        spec.samples.erase(it);
-        grant(additive ? "bio_stim_additive" : "bio_tissue_organic", "", "{}");
-        earn_specialist_xp(client, "bio_engineer", 80);
-        changed();
-        return;
-    }
+    case R::grow_tissue:
+        return;  // (the Lab's tissues and additives are gone: a workbench crafts them)
     case R::hatch_egg:
     case R::register_droid: {
         if (!world || book == nullptr) return;

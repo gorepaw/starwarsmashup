@@ -586,6 +586,7 @@ private:
         uint8_t actor_kind = 1;
         bool passive = false;
         uint16_t colors = 0;
+        uint8_t scale = 100;  // percent of its look's size (EntityState::scale)
         double radius = 0;  // 0: a person's
         double health = 100;
         double max_health = 100;
@@ -890,6 +891,8 @@ private:
     void specialist_kill(uint32_t victim, uint32_t killer, bool npc);
     bool bounty_pvp_allowed(uint32_t shooter, uint32_t victim) const;
     double vehicle_damage_factor(uint32_t driver) const;
+    // A Bio-Engineer's new sample's quality (Master Geneticist's better, a Field Harvester's lower).
+    double sample_quality(Client& client, bool harvested);
     // Times the damage `attacker` deals: a Pilot's Gunnery from a vehicle.
     double gunnery(uint32_t attacker) const;
     // Pilot experience for time riding on the move (vehicles, speeders, mounts).
