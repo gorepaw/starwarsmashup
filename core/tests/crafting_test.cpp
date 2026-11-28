@@ -207,7 +207,7 @@ void test_server_client_crafting_loopback() {
         // The licences, from trainers: a level-1 perk each, free.
         server.set_vendors({{"Survey Trainer", "trainer", {0, 0, 0}, 4, "surveying,salvaging"},
                             {"Weaponsmith Trainer", "trainer", {0, 0, 0}, 4, "weaponsmith"}});
-        for (const char* id : {"survey_quick_extraction", "salvage_tinkerers_eye", "wsmith_weapon_experimentation"}) {
+        for (const char* id : {"survey_quick_extraction", "salvage_tinkerer", "wsmith_weapon_experimentation"}) {
             client.service(net::ServiceRequest::learn_perk, id, 0, 0);
             run(0.3);
         }

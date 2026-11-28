@@ -380,6 +380,7 @@ enum class ContractKind : uint8_t {
     faction_recon,     // hold the waypoint (within `radius`) for `needed` seconds
     faction_dispatch,  // carry orders to the same side's terminal in another town
     harvest,     // harvest `needed` units of a resource (`item`) from here on, and bring them to the terminal (Foraging)
+    salvage_site, // a wreck at the waypoint, its guards down, salvaged there (Salvaging)
 };
 std::string_view contract_kind_name(ContractKind kind);
 std::optional<ContractKind> contract_kind_from_name(std::string_view name);
@@ -422,6 +423,12 @@ inline constexpr double faction_dispatch_distance = 300;
 inline constexpr int64_t faction_mission_points = 40;
 // A Forager's Big Game: a body this tough (its health) gives twice as much.
 inline constexpr double big_game_health = 1000;
+// A wreck mission's salvaging: this long standing at it (a Wreck Diver's half),
+// within this of the waypoint. Clients draw the first of these looks their
+// planet's export has.
+inline constexpr double wreck_salvage_time = 10;
+inline constexpr double wreck_reach = 6;
+inline constexpr std::string_view wreck_channel = "salvage_site";
 int64_t contract_reward(ContractKind kind, int tier, double distance);
 
 // A bounty a player put up on an opted-in player (docs/PROFESSIONS.md,

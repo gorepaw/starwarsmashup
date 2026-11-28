@@ -56,6 +56,13 @@ const TARGET_HOLO_ID := 1 << 40  # practice targets' hologram ids, past any enti
 
 # Stage 11: `mode` is the game mode id wanted ("conquest", "ctf", "1flag",
 # "hunt", "xl", "any"; "assault" at a Space Terminal); "" when leaving.
+# A wreck mission's wreck (Salvaging): the first of these the planet's city
+# export has (no one wreck stands in every planet's), else a marker.
+const WRECK_LOOKS := "object/static/structure/general/shared_lucky_despot_debris_sm_engine.iff;" + \
+		"object/static/structure/general/shared_debris_deathstar_large_tube.iff;" + \
+		"object/static/structure/tatooine/shared_debris_tatt_crate_metal_1.iff"
+const SALVAGE_SITE := 32  # SpecialistRequest::salvage_site
+
 signal queue_requested(side: int, mode: String)
 signal item_bought(def_id: String, use_fp: bool)
 signal loadout_saved(slot_index: int, loadout: Dictionary)
@@ -320,10 +327,13 @@ func is_any_screen_open() -> bool:
 
 
 func try_open_terminal(client: Object) -> bool:
-	# A quest's object first: it was put there to be used.
+	# A quest's object (or a mission's wreck) first: it was put there to be used.
 	var quest_object := at_quest_object(client)
 	if not quest_object.is_empty():
-		client.use_quest_object(str(quest_object["quest_id"]), int(quest_object["index"]))
+		if quest_object.has("contract_id"):
+			client.specialist(SALVAGE_SITE, "", 0, Vector3.ZERO, int(quest_object["contract_id"]), 0, "")
+		else:
+			client.use_quest_object(str(quest_object["quest_id"]), int(quest_object["index"]))
 		return false  # what it did comes back as a notice
 	# Talking to someone a quest names counts, whatever else they do (the
 	# junk dealer buys junk too).
@@ -810,26 +820,45 @@ func at_quest_npc(client: Object) -> Dictionary:
 	return best
 
 
-# The nearest of our quests' objects in reach (a use step's), with its
-# quest's id; a little short of the server's reach, which measures from
-# where it has us.
+# What can be used where it stands: our quests' objects (a use step's, with
+# the quest's id and the object's index) and our wreck missions' wrecks
+# (Salvaging, with the contract's id). Each with a key, a name, a look (or
+# looks, ;-separated, the first the planet's export has), a position, whether
+# that has a height, and the reach.
+func _usable_objects(client: Object) -> Array:
+	var out: Array = []
+	for q: Dictionary in client.get_quests().get("active", []):
+		for o: Dictionary in q.get("objects", []):
+			var entry := o.duplicate()
+			entry["quest_id"] = q["id"]
+			entry["key"] = "%s:%d" % [str(q["id"]), int(o["index"])]
+			out.append(entry)
+	for c: Dictionary in (client.get_specialist() as Dictionary).get("contracts", []):
+		if str(c.get("kind", "")) != "salvage_site":
+			continue
+		out.append({"key": "wreck:%d" % int(c["id"]), "name": "wreck", "look": WRECK_LOOKS,
+				"position": c["waypoint"], "has_height": false, "reach": float(c.get("radius", 6.0)),
+				"contract_id": int(c["id"])})
+	return out
+
+
+# The nearest usable object in reach (_usable_objects'); a little short of
+# the server's reach, which measures from where it has us.
 func at_quest_object(client: Object) -> Dictionary:
 	if client == null or not client.is_spawned():
 		return {}
 	var position: Vector3 = client.get_presented()["position"]
 	var best := {}
 	var best_d := INF
-	for q: Dictionary in client.get_quests().get("active", []):
-		for o: Dictionary in q.get("objects", []):
-			var at: Vector3 = o["position"]
-			var d := Vector2(position.x - at.x, position.z - at.z).length()
-			if d > float(o.get("reach", 3.0)) - 0.3 or d >= best_d:
-				continue
-			if bool(o.get("has_height", false)) and absf(position.y - at.y) > 2.8:
-				continue
-			best_d = d
-			best = o.duplicate()
-			best["quest_id"] = q["id"]
+	for o: Dictionary in _usable_objects(client):
+		var at: Vector3 = o["position"]
+		var d := Vector2(position.x - at.x, position.z - at.z).length()
+		if d > float(o.get("reach", 3.0)) - 0.3 or d >= best_d:
+			continue
+		if bool(o.get("has_height", false)) and absf(position.y - at.y) > 2.8:
+			continue
+		best_d = d
+		best = o
 	return best
 
 
@@ -1066,32 +1095,31 @@ func _update_objective_markers(client: Object) -> void:
 # there, from the player's height down, once they're near.
 func _update_quest_objects(client: Object, own: Vector3, chevron: Texture2D, seen: Dictionary) -> void:
 	var wanted := {}
-	for q: Dictionary in client.get_quests().get("active", []):
-		for o: Dictionary in q.get("objects", []):
-			var key := "%s:%d" % [str(q["id"]), int(o["index"])]
-			var at: Vector3 = o["position"]
-			if Vector2(at.x - own.x, at.z - own.z).length() > MARKER_RANGE:
-				continue
-			if not _quest_object_floors.has(key):
-				if bool(o.get("has_height", false)):
-					_quest_object_floors[key] = at
-				else:
-					var from := Vector3(at.x, own.y + 3.0, at.z)
-					var to := Vector3(at.x, own.y - 40.0, at.z)
-					var t := float(client.raycast(from, to))
-					if t < 0.0:
-						continue  # (not loaded there yet)
-					_quest_object_floors[key] = from.lerp(to, t)
-			var floor_at: Vector3 = _quest_object_floors[key]
-			wanted[key] = true
-			var node: Node3D = _quest_object_nodes.get(key)
-			if node == null or not is_instance_valid(node):
-				node = _quest_object_model(client, str(o.get("look", "")))
-				_world_root.add_child(node)
-				_quest_object_nodes[key] = node
-			node.position = floor_at
-			seen["qo" + key] = true
-			_place_marker("qo" + key, chevron, 0.0009, GIVER_COLOR, floor_at + Vector3.UP * 1.6)
+	for o: Dictionary in _usable_objects(client):
+		var key := str(o["key"])
+		var at: Vector3 = o["position"]
+		if Vector2(at.x - own.x, at.z - own.z).length() > MARKER_RANGE:
+			continue
+		if not _quest_object_floors.has(key):
+			if bool(o.get("has_height", false)):
+				_quest_object_floors[key] = at
+			else:
+				var from := Vector3(at.x, own.y + 3.0, at.z)
+				var to := Vector3(at.x, own.y - 40.0, at.z)
+				var t := float(client.raycast(from, to))
+				if t < 0.0:
+					continue  # (not loaded there yet)
+				_quest_object_floors[key] = from.lerp(to, t)
+		var floor_at: Vector3 = _quest_object_floors[key]
+		wanted[key] = true
+		var node: Node3D = _quest_object_nodes.get(key)
+		if node == null or not is_instance_valid(node):
+			node = _quest_object_model(client, str(o.get("look", "")))
+			_world_root.add_child(node)
+			_quest_object_nodes[key] = node
+		node.position = floor_at
+		seen["qo" + key] = true
+		_place_marker("qo" + key, chevron, 0.0009, GIVER_COLOR, floor_at + Vector3.UP * 1.6)
 	for key: String in _quest_object_nodes.keys():
 		if not wanted.has(key):
 			if is_instance_valid(_quest_object_nodes[key]):
@@ -1104,8 +1132,9 @@ func _update_quest_objects(client: Object, own: Vector3, chevron: Texture2D, see
 # has it (most terminals, crates and datapads stand somewhere in a town),
 # else a small hologram.
 func _quest_object_model(client: Object, look: String) -> Node3D:
-	if look != "":
-		var file := _look_model_file(client, look)
+	# (Several looks, ;-separated: the first the planet's export has.)
+	for one in look.split(";", false):
+		var file := _look_model_file(client, one.strip_edges())
 		if file != "":
 			if not _look_scenes.has(file):
 				_look_scenes[file] = SwgCity._load_model(file)
@@ -1753,7 +1782,8 @@ func update_hub(client: Object, world: Node3D, delta: float, pause_visible: bool
 	_hub_hud.visible = in_hub and not (pause_visible or is_any_screen_open())
 	var tip := ""
 	if not quest_object.is_empty():
-		tip = "Press %s to use the %s" % [_key_name("interact"), quest_object["name"]]
+		tip = ("Press %s to salvage the wreck" % _key_name("interact")) if quest_object.has("contract_id") \
+				else "Press %s to use the %s" % [_key_name("interact"), quest_object["name"]]
 	elif not terminal.is_empty() and queued < 0:
 		tip = "Press %s to use the %s" % [_key_name("interact"), terminal["name"]]
 	elif not qm.is_empty():

@@ -154,15 +154,17 @@ A licence at 1; no buttons. Artisan terminals offer a flora survey (as Surveying
 | 65 | **Lush Patches**: 30% more flora at 60% concentration or richer | **Seasoned Forager**: 25% more Foraging experience |
 | 85 | **Field Dresser**: creatures you kill harvested where they fall | **Plentiful Land**: double the flora at 80% concentration or richer |
 
-Gathering not yet given its own (Salvaging):
+#### Salvaging
+
+A licence at 1; no buttons. A humanoid's body (a bandit, a trooper: an NPC of actor kind 3) is Salvaging's, a creature's Foraging's, whatever it's called. Breaking an item down stays flat for everyone (6 alloy, 3 from junk). Artisan terminals offer wreck missions (`ContractKind::salvage_site`): a wreck out in the wilds, a named gang guarding it; with them down, 10 s salvaging at it (`SpecialistRequest::salvage_site`, a channel) gives a large haul. The wreck is a usable object like a quest's (`_usable_objects` in hub_ui.gd): the first of `WRECK_LOOKS` the planet's city export has, used with the interact key.
 
 | Level | A | B |
 |---|---|---|
-| 1 | Licence, and 15% more per haul (`yield`) | Licence, and 25% more experience (`xp`) |
-| 25 | 20% more per haul | 15% chance of a double haul (`double_haul`) |
-| 45 | 25% more experience | 20% more per haul |
-| 65 | 15% chance of a double haul | 25% more experience |
-| 85 | 40% more per haul | 30% chance of a double haul |
+| 1 | **Scrapper**: 15% more per salvage (`yield`) | **Tinkerer**: breaking an item down gives back the modules crafted into it |
+| 25 | **Reclaimer**: breaking down, +15% a Mk, Fine ×1.5, Exceptional ×2 | **Circuit Recovery**: weapons, shields and droid parts give electronics too |
+| 45 | **Spare Parts**: 15% chance of a double haul | **Salvage Contracts**: wreck missions pay 50% more (`order_pay`) |
+| 65 | **Wreck Diver**: a wreck in 5 s, 30% more from it | **Seasoned Salvager**: 25% more Salvaging experience |
+| 85 | **Battlefield Scavenger**: humanoids you kill salvaged where they fall | **Treasure in the Trash**: one salvage in 10 turns up a crafting module |
 
 Crafting (Weaponsmith, Armorsmith, Tailor, Chef, Architect):
 

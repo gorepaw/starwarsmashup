@@ -882,6 +882,127 @@ void test_foraging(const std::filesystem::path& root, const SpecialistBook& book
     CHECK(client.player_status().credits > credits);
 }
 
+// A Salvager with Tinkerer, Reclaimer, Salvage Contracts, Wreck Diver and
+// Battlefield Scavenger: a Mk V Fine rifle breaks down into more than a
+// plain one and gives its module back; a corsair (no bandit in its name)
+// salvaged where it falls; a guarded wreck salvaged once its gang is down.
+void test_salvaging(const std::filesystem::path& root, const SpecialistBook& book, const ProfessionBook& professions,
+                    const ItemCatalog& catalog) {
+    CraftingBook crafting;
+    crafting.load_resources(root / "game" / "crafting" / "resources.ini");
+    crafting.load_schematics(root / "game" / "crafting" / "schematics.ini");
+    Heightfield ground{801, 2.0, -800, -800, std::vector<float>(801 * 801, 0.0f)};
+    World world{ground};
+    MemoryCharacterStore store;
+    const CharacterRecord rec = store.create("Salvager", {0, 0, 0}, 0);
+    store.save_professions(rec.id, std::vector<ProfessionProgress>{{"salvaging", professions.xp_for_level(100), 0}});
+    store.set_extra(rec.id, "perks:salvaging",
+                    "salvage_tinkerer,salvage_reclaimer,salvage_contracts,salvage_wreck_diver,salvage_battlefield_scavenger");
+    const ItemInstance plain = store.grant_item({0, rec.id, "wp_rifle_e11"});
+    const ItemInstance fine = store.grant_item(
+        {0, rec.id, "wp_rifle_e11", ItemGrade::fine, "", "{\"mods\":\"mod_precision_barrel\"}", 1, 5});
+    net::LoopbackHub links;
+    net::Endpoint server_ep{1, 1};
+    net::LoopbackLink srv_link{links, server_ep};
+    net::LoopbackLink link{links, {2, 1}};
+    ServerConfig config;
+    config.catalog = &catalog;
+    config.professions = &professions;
+    config.specialists = &book;
+    config.crafting = &crafting;
+    config.pvp_enabled = false;
+    config.spawn = {0, 0, 0};
+    GameServer server(srv_link, world, config, &store);
+    server.set_crafting(&crafting, {});
+    server.set_quests(nullptr, {}, {{"Artisan Terminal", {2, 0, 0}, 3, "artisan"}});
+    GameClient client(link, world, ClientConfig{.server = server_ep, .name = "Salvager"});
+    double now = 0;
+    const auto run = [&](double seconds) {
+        for (const double end = now + seconds; now < end; now += 1.0 / 30.0) {
+            server.update(now);
+            client.update(now);
+        }
+    };
+    const auto vault = [&] {
+        int64_t n = 0;
+        if (const auto* m = server.materials_of(client.entity_id())) {
+            for (const MaterialStack& st : *m) n += st.amount;
+        }
+        return n;
+    };
+    const auto holds = [&](const char* def_id) {
+        return std::any_of(client.items().begin(), client.items().end(), [&](const ItemInstance& i) { return i.def_id == def_id; });
+    };
+    run(1.0);
+    CHECK(client.status() == GameClient::Status::connected);
+    // Reclaimer: Mk V and Fine count (1.75 x 1.5); Tinkerer: the barrel back.
+    int64_t before = vault();
+    client.salvage_item(plain.id);
+    run(0.5);
+    const int64_t from_plain = vault() - before;
+    before = vault();
+    CHECK(!holds("mod_precision_barrel"));
+    client.salvage_item(fine.id);
+    run(0.5);
+    const int64_t from_fine = vault() - before;
+    CHECK(from_plain > 0 && from_fine >= from_plain * 2);
+    CHECK(holds("mod_precision_barrel"));
+
+    // Battlefield Scavenger: a corsair, salvaged where he falls.
+    GameServer::NpcCombatSpec outlaw;
+    outlaw.actor_kind = 3;
+    outlaw.max_health = 200;
+    before = vault();
+    const uint32_t corsair = server.add_combat_npc("Canyon Corsair", {4, 0, 4}, 0, 0, outlaw);
+    server.npc_melee(client.entity_id(), corsair, 1e6, DamageType::laser);
+    run(0.5);
+    CHECK(vault() > before);
+
+    // A wreck mission: its gang first, then 5 s at the wreck (Wreck Diver).
+    net::SpecialistRequest ask;
+    ask.action = net::SpecialistRequest::contracts;
+    client.specialist_request(ask);
+    run(0.5);
+    std::optional<Contract> wreck;
+    for (const Contract& c : client.specialist().offers) {
+        if (c.kind == ContractKind::salvage_site) wreck = c;
+    }
+    CHECK(wreck.has_value());
+    if (!wreck) return;
+    CHECK(wreck->profession == "salvaging" && wreck->reward > 0);
+    net::SpecialistRequest take;
+    take.action = net::SpecialistRequest::contract_accept;
+    take.amount = int64_t(wreck->id);
+    client.specialist_request(take);
+    run(0.5);
+    std::vector<uint32_t> gang;
+    for (const uint32_t e : server.npcs()) {
+        const auto info = server.npc_info(e);
+        if (info && info->life == Life::alive && info->actor_kind == 3) gang.push_back(e);
+    }
+    CHECK(gang.size() >= 3);
+    MoveState s = *server.state_of(client.entity_id());
+    s.position = {wreck->waypoint.x, 0, wreck->waypoint.z};
+    server.set_state(client.entity_id(), s);
+    run(0.5);
+    net::SpecialistRequest salvage;
+    salvage.action = net::SpecialistRequest::salvage_site;
+    salvage.amount = int64_t(wreck->id);
+    client.specialist_request(salvage);
+    run(0.5);
+    CHECK(client.specialist().channel.empty());  // (the gang's still up)
+    for (const uint32_t e : gang) server.npc_melee(client.entity_id(), e, 1e6, DamageType::laser);
+    run(0.5);
+    const int64_t credits = client.player_status().credits;
+    before = vault();
+    client.specialist_request(salvage);
+    run(1.0);
+    CHECK(client.specialist().channel == "salvage_site");
+    run(5.0);
+    CHECK(client.specialist().contracts.empty());
+    CHECK(client.player_status().credits > credits && vault() > before);
+}
+
 // An Imperial terminal's missions (docs/PROFESSIONS.md, Faction terminals):
 // a dispatch to the other Imperial terminal, a recon held for 10 s, a Rebel
 // squad destroyed; standing with the Empire up, the Rebellion's down. A
@@ -2175,6 +2296,7 @@ int main() {
     test_surveying(root, book, professions, catalog);
     test_faction_missions(book, professions, catalog);
     test_foraging(root, book, professions, catalog);
+    test_salvaging(root, book, professions, catalog);
     test_bounties(book, professions, catalog);
     test_doctor_heals(book, professions, catalog);
     test_smuggler(book, professions, catalog);

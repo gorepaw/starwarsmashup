@@ -246,9 +246,12 @@ void GameServer::handle_gather_request(Client& client, const net::GatherRequest&
             notify(client.entity, "Move closer to harvest.");
             return;
         }
-        if (!require_licence(client, is_bandit_name(it->name) ? "salvaging" : "foraging")) return;
+        // A humanoid's body (a bandit, a trooper: actor kind 3) is Salvaging's,
+        // a creature's Foraging's; by name only if the body's NPC is gone.
+        const Npc* body = find_npc(corpse_id);
+        const bool salvage = body != nullptr ? body->actor_kind == 3 : is_bandit_name(it->name);
+        if (!require_licence(client, salvage ? "salvaging" : "foraging")) return;
         it->harvested = true;
-        const bool salvage = is_bandit_name(it->name);
         const std::string corpse_name = it->name;
         if (it->items.empty()) {
             corpse_loots_.erase(it);
@@ -275,8 +278,38 @@ void GameServer::handle_gather_request(Client& client, const net::GatherRequest&
         const double bonus =
             config_.professions ? perk_bonus(*config_.professions, client.professions, "salvaging", "yield") : 0.0;
         auto yield = book.salvage_yield(*def, lv, bonus);
+        const auto salvager = [&](std::string_view grant) {
+            return config_.professions != nullptr && has_grant(*config_.professions, client.professions, "salvaging", grant);
+        };
+        // A Reclaimer's: its Mk and grade count.
+        if (salvager("reclaimer")) {
+            const double grade = it->grade >= ItemGrade::exceptional ? 2.0 : it->grade == ItemGrade::fine ? 1.5 : 1.0;
+            const double factor = (1.0 + 0.15 * double(clamp_mark(it->mark))) * grade;
+            for (MaterialStack& st : yield.materials) st.amount = int64_t(std::llround(double(st.amount) * factor));
+        }
+        // Circuit Recovery: weapons, shields and droid parts give electronics too.
+        if (salvager("circuit_recovery") &&
+            (def->kind == ItemKind::weapon || def->kind == ItemKind::deflector_shield || def->id.find("droid") != std::string::npos)) {
+            const ResourceDef* circuits = nullptr;
+            for (const ResourceDef& r : book.resources()) {
+                const bool taken = std::any_of(yield.materials.begin(), yield.materials.end(),
+                                               [&](const MaterialStack& m) { return m.resource_id == r.id; });
+                if (r.category == ResourceCategory::salvage && !taken) {
+                    circuits = &r;
+                    break;
+                }
+            }
+            if (circuits != nullptr && !yield.materials.empty()) {
+                yield.materials.push_back({circuits->id, std::max<int64_t>(1, yield.materials.front().amount / 2)});
+            }
+        }
+        // Tinkerer: the modules crafted into it, back whole.
+        std::vector<std::string> recovered = salvager("tinkerer") ? item_modules(*it) : std::vector<std::string>{};
         if (!store_->remove_item(item_id)) return;
         client.items.erase(it);
+        for (const std::string& m : recovered) {
+            if (config_.catalog->find(m) != nullptr) client.items.push_back(store_->grant_item({0, client.character, m}));
+        }
         const bool twice = config_.professions != nullptr &&
                            random_unit() < perk_bonus(*config_.professions, client.professions, "salvaging", "double_haul");
         for (MaterialStack& st : yield.materials) {
@@ -295,7 +328,11 @@ void GameServer::handle_gather_request(Client& client, const net::GatherRequest&
             if (!summary.empty()) summary += ", ";
             summary += std::format("{}x {}", st.amount, r ? r->name : st.resource_id);
         }
+        for (const std::string& m : recovered) {
+            if (const ItemDef* md = config_.catalog->find(m)) summary += ", and " + md->display_name;
+        }
         notify(client.entity, std::format("Salvaged {} -> {}", def->display_name, summary));
+        salvage_treasure(client);
     }
 }
 
@@ -344,6 +381,22 @@ void GameServer::harvest_remains(Client& client, uint32_t npc_entity, const std:
     client.crafting_sync_tick = 0;
     earn_profession_xp(client, prof, 28);
     notify(client.entity, std::format("{} {} from {}", salvage ? "Salvaged" : "Harvested", summary, name));
+    if (salvage) salvage_treasure(client);
+}
+
+void GameServer::salvage_treasure(Client& client) {
+    if (config_.professions == nullptr || config_.catalog == nullptr || store_ == nullptr || client.character == 0) return;
+    if (!has_grant(*config_.professions, client.professions, "salvaging", "treasure") || random_unit() >= 0.1) return;
+    std::vector<const ItemDef*> modules;
+    for (const ItemDef& d : config_.catalog->all()) {
+        if (d.kind == ItemKind::enhancement && !d.module_for.empty()) modules.push_back(&d);
+    }
+    if (modules.empty()) return;
+    const ItemDef& found = *modules[size_t(random_unit() * double(modules.size())) % modules.size()];
+    client.items.push_back(store_->grant_item({0, client.character, found.id}));
+    ++client.inventory_rev;
+    client.last_sync_tick = 0;
+    notify(client.entity, std::format("Treasure in the trash: a {}", found.display_name));
 }
 
 // What you got from the ground where you stood still: the best of its kind there.

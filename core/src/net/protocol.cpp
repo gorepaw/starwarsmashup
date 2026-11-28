@@ -866,7 +866,7 @@ Contract get_contract(ByteReader& in) {
     Contract c;
     c.id = in.get<uint64_t>();
     const uint8_t kind = in.get<uint8_t>();
-    if (kind > uint8_t(ContractKind::harvest)) throw PacketError("bad contract kind");
+    if (kind > uint8_t(ContractKind::salvage_site)) throw PacketError("bad contract kind");
     c.kind = ContractKind(kind);
     c.title = in.get_string();
     c.target_name = in.get_string();
@@ -2195,7 +2195,7 @@ Message decode(std::span<const uint8_t> packet) {
     case Type::specialist_request: {
         SpecialistRequest m;
         m.action = in.get<uint8_t>();
-        if (m.action > uint8_t(SpecialistRequest::refit_droid)) throw PacketError("bad specialist action");
+        if (m.action > uint8_t(SpecialistRequest::salvage_site)) throw PacketError("bad specialist action");
         m.id = in.get_string();
         m.target = in.get<uint32_t>();
         m.position = get_vec3(in);

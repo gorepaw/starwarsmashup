@@ -702,6 +702,23 @@ void GameServer::handle_specialist_request(Client& client, const net::Specialist
             taken.target_entity = quarry;
             bounty_marks_.push_back({client.entity, taken.id, {quarry}});
         }
+        if (taken.kind == ContractKind::salvage_site && taken.target_entity == 0) {
+            // The wreck's guards, about it (a bounty gang's wits).
+            const Vec3 camp = taken.waypoint + Vec3{5, 0, 3};
+            std::vector<uint32_t> gang;
+            if (on_spawn_mark) gang = on_spawn_mark(taken.target_name, camp, taken.tier, taken.guards);
+            if (gang.empty()) {
+                NpcCombatSpec spec;
+                spec.actor_kind = 3;
+                for (int g = 0; g <= taken.guards; ++g) {
+                    spec.max_health = 220 + 30 * taken.tier;
+                    const Vec3 at = camp + Vec3{4.0 * std::cos(g * 2.1), 0, 4.0 * std::sin(g * 2.1)};
+                    gang.push_back(add_combat_npc(g == 0 ? taken.target_name : "Scavenger", at, 0, 0, spec));
+                }
+            }
+            taken.target_entity = gang.front();
+            bounty_marks_.push_back({client.entity, taken.id, std::move(gang)});
+        }
         if (taken.kind == ContractKind::faction_destroy && taken.target_entity == 0) {
             // The other side's troopers, where it said.
             const std::string enemy = taken.item == "imperial" ? "rebel" : "imperial";
@@ -751,6 +768,39 @@ void GameServer::handle_specialist_request(Client& client, const net::Specialist
     case R::slice_answer:
         answer_slice(client, uint64_t(std::max<int64_t>(0, request.amount)), request.target == 1);
         return;
+    case R::salvage_site: {
+        // A wreck mission's wreck: at it, its guards down, a licensed salvager.
+        const auto c = std::find_if(client.spec.contracts.begin(), client.spec.contracts.end(), [&](const Contract& k) {
+            return k.kind == ContractKind::salvage_site && int64_t(k.id) == request.amount;
+        });
+        if (c == client.spec.contracts.end() || client.life != Life::alive || conquest_) return;
+        if (flat_distance(client.state.position, c->waypoint) > c->radius) {
+            notify(client.entity, "Get to the wreck first");
+            return;
+        }
+        if (config_.professions == nullptr || !licensed(*config_.professions, client.professions, "salvaging")) {
+            notify(client.entity, "Salvaging a wreck takes a Salvaging licence");
+            return;
+        }
+        for (const BountyMark& m : bounty_marks_) {
+            if (m.contract != c->id) continue;
+            for (const uint32_t e : m.entities) {
+                if (const Npc* n = find_npc(e); n != nullptr && n->life == Life::alive) {
+                    notify(client.entity, "Deal with the wreck's guards first");
+                    return;
+                }
+            }
+        }
+        if (!client.spec.channel.empty()) return;
+        client.spec.channel = std::string(wreck_channel);
+        client.spec.channel_target = uint32_t(c->id);
+        client.spec.channel_remaining = granted(client, "salvaging", "wreck_diver") ? wreck_salvage_time / 2 : wreck_salvage_time;
+        client.spec.channel_from = client.state.position;
+        notify(client.entity, "Salvaging the wreck: hold still");
+        ++client.spec.revision;
+        client.spec.sync_tick = 0;
+        return;
+    }
     case R::contract_abandon:
         std::erase_if(client.spec.contracts, [&](const Contract& c) { return int64_t(c.id) == request.amount; });
         ++client.spec.revision;
@@ -1358,6 +1408,14 @@ bool GameServer::use_ability(Client& client, const AbilityDef& a, uint32_t targe
 }
 
 void GameServer::finish_channel(Client& client) {
+    if (client.spec.channel == wreck_channel) {
+        const uint64_t contract = client.spec.channel_target;
+        client.spec.channel.clear();
+        ++client.spec.revision;
+        client.spec.sync_tick = 0;
+        finish_wreck(client, contract);
+        return;
+    }
     const SpecialistBook* book = config_.specialists;
     const AbilityDef* a = book ? book->ability(client.spec.channel) : nullptr;
     const uint32_t target = client.spec.channel_target;
@@ -1801,6 +1859,22 @@ void GameServer::specialist_kill(uint32_t victim, uint32_t killer, bool npc) {
             }
             if (!corpse) {
                 dressed_corpses_.push_back(victim);  // (its body's loot comes after)
+                if (dressed_corpses_.size() > 256) dressed_corpses_.erase(dressed_corpses_.begin());
+            }
+        }
+    }
+    // A Salvager's Battlefield Scavenger: a humanoid they kill salvaged where it falls.
+    if (npc && !conquest_ && config_.professions != nullptr && licensed(*config_.professions, hunter->professions, "salvaging") &&
+        granted(*hunter, "salvaging", "battlefield_scavenger")) {
+        if (const Npc* n = find_npc(victim); n != nullptr && n->actor_kind == 3) {
+            const std::string name = n->name;
+            harvest_remains(*hunter, victim, name, true);
+            bool corpse = false;
+            for (CorpseLoot& c : corpse_loots_) {
+                if (c.npc_entity == victim) c.harvested = corpse = true;
+            }
+            if (!corpse) {
+                dressed_corpses_.push_back(victim);
                 if (dressed_corpses_.size() > 256) dressed_corpses_.erase(dressed_corpses_.begin());
             }
         }
@@ -2423,6 +2497,23 @@ void GameServer::offer_contracts(Client& client, size_t terminal) {
             c.xp = 100 + 40 * tier;
             spec.offers.push_back(dressed(c));
         }
+        // A wreck mission (Salvaging): a wreck out in the wilds, a gang
+        // guarding it, salvaged once they're down.
+        if (const auto spot = bounty_spot(at)) {
+            const int tier = tier_in("salvaging");
+            Contract c;
+            c.kind = ContractKind::salvage_site;
+            c.profession = "salvaging";
+            c.target_name = bounty_mark_name(random_unit(), random_unit());
+            c.waypoint = *spot;
+            c.radius = wreck_reach;
+            c.tier = tier;
+            c.guards = 2 + tier / 2;
+            c.title = std::format("Salvage: a wreck out in the wilds, {}'s gang guarding it (tier {})", c.target_name, tier);
+            c.reward = contract_reward(c.kind, tier, flat_distance(*spot, at));
+            c.xp = 140 + 50 * tier;
+            spec.offers.push_back(dressed(c));
+        }
         // A harvest mission (Foraging): so much of one organic, harvested from
         // here on, brought back here.
         std::vector<const ResourceDef*> organics;
@@ -2536,6 +2627,32 @@ void GameServer::offer_contracts(Client& client, size_t terminal) {
     spec.sync_tick = 0;
 }
 
+void GameServer::finish_wreck(Client& client, uint64_t contract) {
+    Contract* c = nullptr;
+    for (Contract& k : client.spec.contracts) {
+        if (k.kind == ContractKind::salvage_site && uint32_t(k.id) == uint32_t(contract)) c = &k;
+    }
+    if (c == nullptr || config_.crafting == nullptr) return;
+    // Alloy and electronics, a lot of them: more the harder the wreck (a Wreck Diver's 30% more).
+    double amount = double(gathered_amount(client, "salvaging", 14 + 8 * c->tier));
+    if (granted(client, "salvaging", "wreck_diver")) amount *= 1.3;
+    std::string summary;
+    bool first = true;
+    for (const ResourceDef& r : config_.crafting->resources()) {
+        if (r.category != ResourceCategory::salvage) continue;
+        const int64_t n = std::max<int64_t>(1, int64_t(std::llround(first ? amount : amount / 2)));
+        add_material(client.materials, r.id, n);
+        summary += std::format("{}{}x {}", summary.empty() ? "" : ", ", n, r.name);
+        first = false;
+    }
+    save_materials(client);
+    ++client.crafting_rev;
+    client.crafting_sync_tick = 0;
+    notify(client.entity, "Salvaged the wreck: " + summary);
+    salvage_treasure(client);
+    c->progress = 1;  // (update_contracts pays it)
+}
+
 void GameServer::earn_faction_standing(Client& client, const std::string& faction, int64_t points) {
     const std::string side = normalize_faction(faction);
     if (side.empty() || side == "neutral" || points <= 0) return;
@@ -2591,6 +2708,8 @@ void GameServer::update_contracts(Client& client) {
             done = c.progress >= c.needed;
         } else if (c.kind == ContractKind::survey) {
             done = c.progress >= c.needed - 1e-9 && client.life == Life::alive;  // (finish_extraction's)
+        } else if (c.kind == ContractKind::salvage_site) {
+            done = c.progress >= 1;  // (finish_wreck's)
         } else if (c.kind == ContractKind::harvest) {
             // Harvested since (harvest_remains counts it), held in the vault, and here.
             int64_t held = 0;
@@ -2689,7 +2808,8 @@ void GameServer::update_contracts(Client& client) {
             ++client.crafting_rev;
             client.crafting_sync_tick = 0;
         }
-        if (done && (c.kind == ContractKind::craft_order || c.kind == ContractKind::survey || c.kind == ContractKind::harvest)) {
+        if (done && (c.kind == ContractKind::craft_order || c.kind == ContractKind::survey || c.kind == ContractKind::harvest ||
+                     c.kind == ContractKind::salvage_site)) {
             c.reward = order_pay(client, c.profession, c.reward);  // an artisan's order_pay perks
         }
         if (done) {

@@ -806,6 +806,10 @@ private:
     void refresh_effect_gear(Client& client);
     bool use_ability(Client& client, const AbilityDef& ability, uint32_t target, Vec3 at);
     void finish_channel(Client& client);
+    // A wreck mission's salvaging done: its haul, and the mission complete.
+    void finish_wreck(Client& client, uint64_t contract);
+    // A Salvager's Treasure in the Trash: one salvage in 10 turns up a module.
+    void salvage_treasure(Client& client);
     void give_effect(Client& client, TimedEffect effect);
     // Inspiration (docs/PROFESSIONS.md): `gain` seconds of it from a
     // performer of this standing, built toward the listener's choice;

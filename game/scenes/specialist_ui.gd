@@ -49,6 +49,8 @@ var _look_heights := {}   # a companion's look (object template) -> its height (
 var _spec := {}
 var _revision := -1
 var _synced_at := 0.0     # when the last sync arrived (cooldowns count down from it)
+var _channel_seen := ""    # the channel under way when last drawn
+var _channel_total := 1.0  # ...and how long it was when it began (a wreck's has no ability)
 var _clock := 0.0
 var _last_command := -10.0
 var _hint := ""
@@ -303,11 +305,17 @@ func update(client: Object, camera: Camera3D, catalog: Array, delta: float) -> v
 	_bar.companion = companion
 	var channel := str(_spec.get("channel", ""))
 	if channel != "":
-		var total := maxf(0.1, float((abilities.get(channel, {}) as Dictionary).get("channel", 1.0)))
 		var left := maxf(0.0, float(_spec.get("channel_remaining", 0.0)) - (_clock - _synced_at))
-		_bar.channel = {"name": str((abilities.get(channel, {}) as Dictionary).get("name", channel)) + "... hold still",
-				"progress": 1.0 - left / total}
+		# (Not an ability's, a wreck mission's: as long as it was when it began.)
+		if channel != _channel_seen:
+			_channel_seen = channel
+			_channel_total = maxf(0.1, float(_spec.get("channel_remaining", 1.0)))
+		var total := maxf(0.1, float((abilities.get(channel, {}) as Dictionary).get("channel", _channel_total)))
+		var label := "Salvaging the wreck" if channel == "salvage_site" else \
+				str((abilities.get(channel, {}) as Dictionary).get("name", channel))
+		_bar.channel = {"name": label + "... hold still", "progress": 1.0 - left / total}
 	else:
+		_channel_seen = ""
 		_bar.channel = {}
 	var hint := _hint if _hint_time > 0 else ""
 	if hint == "" and _beacon_ready(client):

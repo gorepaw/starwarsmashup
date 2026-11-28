@@ -214,7 +214,7 @@ void test_training() {
         CHECK(survey && survey->chooses() && survey->first_perk_level == 1 && survey->pool == PerkPool::noncombat);
         CHECK(smith && smith->chooses() && smith->first_perk_level == 1 && smith->pool == PerkPool::noncombat);
         // (Those not yet given their own perks: a Bonus each.)
-        for (const char* id : {"salvaging", "weaponsmith", "armorsmith", "tailor", "chef", "architect"}) {
+        for (const char* id : {"weaponsmith", "armorsmith", "tailor", "chef", "architect"}) {
             const ProfessionDef* def = book.find(id);
             CHECK(def && def->perks.size() == 10);
             for (const ProfessionPerkDef& perk : def->perks) CHECK(perk.bonuses.size() == 1);
