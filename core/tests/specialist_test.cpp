@@ -711,7 +711,7 @@ void test_surveying(const std::filesystem::path& root, const SpecialistBook& boo
     run(0.5);
     std::vector<Contract> surveys;
     for (const Contract& c : client.specialist().offers) {
-        if (c.kind == ContractKind::survey) surveys.push_back(c);
+        if (c.kind == ContractKind::survey && c.profession == "surveying") surveys.push_back(c);
     }
     CHECK(surveys.size() == 2);
     if (surveys.empty()) return;
@@ -773,6 +773,113 @@ void test_surveying(const std::filesystem::path& root, const SpecialistBook& boo
     std::set<std::string> kinds_after;
     for (const MaterialStack& st : *server.materials_of(client.entity_id())) kinds_after.insert(st.resource_id);
     CHECK(!other_here || kinds_after.size() >= kinds_before.size() + 1);
+}
+
+// A Forager with Quick Hands, Big Game, Harvest Contracts, Lush Patches and
+// Field Dresser: flora in 4 s; kills harvested where they fall, twice from a
+// big one; a harvest mission counting only what's harvested after taking it.
+void test_foraging(const std::filesystem::path& root, const SpecialistBook& book, const ProfessionBook& professions,
+                   const ItemCatalog& catalog) {
+    CraftingBook crafting;
+    crafting.load_resources(root / "game" / "crafting" / "resources.ini");
+    crafting.load_schematics(root / "game" / "crafting" / "schematics.ini");
+    Heightfield ground{401, 2.0, -400, -400, std::vector<float>(401 * 401, 0.0f)};
+    World world{ground};
+    MemoryCharacterStore store;
+    const CharacterRecord rec = store.create("Forager", {0, 0, 0}, 0);
+    store.save_professions(rec.id, std::vector<ProfessionProgress>{{"foraging", professions.xp_for_level(100), 0}});
+    store.set_extra(rec.id, "perks:foraging",
+                    "forage_quick_hands,forage_big_game,forage_harvest_contracts,forage_lush_patches,forage_field_dresser");
+    // A vault already full of organics: none of it counts for a harvest mission.
+    std::vector<MaterialStack> vault;
+    for (const ResourceDef& r : crafting.resources()) {
+        if (r.category == ResourceCategory::organic) vault.push_back({r.id, 100});
+    }
+    store.save_materials(rec.id, vault);
+    net::LoopbackHub links;
+    net::Endpoint server_ep{1, 1};
+    net::LoopbackLink srv_link{links, server_ep};
+    net::LoopbackLink link{links, {2, 1}};
+    ServerConfig config;
+    config.catalog = &catalog;
+    config.professions = &professions;
+    config.specialists = &book;
+    config.crafting = &crafting;
+    config.pvp_enabled = false;
+    config.spawn = {0, 0, 0};
+    GameServer server(srv_link, world, config, &store);
+    server.set_crafting(&crafting, {});
+    server.set_quests(nullptr, {}, {{"Artisan Terminal", {2, 0, 0}, 3, "artisan"}});
+    GameClient client(link, world, ClientConfig{.server = server_ep, .name = "Forager"});
+    double now = 0;
+    const auto run = [&](double seconds) {
+        for (const double end = now + seconds; now < end; now += 1.0 / 30.0) {
+            server.update(now);
+            client.update(now);
+        }
+    };
+    const auto held = [&](const std::string& id) {
+        int64_t n = 0;
+        if (const auto* m = server.materials_of(client.entity_id())) {
+            for (const MaterialStack& st : *m) {
+                if (id.empty() || st.resource_id == id) n += st.amount;
+            }
+        }
+        return n;
+    };
+    // A creature of so much health, killed by the forager.
+    const auto hunt = [&](double health) {
+        GameServer::NpcCombatSpec beast;
+        beast.actor_kind = 2;
+        beast.max_health = health;
+        beast.hit_radius = 1.0;
+        beast.hit_height = 2.0;
+        const uint32_t e = server.add_combat_npc("Beast", {4, 0, 4}, 0, 1, beast);
+        server.npc_melee(client.entity_id(), e, 1e6, DamageType::laser);
+        run(0.3);
+    };
+    run(1.0);
+    CHECK(client.status() == GameClient::Status::connected);
+    // Quick Hands: flora in 4 s.
+    const int64_t before_flora = held("");
+    client.gather_extract(ResourceCategory::flora);
+    run(4.4);
+    CHECK(held("") > before_flora);
+
+    // Field Dresser and Big Game: harvested where they fall, twice from a big one.
+    int64_t total = held("");
+    hunt(500);
+    const int64_t small = held("") - total;
+    total = held("");
+    hunt(1200);
+    const int64_t big = held("") - total;
+    CHECK(small > 0 && big == 2 * small);
+
+    // The terminal's missions: a flora survey and a harvest, both Foraging's.
+    net::SpecialistRequest ask;
+    ask.action = net::SpecialistRequest::contracts;
+    client.specialist_request(ask);
+    run(0.5);
+    std::optional<Contract> harvest;
+    bool flora_survey = false;
+    for (const Contract& c : client.specialist().offers) {
+        if (c.kind == ContractKind::harvest) harvest = c;
+        flora_survey = flora_survey || (c.kind == ContractKind::survey && c.item == "flora" && c.profession == "foraging");
+    }
+    CHECK(flora_survey && harvest.has_value());
+    if (!harvest) return;
+    CHECK(harvest->profession == "foraging" && near(harvest->needed, 65, 1e-6));  // (a master's: tier 5)
+    net::SpecialistRequest take;
+    take.action = net::SpecialistRequest::contract_accept;
+    take.amount = int64_t(harvest->id);
+    client.specialist_request(take);
+    run(1.0);
+    // At the terminal with a vault full of it: not done (it's from before).
+    CHECK(client.specialist().contracts.size() == 1 && held(harvest->item) >= 100);
+    const int64_t credits = client.player_status().credits;
+    for (int i = 0; i < 40 && !client.specialist().contracts.empty(); ++i) hunt(1200);
+    CHECK(client.specialist().contracts.empty());
+    CHECK(client.player_status().credits > credits);
 }
 
 // An Imperial terminal's missions (docs/PROFESSIONS.md, Faction terminals):
@@ -2067,6 +2174,7 @@ int main() {
     test_craft_orders(root, book, professions, catalog);
     test_surveying(root, book, professions, catalog);
     test_faction_missions(book, professions, catalog);
+    test_foraging(root, book, professions, catalog);
     test_bounties(book, professions, catalog);
     test_doctor_heals(book, professions, catalog);
     test_smuggler(book, professions, catalog);

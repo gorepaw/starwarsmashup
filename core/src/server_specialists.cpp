@@ -1789,6 +1789,22 @@ void GameServer::specialist_kill(uint32_t victim, uint32_t killer, bool npc) {
             earn_specialist_xp(*hunter, "bio_engineer", 30 + tpl->tier * 10);
         }
     }
+    // A Forager's Field Dresser: a creature they kill harvested where it falls.
+    if (npc && !conquest_ && config_.professions != nullptr && licensed(*config_.professions, hunter->professions, "foraging") &&
+        granted(*hunter, "foraging", "field_dresser")) {
+        if (const Npc* n = find_npc(victim); n != nullptr && n->actor_kind == 2) {
+            const std::string name = n->name;
+            harvest_remains(*hunter, victim, name, false);
+            bool corpse = false;
+            for (CorpseLoot& c : corpse_loots_) {
+                if (c.npc_entity == victim) c.harvested = corpse = true;
+            }
+            if (!corpse) {
+                dressed_corpses_.push_back(victim);  // (its body's loot comes after)
+                if (dressed_corpses_.size() > 256) dressed_corpses_.erase(dressed_corpses_.begin());
+            }
+        }
+    }
     // Clean Getaway (a Bounty Hunter's 85): away fast after a kill, the shield already coming back.
     if (hunter->life == Life::alive && granted(*hunter, "bounty_hunter", "clean_getaway")) {
         give_effect(*hunter, {"bh_clean_getaway", "Clean Getaway", hunter->entity, 4, 4, {{Stat::run_speed, 0, 1.2}}});
@@ -2378,19 +2394,23 @@ void GameServer::offer_contracts(Client& client, size_t terminal) {
             spec.offers.push_back(dressed(c));
             made.erase(made.begin() + std::ptrdiff_t(k));
         }
-        // Survey missions (Surveying): a resource kind, at a concentration
-        // that climbs with the surveyor's level, out past the town.
-        const int tier = std::clamp(
-            1 + (config_.professions ? profession_standing(*config_.professions, client.professions, "surveying").level : 1) / 25,
-            1, 5);
+        // Survey missions (Surveying, and Foraging's flora): a resource kind,
+        // at a concentration that climbs with the gatherer's level, out past the town.
+        const auto tier_in = [&](const char* profession) {
+            return std::clamp(
+                1 + (config_.professions ? profession_standing(*config_.professions, client.professions, profession).level : 1) / 25,
+                1, 5);
+        };
         static constexpr std::array<ResourceCategory, 4> kinds{ResourceCategory::mineral, ResourceCategory::chemical,
                                                                ResourceCategory::gas, ResourceCategory::water};
         size_t first = size_t(random_unit() * double(kinds.size())) % kinds.size();
-        for (size_t i = 0; i < 2; ++i) {
-            const ResourceCategory cat = kinds[(first + i * 2) % kinds.size()];
+        for (size_t i = 0; i < 3; ++i) {
+            const bool flora = i == 2;
+            const ResourceCategory cat = flora ? ResourceCategory::flora : kinds[(first + i * 2) % kinds.size()];
+            const int tier = tier_in(flora ? "foraging" : "surveying");
             Contract c;
             c.kind = ContractKind::survey;
-            c.profession = "surveying";
+            c.profession = flora ? "foraging" : "surveying";
             c.item = std::string(resource_category_name(cat));
             c.needed = std::min(0.9, 0.35 + 0.1 * tier);
             c.waypoint = t.position;
@@ -2401,6 +2421,29 @@ void GameServer::offer_contracts(Client& client, size_t terminal) {
                                   resource_category_label(cat), int(std::lround(c.needed * 100)), int(c.radius), t.name);
             c.reward = contract_reward(c.kind, tier, 0);
             c.xp = 100 + 40 * tier;
+            spec.offers.push_back(dressed(c));
+        }
+        // A harvest mission (Foraging): so much of one organic, harvested from
+        // here on, brought back here.
+        std::vector<const ResourceDef*> organics;
+        for (const ResourceDef& r : config_.crafting->resources()) {
+            if (r.category == ResourceCategory::organic) organics.push_back(&r);
+        }
+        if (!organics.empty()) {
+            const ResourceDef& r = *organics[size_t(random_unit() * double(organics.size())) % organics.size()];
+            const int tier = tier_in("foraging");
+            Contract c;
+            c.kind = ContractKind::harvest;
+            c.profession = "foraging";
+            c.item = r.id;
+            c.needed = double(15 + 10 * tier);
+            c.target_name = t.name;
+            c.waypoint = t.position;
+            c.radius = t.radius + 2;
+            c.tier = tier;
+            c.title = std::format("Harvest: {} {}, harvested from now on, brought to {}", int(c.needed), r.name, t.name);
+            c.reward = contract_reward(c.kind, tier, 0);
+            c.xp = 90 + 40 * tier;
             spec.offers.push_back(dressed(c));
         }
     }
@@ -2548,6 +2591,14 @@ void GameServer::update_contracts(Client& client) {
             done = c.progress >= c.needed;
         } else if (c.kind == ContractKind::survey) {
             done = c.progress >= c.needed - 1e-9 && client.life == Life::alive;  // (finish_extraction's)
+        } else if (c.kind == ContractKind::harvest) {
+            // Harvested since (harvest_remains counts it), held in the vault, and here.
+            int64_t held = 0;
+            for (const MaterialStack& m : client.materials) {
+                if (m.resource_id == c.item) held += m.amount;
+            }
+            done = c.progress >= c.needed - 1e-9 && held >= int64_t(c.needed) && client.life == Life::alive &&
+                   flat_distance(client.state.position, c.waypoint) <= c.radius;
         } else if (c.kind == ContractKind::faction_destroy) {
             // Every trooper of its squad down (by anyone's hand).
             bool any = false, standing = false;
@@ -2632,7 +2683,13 @@ void GameServer::update_contracts(Client& client) {
         if (done && c.kind == ContractKind::gig && granted(client, "entertainer", "encore")) {
             c.reward += c.reward / 2;  // an Encore's
         }
-        if (done && (c.kind == ContractKind::craft_order || c.kind == ContractKind::survey)) {
+        if (done && c.kind == ContractKind::harvest) {
+            add_material(client.materials, c.item, -int64_t(c.needed));  // handed over
+            save_materials(client);
+            ++client.crafting_rev;
+            client.crafting_sync_tick = 0;
+        }
+        if (done && (c.kind == ContractKind::craft_order || c.kind == ContractKind::survey || c.kind == ContractKind::harvest)) {
             c.reward = order_pay(client, c.profession, c.reward);  // an artisan's order_pay perks
         }
         if (done) {

@@ -142,7 +142,19 @@ A licence at 1; no buttons. Survey missions come from artisan terminals (`Contra
 | 65 | **Core Sample**: a quarter as much again of the richest other resource there | **Seasoned Prospector**: 25% more Surveying experience |
 | 85 | **Mother Lode**: double at 80% concentration or richer | **Rare Finds**: one extraction in 20 turns up a few of the finest-quality resource of its kind on the planet |
 
-Gathering not yet given its own (Foraging, Salvaging):
+#### Foraging
+
+A licence at 1; no buttons. Artisan terminals offer a flora survey (as Surveying's) and a harvest mission (`ContractKind::harvest`): so many units of one organic, counted only as they're harvested after taking it (`harvest_remains`), handed in from the vault at the terminal.
+
+| Level | A | B |
+|---|---|---|
+| 1 | **Field Skinning**: 15% more per harvest and flora extraction (`yield`) | **Quick Hands**: flora extraction 4 s, flora ground worked out for 10 m |
+| 25 | **Big Game**: twice from a body of 1,000 health or more (`big_game_health`) | **Full Carcass**: hide, meat and bone from every body, half of each |
+| 45 | **Bountiful Harvest**: 15% chance of a double haul | **Harvest Contracts**: harvest and flora survey missions pay 50% more (`order_pay`) |
+| 65 | **Lush Patches**: 30% more flora at 60% concentration or richer | **Seasoned Forager**: 25% more Foraging experience |
+| 85 | **Field Dresser**: creatures you kill harvested where they fall | **Plentiful Land**: double the flora at 80% concentration or richer |
+
+Gathering not yet given its own (Salvaging):
 
 | Level | A | B |
 |---|---|---|

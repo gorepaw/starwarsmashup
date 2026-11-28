@@ -724,6 +724,9 @@ private:
     void apply_professions(const Client& client, const CharacterLoadout& cl, Loadout& loadout) const;
     // Crafting & gathering (server_crafting.cpp).
     void handle_gather_request(Client& client, const net::GatherRequest& request, double now);
+    // What a body gives its harvester (a creature's to Foraging, a bandit's
+    // to Salvaging), and the harvest missions it counts toward.
+    void harvest_remains(Client& client, uint32_t npc_entity, const std::string& name, bool salvage);
     void update_extractions(double now);
     void quest_event(Client& client, const std::string& name);
     // Service points (server_services.cpp): trainers, the bank, clinics and cloning terminals.
@@ -958,6 +961,7 @@ private:
     std::vector<net::MissionTerminal> mission_terminals_;
     std::vector<net::Workbench> workbenches_;
     std::vector<CorpseLoot> corpse_loots_;
+    std::vector<uint32_t> dressed_corpses_;  // harvested where they fell (a Forager's Field Dresser): none left on the body
     uint32_t next_loot_id_ = 0xF0000000u;  // detached loot's ids, clear of entities'
     std::vector<Vehicle> vehicles_;
     std::vector<double> spawn_wait_;    // per vehicle spawn: seconds until it gives another

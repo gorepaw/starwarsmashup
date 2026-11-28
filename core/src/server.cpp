@@ -620,6 +620,11 @@ void GameServer::set_corpse_loot(uint32_t npc_entity, uint32_t owner_entity, con
     if (items.empty()) return;
     corpse_loots_.push_back({npc_entity, owner_entity, name, position, std::move(items)});
     corpse_loots_.back().expires = now_ + corpse_loot_seconds;
+    // Already harvested where it fell (a Forager's Field Dresser).
+    if (const auto it = std::find(dressed_corpses_.begin(), dressed_corpses_.end(), npc_entity); it != dressed_corpses_.end()) {
+        corpse_loots_.back().harvested = true;
+        dressed_corpses_.erase(it);
+    }
 }
 
 void GameServer::clear_corpse_loot(uint32_t npc_entity) {

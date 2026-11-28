@@ -208,10 +208,12 @@ void GameServer::handle_gather_request(Client& client, const net::GatherRequest&
             const Vec3 d = client.state.position - client.last_extract_site;
             const double apart = std::hypot(d.x, d.z);
             // (A Surveyor's Close Spacing: 10 m.)
-            const double spacing = cat != ResourceCategory::flora && config_.professions != nullptr &&
-                                           has_grant(*config_.professions, client.professions, "surveying", "close_spacing")
-                                       ? std::min(10.0, config_.extract_spacing)
-                                       : config_.extract_spacing;
+            // (A Forager's Quick Hands, for flora: 10 m too.)
+            const bool close = config_.professions != nullptr &&
+                               (cat == ResourceCategory::flora
+                                    ? has_grant(*config_.professions, client.professions, "foraging", "quick_hands")
+                                    : has_grant(*config_.professions, client.professions, "surveying", "close_spacing"));
+            const double spacing = close ? std::min(10.0, config_.extract_spacing) : config_.extract_spacing;
             if (apart < spacing) {
                 notify(client.entity, std::format("This ground is worked out: move {} m from where you last extracted.",
                                                   int(std::ceil(spacing - apart))));
@@ -246,28 +248,12 @@ void GameServer::handle_gather_request(Client& client, const net::GatherRequest&
         }
         if (!require_licence(client, is_bandit_name(it->name) ? "salvaging" : "foraging")) return;
         it->harvested = true;
-
         const bool salvage = is_bandit_name(it->name);
-        const ResourceCategory cat = salvage ? ResourceCategory::salvage : ResourceCategory::organic;
-        const std::string prof = salvage ? "salvaging" : "foraging";
-        const int lv = profession_level(config_.professions, client.professions, prof);
-        std::vector<const ResourceDef*> choices;
-        for (const ResourceDef& r : book.resources()) {
-            if (r.category == cat) choices.push_back(&r);
-        }
         const std::string corpse_name = it->name;
         if (it->items.empty()) {
             corpse_loots_.erase(it);
         }
-        if (choices.empty()) return;
-        const ResourceDef* picked = choices[size_t(corpse_id) % choices.size()];
-        const int64_t qty = gathered_amount(client, prof, std::max<int64_t>(3, 4 + lv / 12));
-        add_material(client.materials, picked->id, qty);
-        save_materials(client);
-        ++client.crafting_rev;
-        client.crafting_sync_tick = 0;
-        earn_profession_xp(client, prof, 28);
-        notify(client.entity, std::format("{} {}x {} from {}", salvage ? "Salvaged" : "Harvested", qty, picked->name, corpse_name));
+        harvest_remains(client, corpse_id, corpse_name, salvage);
         return;
     }
 
@@ -313,6 +299,53 @@ void GameServer::handle_gather_request(Client& client, const net::GatherRequest&
     }
 }
 
+void GameServer::harvest_remains(Client& client, uint32_t npc_entity, const std::string& name, bool salvage) {
+    if (config_.crafting == nullptr) return;
+    const CraftingBook& book = *config_.crafting;
+    const ResourceCategory cat = salvage ? ResourceCategory::salvage : ResourceCategory::organic;
+    const std::string prof = salvage ? "salvaging" : "foraging";
+    const int lv = profession_level(config_.professions, client.professions, prof);
+    std::vector<const ResourceDef*> choices;
+    for (const ResourceDef& r : book.resources()) {
+        if (r.category == cat) choices.push_back(&r);
+    }
+    if (choices.empty()) return;
+    const auto forager = [&](std::string_view grant) {
+        return !salvage && config_.professions != nullptr &&
+               has_grant(*config_.professions, client.professions, "foraging", grant);
+    };
+    int64_t qty = gathered_amount(client, prof, std::max<int64_t>(3, 4 + lv / 12));
+    // A Forager's Big Game: twice from a big creature.
+    if (forager("big_game")) {
+        if (const Npc* n = find_npc(npc_entity); n != nullptr && n->max_health >= big_game_health) qty *= 2;
+    }
+    // Full Carcass: hide, meat and bone, half as much of each; else the one the body gives.
+    std::vector<std::pair<const ResourceDef*, int64_t>> got;
+    if (forager("full_carcass")) {
+        for (const ResourceDef* r : choices) got.emplace_back(r, std::max<int64_t>(1, qty / 2));
+    } else {
+        got.emplace_back(choices[size_t(npc_entity) % choices.size()], qty);
+    }
+    std::string summary;
+    for (const auto& [r, n] : got) {
+        add_material(client.materials, r->id, n);
+        summary += std::format("{}{}x {}", summary.empty() ? "" : ", ", n, r->name);
+        // An artisan terminal's harvest mission: this resource, harvested since it was taken.
+        for (Contract& c : client.spec.contracts) {
+            if (c.kind == ContractKind::harvest && c.item == r->id && c.progress < c.needed) {
+                c.progress = std::min(c.needed, c.progress + double(n));
+                ++client.spec.revision;
+                client.spec.sync_tick = 0;
+            }
+        }
+    }
+    save_materials(client);
+    ++client.crafting_rev;
+    client.crafting_sync_tick = 0;
+    earn_profession_xp(client, prof, 28);
+    notify(client.entity, std::format("{} {} from {}", salvage ? "Salvaged" : "Harvested", summary, name));
+}
+
 // What you got from the ground where you stood still: the best of its kind there.
 void GameServer::finish_extraction(Client& client, ResourceCategory cat) {
     const CraftingBook& book = *config_.crafting;
@@ -332,9 +365,14 @@ void GameServer::finish_extraction(Client& client, ResourceCategory cat) {
         return prof == "surveying" && config_.professions != nullptr &&
                has_grant(*config_.professions, client.professions, "surveying", grant);
     };
-    // A Surveyor's Rich Veins and Mother Lode: more from the rich ground.
-    if (conc >= 0.6 && surveyor("rich_veins")) qty = int64_t(std::llround(double(qty) * 1.3));
-    if (conc >= 0.8 && surveyor("mother_lode")) qty *= 2;
+    const auto forager = [&](std::string_view grant) {
+        return prof == "foraging" && config_.professions != nullptr &&
+               has_grant(*config_.professions, client.professions, "foraging", grant);
+    };
+    // A Surveyor's Rich Veins and Mother Lode, a Forager's Lush Patches and
+    // Plentiful Land: more from the rich ground.
+    if (conc >= 0.6 && (surveyor("rich_veins") || forager("lush_patches"))) qty = int64_t(std::llround(double(qty) * 1.3));
+    if (conc >= 0.8 && (surveyor("mother_lode") || forager("plentiful_land"))) qty *= 2;
     add_material(client.materials, res->id, qty);
     std::string extra;
     // Core Sample: a quarter as much of the richest other resource here.
@@ -410,8 +448,11 @@ void GameServer::update_extractions(double now) {
 }
 
 double GameServer::extract_time_for(const Client& client) const {
-    const bool quick = client.extract_category != ResourceCategory::flora && config_.professions != nullptr &&
-                       has_grant(*config_.professions, client.professions, "surveying", "quick_extraction");
+    // (A Forager's Quick Hands, for flora.)
+    const bool flora = client.extract_category == ResourceCategory::flora;
+    const bool quick = config_.professions != nullptr &&
+                       has_grant(*config_.professions, client.professions, flora ? "foraging" : "surveying",
+                                 flora ? "quick_hands" : "quick_extraction");
     return quick ? std::min(4.0, config_.extract_time) : config_.extract_time;
 }
 

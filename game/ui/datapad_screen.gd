@@ -399,6 +399,8 @@ func _paint_contracts(body: Rect2) -> void:
 					ceili(float(c.get("expires_in", 0.0)) / 60.0), int(c.get("progress", 0.0)), int(c.get("needed", 0.0))]
 		elif str(c.get("kind", "")).begins_with("faction_"):
 			detail = "%d cr  ·  faction standing  ·  %d min left" % [int(c.get("reward", 0)), ceili(float(c.get("expires_in", 0.0)) / 60.0)]
+		elif str(c.get("kind", "")) == "harvest":
+			detail += "  ·  %d / %d harvested" % [int(c.get("progress", 0.0)), int(c.get("needed", 0.0))]
 		elif str(c.get("kind", "")) == "survey":
 			detail += "  ·  best %d%% of %d%%" % [roundi(float(c.get("progress", 0.0)) * 100), roundi(float(c.get("needed", 0.0)) * 100)]
 		elif float(c.get("needed", 0.0)) > 0:

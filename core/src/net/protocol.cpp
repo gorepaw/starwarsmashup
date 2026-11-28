@@ -844,7 +844,7 @@ Contract get_contract(ByteReader& in) {
     Contract c;
     c.id = in.get<uint64_t>();
     const uint8_t kind = in.get<uint8_t>();
-    if (kind > uint8_t(ContractKind::faction_dispatch)) throw PacketError("bad contract kind");
+    if (kind > uint8_t(ContractKind::harvest)) throw PacketError("bad contract kind");
     c.kind = ContractKind(kind);
     c.title = in.get_string();
     c.target_name = in.get_string();

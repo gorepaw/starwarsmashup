@@ -130,9 +130,9 @@ constexpr std::array<std::string_view, 29> effect_names{
 constexpr std::array<std::string_view, 5> target_names{"self", "ally", "enemy", "ground", "creature"};
 constexpr std::array<std::string_view, 7> deploy_names{"none",         "heal_aura", "buff_aura", "sensor",
                                                        "trap",         "spawn_beacon", "camp"};
-constexpr std::array<std::string_view, 10> contract_names{"npc_mark", "pvp_mark", "contraband", "track", "gig",
+constexpr std::array<std::string_view, 11> contract_names{"npc_mark", "pvp_mark", "contraband", "track", "gig",
                                                           "craft_order", "survey", "faction_destroy", "faction_recon",
-                                                          "faction_dispatch"};
+                                                          "faction_dispatch", "harvest"};
 
 template <typename E, size_t N>
 std::optional<E> from_names(const std::array<std::string_view, N>& names, std::string_view name) {
@@ -654,6 +654,7 @@ int64_t contract_reward(ContractKind kind, int tier, double distance) {
     case ContractKind::faction_destroy: return int64_t(200 * std::max(1, tier) + d * 0.5);
     case ContractKind::faction_recon: return int64_t(90 * std::max(1, tier) + d * 0.4);
     case ContractKind::faction_dispatch: return int64_t(80 + d * 0.3);
+    case ContractKind::harvest: return int64_t(100 + 70 * std::max(1, tier));
     }
     return 0;
 }

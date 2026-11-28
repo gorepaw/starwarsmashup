@@ -379,6 +379,7 @@ enum class ContractKind : uint8_t {
     faction_destroy,   // a squad of the other side's troopers at the waypoint, every one down
     faction_recon,     // hold the waypoint (within `radius`) for `needed` seconds
     faction_dispatch,  // carry orders to the same side's terminal in another town
+    harvest,     // harvest `needed` units of a resource (`item`) from here on, and bring them to the terminal (Foraging)
 };
 std::string_view contract_kind_name(ContractKind kind);
 std::optional<ContractKind> contract_kind_from_name(std::string_view name);
@@ -419,6 +420,8 @@ inline constexpr double survey_mission_distance = 300;
 // least; standing with the side, this much a tier.
 inline constexpr double faction_dispatch_distance = 300;
 inline constexpr int64_t faction_mission_points = 40;
+// A Forager's Big Game: a body this tough (its health) gives twice as much.
+inline constexpr double big_game_health = 1000;
 int64_t contract_reward(ContractKind kind, int tier, double distance);
 
 // A bounty a player put up on an opted-in player (docs/PROFESSIONS.md,
