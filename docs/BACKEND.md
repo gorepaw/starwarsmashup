@@ -67,7 +67,7 @@ Protocol change: `Hello` gains `join_token` and `character_id` (a character chos
 
 ## Game servers on the VPS
 
-- **Linux** (Ubuntu LTS). First task: build `swm_server` and the tests on Linux (GCC/Clang), fix what isn't portable, add a CI job (GitHub Actions) that builds and runs the core tests on Linux.
+- **Linux: Ubuntu 26.04 LTS.** The server, core and tools build with GCC 15 and pass all 39 tests (2026-11-28). The [server audit](SERVER_AUDIT.md)'s load test (Tatooine hub, 16 bots) runs at 1.1 ms a tick, 14% of a core including the bots, and 254 MB. Binaries built on 26.04 need its C library, so the VPS runs 26.04 too. `.github/workflows/linux.yml` builds and tests every push (GCC 14 on GitHub's Ubuntu 24.04 runner). The game server handles SIGTERM by saving everyone, so `systemctl stop` is safe.
 - **Server data**: the server needs terrain bakes, collision, hub and battlefield data, and item exports, all derived from Battlefront II and Galaxies files. It's the developer's own extraction on the developer's own server, never served to players. It goes up through a third update channel, **`server`** (private bucket, its own token), with the same manifests and blobs, applied by a small headless `swm_update` command (the launcher's update code without the UI). The server channel holds only what the server reads (no textures, meshes or audio: a fraction of the 5 GB).
 - **Processes**: `systemd` runs `swm-galaxy.service` (restart on failure, `LimitNOFILE`, its own user). Battle servers move out of the hub's process ([audit](SERVER_AUDIT.md#whats-left-recommended-next-steps), step 5): the hub launches `swm_server --battlefield ... --ticket-key ...` children on a port range and reaps them.
 - **Before inviting anyone: delta snapshots.** At 220 KB/s per client, 30 players in a crowd is 6.6 MB/s, about 50 Mbit/s sustained and roughly 15 TB a month at that rate. Delta compression against the last acknowledged snapshot (inputs already carry `view_tick`) should cut that several times over and decides how big a plan is needed.
@@ -110,7 +110,7 @@ Protocol change: `Hello` gains `join_token` and `character_id` (a character chos
 
 ## Milestones
 
-1. **Server on Linux.** Builds and passes the core tests on Linux; CI job. Headless `swm_update`; `server` channel.
+1. **Server on Linux.** Done: builds and passes the tests on Linux; CI job. Still to do: headless `swm_update`; `server` channel.
 2. **Write-behind persistence.** The queue in front of `CharacterStore`, on SQLite; trades as single transactions; tests that kill the server mid-trade and check nothing is lost or duplicated.
 3. **Delta snapshots.** Bandwidth measured again with 16 bots; the audit updated.
 4. **Accounts.** D1 schema, sign-up / sign-in / verify / reset routes, Argon2id, email, Turnstile and rate limits, admin TOTP; launcher sign-in; join tokens; `Hello` with a token; `--auth` on the server; a character picker by account; bans and admin role.
