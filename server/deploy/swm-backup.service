@@ -1,0 +1,21 @@
+[Unit]
+Description=Back up the Star Wars Mashup database to R2
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=swm
+Group=swm
+ExecStart=/opt/swm/bin/swm-backup
+NoNewPrivileges=yes
+ProtectSystem=strict
+ReadWritePaths=/var/lib/swm
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+CapabilityBoundingSet=

@@ -8,8 +8,46 @@
 //   GET      /<area>/list?cursor=...   blob keys, 1000 at a time: PUBLISH_TOKEN
 //
 // <key> is channels/<channel>/<file> or blobs/<2 hex>/<64 hex>; nothing else.
+//
+// The game server's database backups (docs/BACKEND.md), in their own bucket:
+//
+//   PUT      /backups/<daily|weekly>/<file>    BACKUP_TOKEN (the server's); never overwrites
+//   GET      /backups/<daily|weekly>/<file>    PUBLISH_TOKEN (the developer's)
+//   GET      /backups/list?prefix=daily/       PUBLISH_TOKEN
+//
+// The server can add backups but can't read, replace or delete them, so a
+// compromised server can't destroy its own history. The bucket's lifecycle
+// rules expire them (daily/ after 30 days, weekly/ after 180).
 
 const KEY = /^(channels\/[a-z0-9_-]{1,32}\/[A-Za-z0-9._-]{1,64}|blobs\/[0-9a-f]{2}\/[0-9a-f]{64})$/;
+const BACKUP_KEY = /^(daily|weekly)\/[A-Za-z0-9._-]{1,96}$/;
+
+async function backups(request, env, url, key) {
+  const token = bearer(request);
+  if (request.method === "PUT") {
+    if (!tokenIs(token, env.BACKUP_TOKEN)) return text(401, "unauthorized");
+    if (!BACKUP_KEY.test(key)) return text(404, "not found");
+    if (await env.BACKUPS.head(key)) return text(409, "exists");
+    await env.BACKUPS.put(key, request.body, { httpMetadata: { contentType: "application/octet-stream" } });
+    return text(201, "stored");
+  }
+  if (request.method !== "GET") return text(405, "method not allowed");
+  if (!tokenIs(token, env.PUBLISH_TOKEN)) return text(401, "unauthorized");
+  if (key === "list") {
+    const prefix = url.searchParams.get("prefix") || "";
+    const listed = await env.BACKUPS.list({ prefix, cursor: url.searchParams.get("cursor") || undefined, limit: 1000 });
+    return Response.json({
+      objects: listed.objects.map((o) => ({ key: o.key, size: o.size, uploaded: o.uploaded })),
+      cursor: listed.truncated ? listed.cursor : null,
+    });
+  }
+  if (!BACKUP_KEY.test(key)) return text(404, "not found");
+  const object = await env.BACKUPS.get(key);
+  if (!object) return text(404, "not found");
+  return new Response(object.body, {
+    headers: { "Content-Type": "application/octet-stream", "Content-Length": String(object.size), "Cache-Control": "private, no-store" },
+  });
+}
 
 function bearer(request) {
   const h = request.headers.get("Authorization") || "";
@@ -39,6 +77,7 @@ export default {
     const parts = url.pathname.split("/").filter(Boolean);
     const area = parts.shift();
     const key = parts.join("/");
+    if (area === "backups") return backups(request, env, url, key);
     const bucket = area === "public" ? env.PUBLIC : area === "private" ? env.PRIVATE : null;
     if (!bucket) return text(404, "not found");
     const token = bearer(request);

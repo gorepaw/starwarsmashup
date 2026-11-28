@@ -1,0 +1,40 @@
+[Unit]
+Description=Star Wars Mashup galaxy server (every planet in hubs/galaxy.ini)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=swm
+Group=swm
+WorkingDirectory=/opt/swm/game
+ExecStart=/opt/swm/bin/swm_server --galaxy hubs/galaxy.ini --catalog items/swg_catalog.ini --bf2-items imported_assets/items --db /var/lib/swm/swm.sqlite --port 7777
+# SIGTERM saves every connected character before exiting.
+KillSignal=SIGTERM
+TimeoutStopSec=90
+Restart=on-failure
+RestartSec=5
+LimitNOFILE=65536
+MemoryMax=12G
+
+# Sandbox: read-only system and game data; writes only to /var/lib/swm.
+NoNewPrivileges=yes
+ProtectSystem=strict
+ReadWritePaths=/var/lib/swm
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+RestrictNamespaces=yes
+RestrictRealtime=yes
+LockPersonality=yes
+SystemCallArchitectures=native
+CapabilityBoundingSet=
+
+[Install]
+WantedBy=multi-user.target

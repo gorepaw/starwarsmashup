@@ -1,0 +1,11 @@
+[Unit]
+Description=Nightly backup of the Star Wars Mashup database
+
+[Timer]
+# 09:30 UTC: the small hours across the Americas.
+OnCalendar=*-*-* 09:30:00 UTC
+RandomizedDelaySec=10min
+Persistent=true
+
+[Install]
+WantedBy=timers.target

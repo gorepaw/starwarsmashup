@@ -67,10 +67,17 @@ Protocol change: `Hello` gains `join_token` and `character_id` (a character chos
 
 ## Game servers on the VPS
 
-- **Linux: Ubuntu 26.04 LTS.** The server, core and tools build with GCC 15 and pass all 39 tests (2026-11-28). The [server audit](SERVER_AUDIT.md)'s load test (Tatooine hub, 16 bots) runs at 1.1 ms a tick, 14% of a core including the bots, and 254 MB. Binaries built on 26.04 need its C library, so the VPS runs 26.04 too. `.github/workflows/linux.yml` builds and tests every push (GCC 14 on GitHub's Ubuntu 24.04 runner). The game server handles SIGTERM by saving everyone, so `systemctl stop` is safe.
+- **Linux.** The server, core and tools build with GCC 15 (Ubuntu 26.04) and GCC 14 (Ubuntu 24.04) and pass all 39 tests (2026-11-28). The [server audit](SERVER_AUDIT.md)'s load test (Tatooine hub, 16 bots) runs at 1.1 ms a tick, 14% of a core including the bots, and 254 MB; the whole galaxy (10 planets) idles at 0.2 ms a tick in 1.5 GB. `.github/workflows/linux.yml` builds and tests every push (GCC 14 on GitHub's Ubuntu 24.04 runner). The game server handles SIGTERM by saving everyone, so `systemctl stop` is safe.
+- **Running now (2026-11-28)**: a Contabo VPS (US East; 8 vCPU, 24 GB, 600 Mbit/s, unlimited traffic; Ubuntu 24.04), set up as follows. The server is built on the VPS from a `git archive` of the repo with GCC 14 (a binary built on a newer Ubuntu needs a newer C library).
+  - Logins: SSH keys only, as `ops` (sudo); root and passwords refused. Firewall: SSH from anywhere, game UDP from the developer's address only until accounts exist. Unattended security updates.
+  - `/opt/swm/bin/swm_server`, `/opt/swm/game` (the repo's `game/` without tests, plus the 920 MB of `imported_assets` the server reads: heightfields, collision, water, terrain holes, town data, battlefields, items; checked with `strace` that it opens nothing else), the database in `/var/lib/swm`. Everything there is owned by root except the database: the server runs as the no-login `swm` user, sandboxed by systemd.
+  - Units in [`server/deploy/`](../server/deploy): `swm-galaxy.service` (the whole galaxy on UDP 7777), `swm-backup.service` + `.timer` (below).
+  - `swm_probe <address:port> --bake <prefix>` joins as a player and reports what it saw. From the developer's connection: joined in 80 ms, 77 ms round trip, 344 snapshots in 12 s, no corrections.
 - **Server data**: the server needs terrain bakes, collision, hub and battlefield data, and item exports, all derived from Battlefront II and Galaxies files. It's the developer's own extraction on the developer's own server, never served to players. It goes up through a third update channel, **`server`** (private bucket, its own token), with the same manifests and blobs, applied by a small headless `swm_update` command (the launcher's update code without the UI). The server channel holds only what the server reads (no textures, meshes or audio: a fraction of the 5 GB).
 - **Processes**: `systemd` runs `swm-galaxy.service` (restart on failure, `LimitNOFILE`, its own user). Battle servers move out of the hub's process ([audit](SERVER_AUDIT.md#whats-left-recommended-next-steps), step 5): the hub launches `swm_server --battlefield ... --ticket-key ...` children on a port range and reaps them.
 - **Before inviting anyone: delta snapshots.** At 220 KB/s per client, 30 players in a crowd is 6.6 MB/s, about 50 Mbit/s sustained and roughly 15 TB a month at that rate. Delta compression against the last acknowledged snapshot (inputs already carry `view_tick`) should cut that several times over and decides how big a plan is needed.
+- **Datagrams under the path MTU.** Snapshots are about 8 KB and the `Welcome` 31 KB, sent as single UDP datagrams that IP splits into 1,500-byte fragments (6 and 21 of them). Over the internet that works on most connections, but some routers, NATs and mobile networks drop fragments (WSL 2's NAT drops them all), and losing one fragment loses the whole datagram. With delta snapshots: keep each datagram under about 1,200 bytes, splitting large messages (the `Welcome`, a big snapshot) into numbered parts the receiver reassembles.
+- **A fixed port range.** Planets other than the first, and battle servers, bind whatever port the OS gives them; the firewall can't open those to the public. Add `--ports <first>-<last>` and open exactly that range.
 - **Version gate**: client and server share `protocol_version`. Add a version-neutral first exchange (a fixed-layout `Hello` header the server always parses) so an outdated client is told "update your game" instead of timing out. Releases publish the `server` channel and restart the server first, then publish `stable`; the launcher's update runs before play, so players are rarely behind.
 
 ## Joining a server
@@ -85,7 +92,7 @@ Protocol change: `Hello` gains `join_token` and `character_id` (a character chos
 
 ## Operations
 
-- **Backups**: nightly `pg_dump` (or the SQLite `.backup`), compressed, to a private R2 bucket `swm-backups`, kept 30 days; weekly copy kept 6 months. **A restore drill before the alpha**: restore last night's backup into a scratch database and start a server on it.
+- **Backups** (running): nightly at 09:30 UTC, [`swm-backup.sh`](../server/deploy/swm-backup.sh) takes SQLite's online backup, checks its integrity, compresses it and uploads it through the update Worker's `/backups` route to the `swm-backups` bucket: `daily/` kept 30 days, Sundays also `weekly/` kept 180 (bucket lifecycle rules). The server's token can only add backups, never read, replace or delete them; listing and downloading take the publish token. A first drill: downloaded through the Worker, decompressed, integrity `ok`, every table and character there. With Postgres the script switches to `pg_dump`. **Before the alpha, a full drill**: start a server on a restored backup.
 - **Deploys**: `tools/release/deploy_server.sh`: publish the `server` channel, announce a restart in game (a server message, 5 minutes), save everyone, stop, `swm_update`, start, check the heartbeat. Rolling back is republishing the previous version.
 - **Monitoring**: the server's perf line goes to the systemd journal; the heartbeat carries tick time and player count; a Worker cron alerts (an email to the operator) when a heartbeat is 2 minutes late or tick time passes 50% of budget.
 - **Logs and privacy**: keep IP addresses only in short-lived logs (7 days) for abuse handling; keep no more personal data than an email address and display name. A short privacy page on the website says what's kept and how to delete it.
@@ -105,7 +112,7 @@ Protocol change: `Hello` gains `join_token` and `character_id` (a character chos
 |---|---|
 | Domain | about $10–15 a year |
 | Cloudflare (Workers, D1, Pages, R2, Email, Turnstile) | Workers Paid, $5 a month (needed for password hashing; also lifts the request budget); the rest within free tiers |
-| VPS: 4+ dedicated cores, 8–16 GB RAM, generous or unmetered traffic, UDP DDoS filtering | roughly $20–60 a month |
+| VPS: Contabo, 8 vCPU, 24 GB, unlimited traffic | Contabo's monthly price for the plan |
 | Code signing for the launcher (optional) | about $10 a month |
 
 ## Milestones
@@ -127,7 +134,8 @@ Made (2026-11-28):
 
 - **Accounts: the project's own**, email and password, with email verification. No third-party sign-in.
 - **Sign-up: open**, with a player cap, a login queue and the abuse limits above.
-- **A domain and a VPS** are being bought now. The domain is registered through Cloudflare (DNS is already there). It shouldn't contain "Star Wars" or imply official status. **VPS: OVHcloud US** (unlimited traffic, network DDoS filtering included); the plan size can change once delta snapshots have measured the real bandwidth.
+- **Domain: swbfo.com.** The website and account pages should say plainly that it's an unofficial, non-commercial fan project.
+- **VPS: Contabo, US East** (8 vCPU, 24 GB, 600 Mbit/s, unlimited traffic). OVHcloud's US VPSes were out of stock; Hetzner's US prices nearly tripled in 2026, and pay-per-gigabyte hosts (Vultr, DigitalOcean, Linode) cost the most as players grow. Contabo shares CPUs more and its DDoS filtering is basic; the galaxy uses a sliver of one core, and the server is one binary, its data and a database, so moving hosts is easy.
 
 Open:
 
