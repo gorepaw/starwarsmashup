@@ -184,6 +184,12 @@ static func build_lines(def: Dictionary, inst: Dictionary, store: Object, equipp
 			var heal_text := "%.0f" % heal + (" over %.0f s" % over if over > 0.0 else " at once")
 			lines.append(_cmp_line("Heals", heal, eq_heal, heal_text, true, not eq_stats.is_empty()))
 			lines.append({"text": "Carried: %d a life" % int(stats.get("carried", 2)), "color": Bf2Screen.TEXT})
+		elif str(stats.get("projectile", "")) == "jump":
+			# A jump pack: how hard it lifts, how many hops a life.
+			var lift := float(stats.get("jump", 0.0))
+			var eq_lift := float(eq_stats.get("jump", lift)) if not eq_stats.is_empty() else lift
+			lines.append(_cmp_line("Lift", lift, eq_lift, "%.0f m/s" % lift, true, not eq_stats.is_empty()))
+			lines.append({"text": "Carried: %d hops a life" % int(stats.get("carried", 3)), "color": Bf2Screen.TEXT})
 		elif str(stats.get("projectile", "")) == "melee":
 			var eq_dmg := float(eq_stats.get("damage", dmg)) if not eq_stats.is_empty() else dmg
 			var eq_rof := 1.0 / maxf(0.01, float(eq_stats.get("shot_delay", delay))) if not eq_stats.is_empty() else rof

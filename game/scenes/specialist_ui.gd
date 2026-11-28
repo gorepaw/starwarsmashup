@@ -35,6 +35,8 @@ const CURVE_PER_LEVEL := 15
 signal screen_opened
 signal screen_closed
 
+const BLINDED := 1 << 8  # effect_flag::blinded
+var _blind: ColorRect
 var _bar: AbilityBar
 var covered := false  # a full screen is open over the game (inventory, a terminal, the menu): no bar under it
 var _datapad: DatapadScreen
@@ -268,6 +270,12 @@ func update(client: Object, camera: Camera3D, catalog: Array, delta: float) -> v
 		if left > 0:
 			effects.append({"name": str(e.get("name", "")), "remaining": left, "debuff": int(e.get("flags", 0)) & 1})
 	_bar.effects = effects
+	# A flashbang: the screen white, fading out over its last second.
+	var blind := 0.0
+	for e: Dictionary in _spec.get("effects", []):
+		if int(e.get("flags", 0)) & BLINDED:
+			blind = maxf(blind, float(e.get("remaining", 0.0)) - (_clock - _synced_at))
+	_blind_overlay().color = Color(1, 1, 1, clampf(blind, 0.0, 1.0))
 	_bar.performing = bool(_spec.get("performing", false))
 	# The fielded companion: its health from the snapshot.
 	var companion := {}
@@ -350,6 +358,20 @@ func _near(own: Vector3, list: Array, extra := 1.5) -> Dictionary:
 	return {}
 
 
+# A full-screen white over everything (the HUD too), for a flashbang.
+func _blind_overlay() -> ColorRect:
+	if _blind == null:
+		var layer := CanvasLayer.new()
+		layer.layer = 90
+		add_child(layer)
+		_blind = ColorRect.new()
+		_blind.set_anchors_preset(Control.PRESET_FULL_RECT)
+		_blind.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		_blind.color = Color(1, 1, 1, 0)
+		layer.add_child(_blind)
+	return _blind
+
+
 func _fill_datapad(client: Object) -> void:
 	var own := _own(client)
 	_datapad.spec = _spec
@@ -364,6 +386,13 @@ func _fill_datapad(client: Object) -> void:
 	if own.is_empty():
 		return
 	var at: Vector3 = own["position"]
+	# Players within 10 m, to ask a slice of.
+	var nearby: Array = []
+	for r: Dictionary in client.get_remotes():
+		if int(r.get("actor_kind", 0)) == 0 and int(r.get("look", 0)) == 0 and str(r.get("name", "")) != "" \
+				and (r["position"] as Vector3).distance_to(at) <= 10.0:
+			nearby.append(str(r["name"]))
+	_datapad.nearby = nearby
 	var terminal := _near(at, client.get_mission_terminals())
 	_datapad.terminal = terminal
 	_datapad.at_quartermaster = not _near(at, client.get_quartermasters()).is_empty()

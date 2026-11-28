@@ -118,8 +118,9 @@ double mitigated_damage(const CharacterStats& stats, double amount, DamageType t
 // A weapon: how it fires, what it fires (a Battlefront weapon class, its
 // ordnance and its explosion, via `bf2tool export-loadout`), and the stats it
 // changes while carried. Defaults are the Imperial E-11's. A `heal` fires
-// nothing: used from the tactical slot, it heals its user (a medpack).
-enum class Projectile : uint8_t { bolt, missile, grenade, melee, heal };
+// nothing: used from the tactical slot, it heals its user (a medpack); nor
+// does a `jump`: it hops its user up and forward (a jump pack).
+enum class Projectile : uint8_t { bolt, missile, grenade, melee, heal, jump };
 
 // For a Battlefront weapon (by its class name), the Galaxies weapon of the
 // same kind soldiers hold for it, game/imported_assets/-relative ("" none):
@@ -251,6 +252,9 @@ struct WeaponDef {
     // or spread over `heal_time` seconds if that's above 0.
     double heal = 0;
     double heal_time = 0;
+    // A jump pack (Projectile::jump): how fast it lifts its user, m/s up
+    // (and 0.6 times that forward).
+    double jump = 0;
     double shot_elevate = 0;         // ShotElevate: radians a throw is aimed above the crosshair
     double explosion_damage = 0;     // explosion Damage: full within the inner radius...
     double explosion_inner = 0;      // DamageRadiusInner, m

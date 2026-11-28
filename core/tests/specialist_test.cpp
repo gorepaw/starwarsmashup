@@ -197,6 +197,11 @@ void test_rules(const SpecialistBook& book, const ProfessionBook& professions) {
     CHECK(item_slice(item) == "slice_hot_shot" && item.color_json.find("overclock") == std::string::npos);
     set_item_slice(item, "");
     CHECK(item_slice(item).empty() && item.color_json == "{\"primary\":3}");
+    set_item_slice(item, "slice_long_coil", 1.5);
+    CHECK(item_slice(item) == "slice_long_coil" && std::abs(item_slice_power(item) - 1.5) < 1e-9);
+    set_item_slice(item, "slice_long_coil");
+    CHECK(item_slice_power(item) == 1.0);
+    set_item_slice(item, "");
     WeaponDef w;
     const double delay = w.shot_delay, heat = w.heat_per_shot;
     apply_slice(w, *book.slice("slice_overclock"));
@@ -660,6 +665,10 @@ void test_bounties(const SpecialistBook& book, const ProfessionBook& professions
     const CharacterRecord hunter_rec = store.create("Hunter", {0, 0, 0}, 0);
     store.save_professions(hunter_rec.id, std::vector<ProfessionProgress>{{"bounty_hunter", professions.xp_for_level(60), 0}});
     store.set_extra(hunter_rec.id, "perks:bounty_hunter", "bh_perk_seeker,bh_perk_toxin_dart,bh_perk_big_game");
+    // ...and a Smuggler's flashbang, for the player mark.
+    store.save_professions(hunter_rec.id, std::vector<ProfessionProgress>{{"bounty_hunter", professions.xp_for_level(60), 0},
+                                                                          {"smuggler", professions.xp_for_level(10), 0}});
+    store.set_extra(hunter_rec.id, "perks:smuggler", "smg_perk_flashbang");
     store.create("Mark", {3, 0, 0}, 0);
     const CharacterRecord poster_rec = store.create("Poster", {0, 0, 3}, 0);
     store.update_economy(poster_rec.id, 5000, 0, 0, 0);
@@ -799,6 +808,20 @@ void test_bounties(const SpecialistBook& book, const ProfessionBook& professions
     const int64_t before_pvp = hunter.player_status().credits;
     act(hunter, R::contract_accept, int64_t(pvp->id));
     run(0.5);
+    // Hunted, they're an enemy: a flashbang blinds them (no slow), not the poster beside them.
+    net::SpecialistRequest bang;
+    bang.action = R::use_ability;
+    bang.id = "smg_flashbang";
+    bang.position = server.state_of(mark.entity_id()) ? server.state_of(mark.entity_id())->position : Vec3{};
+    hunter.specialist_request(bang);
+    run(0.3);
+    const auto blinded = [&](uint32_t e) {
+        const SpecialistState* st = server.specialist_state(e);
+        return st && std::any_of(st->effects.begin(), st->effects.end(), [](const TimedEffect& x) {
+            return (x.flags & effect_flag::blinded) != 0 && x.modifiers.empty();
+        });
+    };
+    CHECK(blinded(mark.entity_id()) && !blinded(poster.entity_id()) && !blinded(hunter.entity_id()));
     server.npc_melee(hunter.entity_id(), mark.entity_id(), 1e6, DamageType::ballistic);
     run(0.5);
     CHECK(hunter.player_status().credits == before_pvp + 1500);
@@ -819,6 +842,123 @@ void test_bounties(const SpecialistBook& book, const ProfessionBook& professions
     wall += 101;
     run(1.5);
     CHECK(server.posted_bounties().empty() && poster.player_status().credits == 4500);
+}
+
+// A Smuggler: slicing another's rifle for a fee (a Master Slicer's, half
+// again as strong), Lucky, and a contraband run: one package at a time,
+// pirates at the drop, the package lost with its runner.
+void test_smuggler(const SpecialistBook& book, const ProfessionBook& professions, const ItemCatalog& catalog) {
+    Heightfield ground{401, 2.0, -400, -400, std::vector<float>(401 * 401, 0.0f)};
+    World world{ground};
+    MemoryCharacterStore store;
+    const CharacterRecord runner_rec = store.create("Runner", {0, 0, 0}, 0);
+    store.save_professions(runner_rec.id, std::vector<ProfessionProgress>{{"smuggler", professions.xp_for_level(80), 0}});
+    store.set_extra(runner_rec.id, "perks:smuggler", "smg_perk_smoke,smg_perk_getaway,smg_perk_master_slicer,smg_perk_lucky");
+    store.update_economy(runner_rec.id, 1000, 0, 0, 0);
+    const CharacterRecord owner_rec = store.create("Owner", {3, 0, 0}, 0);
+    store.update_economy(owner_rec.id, 2000, 0, 0, 0);
+    const ItemInstance rifle = store.grant_item({0, owner_rec.id, "wp_rifle_e11"});
+
+    net::LoopbackHub links;
+    net::Endpoint server_ep{1, 1};
+    net::LoopbackLink srv_link{links, server_ep};
+    net::LoopbackLink r_link{links, {2, 1}}, o_link{links, {3, 1}};
+    ServerConfig config;
+    config.catalog = &catalog;
+    config.professions = &professions;
+    config.specialists = &book;
+    config.spawn = {0, 0, 0};
+    config.respawn_delay = 1;
+    GameServer server(srv_link, world, config, &store);
+    server.set_quests(nullptr, {}, {{"Mission Terminal", {0, 0, 0}, 8, "general"}});
+    int ambushes = 0;
+    server.on_spawn_mark = [&](const std::string& name, Vec3 at, int, int guards) {
+        ++ambushes;
+        GameServer::NpcCombatSpec spec;
+        spec.actor_kind = 3;
+        spec.max_health = 100;
+        std::vector<uint32_t> gang{server.add_combat_npc(name, at, 0, 0, spec)};
+        for (int g = 0; g < guards; ++g) gang.push_back(server.add_combat_npc("Pirate", at + Vec3{3, 0, double(g)}, 0, 0, spec));
+        return gang;
+    };
+    GameClient runner(r_link, world, ClientConfig{.server = server_ep, .name = "Runner"});
+    GameClient owner(o_link, world, ClientConfig{.server = server_ep, .name = "Owner"});
+    double now = 0;
+    const auto run = [&](double seconds) {
+        for (const double end = now + seconds; now < end; now += 1.0 / 30.0) {
+            server.update(now);
+            runner.update(now);
+            owner.update(now);
+        }
+    };
+    using R = net::SpecialistRequest;
+    const auto act = [&](GameClient& who, uint8_t action, int64_t amount, uint64_t item = 0, std::string id = {},
+                         std::string text = {}, uint32_t target = 0) {
+        net::SpecialistRequest r;
+        r.action = action;
+        r.amount = amount;
+        r.item_id = item;
+        r.id = std::move(id);
+        r.text = std::move(text);
+        r.target = target;
+        who.specialist_request(r);
+    };
+    run(1.0);
+    CHECK(runner.status() == GameClient::Status::connected && owner.status() == GameClient::Status::connected);
+
+    // Asked, and done: the fee to the Smuggler (less the parts), the slice half again as strong.
+    act(owner, R::slice_request, 0, rifle.id, "slice_overclock", "Runner");
+    run(0.5);
+    CHECK(runner.specialist().slice_jobs.size() == 1);
+    if (runner.specialist().slice_jobs.empty()) return;
+    act(runner, R::slice_answer, int64_t(runner.specialist().slice_jobs[0].id), 0, {}, {}, 1);
+    run(0.5);
+    CHECK(runner.specialist().slice_jobs.empty());
+    CHECK(owner.player_status().credits == 2000 - slice_job_fee);
+    CHECK(runner.player_status().credits == 1000 + slice_job_fee - 250);
+    const std::vector<ItemInstance> held = store.list_items(owner_rec.id);
+    const auto sliced = std::find_if(held.begin(), held.end(), [&](const ItemInstance& i) { return i.id == rifle.id; });
+    CHECK(sliced != held.end() && item_slice(*sliced) == "slice_overclock" && std::abs(item_slice_power(*sliced) - 1.5) < 1e-9);
+    const SliceDef strong = scaled_slice(*book.slice("slice_overclock"), 1.5);
+    CHECK(std::abs(strong.rate - 1.18) < 1e-9 && std::abs(strong.heat - 1.3) < 1e-9);
+
+    // Lucky: the first killing blow leaves 1 health; the next kills.
+    const uint32_t er = runner.entity_id();
+    server.npc_melee(0, er, 1e6, DamageType::ballistic);
+    run(0.2);
+    CHECK(server.alive(er) && server.health_of(er) <= 1.0);
+    server.npc_melee(0, er, 1e6, DamageType::ballistic);
+    run(0.2);
+    CHECK(!server.alive(er));
+    run(3.0);
+    CHECK(server.alive(er));
+
+    // Contraband: one package at a time.
+    act(runner, R::contracts, 0);
+    run(0.5);
+    std::vector<Contract> runs;
+    for (const Contract& c : runner.specialist().offers) {
+        if (c.kind == ContractKind::contraband) runs.push_back(c);
+    }
+    CHECK(runs.size() == 2);
+    if (runs.size() < 2) return;
+    act(runner, R::contract_accept, int64_t(runs[0].id));
+    act(runner, R::contract_accept, int64_t(runs[1].id));
+    run(0.5);
+    CHECK(runner.specialist().contracts.size() == 1);
+    // Near the drop, pirates wait.
+    MoveState near = *server.state_of(er);
+    near.position = runs[0].waypoint + Vec3{60, 0, 0};
+    server.set_state(er, near);
+    run(0.5);
+    CHECK(ambushes == 1);
+    // Fallen (Lucky spent first: it's back each life), the package is lost.
+    server.npc_melee(0, er, 1e6, DamageType::ballistic);
+    run(0.2);
+    CHECK(server.alive(er) && runner.specialist().contracts.size() == 1);
+    server.npc_melee(0, er, 1e6, DamageType::ballistic);
+    run(0.3);
+    CHECK(!server.alive(er) && runner.specialist().contracts.empty());
 }
 
 // In a match: a loadout from a hub brings its kit and Companion Slot; a
@@ -967,6 +1107,7 @@ int main() {
     test_craft_orders(root, book, professions, catalog);
     test_bounties(book, professions, catalog);
     test_doctor_heals(book, professions, catalog);
+    test_smuggler(book, professions, catalog);
     test_match(book, professions);
     return swm::test::finish("specialist_test");
 }

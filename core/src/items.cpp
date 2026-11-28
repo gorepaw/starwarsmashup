@@ -13,7 +13,7 @@
 namespace swm::core {
 namespace {
 
-const std::array<WeaponArchetypeInfo, 16> archetype_table{{
+const std::array<WeaponArchetypeInfo, 17> archetype_table{{
     {WeaponArchetype::rifle_auto, "rifle_auto", "imp_weap_inf_rifle", "rifle", "primary"},
     {WeaponArchetype::carbine_burst, "carbine_burst", "all_weap_inf_rifle", "rifle", "primary"},
     {WeaponArchetype::sniper, "sniper", "imp_weap_inf_sniper_rifle", "rifle", "primary"},
@@ -36,6 +36,7 @@ const std::array<WeaponArchetypeInfo, 16> archetype_table{{
 }};
 
 WeaponDef default_archetype_weapon(WeaponArchetype a) {
+    {WeaponArchetype::jump_pack, "jump_pack", "", "grenade", "secondary"},
     WeaponDef w;
     switch (a) {
     case WeaponArchetype::rifle_auto:
@@ -262,6 +263,22 @@ WeaponDef default_archetype_weapon(WeaponArchetype a) {
     case WeaponArchetype::melee:
     case WeaponArchetype::melee_2h:
         // One-handed: a sidearm. Two-handed is a primary, so it outweighs
+    case WeaponArchetype::jump_pack:
+        // No shot: a hop (its item's Jump), three a life, a second and a half apart.
+        w.name = "swg_jump_pack";
+        w.projectile = Projectile::jump;
+        w.jump = 11;
+        w.shot_delay = 1.5;
+        w.rounds_per_clip = 1;
+        w.ammo = 3;
+        w.reload_time = 0;
+        w.yaw_spread = 0;
+        w.pitch_spread = 0;
+        w.spread_per_shot = 0;
+        w.damage = 0;
+        w.fire_sound.clear();
+        w.muzzle_flash.clear();
+        break;
         // it: slower swings that hit harder, about a fifth more damage a
         // second, with more reach, a wider arc and more stagger, and a
         // shorter lunge.
@@ -709,6 +726,7 @@ void ItemCatalog::load(const std::filesystem::path& catalog_ini, const std::file
                     throw std::runtime_error(where + " (" + def.id + "): Paint is '<scheme>: <variable>=<index>, ...'");
                 }
                 query += (query.empty() ? "" : "&") + part;
+        def.jump = std::max(0.0, s.number("Jump", 0.0));
             }
             if (scheme.empty() || query.empty()) {
                 throw std::runtime_error(where + " (" + def.id + "): Paint is '<scheme>: <variable>=<index>, ...'");
@@ -1125,7 +1143,7 @@ WeaponDef ItemCatalog::resolve_weapon(const ItemDef& def, ItemGrade grade, int m
         w.ammo_class = def.ammo_class;
     } else if (def.archetype == WeaponArchetype::heavy_launcher) {
         w.ammo_class = AmmoClass::heavy;
-    } else if (w.projectile == Projectile::melee || w.projectile == Projectile::heal ||
+    } else if (w.projectile == Projectile::melee || w.projectile == Projectile::heal || w.projectile == Projectile::jump ||
                def.archetype == WeaponArchetype::grenade || def.archetype == WeaponArchetype::placed ||
                def.archetype == WeaponArchetype::utility) {
         w.ammo_class = AmmoClass::none;
@@ -1274,6 +1292,10 @@ BattleReward compute_battle_reward(bool won, bool draw, uint16_t kills, uint16_t
         return battle_reward({250, 100, 200}, kills, captures);
     }
     if (draw) {
+    if (w.projectile == Projectile::jump) {
+        if (def.jump > 0) w.jump = def.jump;
+        if (def.carried > 0) w.ammo = def.carried;
+    }
         return battle_reward({150, 60, 120}, kills, captures);
     }
     return battle_reward({100, 40, 80}, kills, captures);

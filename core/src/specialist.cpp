@@ -119,12 +119,13 @@ uint64_t to_uint(const std::string& text) {
     }
 }
 
-constexpr std::array<std::string_view, 25> effect_names{
+constexpr std::array<std::string_view, 26> effect_names{
     "buff",          "heal",        "heal_area", "damage_area",      "hazard",
     "cleanse",       "revive",      "cloak",     "mark",             "snare",
     "jump",          "deploy",      "strike",    "supply",           "vehicle_repair",
     "vehicle_guard", "companion_repair", "companion_overcharge", "perform", "track",
     "seeker",        "hvt",         "tranquilize", "tame",           "sample_dna",
+    "blind",
 };
 constexpr std::array<std::string_view, 5> target_names{"self", "ally", "enemy", "ground", "creature"};
 constexpr std::array<std::string_view, 7> deploy_names{"none",         "heal_aura", "buff_aura", "sensor",
@@ -249,6 +250,7 @@ void SpecialistBook::parse(const Ini& ini, const std::string& where) {
             a.world_only = same(where_used, "world");
             a.xp = int64_t(std::max(0.0, s.number("XP", 20)));
             a.flair = truthy(s.get("Flair").value_or("false"));
+            a.unmark = truthy(s.get("Unmark").value_or("false"));
             if (ability(a.id)) throw std::runtime_error(here + ": a second ability " + a.id);
             abilities_.push_back(std::move(a));
         } else if (same(s.name, "companion")) {
@@ -749,7 +751,10 @@ bool listing_matches(const BazaarListing& listing, std::string_view item_name, s
 // ---------------------------------------------------------------------------
 // Slicing
 
-std::string item_slice(const ItemInstance& item) {
+namespace {
+
+// An item's slice as saved: its id, and ":<power>" after it if not 1.
+std::string saved_slice(const ItemInstance& item) {
     const std::string& json = item.color_json;
     const size_t key = json.find("\"slice\"");
     if (key == std::string::npos) return {};
@@ -760,7 +765,39 @@ std::string item_slice(const ItemInstance& item) {
     return json.substr(open + 1, close - open - 1);
 }
 
-void set_item_slice(ItemInstance& item, std::string_view slice_id) {
+} // namespace
+
+std::string item_slice(const ItemInstance& item) {
+    const std::string saved = saved_slice(item);
+    return saved.substr(0, saved.find(':'));
+}
+
+double item_slice_power(const ItemInstance& item) {
+    const std::string saved = saved_slice(item);
+    const size_t colon = saved.find(':');
+    if (colon == std::string::npos) return 1.0;
+    char* end = nullptr;
+    const double p = std::strtod(saved.c_str() + colon + 1, &end);
+    return p > 0 && p < 10 ? p : 1.0;
+}
+
+SliceDef scaled_slice(const SliceDef& slice, double power) {
+    SliceDef s = slice;
+    const auto more = [&](double m) { return 1.0 + (m - 1.0) * power; };
+    s.damage = more(s.damage);
+    s.rate = more(s.rate);
+    s.heat = more(s.heat);
+    s.spread = more(s.spread);
+    s.range = more(s.range);
+    s.reload = more(s.reload);
+    for (StatModifier& m : s.modifiers) {
+        m.add *= power;
+        m.multiply = more(m.multiply);
+    }
+    return s;
+}
+
+void set_item_slice(ItemInstance& item, std::string_view slice_id, double power) {
     std::string json = item.color_json;
     if (json.empty() || json.front() != '{' || json.back() != '}') json = "{}";
     // Drop any slice already there, with the comma that joined it.
@@ -781,7 +818,8 @@ void set_item_slice(ItemInstance& item, std::string_view slice_id) {
     }
     if (!slice_id.empty()) {
         const bool empty = json.find_first_not_of(" {}") == std::string::npos;
-        json.insert(json.size() - 1, std::format("{}\"slice\":\"{}\"", empty ? "" : ",", slice_id));
+        const std::string saved = std::abs(power - 1.0) < 1e-6 ? std::string(slice_id) : std::format("{}:{:.2f}", slice_id, power);
+        json.insert(json.size() - 1, std::format("{}\"slice\":\"{}\"", empty ? "" : ",", saved));
     }
     item.color_json = json;
 }

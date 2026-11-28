@@ -37,6 +37,7 @@ static func _draw(image: Image, ability: String) -> bool:
 		"smg_flashbang": _burst(image)
 		"smg_smoke": _cloud(image)
 		"smg_emp": _bolt(image, C, 1.0)
+		"smg_getaway": _jump(image)
 		"sl_rally": _flag(image)
 		"sl_supply": _crate(image)
 		"sl_strike": _strike(image)

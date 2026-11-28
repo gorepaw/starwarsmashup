@@ -1140,6 +1140,35 @@ void test_medpacks() {
     }
 }
 
+// A jump pack: a tap of the Tactical slot lifts its user, Carried times a life.
+void test_jump_pack() {
+    const std::filesystem::path ini = "swm_jump_pack_test_catalog.ini";
+    {
+        std::ofstream out(ini);
+        out << "[item]\nId = pack\nKind = weapon\nArchetype = jump_pack\nSlot = secondary\nJump = 12\nCarried = 2\n";
+    }
+    ItemCatalog catalog;
+    catalog.load(ini);
+    std::filesystem::remove(ini);
+    const WeaponDef pack = catalog.resolve_weapon(*catalog.find("pack"));
+    CHECK(pack.projectile == Projectile::jump && near(pack.jump, 12) && pack.ammo == 2 && pack.ammo_class == AmmoClass::none);
+    Loadout carried;
+    carried.weapons[secondary_slot] = pack;
+    Arena arena(0, 0.5, {}, carried);
+    arena.run(0.5, [] {});
+    const uint32_t b = arena.b.entity_id();
+    const double ground = arena.server.state_of(b) ? arena.server.state_of(b)->position.y : 0;
+    int steps = 0;
+    double highest = ground;
+    arena.run(0.8, [&] {
+        arena.b.set_input({.secondary = ++steps <= 6});
+        if (const MoveState* s = arena.server.state_of(b)) highest = std::max(highest, s->position.y);
+    });
+    CHECK(highest > ground + 2.0);  // up some metres
+    CHECK(arena.b.predicted().combat.weapons[secondary_slot].rounds == 1);  // one hop left this life
+    std::printf("jump pack: up %.1f m\n", highest - ground);
+}
+
 int main() {
     test_placed_mines_and_traps();
     test_beam_and_flamer();
@@ -1166,5 +1195,6 @@ int main() {
     test_melee_combat();
     test_unified_ammo();
     test_medpacks();
+    test_jump_pack();
     return swm::test::finish("combat_test");
 }

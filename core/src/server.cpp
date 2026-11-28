@@ -1179,7 +1179,7 @@ void GameServer::handle(const net::Endpoint& from, const net::Datagram& datagram
                         const ItemDef* def = config_.catalog->find(inst.def_id);
                         if (def != nullptr && def->kind == ItemKind::junk && store_->remove_item(inst.id)) {
                             ++sold_count;
-                            total_cr += std::max<int64_t>(1, def->sell_value);
+                            total_cr += black_market(*client, std::max<int64_t>(1, def->sell_value));
                         }
                     }
                     if (sold_count > 0) {
@@ -1198,7 +1198,8 @@ void GameServer::handle(const net::Endpoint& from, const net::Datagram& datagram
                         const ItemDef* def = config_.catalog->find(it->def_id);
                         if (def != nullptr && def->sell_value > 0 && store_->remove_item(sell->item_id)) {
                             scrub_item_from_loadouts(*client, sell->item_id);
-                            client->credits += def->sell_value;
+                            const int64_t paid = black_market(*client, def->sell_value);
+                            client->credits += paid;
                             store_->update_economy(client->character, client->credits, client->faction_points,
                                                    client->experience, int(client->loadout));
                             client->items = store_->list_items(client->character);
@@ -1209,7 +1210,7 @@ void GameServer::handle(const net::Endpoint& from, const net::Datagram& datagram
                             client->stats = stats_for(loadout_of(*client), client->species, config_.base_stats);
                             client->health = std::min(client->health, client->stats.max_health);
                             reset_loadout(client->state, loadout_of(*client), client->stats);
-                            notify(client->entity, std::format("Sold {} for {} Cr", def->display_name, def->sell_value));
+                            notify(client->entity, std::format("Sold {} for {} Cr", def->display_name, paid));
                         }
                     }
                 }
@@ -1956,7 +1957,7 @@ void GameServer::run_match() {
             units.push_back({client.team, client.state.position, client.entity, client.state.vehicle < 0});
             // Stage 12: a Smuggler slices command posts as fast as two
             // (a second unit that can't carry a flag).
-            if (client.state.vehicle < 0 && specialist_level(client, "smuggler") > 0) {
+            if (client.state.vehicle < 0 && granted(client, "smuggler", "post_slicer")) {
                 units.push_back({client.team, client.state.position, 0, false});
             }
         }
@@ -2250,6 +2251,18 @@ void GameServer::fire(Client& shooter, const Shot& shot, double view_tick) {
             e.heal_per_second = weapon.heal / weapon.heal_time;
             give_effect(shooter, std::move(e));
         } else {
+    if (weapon.projectile == Projectile::jump) {
+        // A jump pack: no shot, its user lifted up and forward (not from a vehicle).
+        if (driving) return;
+        MoveState s = shooter.state;
+        const double yaw = s.yaw;
+        const Vec3 forward{-std::sin(yaw), 0, -std::cos(yaw)};
+        s.velocity = s.velocity * 0.5 + forward * (weapon.jump * 0.6);
+        s.velocity.y = weapon.jump;
+        s.grounded = false;
+        set_state(shooter.entity, s);
+        return;
+    }
             heal(shooter, weapon.heal);
         }
         return;
@@ -3350,6 +3363,12 @@ void GameServer::kill(Client& victim, uint32_t attacker, bool is_flyer) {
         // (state.vehicle is its class, not an index into vehicles_.)
         const size_t vi = size_t(victim.state.vehicle);
         if (vi < classes.size() && classes[vi].kind == VehicleKind::flyer) {
+    // Lucky (a Smuggler's 85): once a life, a killing blow leaves 1 health.
+    if (victim.health <= 0 && !victim.spec.lucky_used && granted(victim, "smuggler", "lucky")) {
+        victim.spec.lucky_used = true;
+        victim.health = 1;
+        notify(victim.entity, "Lucky: that should have killed you");
+    }
             is_flyer = true;
         }
         leave_vehicle(victim);

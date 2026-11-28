@@ -42,6 +42,8 @@ const SUPPLY := 24
 const COMPANION_SLOT := 25
 const CHOOSE_INSPIRATION := 27
 const POST_BOUNTY := 28
+const SLICE_REQUEST := 29
+const SLICE_ANSWER := 30
 const POSTED_AMOUNTS := [500, 2500]  # what a "Post" button puts up on an opted-in player
 
 const TABS := ["Kit", "Companions", "Lab", "Droids", "Contracts", "Slicing", "Inspiration"]
@@ -54,6 +56,7 @@ var catalog: Array = []    # item defs, for names
 var levels := {}           # profession id -> level
 var terminal := {}         # a mission terminal in reach: {index, kind, name}; empty: none
 var at_quartermaster := false
+var nearby: Array = []     # players within 10 m (names), to ask a slice of
 var feedback := ""
 var key_names := {}        # action -> key label
 var bar_ids: Array = []    # the ability on each of the bar's six keys now ("" empty)
@@ -387,7 +390,8 @@ func _paint_slicing(body: Rect2) -> void:
 	var half := (body.size.x - 18 * u) * 0.5
 	var x := body.position.x
 	var y := body.position.y
-	text("gamefont_small", "Weapons and armor (Smuggler %d; 250 cr a slice)" % _level("smuggler"), Vector2(x, y), "Left", TEXT)
+	text("gamefont_small", "Weapons and armor (Smuggler %d; 250 cr a slice, or ask one near for 500)" % _level("smuggler"),
+			Vector2(x, y), "Left", TEXT)
 	y += 26 * u
 	var shown := 0
 	for item: Dictionary in items:
@@ -416,13 +420,30 @@ func _paint_slicing(body: Rect2) -> void:
 		var sid := str(s["id"])
 		var rect := Rect2(x, y, half, 40 * u)
 		var ok := maxi(50, int(s.get("level", 1))) <= _level("smuggler")
-		_row(rect, "slice:" + sid if ok else "", sid == _slice)
+		_row(rect, "slice:" + sid, sid == _slice)  # (any: a Smuggler near may slice it for you)
 		text("gamefont_tiny", "%s (%s, Smuggler %d)" % [str(s.get("name", sid)), str(s.get("applies", "")), maxi(50, int(s.get("level", 1)))],
 				Vector2(rect.position.x + 8 * u, y + 3 * u), "Left", ACCENT if sid == _slice else (TEXT if ok else DIM))
 		text("gamefont_tiny", str(s.get("description", "")), Vector2(rect.position.x + 8 * u, y + 21 * u), "Left", DIM, 0.85)
 		y += 44 * u
 	button(Rect2(body.end.x - 200 * u, body.end.y - 30 * u, 200 * u, 28 * u), "Slice it", "do_slice", false, false,
 			_slice_item >= 0 and _slice != "")
+	# Asking a Smuggler near to slice it (500 cr to them, when it's done).
+	var ax := body.end.x - 210 * u
+	for n: String in nearby.slice(0, 3):
+		ax -= 190 * u
+		button(Rect2(ax, body.end.y - 30 * u, 184 * u, 28 * u), "Ask %s" % n, "askslice:" + n, false, false,
+				_slice_item >= 0 and _slice != "")
+	# Asks of you (a Smuggler's): do them, or not.
+	var jobs: Array = spec.get("slice_jobs", [])
+	var jy := body.end.y - 70 * u
+	for j: Dictionary in jobs.slice(0, 3):
+		var jr := Rect2(body.position.x, jy, body.size.x, 34 * u)
+		_row(jr, "")
+		text("gamefont_tiny", "%s asks: %s into their %s (+%d cr)" % [str(j.get("owner_name", "")), str(j.get("slice", "")),
+				str(j.get("item_name", "")), int(j.get("fee", 0))], Vector2(jr.position.x + 8 * u, jy + 9 * u), "Left", ACCENT)
+		button(Rect2(jr.end.x - 200 * u, jy + 4 * u, 96 * u, 26 * u), "Slice it", "jobyes:%d" % int(j.get("id", 0)))
+		button(Rect2(jr.end.x - 100 * u, jy + 4 * u, 92 * u, 26 * u), "Decline", "jobno:%d" % int(j.get("id", 0)))
+		jy -= 38 * u
 	if at_quartermaster and _level("merchant") >= 100:
 		button(Rect2(body.position.x, body.end.y - 30 * u, 300 * u, 28 * u), "Supply the selected item to the quartermaster",
 				"supply", false, false, _slice_item >= 0)
@@ -546,6 +567,12 @@ func _on_click(id: String, _at: Vector2) -> void:
 		_slice_item = int(id.substr(10))
 	elif id.begins_with("slice:"):
 		_slice = id.substr(6)
+	elif id.begins_with("askslice:"):
+		_send(SLICE_REQUEST, 0, _slice_item, _slice, id.substr(9))
+	elif id.begins_with("jobyes:"):
+		_send(SLICE_ANSWER, int(id.substr(7)), 0, "", "", 1)
+	elif id.begins_with("jobno:"):
+		_send(SLICE_ANSWER, int(id.substr(6)), 0, "", "", 0)
 	elif id == "do_slice":
 		_send(SLICE, 0, _slice_item, _slice)
 	elif id == "supply":

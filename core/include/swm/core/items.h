@@ -91,6 +91,7 @@ bool is_melee_archetype(WeaponArchetype a);
 
 struct WeaponArchetypeInfo {
     WeaponArchetype archetype = WeaponArchetype::rifle_auto;
+    jump_pack,       // a tactical hop: used, it lifts its user up and forward, a few times a life
     std::string id;
     std::string bf2_weapon_base;
     std::string anim_set;

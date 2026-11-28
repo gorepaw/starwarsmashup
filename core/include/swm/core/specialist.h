@@ -62,6 +62,7 @@ enum class AbilityEffect : uint8_t {
     tranquilize,   // a creature: slowed and easier to tame for `duration`
     tame,          // a creature: a bonding channel, then it's yours (Creature Handler)
     sample_dna,    // a creature, living or dead: a DNA sample (Bio-Engineer)
+    blind,         // enemy players within `radius` see white, no HUD, for `duration` (Smuggler)
 };
 
 // Who an ability is aimed at.
@@ -100,6 +101,7 @@ struct AbilityDef {
     bool world_only = false;
     int64_t xp = 20;  // its profession's experience each time it does something
     bool flair = false;  // a buff that's only for show (clients draw a holo-aura)
+    bool unmark = false; // a buff that also clears the marks on its user (Smuggler's Getaway)
 };
 
 // The ability catalog and companion templates (specialists.ini).
@@ -243,6 +245,7 @@ inline constexpr uint16_t vehicle_guard = 1 << 4; // the vehicle driven takes le
 inline constexpr uint16_t overcharged = 1 << 5;   // a companion's hits are stronger
 inline constexpr uint16_t marked = 1 << 6;        // shown to the other side
 inline constexpr uint16_t holo_flair = 1 << 7;    // a holographic aura, for show
+inline constexpr uint16_t blinded = 1 << 8;       // a flashbang's: the screen white, no HUD
 }  // namespace effect_flag
 
 // A buff or debuff on a character. The same id refreshes rather than stacks.
@@ -385,6 +388,7 @@ struct Contract {
     int tier = 0;
     int guards = 0;
 
+    bool ambushed = false;  // a contraband run's: its ambush has sprung
     friend bool operator==(const Contract&, const Contract&) = default;
 };
 
@@ -467,7 +471,9 @@ bool listing_matches(const BazaarListing& listing, std::string_view item_name, s
 // The slice an item carries (its color_json's "slice"), if any.
 std::string item_slice(const ItemInstance& item);
 // The item with a slice set (replacing any other).
-void set_item_slice(ItemInstance& item, std::string_view slice_id);
+void set_item_slice(ItemInstance& item, std::string_view slice_id, double power = 1.0);
+// A slice made `power` times as strong, its upsides and downsides alike.
+SliceDef scaled_slice(const SliceDef& slice, double power);
 // A sliced weapon or armor piece's changes, applied to what it resolves to.
 void apply_slice(WeaponDef& weapon, const SliceDef& slice);
 void apply_slice(Gear& gear, const SliceDef& slice);
@@ -475,6 +481,8 @@ void apply_slice(Gear& gear, const SliceDef& slice);
 // ---------------------------------------------------------------------------
 // Entertainer
 
+// How strong an item's slice is (1: as written; a Master Slicer's 1.5).
+double item_slice_power(const ItemInstance& item);
 // Inspiration: one long buff, built by watching a performance (every pulse
 // in the audience adds `inspiration_per_second` of it per second watched,
 // more with a band of performers within `band_radius`), up to a cap (a
@@ -578,6 +586,23 @@ struct SpecialistState {
     uint64_t next_sample_id = 1;
     std::vector<DnaSample> samples;
     uint64_t active_companion = 0;   // the fielded one's record (0: none)
+// A slice another player asked of a Smuggler (docs/PROFESSIONS.md): their
+// item, the slice, and the fee they'll pay on it being done.
+struct SliceJob {
+    uint64_t id = 0;
+    uint32_t owner = 0;        // the asker's entity
+    std::string owner_name;
+    uint64_t item_id = 0;
+    std::string item_name;
+    std::string slice;
+    int64_t fee = 0;
+    double expires = 0;        // server seconds (sent: seconds left)
+
+    friend bool operator==(const SliceJob&, const SliceJob&) = default;
+};
+inline constexpr int64_t slice_job_fee = 500;     // what the asker pays the Smuggler
+inline constexpr double slice_job_seconds = 120;  // how long an ask stands
+
     uint32_t companion_entity = 0;
     double companion_cooldown = 0;   // seconds until another can be fielded
     std::vector<Contract> contracts;  // accepted
@@ -602,6 +627,8 @@ struct SpecialistState {
     std::vector<BazaarListing> bazaar_view;  // the last browse
     std::string bazaar_query;
     std::vector<std::pair<std::string, PriceStats>> bazaar_prices;
+    bool lucky_used = false;        // this life (a Smuggler's Lucky)
+    std::vector<SliceJob> slice_jobs;  // a Smuggler's: slices others asked of them
     uint32_t revision = 1;
     uint32_t acked = 0;
     uint32_t sync_tick = 0;

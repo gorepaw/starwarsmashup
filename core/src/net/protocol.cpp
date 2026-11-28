@@ -546,6 +546,7 @@ void put_weapon_def(ByteWriter& out, const WeaponDef& w) {
     out.put(double(w.trap_interval));
     out.put(double(w.heal));
     out.put(double(w.heal_time));
+    out.put(double(w.jump));
     out.put(double(w.shot_elevate));
     out.put(double(w.explosion_damage));
     out.put(double(w.explosion_inner));
@@ -626,7 +627,7 @@ WeaponDef get_weapon_def(ByteReader& in) {
     if (dt >= damage_type_count) throw PacketError("bad damage type");
     w.damage_type = DamageType(dt);
     const uint8_t proj = in.get<uint8_t>();
-    if (proj > uint8_t(Projectile::heal)) throw PacketError("bad projectile");
+    if (proj > uint8_t(Projectile::jump)) throw PacketError("bad projectile");
     w.projectile = Projectile(proj);
     w.ammo = in.get<int16_t>();
     w.shot_delay = in.get<double>();
@@ -663,6 +664,7 @@ WeaponDef get_weapon_def(ByteReader& in) {
     w.trap_interval = in.get<double>();
     w.heal = in.get<double>();
     w.heal_time = in.get<double>();
+    w.jump = in.get<double>();
     w.shot_elevate = in.get<double>();
     w.explosion_damage = in.get<double>();
     w.explosion_inner = in.get<double>();
@@ -1520,6 +1522,17 @@ struct Encoder {
         out.put(m.channel_remaining);
     }
     void operator()(const SpecialistAck& m) {
+        out.put(uint16_t(m.slice_jobs.size()));
+        for (const SliceJob& j : m.slice_jobs) {
+            out.put(j.id);
+            out.put(j.owner);
+            out.put_string(j.owner_name);
+            out.put(j.item_id);
+            out.put_string(j.item_name);
+            out.put_string(j.slice);
+            out.put(j.fee);
+            out.put(j.expires);
+        }
         out.put(uint8_t(Type::specialist_ack));
         out.put(m.revision);
     }
@@ -2135,7 +2148,7 @@ Message decode(std::span<const uint8_t> packet) {
     case Type::specialist_request: {
         SpecialistRequest m;
         m.action = in.get<uint8_t>();
-        if (m.action > uint8_t(SpecialistRequest::post_bounty)) throw PacketError("bad specialist action");
+        if (m.action > uint8_t(SpecialistRequest::slice_answer)) throw PacketError("bad specialist action");
         m.id = in.get_string();
         m.target = in.get<uint32_t>();
         m.position = get_vec3(in);
@@ -2218,6 +2231,19 @@ Message decode(std::span<const uint8_t> packet) {
         break;
     }
     case Type::specialist_ack:
+        const uint16_t jobs = in.get<uint16_t>();
+        for (uint16_t i = 0; i < jobs; ++i) {
+            SliceJob j;
+            j.id = in.get<uint64_t>();
+            j.owner = in.get<uint32_t>();
+            j.owner_name = in.get_string();
+            j.item_id = in.get<uint64_t>();
+            j.item_name = in.get_string();
+            j.slice = in.get_string();
+            j.fee = in.get<int64_t>();
+            j.expires = in.get<double>();
+            m.slice_jobs.push_back(std::move(j));
+        }
         message = SpecialistAck{in.get<uint32_t>()};
         break;
     default:

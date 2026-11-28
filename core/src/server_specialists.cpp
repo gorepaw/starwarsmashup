@@ -310,7 +310,7 @@ void GameServer::apply_slices(const Client& client, const CharacterLoadout& cl, 
         const ItemInstance* inst = item(weapon_ids[size_t(s)]);
         if (inst == nullptr || !loadout.weapons[size_t(s)]) continue;
         if (const SliceDef* slice = book->slice(item_slice(*inst)); slice && slice->applies == "weapon") {
-            apply_slice(*loadout.weapons[size_t(s)], *slice);
+            apply_slice(*loadout.weapons[size_t(s)], scaled_slice(*slice, item_slice_power(*inst)));
         }
     }
     Gear sliced{"slices", "slices", {}};
@@ -318,7 +318,7 @@ void GameServer::apply_slices(const Client& client, const CharacterLoadout& cl, 
         const ItemInstance* inst = item(id);
         if (inst == nullptr) continue;
         if (const SliceDef* slice = book->slice(item_slice(*inst)); slice && slice->applies == "armor") {
-            apply_slice(sliced, *slice);
+            apply_slice(sliced, scaled_slice(*slice, item_slice_power(*inst)));
         }
     }
     if (!sliced.modifiers.empty()) loadout.gear.push_back(std::move(sliced));
@@ -642,6 +642,16 @@ void GameServer::handle_specialist_request(Client& client, const net::Specialist
             return;
         }
         Contract taken = *it;
+        if (taken.kind == ContractKind::contraband) {
+            const int runs = int(std::count_if(client.spec.contracts.begin(), client.spec.contracts.end(),
+                                               [](const Contract& c) { return c.kind == ContractKind::contraband; }));
+            const int most = granted(client, "smuggler", "hidden_compartments") ? 2 : 1;
+            if (runs >= most) {
+                notify(client.entity, most == 1 ? "One package at a time (Hidden Compartments carries two)"
+                                                : "Two packages at a time");
+                return;
+            }
+        }
         if (taken.kind == ContractKind::npc_mark && taken.target_entity == 0) {
             // Its outlaw and gang, where it said (the hub's population gives them wits).
             std::vector<uint32_t> gang;
@@ -667,6 +677,12 @@ void GameServer::handle_specialist_request(Client& client, const net::Specialist
     }
     case R::post_bounty:
         post_bounty(client, request.id, request.amount);
+        return;
+    case R::slice_request:
+        request_slice(client, request.item_id, request.id, request.text);
+        return;
+    case R::slice_answer:
+        answer_slice(client, uint64_t(std::max<int64_t>(0, request.amount)), request.target == 1);
         return;
     case R::contract_abandon:
         std::erase_if(client.spec.contracts, [&](const Contract& c) { return int64_t(c.id) == request.amount; });
@@ -781,6 +797,9 @@ bool GameServer::use_ability(Client& client, const AbilityDef& a, uint32_t targe
             targets.push_back(&client);
         }
         for (Client* t : targets) give_effect(*t, buff_effect());
+        if (a.unmark) {  // (a Smuggler's Getaway: whatever showed them is gone)
+            std::erase_if(marks_, [&](const Mark& m) { return m.entity == me; });
+        }
         // Shields Up and Press On (a Squad Leader's 25): what an order carries besides.
         if (order) {
             const double seconds = std::max(1.0, a.duration * order_scale);
@@ -856,6 +875,20 @@ bool GameServer::use_ability(Client& client, const AbilityDef& a, uint32_t targe
             if (h > 0 && who != &client) notify(who->entity, std::format("{} healed you (+{})", client.name, int(h)));
         }
         earn_specialist_xp(client, profession, healed > 0 ? a.xp + int64_t(healed / 10) : a.xp / 4);
+        return true;
+    }
+    case AbilityEffect::blind: {
+        // A flashbang (a Smuggler's): enemy players near see white, no HUD. No slow.
+        int blinded = 0;
+        for (const uint32_t e : enemies_near(point, std::max(0.5, a.radius))) {
+            if (Client* c = find(e)) {
+                give_effect(*c, {a.id, a.name, me, std::max(0.5, a.duration), std::max(0.5, a.duration), {}, 0, 0,
+                                 DamageType::bio, uint16_t(effect_flag::debuff | effect_flag::blinded)});
+                ++blinded;
+            }
+        }
+        explosions_.push_back({me, net::droid_explosion_weapon, point, {0, 1, 0}, float(std::max(1.0, a.radius))});
+        earn_specialist_xp(client, profession, blinded ? a.xp * std::min(blinded, 4) : a.xp / 4);
         return true;
     }
     case AbilityEffect::heal_area: {
@@ -1580,7 +1613,18 @@ void GameServer::update_effects(Client& client, double dt) {
     SpecialistState& spec = client.spec;
     // Inspiration counts down while its character plays; a death in the open
     // world ends it, one in a match doesn't (docs/PROFESSIONS.md).
-    if (client.life != Life::alive) spec.second_wind_used = false;  // (each life its own)
+    if (client.life != Life::alive) {
+        spec.second_wind_used = false;  // (each life its own)
+        spec.lucky_used = false;
+        // A contraband run's package is lost with its runner.
+        const size_t before = spec.contracts.size();
+        std::erase_if(spec.contracts, [](const Contract& c) { return c.kind == ContractKind::contraband; });
+        if (spec.contracts.size() != before) {
+            notify(client.entity, "Contract failed: the package was lost when you fell");
+            ++spec.revision;
+            spec.sync_tick = 0;
+        }
+    }
     if (!spec.inspiration.id.empty()) {
         spec.inspiration.remaining -= dt;
         if (spec.inspiration.remaining <= 0 || (!conquest_ && client.life == Life::dead)) spec.inspiration = {};
@@ -2103,7 +2147,31 @@ void GameServer::update_contracts(Client& client) {
             failed = true;
             why = "it expired";
         } else if (c.kind == ContractKind::contraband) {
-            done = flat_distance(client.state.position, c.waypoint) <= c.radius && client.life == Life::alive;
+            const double near = flat_distance(client.state.position, c.waypoint);
+            // Near the drop, pirates lie in wait (not for Hidden Compartments).
+            if (!c.ambushed && near <= 120 && client.life == Life::alive) {
+                c.ambushed = true;
+                if (!granted(client, "smuggler", "hidden_compartments")) {
+                    const int tier = std::clamp(1 + specialist_level(client, "smuggler") / 25, 1, 5);
+                    const std::string boss = "Pirate " + bounty_mark_name(random_unit(), random_unit());
+                    std::vector<uint32_t> gang;
+                    if (on_spawn_mark) gang = on_spawn_mark(boss, c.waypoint, tier, 2);
+                    if (gang.empty()) {
+                        NpcCombatSpec spec_npc;
+                        spec_npc.actor_kind = 3;
+                        spec_npc.max_health = 220;
+                        for (int g = 0; g < 3; ++g) {
+                            gang.push_back(add_combat_npc(g == 0 ? boss : "Pirate",
+                                                          c.waypoint + Vec3{4.0 * std::cos(g * 2.1), 0, 4.0 * std::sin(g * 2.1)},
+                                                          0, 0, spec_npc));
+                        }
+                    }
+                    bounty_marks_.push_back({client.entity, c.id, std::move(gang)});
+                    notify(client.entity, "Pirates wait at the drop");
+                }
+            }
+            done = near <= c.radius && client.life == Life::alive;
+            if (done && granted(client, "smuggler", "smooth_talker")) c.reward += c.reward / 2;
         } else if (c.kind == ContractKind::gig) {
             done = c.progress >= c.needed;
         } else if (c.kind == ContractKind::craft_order) {
@@ -2656,8 +2724,8 @@ void GameServer::datapad_action(Client& client, const net::SpecialistRequest& re
         const ItemDef* def = item && config_.catalog ? config_.catalog->find(item->def_id) : nullptr;
         if (slice == nullptr || def == nullptr) return;
         const ProfessionStanding smg = standing("smuggler");
-        if (smg.level < std::max(50, slice->level) || smg.trained < 50) {
-            notify(client.entity, std::format("{} needs Smuggler {} (Gear Slicing trained)", slice->name, std::max(50, slice->level)));
+        if (smg.level < std::max(50, slice->level) || smg.trained < 1) {
+            notify(client.entity, std::format("{} needs a licensed Smuggler {}", slice->name, std::max(50, slice->level)));
             return;
         }
         const bool weapon = def->kind == ItemKind::weapon;
@@ -2671,7 +2739,7 @@ void GameServer::datapad_action(Client& client, const net::SpecialistRequest& re
             return;
         }
         ItemInstance sliced = *item;
-        set_item_slice(sliced, slice->id);
+        set_item_slice(sliced, slice->id, granted(client, "smuggler", "master_slicer") ? 1.5 : 1.0);
         if (!store_->update_item_colors(item->id, sliced.color_json)) return;
         client.credits -= slice_cost;
         save_economy(client);
@@ -2888,6 +2956,8 @@ std::optional<Vec3> GameServer::bounty_spot(Vec3 from) {
         Vec3 p = world_.clamp({from.x + dist * std::cos(angle), 0, from.z + dist * std::sin(angle)});
         p.y = world_.terrain().height_at(p.x, p.z);
         if (world_.near_structure(p, 60.0)) continue;
+    sync.slice_jobs = spec.slice_jobs;
+    for (SliceJob& j : sync.slice_jobs) j.expires = std::max(0.0, j.expires - specialist_clock_);
         return p;
     }
     return std::nullopt;
@@ -3076,3 +3146,108 @@ void GameServer::update_bounties(double dt) {
 }
 
 } // namespace swm::core
+    // Slice asks no one answered in time, or whose asker left.
+    for (Client& c : clients_) {
+        const size_t before = c.spec.slice_jobs.size();
+        std::erase_if(c.spec.slice_jobs,
+                      [&](const SliceJob& j) { return j.expires < specialist_clock_ || find(j.owner) == nullptr; });
+        if (c.spec.slice_jobs.size() != before) {
+            ++c.spec.revision;
+            c.spec.sync_tick = 0;
+        }
+    }
+// ---------------------------------------------------------------------------
+// Smuggler: slicing others' gear, the Black Market
+
+int64_t GameServer::black_market(const Client& client, int64_t value) const {
+    return granted(client, "smuggler", "black_market") ? value + value / 4 : value;
+}
+
+void GameServer::request_slice(Client& owner, uint64_t item_id, const std::string& slice_id, const std::string& smuggler) {
+    if (conquest_ || config_.specialists == nullptr || config_.catalog == nullptr) return;
+    const SliceDef* slice = config_.specialists->slice(slice_id);
+    const auto it = std::find_if(owner.items.begin(), owner.items.end(), [&](const ItemInstance& i) { return i.id == item_id; });
+    const ItemDef* def = it != owner.items.end() ? config_.catalog->find(it->def_id) : nullptr;
+    if (slice == nullptr || def == nullptr) return;
+    if ((slice->applies == "weapon" && def->kind != ItemKind::weapon) || (slice->applies == "armor" && def->kind != ItemKind::armor)) {
+        notify(owner.entity, std::format("{} is for {}", slice->name, slice->applies));
+        return;
+    }
+    Client* slicer = nullptr;
+    for (Client& c : clients_) {
+        if (c.name == smuggler && &c != &owner) slicer = &c;
+    }
+    if (slicer == nullptr || flat_distance(slicer->state.position, owner.state.position) > 10) {
+        notify(owner.entity, std::format("{} isn't near enough to ask", smuggler));
+        return;
+    }
+    if (specialist_level(*slicer, "smuggler") < std::max(50, slice->level)) {
+        notify(owner.entity, std::format("{} can't slice {} (it takes a Smuggler {})", slicer->name, slice->name,
+                                         std::max(50, slice->level)));
+        return;
+    }
+    if (owner.credits < slice_job_fee) {
+        notify(owner.entity, std::format("Asking a slice takes {} credits for the Smuggler", slice_job_fee));
+        return;
+    }
+    // One ask per item: a new one replaces it.
+    std::erase_if(slicer->spec.slice_jobs, [&](const SliceJob& j) { return j.owner == owner.entity && j.item_id == item_id; });
+    slicer->spec.slice_jobs.push_back({next_slice_job_++, owner.entity, owner.name, item_id, def->display_name, slice->id,
+                                       slice_job_fee, specialist_clock_ + slice_job_seconds});
+    ++slicer->spec.revision;
+    slicer->spec.sync_tick = 0;
+    notify(slicer->entity, std::format("{} asks you to slice {} into their {} ({} cr): see your datapad's Slicing tab",
+                                       owner.name, slice->name, def->display_name, slice_job_fee));
+    notify(owner.entity, std::format("Asked {} to slice {} into your {}", slicer->name, slice->name, def->display_name));
+}
+
+void GameServer::answer_slice(Client& smuggler, uint64_t job_id, bool accept) {
+    const auto it = std::find_if(smuggler.spec.slice_jobs.begin(), smuggler.spec.slice_jobs.end(),
+                                 [&](const SliceJob& j) { return j.id == job_id; });
+    if (it == smuggler.spec.slice_jobs.end()) return;
+    const SliceJob job = *it;
+    smuggler.spec.slice_jobs.erase(it);
+    ++smuggler.spec.revision;
+    smuggler.spec.sync_tick = 0;
+    Client* owner = find(job.owner);
+    if (!accept) {
+        if (owner) notify(owner->entity, std::format("{} won't slice your {}", smuggler.name, job.item_name));
+        return;
+    }
+    const SliceDef* slice = config_.specialists ? config_.specialists->slice(job.slice) : nullptr;
+    if (owner == nullptr || slice == nullptr || store_ == nullptr) {
+        notify(smuggler.entity, "They've gone");
+        return;
+    }
+    const auto item = std::find_if(owner->items.begin(), owner->items.end(), [&](const ItemInstance& i) { return i.id == job.item_id; });
+    if (item == owner->items.end()) return;
+    if (flat_distance(smuggler.state.position, owner->state.position) > 10) {
+        notify(smuggler.entity, std::format("{} is too far away now", owner->name));
+        return;
+    }
+    if (owner->credits < job.fee) {
+        notify(smuggler.entity, std::format("{} can't pay any more", owner->name));
+        return;
+    }
+    if (smuggler.credits < slice_cost) {
+        notify(smuggler.entity, std::format("Slicing takes {} credits of parts", slice_cost));
+        return;
+    }
+    ItemInstance sliced = *item;
+    set_item_slice(sliced, slice->id, granted(smuggler, "smuggler", "master_slicer") ? 1.5 : 1.0);
+    if (!store_->update_item_colors(item->id, sliced.color_json)) return;
+    item->color_json = sliced.color_json;
+    owner->credits -= job.fee;
+    smuggler.credits += job.fee - slice_cost;
+    save_economy(*owner);
+    save_economy(smuggler);
+    rebuild_client_loadouts(*owner);
+    owner->stats = stats_for(loadout_of(*owner), owner->species, config_.base_stats);
+    ++owner->inventory_rev;
+    owner->last_sync_tick = 0;
+    notify(owner->entity, std::format("{} sliced {} into your {} (-{} cr)", smuggler.name, slice->name, job.item_name, job.fee));
+    notify(smuggler.entity, std::format("Sliced {} into {}'s {} (+{} cr, {} for parts)", slice->name, owner->name,
+                                        job.item_name, job.fee, slice_cost));
+    earn_specialist_xp(smuggler, "smuggler", 60 + slice->level);
+}
+

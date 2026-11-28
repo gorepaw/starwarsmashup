@@ -1,6 +1,6 @@
 # Trainer Perks
 
-The rework of what professions teach. It replaces milestones at 1 / 25 / 50 / 75 / 100 ([Professions](PROFESSIONS.md)) with two perks to choose between at each tier. Weapons and armor were first; then Squad Leader, Doctor and Entertainer, gathering and crafting, and Bounty Hunter (2026-11-27). The other advanced professions follow one by one and keep their milestones until their turn.
+The rework of what professions teach. It replaces milestones at 1 / 25 / 50 / 75 / 100 ([Professions](PROFESSIONS.md)) with two perks to choose between at each tier. Weapons and armor were first; then Squad Leader, Doctor and Entertainer, gathering and crafting, Bounty Hunter and Smuggler (2026-11-27). The other advanced professions follow one by one and keep their milestones until their turn.
 
 Status: **built** (see Order of work): the rules, the cap, trainers, licences, and all 90 perks. The tags say what each needed: nothing new, a trigger (**T**), or a new mechanic (**N**; [Mechanics](#mechanics)).
 
@@ -168,6 +168,18 @@ Tiers from 1 (taking bounties needs the licence).
 | 45 | **Bloodhound**: marks within 150 m stay on your HUD; in a battle whoever shoots you shows to your side 5 s | **Relentless**: slows on you halved |
 | 65 | **Big Game**: also a tier-harder mark with a bigger gang, double pay | **Twin Charges**: your level-25 button holds two charges |
 | 85 | **Collector**: bounties pay half again, credits and experience | **Clean Getaway**: after a kill, 20% faster 4 s and the shield recharging at once |
+
+### Smuggler
+
+Tiers from 1 (contraband runs and slicing take the licence; slices themselves need Smuggler 50 / 75 / 100).
+
+| Level | A | B |
+|---|---|---|
+| 1 | **Smoke Screen** (button): your side hidden inside it for 12 s | **Flashbang** (button): enemy players within 6 m blinded 3 s, no slow |
+| 25 | **EMP Disruptor** (button): 180 electro within 6 m | **Getaway** (button): 30% faster 4 s, marks on you dropped |
+| 45 | **Post Slicer**: take command posts as fast as two | **Smooth Talker**: contraband pays half again |
+| 65 | **Master Slicer**: your slices half again as strong, both ways (saved on the item, `slice_id:1.50`) | **Hidden Compartments**: two packages at once, no pirates at the drop |
+| 85 | **Lucky**: once a life, a killing blow leaves 1 health | **Black Market**: vendors pay a quarter more |
 
 ## Triggers
 

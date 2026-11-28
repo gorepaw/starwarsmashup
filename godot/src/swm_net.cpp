@@ -867,6 +867,18 @@ godot::Dictionary SwmClient::get_specialist() const {
     out["bounty_flag"] = s.bounty_flag;
     out["inspiration_choice"] = godot::String::utf8(s.inspiration_choice.c_str());
     out["channel"] = godot::String::utf8(s.channel.c_str());
+    godot::Array jobs;  // a Smuggler's: slices others asked of them
+    for (const core::SliceJob& j : s.slice_jobs) {
+        godot::Dictionary d;
+        d["id"] = int64_t(j.id);
+        d["owner_name"] = godot::String::utf8(j.owner_name.c_str());
+        d["item_name"] = godot::String::utf8(j.item_name.c_str());
+        d["slice"] = godot::String::utf8(j.slice.c_str());
+        d["fee"] = int64_t(j.fee);
+        d["expires_in"] = j.expires;
+        jobs.push_back(d);
+    }
+    out["slice_jobs"] = jobs;
     out["channel_remaining"] = double(s.channel_remaining);
     return out;
 }
@@ -1963,6 +1975,7 @@ godot::Array SwmClient::get_weapons() const {
                               : w.projectile == core::Projectile::missile ? "missile"
                               : w.projectile == core::Projectile::grenade ? "grenade"
                               : w.projectile == core::Projectile::heal    ? "heal"
+                            : w.projectile == core::Projectile::jump    ? "jump"
                                                                           : "melee";
         entry["heal"] = w.heal;            // a medpack's, at once or over heal_time seconds
         entry["heal_time"] = w.heal_time;
