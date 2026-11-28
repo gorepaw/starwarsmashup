@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cctype>
 #include <cmath>
+#include <format>
 #include <limits>
 #include <numbers>
 #include <sstream>
@@ -213,7 +214,7 @@ void WorldPopulation::spawn_all() {
 
         Vec3 center = world_.clamp(lair.position);
         center.y = world_.terrain().height_at(center.x, center.z);
-        lair_states_.push_back({center, lair.radius, center, 3.0 + random_unit() * 5.0});
+        lair_states_.push_back({center, lair.radius, false, center, 3.0 + random_unit() * 5.0});
 
         const auto lit = look_indices_.find(arch->template_path);
         const uint8_t look = lit != look_indices_.end() ? lit->second : 0;
@@ -491,7 +492,8 @@ void WorldPopulation::update_creatures(double now) {
                 server_.set_npc_hidden(mob.entity, true);
                 mob.corpse_hidden = true;
             }
-            if (awake && now - mob.dead_since >= arch.respawn_time * respawn_scale(lair_states_[mob.lair].center,
+            if (awake && !lair_states_[mob.lair].temporary &&
+                now - mob.dead_since >= arch.respawn_time * respawn_scale(lair_states_[mob.lair].center,
                                                                                   lair_states_[mob.lair].radius)) {
                 const Vec3 spawn_pos = random_point_around(lair_states_[mob.lair].center, lair_states_[mob.lair].radius * 0.5);
                 mob.home = spawn_pos;
@@ -785,7 +787,9 @@ void WorldPopulation::update_bandits(double now) {
 std::vector<uint32_t> WorldPopulation::mob_entities() const {
     std::vector<uint32_t> ids;
     ids.reserve(creatures_.size() + bandits_.size());
-    for (const CreatureMob& m : creatures_) ids.push_back(m.entity);
+    for (const CreatureMob& m : creatures_) {
+        if (!m.gone) ids.push_back(m.entity);
+    }
     for (const BanditMob& m : bandits_) {
         if (!m.gone) ids.push_back(m.entity);
     }
@@ -849,10 +853,65 @@ std::vector<uint32_t> WorldPopulation::spawn_mark(const std::string& name, Vec3 
     return out;
 }
 
+uint32_t WorldPopulation::spawn_quarry(const std::string& name, Vec3 center, int tier) {
+    // The toughest kind up to its tier (the weakest there is, if none is).
+    int best = -1;
+    for (const CreatureArchetype& c : spawns_.creatures) {
+        if (c.tier <= tier) best = std::max(best, c.tier);
+    }
+    if (best < 0) {
+        for (const CreatureArchetype& c : spawns_.creatures) best = best < 0 ? c.tier : std::min(best, c.tier);
+    }
+    std::vector<size_t> fit;
+    for (size_t i = 0; i < spawns_.creatures.size(); ++i) {
+        if (spawns_.creatures[i].tier == best) fit.push_back(i);
+    }
+    if (fit.empty()) return 0;
+    const size_t arch_idx = fit[size_t(random_unit() * double(fit.size())) % fit.size()];
+    const CreatureArchetype& arch = spawns_.creatures[arch_idx];
+    center = world_.clamp(center);
+    center.y = world_.terrain().height_at(center.x, center.z);
+    lair_states_.push_back({center, 20.0, true, center, 3.0 + random_unit() * 5.0});
+    const auto lit = look_indices_.find(arch.template_path);
+    GameServer::NpcCombatSpec spec;
+    spec.actor_kind = 2;
+    spec.passive = arch.behavior == CreatureBehavior::passive;
+    spec.max_health = arch.health * (2.0 + 0.5 * tier);  // a beast of a kind
+    spec.hit_radius = arch.radius;
+    spec.hit_height = arch.height;
+    spec.walk_speed = arch.walk_speed;
+    spec.run_speed = arch.run_speed;
+    const uint32_t entity = server_.add_combat_npc(std::format("{} the {}", name, arch.name), center,
+                                                   random_unit() * 2.0 * std::numbers::pi,
+                                                   lit != look_indices_.end() ? lit->second : 0, spec,
+                                                   uint16_t(random_unit() * 99.0) + 1);
+    CreatureMob mob;
+    mob.entity = entity;
+    mob.archetype = arch_idx;
+    mob.lair = lair_states_.size() - 1;
+    mob.home = center;
+    mob.goal = center;
+    mob.wait_until = random_unit() * 4.0;
+    lair_states_.back().mobs.push_back(creatures_.size());
+    by_entity_[entity] = {false, creatures_.size()};
+    creatures_.push_back(mob);
+    return entity;
+}
+
 void WorldPopulation::retire_mark(const std::vector<uint32_t>& entities) {
     for (const uint32_t entity : entities) {
         const auto it = by_entity_.find(entity);
-        if (it == by_entity_.end() || !it->second.first) continue;
+        if (it == by_entity_.end()) continue;
+        if (!it->second.first) {
+            // A quarry.
+            CreatureMob& mob = creatures_[it->second.second];
+            std::erase(lair_states_[mob.lair].mobs, it->second.second);
+            mob.gone = true;
+            mob.dormant = true;  // (never updated again)
+            by_entity_.erase(it);
+            server_.remove_npc(entity);
+            continue;
+        }
         BanditMob& mob = bandits_[it->second.second];
         std::erase(camp_states_[mob.camp].mobs, it->second.second);
         mob.gone = true;

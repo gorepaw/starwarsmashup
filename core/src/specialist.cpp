@@ -898,6 +898,13 @@ std::string bounty_mark_name(double first_roll, double last_roll) {
     return std::format("{} {}", pick(firsts, first_roll), pick(lasts, last_roll));
 }
 
+std::string quarry_name(double roll) {
+    static constexpr std::array<std::string_view, 12> names{"Old Scar",  "Ironhide",  "Red Fang",   "Bone-Eater",
+                                                            "Greymane",  "Nightstalker", "Broken Horn", "Ashback",
+                                                            "Longtooth", "Dune Ghost", "Splitclaw",  "the Widowmaker"};
+    return std::string(names[std::min(names.size() - 1, size_t(std::clamp(roll, 0.0, 1.0) * double(names.size())))]);
+}
+
 std::string format_posted_bounties(std::span<const PostedBounty> bounties) {
     std::string out;
     for (const PostedBounty& b : bounties) {

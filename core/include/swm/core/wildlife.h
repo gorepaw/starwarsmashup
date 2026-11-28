@@ -129,7 +129,12 @@ public:
     // like any camp's but never come back once dead. Their entities, the
     // leader first; empty if there are no bandits to make them of.
     std::vector<uint32_t> spawn_mark(const std::string& name, Vec3 center, int tier, int guards);
-    // Takes a mark's outlaws (spawn_mark's entities) out of the world for good.
+    // A Ranger's quarry (docs/PROFESSIONS.md): one named creature of a type
+    // up to `tier`, tougher than its kind, that never comes back once dead.
+    // Its entity, or 0 if there are no creatures to make it of.
+    uint32_t spawn_quarry(const std::string& name, Vec3 center, int tier);
+    // Takes a mark's outlaws or a quarry (spawn_mark's, spawn_quarry's
+    // entities) out of the world for good.
     void retire_mark(const std::vector<uint32_t>& entities);
 
 private:
@@ -150,11 +155,13 @@ private:
         bool corpse_hidden = false;
         uint32_t last_seen_damage_tick = 0;
         bool dormant = false;  // alive, out of the world while its lair sleeps
+        bool gone = false;     // a retired quarry's: out of the world for good
     };
 
     struct LairState {
         Vec3 center;
         double radius = 25;
+        bool temporary = false;  // a quarry's: its dead stay dead
         Vec3 herd_anchor;
         double next_herd_move = 0;
         bool awake = true;

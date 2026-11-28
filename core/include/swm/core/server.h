@@ -359,6 +359,9 @@ public:
     // first) and takes them away. Unset: lone outlaws without a gang's wits.
     std::function<std::vector<uint32_t>(const std::string& name, Vec3 at, int tier, int guards)> on_spawn_mark;
     std::function<void(const std::vector<uint32_t>& entities)> on_retire_mark;
+    // A Ranger's quarry (its entity; 0: none to make): the population's, as
+    // marks are, and retired the same way.
+    std::function<uint32_t(const std::string& name, Vec3 at, int tier)> on_spawn_quarry;
     // Bounties players have put up, outstanding (saved with the world).
     const std::vector<PostedBounty>& posted_bounties() const { return posted_; }
     // The field as a player sees it (what their snapshots carry).

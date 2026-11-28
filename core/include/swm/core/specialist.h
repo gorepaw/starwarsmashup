@@ -414,6 +414,8 @@ struct PostedBounty {
 inline constexpr int64_t pvp_bounty_base = 1000;  // what a player mark pays before what's posted
 // A made-up outlaw's name for a bounty mark, from two rolls in [0, 1).
 std::string bounty_mark_name(double first_roll, double last_roll);
+// A Ranger's quarry's name ("Old Scar"), from a roll in [0, 1); the creature's kind follows it.
+std::string quarry_name(double roll);
 inline constexpr int64_t min_posted_bounty = 500;
 std::string format_posted_bounties(std::span<const PostedBounty> bounties);
 std::vector<PostedBounty> parse_posted_bounties(std::string_view text);

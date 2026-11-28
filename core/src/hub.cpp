@@ -676,6 +676,9 @@ void Hub::add_people() {
             return population_->spawn_mark(name, at, tier, guards);
         };
         server_.on_retire_mark = [this](const std::vector<uint32_t>& entities) { population_->retire_mark(entities); };
+        server_.on_spawn_quarry = [this](const std::string& name, Vec3 at, int tier) {
+            return population_->spawn_quarry(name, at, tier);
+        };
     }
 }
 
@@ -773,6 +776,7 @@ Hub::~Hub() {
     server_.on_join = nullptr;
     server_.on_spawn_mark = nullptr;
     server_.on_retire_mark = nullptr;
+    server_.on_spawn_quarry = nullptr;
     for (auto& battle : battles_) {
         battle->bots->disconnect();
     }

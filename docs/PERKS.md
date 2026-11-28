@@ -1,6 +1,6 @@
 # Trainer Perks
 
-The rework of what professions teach. It replaces milestones at 1 / 25 / 50 / 75 / 100 ([Professions](PROFESSIONS.md)) with two perks to choose between at each tier. Weapons and armor were first; then Squad Leader, Doctor and Entertainer, gathering and crafting, Bounty Hunter and Smuggler (2026-11-27). The other advanced professions follow one by one and keep their milestones until their turn.
+The rework of what professions teach. It replaces milestones at 1 / 25 / 50 / 75 / 100 ([Professions](PROFESSIONS.md)) with two perks to choose between at each tier. Weapons and armor were first; then Squad Leader, Doctor and Entertainer, gathering and crafting, Bounty Hunter, Smuggler and Ranger (2026-11-27). The other advanced professions follow one by one and keep their milestones until their turn.
 
 Status: **built** (see Order of work): the rules, the cap, trainers, licences, and all 90 perks. The tags say what each needed: nothing new, a trigger (**T**), or a new mechanic (**N**; [Mechanics](#mechanics)).
 
@@ -180,6 +180,18 @@ Tiers from 1 (contraband runs and slicing take the licence; slices themselves ne
 | 45 | **Post Slicer**: take command posts as fast as two | **Smooth Talker**: contraband pays half again |
 | 65 | **Master Slicer**: your slices half again as strong, both ways (saved on the item, `slice_id:1.50`) | **Hidden Compartments**: two packages at once, no pirates at the drop |
 | 85 | **Lucky**: once a life, a killing blow leaves 1 health | **Black Market**: vendors pay a quarter more |
+
+### Ranger
+
+Tiers from 1 (hunts take the licence).
+
+| Level | A | B |
+|---|---|---|
+| 1 | **Tracking** (button): creatures within 250 m on your map 30 s; in a battle, a motion sensor spotting 20 m | **Camouflage** (button): hidden 8 s, or until you fire |
+| 25 | **Snare Trap** (button): 80 damage, held 3 s | **Bolas** (button): half speed 4 s |
+| 45 | **Pathfinder**: sprinting drains 25% less stamina | **Keen Senses**: enemies within 15 m show through cloak and smoke |
+| 65 | **Trapper**: traps hold 5 s, two set at once | **Hamstring**: hits slow enemies 10% for 2 s |
+| 85 | **Survivalist**: out of a fight, 3% health back a second | **Scout Leader**: tracking and sensor finds show to your side, twice as long |
 
 ## Triggers
 

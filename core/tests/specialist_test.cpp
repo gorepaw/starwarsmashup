@@ -961,6 +961,110 @@ void test_smuggler(const SpecialistBook& book, const ProfessionBook& professions
     CHECK(!server.alive(er) && runner.specialist().contracts.empty());
 }
 
+// A Ranger: a hunt from a scout terminal (its named quarry spawned, brought
+// down by a snare trap), a Trapper's two traps, Survivalist, and an
+// Architect's field camp kit pitching a camp.
+void test_ranger(const SpecialistBook& book, const ProfessionBook& professions, const ItemCatalog& catalog) {
+    Heightfield ground{401, 2.0, -400, -400, std::vector<float>(401 * 401, 0.0f)};
+    World world{ground};
+    MemoryCharacterStore store;
+    const CharacterRecord rec = store.create("Scout", {0, 0, 0}, 0);
+    store.save_professions(rec.id, std::vector<ProfessionProgress>{{"ranger", professions.xp_for_level(80), 0}});
+    store.set_extra(rec.id, "perks:ranger", "rg_perk_tracking,rg_perk_snare_trap,rg_perk_keen_senses,rg_perk_trapper,rg_perk_survivalist");
+    ensure_starter_kit(store, rec.id);  // (a loadout to carry the kit in, before the camp kit below)
+    const ItemInstance kit = store.grant_item({0, rec.id, "arch_field_camp"});
+    net::LoopbackHub links;
+    net::Endpoint server_ep{1, 1};
+    net::LoopbackLink srv_link{links, server_ep};
+    net::LoopbackLink link{links, {2, 1}};
+    ServerConfig config;
+    config.catalog = &catalog;
+    config.professions = &professions;
+    config.specialists = &book;
+    config.spawn = {0, 0, 0};
+    GameServer server(srv_link, world, config, &store);
+    server.set_quests(nullptr, {}, {{"Scout Terminal", {0, 0, 0}, 8, "scout"}});
+    std::vector<std::vector<uint32_t>> retired;
+    uint32_t quarry = 0;
+    server.on_spawn_quarry = [&](const std::string& name, Vec3, int) {
+        GameServer::NpcCombatSpec spec;
+        spec.actor_kind = 2;
+        spec.max_health = 10;
+        quarry = server.add_combat_npc(name + " the Kreetle", {5, 0, 0}, 0, 0, spec);
+        return quarry;
+    };
+    server.on_retire_mark = [&](const std::vector<uint32_t>& gone) {
+        retired.push_back(gone);
+        for (const uint32_t e : gone) server.remove_npc(e);
+    };
+    GameClient client(link, world, ClientConfig{.server = server_ep, .name = "Scout"});
+    double now = 0;
+    const auto run = [&](double seconds) {
+        for (const double end = now + seconds; now < end; now += 1.0 / 30.0) {
+            server.update(now);
+            client.update(now);
+        }
+    };
+    using R = net::SpecialistRequest;
+    const auto act = [&](uint8_t action, int64_t amount) {
+        net::SpecialistRequest r;
+        r.action = action;
+        r.amount = amount;
+        client.specialist_request(r);
+    };
+    const auto trap = [&](Vec3 at) {
+        net::SpecialistRequest r;
+        r.action = R::use_ability;
+        r.id = "rg_trip_trap";
+        r.position = at;
+        client.specialist_request(r);
+    };
+    run(1.0);
+    CHECK(client.status() == GameClient::Status::connected);
+    const uint32_t me = client.entity_id();
+
+    // Survivalist: hurt, then out of the fight, it comes back.
+    const double full = server.health_of(me);
+    server.npc_melee(0, me, 300, DamageType::ballistic);
+    run(0.5);
+    const double hurt = server.health_of(me);
+    CHECK(hurt > 0 && hurt < full - 50);
+    run(12.0);
+    CHECK(server.health_of(me) > hurt + 30);
+
+    // A hunt: two offered (tier 4 at Ranger 80); taken, its quarry spawns.
+    act(R::contracts, 0);
+    run(0.5);
+    const std::vector<Contract> offers = client.specialist().offers;
+    const auto hunt = std::find_if(offers.begin(), offers.end(), [](const Contract& c) { return c.kind == ContractKind::track; });
+    CHECK(std::count_if(offers.begin(), offers.end(), [](const Contract& c) { return c.kind == ContractKind::track; }) == 2);
+    CHECK(hunt != offers.end() && hunt->title.find("tier 4") != std::string::npos && hunt->target_entity == 0);
+    if (hunt == offers.end()) return;
+    act(R::contract_accept, int64_t(hunt->id));
+    run(0.5);
+    CHECK(quarry != 0 && client.specialist().contracts.size() == 1 && client.specialist().contracts[0].target_entity == quarry);
+    CHECK(client.specialist().contracts[0].target_name.find("the Kreetle") != std::string::npos);
+    // A Trapper's first trap, out of the way; the second, under the quarry, brings it down.
+    trap({-5, 0, 0});
+    run(0.5);
+    CHECK(server.deployable_count() == 1);
+    run(30.5);  // the trap's cooldown
+    const int64_t before = client.player_status().credits;
+    trap({5, 0, 0});
+    run(1.5);
+    CHECK(client.specialist().contracts.empty() && client.player_status().credits == before + hunt->reward);
+    CHECK(server.deployable_count() == 1);  // the first trap's still set (the second sprang)
+    run(31.0);
+    CHECK(retired.size() == 1);
+
+    // The Architect's camp kit: used, a camp.
+    client.use_item(kit.id);
+    run(0.5);
+    CHECK(server.deployable_count() == 2);
+    const std::vector<ItemInstance> left = store.list_items(rec.id);
+    CHECK(std::none_of(left.begin(), left.end(), [&](const ItemInstance& i) { return i.id == kit.id; }));
+}
+
 // In a match: a loadout from a hub brings its kit and Companion Slot; a
 // cloak hides you from the other side (they aren't even sent you); a squad
 // beacon is somewhere to spawn; a big creature stays home.
@@ -1108,6 +1212,7 @@ int main() {
     test_bounties(book, professions, catalog);
     test_doctor_heals(book, professions, catalog);
     test_smuggler(book, professions, catalog);
+    test_ranger(book, professions, catalog);
     test_match(book, professions);
     return swm::test::finish("specialist_test");
 }

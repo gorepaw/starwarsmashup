@@ -151,7 +151,10 @@ bool GameServer::hidden_from(uint32_t viewer, uint32_t entity) const {
             }
         }
     }
-    return hidden && flat_distance(who->state.position, target->state.position) > reveal_radius;
+    const double apart = flat_distance(who->state.position, target->state.position);
+    // Keen Senses (a Ranger's 45): within 15 m nothing hides from them.
+    if (hidden && apart <= 15.0 && granted(*who, "ranger", "keen_senses")) return false;
+    return hidden && apart > reveal_radius;
 }
 
 bool GameServer::cloaked(uint32_t entity) const {
@@ -652,6 +655,23 @@ void GameServer::handle_specialist_request(Client& client, const net::Specialist
                 return;
             }
         }
+        if (taken.kind == ContractKind::track && taken.target_entity == 0) {
+            // The quarry, somewhere within 100 m of the waypoint.
+            const double angle = random_unit() * 2 * std::numbers::pi;
+            const double dist = random_unit() * 80.0;
+            Vec3 at = world_.clamp(taken.waypoint + Vec3{std::cos(angle) * dist, 0, std::sin(angle) * dist});
+            at.y = world_.terrain().height_at(at.x, at.z);
+            uint32_t quarry = on_spawn_quarry ? on_spawn_quarry(taken.target_name, at, taken.tier) : 0;
+            if (quarry == 0) {
+                NpcCombatSpec spec;
+                spec.actor_kind = 2;
+                spec.max_health = 150 * (2.0 + 0.5 * taken.tier);
+                quarry = add_combat_npc(taken.target_name, at, 0, 0, spec);
+            }
+            if (const Npc* n = find_npc(quarry)) taken.target_name = n->name;
+            taken.target_entity = quarry;
+            bounty_marks_.push_back({client.entity, taken.id, {quarry}});
+        }
         if (taken.kind == ContractKind::npc_mark && taken.target_entity == 0) {
             // Its outlaw and gang, where it said (the hub's population gives them wits).
             std::vector<uint32_t> gang;
@@ -1031,8 +1051,17 @@ bool GameServer::use_ability(Client& client, const AbilityDef& a, uint32_t targe
     }
     case AbilityEffect::deploy: {
         if (a.deploy == DeployKind::spawn_beacon && !conquest_) return false;
-        // One of each kind per owner: a new one replaces the old.
-        std::erase_if(deployables_, [&](const Deployable& d) { return d.owner == me && d.ability == a.id; });
+        // One of each kind per owner: a new one replaces the old (a Trapper keeps two traps).
+        const bool two = a.deploy == DeployKind::trap && granted(client, "ranger", "trapper");
+        if (two) {
+            int kept = 0;
+            for (auto it = deployables_.rbegin(); it != deployables_.rend(); ++it) {
+                if (it->owner == me && it->ability == a.id && ++kept > 1) it->remaining = 0;
+            }
+            std::erase_if(deployables_, [&](const Deployable& d) { return d.owner == me && d.ability == a.id && d.remaining <= 0; });
+        } else {
+            std::erase_if(deployables_, [&](const Deployable& d) { return d.owner == me && d.ability == a.id; });
+        }
         Deployable d;
         d.id = next_field_id_++;
         d.kind = a.deploy;
@@ -1042,6 +1071,7 @@ bool GameServer::use_ability(Client& client, const AbilityDef& a, uint32_t targe
         d.position = point;
         d.radius = std::max(0.5, a.radius);
         d.remaining = std::max(1.0, a.duration);
+        if (a.deploy == DeployKind::sensor && granted(client, "ranger", "scout_leader")) d.remaining *= 2;  // (a Ranger's 85)
         d.amount = a.amount;
         deployables_.push_back(d);
         earn_specialist_xp(client, profession, a.xp);
@@ -1128,7 +1158,12 @@ bool GameServer::use_ability(Client& client, const AbilityDef& a, uint32_t targe
                 bool companion = false;
                 for (const ActiveCompanion& c : companions_) companion = companion || c.entity == n.entity;
                 if (companion) continue;
-                mark_entity(n.entity, -2, me, a.duration, net::FieldMark::tracked);
+                // Scout Leader (a Ranger's 85): for their whole side, twice as long.
+                if (granted(client, "ranger", "scout_leader")) {
+                    mark_entity(n.entity, team, me, a.duration * 2, net::FieldMark::tracked);
+                } else {
+                    mark_entity(n.entity, -2, me, a.duration, net::FieldMark::tracked);
+                }
                 ++found;
             }
         }
@@ -1564,7 +1599,8 @@ void GameServer::specialist_kill(uint32_t victim, uint32_t killer, bool npc) {
         }
     }
     for (auto it = hunter->spec.contracts.begin(); it != hunter->spec.contracts.end(); ++it) {
-        if ((it->kind == ContractKind::npc_mark || it->kind == ContractKind::pvp_mark) && it->target_entity == victim) {
+        if ((it->kind == ContractKind::npc_mark || it->kind == ContractKind::pvp_mark || it->kind == ContractKind::track) &&
+            it->target_entity == victim) {
             int64_t reward = it->reward;
             int64_t xp = it->xp;
             if (it->kind == ContractKind::pvp_mark) {
@@ -1589,7 +1625,8 @@ void GameServer::specialist_kill(uint32_t victim, uint32_t killer, bool npc) {
             }
             hunter->credits += reward;
             save_economy(*hunter);
-            notify(hunter->entity, std::format("Bounty collected: {} (+{} credits)", it->target_name, reward));
+            notify(hunter->entity, std::format("{}: {} (+{} credits)", it->kind == ContractKind::track ? "Hunt done" : "Bounty collected",
+                                               it->target_name, reward));
             earn_specialist_xp(*hunter, it->profession, xp);
             if (it->kind == ContractKind::pvp_mark) {
                 if (Client* mark = find(victim)) notify(mark->entity, std::format("{} collected the bounty on you", hunter->name));
@@ -1613,6 +1650,11 @@ void GameServer::update_effects(Client& client, double dt) {
     SpecialistState& spec = client.spec;
     // Inspiration counts down while its character plays; a death in the open
     // world ends it, one in a match doesn't (docs/PROFESSIONS.md).
+    // Survivalist (a Ranger's 85): out of a fight, 3% of their health back a second.
+    if (client.life == Life::alive && client.health < client.stats.max_health && !in_combat(client) &&
+        granted(client, "ranger", "survivalist")) {
+        heal(client, client.stats.max_health * 0.03 * dt);
+    }
     if (client.life != Life::alive) {
         spec.second_wind_used = false;  // (each life its own)
         spec.lucky_used = false;
@@ -1829,7 +1871,7 @@ void GameServer::update_specialists(double dt) {
             if (healed > 0 && tick_ % 30 == 0) {
                 if (Client* o = find(d.owner)) {
                     const AbilityDef* a = book->ability(d.ability);
-                    earn_specialist_xp(*o, a ? a->profession : "doctor", 2);
+                    earn_specialist_xp(*o, a ? a->profession : d.ability == "arch_field_camp" ? "architect" : "doctor", 2);
                 }
             }
             break;
@@ -1894,6 +1936,7 @@ void GameServer::update_specialists(double dt) {
                 }
             }
             if (caught == 0) break;
+            const double hold = granted(*o, "ranger", "trapper") ? 5.0 : 3.0;  // Trapper (a Ranger's 65)
             d.spent = true;
             d.remaining = std::min(d.remaining, 0.5);
             if (Client* c = find(caught)) {
@@ -1903,7 +1946,7 @@ void GameServer::update_specialists(double dt) {
                     e.id = a->id;
                     e.name = a->name;
                     e.source = d.owner;
-                    e.remaining = e.duration = 3;
+                    e.remaining = e.duration = hold;
                     e.modifiers = a->modifiers;
                     e.flags = effect_flag::debuff;
                     give_effect(*c, std::move(e));
@@ -1911,7 +1954,7 @@ void GameServer::update_specialists(double dt) {
             } else if (Npc* n = find_npc(caught)) {
                 damage_npc(*n, d.amount, DamageType::ballistic, d.owner);
                 npc_base_speed_.try_emplace(caught, n->walk_speed, n->run_speed);
-                npc_effects_.push_back({caught, d.ability, 3, a ? modifier_multiply(a->modifiers, Stat::run_speed) : 0.3, 0,
+                npc_effects_.push_back({caught, d.ability, hold, a ? modifier_multiply(a->modifiers, Stat::run_speed) : 0.3, 0,
                                         DamageType::ballistic, d.owner, false});
             }
             mark_entity(caught, d.team, d.owner, 5, net::FieldMark::marked);
@@ -2049,17 +2092,22 @@ void GameServer::offer_contracts(Client& client, size_t terminal) {
             if (spec.offers.size() >= 8) break;
         }
     } else if (t.kind == "scout") {
-        for (const Npc* n : pick_npcs(2, 150, 900, 3)) {
+        // Hunts: a named beast out in the wilds (it's somewhere within 100 m
+        // of the waypoint; tracking finds it), as tough as the Ranger is seasoned.
+        const int tier = std::clamp(1 + specialist_level(client, "ranger") / 25, 1, 5);
+        for (int i = 0; i < 2; ++i) {
+            const auto spot = bounty_spot(at);
+            if (!spot) continue;
             Contract c;
             c.kind = ContractKind::track;
             c.profession = "ranger";
-            c.target_name = n->name;
-            c.target_entity = n->entity;
-            c.waypoint = n->state.position;
-            c.radius = 15;
-            c.title = std::format("Track: {}", n->name);
-            c.reward = contract_reward(c.kind, 1, flat_distance(n->state.position, at));
-            c.xp = 150;
+            c.target_name = quarry_name(random_unit());
+            c.waypoint = *spot;
+            c.radius = 100;
+            c.tier = tier;
+            c.title = std::format("Hunt: {} (tier {}), somewhere near the waypoint", c.target_name, tier);
+            c.reward = contract_reward(ContractKind::npc_mark, tier, flat_distance(*spot, at));
+            c.xp = 140 + tier * 40;
             spec.offers.push_back(dressed(c));
         }
     } else if (t.kind == "entertainer") {
@@ -2190,13 +2238,11 @@ void GameServer::update_contracts(Client& client) {
             done = have >= int(c.needed) && client.life == Life::alive &&
                    flat_distance(client.state.position, c.waypoint) <= c.radius;
         } else if (c.kind == ContractKind::track) {
+            // Done by the kill (specialist_kill); asleep out of sight it's still there.
             const Npc* n = find_npc(c.target_entity);
-            if (n == nullptr || n->hidden || n->life != Life::alive) {
+            if (n == nullptr || n->life != Life::alive) {
                 failed = true;
-                why = "the trail went cold";
-            } else {
-                c.waypoint = n->state.position;  // a ranger keeps the trail
-                done = flat_distance(client.state.position, n->state.position) <= c.radius && client.life == Life::alive;
+                why = "someone else got to it";
             }
         } else {
             const bool gone = c.kind == ContractKind::pvp_mark
@@ -2839,6 +2885,24 @@ bool GameServer::use_specialist_item(Client& client, const ItemDef& def, uint64_
         }
         if (store_ == nullptr || !store_->remove_item(item_id)) return true;
         npc->health = std::min(npc->max_health, npc->health + npc->max_health * 0.4);
+    } else if (def.id == "arch_field_camp") {
+        // A camp (docs/PROFESSIONS.md, Ranger's Forward Camp moved to
+        // Architect): 6 health a second to your side within 8 m, and quick
+        // loadout swaps there, for 5 minutes. One per owner.
+        if (store_ == nullptr || !store_->remove_item(item_id)) return true;
+        std::erase_if(deployables_, [&](const Deployable& d) { return d.owner == client.entity && d.ability == def.id; });
+        Deployable d;
+        d.id = next_field_id_++;
+        d.kind = DeployKind::camp;
+        d.ability = def.id;
+        d.owner = client.entity;
+        d.team = field_team(client);
+        d.position = client.state.position;
+        d.radius = 8;
+        d.remaining = 300;
+        d.amount = 6;
+        deployables_.push_back(d);
+        notify(client.entity, "Camp pitched: 5 minutes of rest for your side within 8 m");
     } else if (def.id == "doc_antidote" || def.id == "doc_performance_stim") {
         if (store_ == nullptr || !store_->remove_item(item_id)) return true;
         if (def.id == "doc_antidote") {
@@ -3051,6 +3115,22 @@ void GameServer::specialist_hit(uint32_t attacker, uint32_t victim) {
     }
     if (shooter != nullptr && is_enemy(*shooter, victim) && granted(*shooter, "squad_leader", "spotter")) {
         mark_entity(victim, field_team(*shooter), attacker, 5.0, net::FieldMark::marked);
+    }
+    // Hamstring (a Ranger's 65): their hits slow 10% for 2 s.
+    if (shooter != nullptr && is_enemy(*shooter, victim) && granted(*shooter, "ranger", "hamstring")) {
+        if (hit != nullptr) {
+            give_effect(*hit, {"rg_hamstring", "Hamstrung", attacker, 2, 2, {{Stat::run_speed, 0, 0.9}}, 0, 0,
+                               DamageType::ballistic, effect_flag::debuff});
+        } else if (Npc* n = find_npc(victim)) {
+            npc_base_speed_.try_emplace(victim, n->walk_speed, n->run_speed);
+            const auto it = std::find_if(npc_effects_.begin(), npc_effects_.end(),
+                                         [&](const NpcEffect& e) { return e.entity == victim && e.id == "rg_hamstring"; });
+            if (it != npc_effects_.end()) {
+                it->remaining = 2;
+            } else {
+                npc_effects_.push_back({victim, "rg_hamstring", 2, 0.9, 0, DamageType::ballistic, attacker, false});
+            }
+        }
     }
 }
 
