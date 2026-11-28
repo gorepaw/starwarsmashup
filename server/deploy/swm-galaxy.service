@@ -6,8 +6,9 @@ Wants=network-online.target
 [Service]
 User=swm
 Group=swm
-WorkingDirectory=/opt/swm/game
-ExecStart=/opt/swm/bin/swm_server --galaxy hubs/galaxy.ini --catalog items/swg_catalog.ini --bf2-items imported_assets/items --db /var/lib/swm/swm.sqlite --port 7777
+WorkingDirectory=/opt/swm/current/game
+# The first planet on 7777; the others and battles on 7778-7899 (the firewall's range).
+ExecStart=/opt/swm/current/bin/swm_server --galaxy hubs/galaxy.ini --catalog items/swg_catalog.ini --bf2-items imported_assets/items --db /var/lib/swm/swm.sqlite --port 7777 --ports 7778-7899
 # SIGTERM saves every connected character before exiting.
 KillSignal=SIGTERM
 TimeoutStopSec=90
