@@ -370,6 +370,10 @@ public:
     // spawns a contract's outlaw and guards (their entities, the leader
     // first) and takes them away. Unset: lone outlaws without a gang's wits.
     std::function<std::vector<uint32_t>(const std::string& name, Vec3 at, int tier, int guards)> on_spawn_mark;
+    // A faction terminal's destroy mission (docs/PROFESSIONS.md): a squad of
+    // `faction`'s troopers ("imperial", "rebel"), its leader first, retired
+    // as marks are. Unset: plain troopers without a camp's wits.
+    std::function<std::vector<uint32_t>(const std::string& faction, Vec3 at, int tier, int count)> on_spawn_squad;
     std::function<void(const std::vector<uint32_t>& entities)> on_retire_mark;
     // A Ranger's quarry (its entity; 0: none to make): the population's, as
     // marks are, and retired the same way.
@@ -767,6 +771,9 @@ private:
     void give_item(Client& client, const std::string& def_id, ItemGrade grade = ItemGrade::standard);
     void take_items(Client& client, const std::string& def_id, int count);
     void save_economy(Client& client);
+    // A faction mission's standing: faction points, `points` with the side
+    // and half that off its enemy's (as a battle's rewards are), saved.
+    void earn_faction_standing(Client& client, const std::string& faction, int64_t points);
     const Loadout& loadout_of(const Client& client) const;
     net::EntityState describe(const Client& client) const;
     Vec3 spawn_point(uint32_t index) const;

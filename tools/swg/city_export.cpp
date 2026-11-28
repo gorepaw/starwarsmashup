@@ -292,6 +292,17 @@ void export_people(TreLibrary& library, const CityExport& city, const std::files
             }
         }
     }
+    // Faction troopers (game/hubs/faction_troops.ini, every planet's): the
+    // faction terminals' destroy missions send squads of them.
+    const std::filesystem::path troops = city.hub.parent_path() / "faction_troops.ini";
+    if (std::filesystem::exists(troops)) {
+        const core::Ini troop_ini = core::Ini::load(troops);
+        for (const core::Ini::Section& section : troop_ini.sections()) {
+            if (section.name == "bandit_type") {
+                if (const auto tpl = section.get("Template")) add_look(*tpl, true);
+            }
+        }
+    }
     // Stage 12: companions (tamed creatures, assembled droids) are drawn as
     // the hub's people too: game/professions/specialists.ini, next to game/hubs/.
     const std::filesystem::path specialists = city.hub.parent_path().parent_path() / "professions" / "specialists.ini";

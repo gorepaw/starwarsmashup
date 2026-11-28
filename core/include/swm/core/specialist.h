@@ -375,6 +375,10 @@ enum class ContractKind : uint8_t {
     gig,         // perform at a venue for a while (Entertainer)
     craft_order, // bring crafted items back to the terminal (a crafting profession: Doctor so far)
     survey,      // extract a resource kind (`item`) at `needed` concentration or richer, `radius` m or more from the terminal
+    // A faction terminal's (`item`: "imperial" or "rebel", whose it is):
+    faction_destroy,   // a squad of the other side's troopers at the waypoint, every one down
+    faction_recon,     // hold the waypoint (within `radius`) for `needed` seconds
+    faction_dispatch,  // carry orders to the same side's terminal in another town
 };
 std::string_view contract_kind_name(ContractKind kind);
 std::optional<ContractKind> contract_kind_from_name(std::string_view name);
@@ -411,6 +415,10 @@ struct Contract {
 inline constexpr std::array<std::string_view, 1> artisan_order_professions{"doctor"};
 // How far from its terminal a survey mission's extraction must be.
 inline constexpr double survey_mission_distance = 300;
+// Faction missions: the other terminal a dispatch goes to is this far at
+// least; standing with the side, this much a tier.
+inline constexpr double faction_dispatch_distance = 300;
+inline constexpr int64_t faction_mission_points = 40;
 int64_t contract_reward(ContractKind kind, int tier, double distance);
 
 // A bounty a player put up on an opted-in player (docs/PROFESSIONS.md,

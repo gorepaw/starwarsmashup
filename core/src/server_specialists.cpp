@@ -702,6 +702,23 @@ void GameServer::handle_specialist_request(Client& client, const net::Specialist
             taken.target_entity = quarry;
             bounty_marks_.push_back({client.entity, taken.id, {quarry}});
         }
+        if (taken.kind == ContractKind::faction_destroy && taken.target_entity == 0) {
+            // The other side's troopers, where it said.
+            const std::string enemy = taken.item == "imperial" ? "rebel" : "imperial";
+            std::vector<uint32_t> squad;
+            if (on_spawn_squad) squad = on_spawn_squad(enemy, taken.waypoint, taken.tier, taken.guards);
+            if (squad.empty()) {
+                NpcCombatSpec spec;
+                spec.actor_kind = 3;
+                for (int g = 0; g <= taken.guards; ++g) {
+                    spec.max_health = 240 + 40 * taken.tier;
+                    const Vec3 at = taken.waypoint + Vec3{4.0 * std::cos(g * 2.1), 0, 4.0 * std::sin(g * 2.1)};
+                    squad.push_back(add_combat_npc(enemy == "rebel" ? "Rebel Trooper" : "Stormtrooper", at, 0, 0, spec));
+                }
+            }
+            taken.target_entity = squad.front();
+            bounty_marks_.push_back({client.entity, taken.id, std::move(squad)});
+        }
         if (taken.kind == ContractKind::npc_mark && taken.target_entity == 0) {
             // Its outlaw and gang, where it said (the hub's population gives them wits).
             std::vector<uint32_t> gang;
@@ -2387,6 +2404,71 @@ void GameServer::offer_contracts(Client& client, size_t terminal) {
             spec.offers.push_back(dressed(c));
         }
     }
+    if (t.kind == "imperial" || t.kind == "rebel") {
+        // Faction missions (docs/PROFESSIONS.md): for anyone the side isn't
+        // hostile to (Hated), as hard as they fight.
+        const std::string side = normalize_faction(t.kind);
+        const auto standing = client.reputation.find(side);
+        if (reputation_tier(standing == client.reputation.end() ? 0 : standing->second) == RepTier::hated) {
+            notify(client.entity, std::format("The {} won't deal with you", t.kind == "imperial" ? "Empire" : "Rebellion"));
+            ++spec.revision;
+            spec.sync_tick = 0;
+            return;
+        }
+        const bool imperial = t.kind == "imperial";
+        const int tier = std::clamp(1 + combat_level_of(client) / 25, 1, 5);
+        if (const auto spot = bounty_spot(at)) {
+            Contract c;
+            c.kind = ContractKind::faction_destroy;
+            c.item = t.kind;
+            c.target_name = imperial ? "a Rebel cell" : "an Imperial patrol";
+            c.waypoint = *spot;
+            c.tier = tier;
+            c.guards = 2 + tier / 2;
+            c.title = std::format("{} orders: destroy {} ({} troopers, tier {})", imperial ? "Imperial" : "Rebel",
+                                  c.target_name, c.guards + 1, tier);
+            c.reward = contract_reward(c.kind, tier, flat_distance(*spot, at));
+            c.xp = 150 + 50 * tier;
+            spec.offers.push_back(dressed(c));
+        }
+        if (const auto spot = bounty_spot(at)) {
+            Contract c;
+            c.kind = ContractKind::faction_recon;
+            c.item = t.kind;
+            c.target_name = "the site";
+            c.waypoint = *spot;
+            c.radius = 15;
+            c.needed = 10;
+            c.tier = tier;
+            c.title = std::format("{} orders: recon a site and hold it for 10 s", imperial ? "Imperial" : "Rebel");
+            c.reward = contract_reward(c.kind, tier, flat_distance(*spot, at));
+            c.xp = 100 + 30 * tier;
+            spec.offers.push_back(dressed(c));
+        }
+        // Orders to the same side's terminal in another town.
+        std::vector<const net::MissionTerminal*> others;
+        for (const net::MissionTerminal& o : mission_terminals_) {
+            if (&o != &t && o.kind == t.kind && flat_distance(o.position, t.position) >= faction_dispatch_distance) {
+                others.push_back(&o);
+            }
+        }
+        if (!others.empty()) {
+            const net::MissionTerminal& o = *others[size_t(random_unit() * double(others.size())) % others.size()];
+            Contract c;
+            c.kind = ContractKind::faction_dispatch;
+            c.item = t.kind;
+            c.target_name = o.name;
+            c.waypoint = o.position;
+            c.radius = o.radius + 2;
+            c.tier = tier;
+            const TownArea* there = town_at(o.position);
+            c.title = std::format("{} orders: carry a dispatch to {}{}", imperial ? "Imperial" : "Rebel", o.name,
+                                  there ? " in " + there->name : std::string());
+            c.reward = contract_reward(c.kind, tier, flat_distance(o.position, t.position));
+            c.xp = 80 + 20 * tier;
+            spec.offers.push_back(dressed(c));
+        }
+    }
     if (t.kind == "general" || t.kind == "bounty" || t.kind == "artisan") {
         for (int i = 0; i < 2; ++i) {
             // A drop point out in the dunes, 300 to 900 m off.
@@ -2409,6 +2491,20 @@ void GameServer::offer_contracts(Client& client, size_t terminal) {
     if (spec.offers.empty()) notify(client.entity, "No contracts for you here right now");
     ++spec.revision;
     spec.sync_tick = 0;
+}
+
+void GameServer::earn_faction_standing(Client& client, const std::string& faction, int64_t points) {
+    const std::string side = normalize_faction(faction);
+    if (side.empty() || side == "neutral" || points <= 0) return;
+    client.faction_points += int64_t(std::llround(double(points) * client.stats.faction_gain));
+    client.reputation[side] = clamp_reputation(client.reputation[side] + points);
+    if (const std::string enemy = opposing_faction(side); !enemy.empty()) {
+        client.reputation[enemy] = clamp_reputation(client.reputation[enemy] - points / 2);
+    }
+    save_economy(client);
+    if (store_ != nullptr && client.character != 0) store_->save_reputation(client.character, client.reputation);
+    ++client.inventory_rev;
+    client.last_sync_tick = 0;
 }
 
 void GameServer::update_contracts(Client& client) {
@@ -2452,6 +2548,27 @@ void GameServer::update_contracts(Client& client) {
             done = c.progress >= c.needed;
         } else if (c.kind == ContractKind::survey) {
             done = c.progress >= c.needed - 1e-9 && client.life == Life::alive;  // (finish_extraction's)
+        } else if (c.kind == ContractKind::faction_destroy) {
+            // Every trooper of its squad down (by anyone's hand).
+            bool any = false, standing = false;
+            for (const BountyMark& m : bounty_marks_) {
+                if (m.contract != c.id || m.hunter != client.entity) continue;
+                any = true;
+                for (const uint32_t e : m.entities) {
+                    const Npc* n = find_npc(e);
+                    standing = standing || (n != nullptr && n->life == Life::alive);
+                }
+            }
+            done = any && !standing;
+        } else if (c.kind == ContractKind::faction_recon) {
+            // Held: ten seconds within its radius, alive (this runs every tenth tick).
+            if (client.life == Life::alive && flat_distance(client.state.position, c.waypoint) <= c.radius) {
+                c.progress = std::min(c.needed, c.progress + 10.0 / std::max(1.0, config_.tick_rate));
+                changed = true;
+            }
+            done = c.progress >= c.needed - 1e-9;
+        } else if (c.kind == ContractKind::faction_dispatch) {
+            done = client.life == Life::alive && flat_distance(client.state.position, c.waypoint) <= c.radius;
         } else if (c.kind == ContractKind::craft_order) {
             // How many of its item are held (not in a loadout); handed in at the terminal.
             int have = 0;
@@ -2484,7 +2601,7 @@ void GameServer::update_contracts(Client& client) {
             }
         }
         // Only those who have the profession may profit (it must be learned, level 1).
-        if (done && professions != nullptr) {
+        if (done && professions != nullptr && !c.profession.empty()) {
             const ProfessionStanding st = profession_standing(*professions, client.professions, c.profession);
             if (st.trained < 1) {
                 done = false;
@@ -2522,7 +2639,14 @@ void GameServer::update_contracts(Client& client) {
             client.credits += c.reward;
             save_economy(client);
             notify(client.entity, std::format("Contract complete: {} (+{} credits)", c.title, c.reward));
-            earn_specialist_xp(client, c.profession, c.xp);
+            if (c.profession.empty()) {
+                // A faction mission's: standing with its side, and experience
+                // to the loadout's professions (a quest's way).
+                earn_faction_standing(client, c.item, faction_mission_points * std::max(1, c.tier));
+                award_xp(client.entity, c.xp);
+            } else {
+                earn_specialist_xp(client, c.profession, c.xp);
+            }
             for (const TownArea& town : towns_) {
                 if (town.id == c.town) earn_town_reputation(client, town, contract_town_reputation);
             }

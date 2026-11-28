@@ -775,6 +775,135 @@ void test_surveying(const std::filesystem::path& root, const SpecialistBook& boo
     CHECK(!other_here || kinds_after.size() >= kinds_before.size() + 1);
 }
 
+// An Imperial terminal's missions (docs/PROFESSIONS.md, Faction terminals):
+// a dispatch to the other Imperial terminal, a recon held for 10 s, a Rebel
+// squad destroyed; standing with the Empire up, the Rebellion's down. A
+// character the Empire hates is turned away.
+void test_faction_missions(const SpecialistBook& book, const ProfessionBook& professions, const ItemCatalog& catalog) {
+    Heightfield ground{801, 2.0, -800, -800, std::vector<float>(801 * 801, 0.0f)};
+    World world{ground};
+    MemoryCharacterStore store;
+    const CharacterRecord rec = store.create("Loyalist", {0, 0, 0}, 0);
+    const CharacterRecord traitor = store.create("Traitor", {0, 0, 0}, 0);
+    store.save_reputation(traitor.id, {{"empire", -5000}});
+    net::LoopbackHub links;
+    net::Endpoint server_ep{1, 1};
+    net::LoopbackLink srv_link{links, server_ep};
+    net::LoopbackLink link{links, {2, 1}};
+    net::LoopbackLink link2{links, {3, 1}};
+    ServerConfig config;
+    config.catalog = &catalog;
+    config.professions = &professions;
+    config.specialists = &book;
+    config.pvp_enabled = false;
+    config.spawn = {0, 0, 0};
+    GameServer server(srv_link, world, config, &store);
+    server.set_quests(nullptr, {}, {{"Imperial Terminal", {2, 0, 0}, 3, "imperial"},
+                                    {"Outpost Imperial Terminal", {0, 0, 400}, 3, "imperial"}});
+    GameClient client(link, world, ClientConfig{.server = server_ep, .name = "Loyalist"});
+    double now = 0;
+    const auto run = [&](double seconds) {
+        for (const double end = now + seconds; now < end; now += 1.0 / 30.0) {
+            server.update(now);
+            client.update(now);
+        }
+    };
+    const auto move_to = [&](Vec3 p) {
+        MoveState s = *server.state_of(client.entity_id());
+        s.position = {p.x, 0, p.z};
+        server.set_state(client.entity_id(), s);
+        run(0.5);
+    };
+    const auto ask = [&](GameClient& who) {
+        net::SpecialistRequest r;
+        r.action = net::SpecialistRequest::contracts;
+        who.specialist_request(r);
+        run(0.5);
+    };
+    const auto take = [&](ContractKind kind) -> std::optional<Contract> {
+        for (const Contract& c : client.specialist().offers) {
+            if (c.kind != kind) continue;
+            net::SpecialistRequest r;
+            r.action = net::SpecialistRequest::contract_accept;
+            r.amount = int64_t(c.id);
+            client.specialist_request(r);
+            const Contract taken = c;
+            run(0.5);
+            return taken;
+        }
+        return std::nullopt;
+    };
+    const auto standing = [&](const char* side) {
+        const auto& rep = client.reputation();
+        const auto it = rep.find(side);
+        return it == rep.end() ? int64_t(0) : it->second;
+    };
+    run(1.0);
+    CHECK(client.status() == GameClient::Status::connected);
+    ask(client);
+    const auto& offers = client.specialist().offers;
+    CHECK(offers.size() == 3);
+    for (const ContractKind k : {ContractKind::faction_destroy, ContractKind::faction_recon, ContractKind::faction_dispatch}) {
+        CHECK(std::any_of(offers.begin(), offers.end(), [&](const Contract& c) { return c.kind == k && c.item == "imperial"; }));
+    }
+    // A dispatch to the outpost's terminal.
+    const int64_t credits = client.player_status().credits;
+    const auto dispatch = take(ContractKind::faction_dispatch);
+    CHECK(dispatch.has_value() && client.specialist().contracts.size() == 1);
+    if (!dispatch) return;
+    move_to(dispatch->waypoint);
+    run(1.0);
+    CHECK(client.specialist().contracts.empty());
+    CHECK(client.player_status().credits > credits);
+    CHECK(standing("empire") > 0 && standing("rebellion") < 0);
+    const int64_t after_dispatch = standing("empire");
+    // A recon: 10 s at the site.
+    move_to({2, 0, 0});
+    ask(client);
+    const auto recon = take(ContractKind::faction_recon);
+    CHECK(recon.has_value());
+    if (!recon) return;
+    move_to(recon->waypoint);
+    run(5.0);
+    CHECK(client.specialist().contracts.size() == 1);  // (not yet)
+    run(6.5);
+    CHECK(client.specialist().contracts.empty() && standing("empire") > after_dispatch);
+    // A Rebel squad: every one of them down.
+    move_to({2, 0, 0});
+    ask(client);
+    const auto destroy = take(ContractKind::faction_destroy);
+    CHECK(destroy.has_value());
+    if (!destroy) return;
+    std::vector<uint32_t> squad;
+    for (const uint32_t e : server.npcs()) {
+        const auto info = server.npc_info(e);
+        if (info && info->name == "Rebel Trooper" && info->life == Life::alive) squad.push_back(e);
+    }
+    CHECK(squad.size() == 3);  // (tier 1: two and their leader)
+    for (size_t i = 0; i + 1 < squad.size(); ++i) server.npc_melee(client.entity_id(), squad[i], 100000, DamageType::laser);
+    run(1.0);
+    CHECK(client.specialist().contracts.size() == 1);  // (one left standing)
+    if (!squad.empty()) server.npc_melee(client.entity_id(), squad.back(), 100000, DamageType::laser);
+    run(1.0);
+    CHECK(client.specialist().contracts.empty());
+    // Hated by the Empire: nothing offered.
+    GameClient other(link2, world, ClientConfig{.server = server_ep, .name = "Traitor"});
+    for (int i = 0; i < 30; ++i) {
+        server.update(now);
+        other.update(now);
+        now += 1.0 / 30.0;
+    }
+    net::SpecialistRequest r;
+    r.action = net::SpecialistRequest::contracts;
+    other.specialist_request(r);
+    for (int i = 0; i < 15; ++i) {
+        server.update(now);
+        other.update(now);
+        now += 1.0 / 30.0;
+    }
+    CHECK(other.status() == GameClient::Status::connected && other.specialist().offers.empty());
+}
+
 // A Doctor's heals: Field Triage reaching everyone near, Lingering Bacta
 // after, and the Defibrillator bringing back the just-fallen.
 void test_doctor_heals(const SpecialistBook& book, const ProfessionBook& professions, const ItemCatalog& catalog) {
@@ -1937,6 +2066,7 @@ int main() {
     test_server(root, book, professions, catalog);
     test_craft_orders(root, book, professions, catalog);
     test_surveying(root, book, professions, catalog);
+    test_faction_missions(book, professions, catalog);
     test_bounties(book, professions, catalog);
     test_doctor_heals(book, professions, catalog);
     test_smuggler(book, professions, catalog);

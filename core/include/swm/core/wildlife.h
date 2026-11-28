@@ -52,6 +52,7 @@ struct BanditArchetype {
     std::string name;
     std::string template_path;
     std::string gang = "Bandits";
+    std::string faction;  // a faction trooper's ("imperial", "rebel": faction_troops.ini); empty: a bandit
     int tier = 1;
     double health = 220;
     BotSkill skill;
@@ -127,8 +128,11 @@ public:
     // A bounty mark (docs/PROFESSIONS.md, Bounty Hunter): a named outlaw and
     // `guards` gang members at `center`, of bandits up to `tier`, who fight
     // like any camp's but never come back once dead. Their entities, the
-    // leader first; empty if there are no bandits to make them of.
-    std::vector<uint32_t> spawn_mark(const std::string& name, Vec3 center, int tier, int guards);
+    // leader first; empty if there are no bandits to make them of. With a
+    // `faction`, of its troopers instead (a faction terminal's destroy
+    // mission), the leader named for his type when `name` is empty.
+    std::vector<uint32_t> spawn_mark(const std::string& name, Vec3 center, int tier, int guards,
+                                     std::string_view faction = {});
     // A Ranger's quarry (docs/PROFESSIONS.md): one named creature of a type
     // up to `tier`, tougher than its kind, that never comes back once dead.
     // Its entity, or 0 if there are no creatures to make it of.

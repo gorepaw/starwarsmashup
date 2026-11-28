@@ -376,6 +376,10 @@ HubConfig load_hub(const std::filesystem::path& path) {
     }
     if (const auto spawns = main->get("Spawns")) {
         hub.spawns = load_world_spawns(path.parent_path() / *spawns);
+        // Faction troopers (every planet's): only the faction terminals' squads.
+        if (const auto troops = path.parent_path() / "faction_troops.ini"; std::filesystem::exists(troops)) {
+            for (BanditArchetype& b : load_world_spawns(troops).bandits) hub.spawns->bandits.push_back(std::move(b));
+        }
         for (const CreatureArchetype& c : hub.spawns->creatures) {
             look_of(c.template_path);
         }
@@ -716,6 +720,10 @@ void Hub::add_people() {
             return population_->spawn_mark(name, at, tier, guards);
         };
         server_.on_retire_mark = [this](const std::vector<uint32_t>& entities) { population_->retire_mark(entities); };
+        // A faction terminal's destroy mission: a squad of the other side's troopers.
+        server_.on_spawn_squad = [this](const std::string& faction, Vec3 at, int tier, int count) {
+            return population_->spawn_mark("", at, tier, count, faction);
+        };
         server_.on_spawn_quarry = [this](const std::string& name, Vec3 at, int tier) {
             return population_->spawn_quarry(name, at, tier);
         };
@@ -815,6 +823,7 @@ Hub::~Hub() {
     server_.on_queue = nullptr;
     server_.on_join = nullptr;
     server_.on_spawn_mark = nullptr;
+    server_.on_spawn_squad = nullptr;
     server_.on_retire_mark = nullptr;
     server_.on_spawn_quarry = nullptr;
     for (auto& battle : battles_) {

@@ -111,6 +111,7 @@ WorldSpawns load_world_spawns(const std::filesystem::path& path) {
                 throw std::runtime_error(where + ": [bandit_type] needs Id and Template");
             }
             b.gang = s.get("Gang").value_or("Bandits");
+            b.faction = s.get("Faction").value_or("");
             b.tier = std::max(1, int(s.number("Tier", 1)));
             b.health = std::max(20.0, s.number("Health", 220));
             b.skill = BotSkill::preset(s.get("Difficulty").value_or("normal"));
@@ -796,19 +797,23 @@ std::vector<uint32_t> WorldPopulation::mob_entities() const {
     return ids;
 }
 
-std::vector<uint32_t> WorldPopulation::spawn_mark(const std::string& name, Vec3 center, int tier, int guards) {
+std::vector<uint32_t> WorldPopulation::spawn_mark(const std::string& name, Vec3 center, int tier, int guards,
+                                                  std::string_view faction) {
     std::vector<uint32_t> out;
-    // The toughest bandits up to its tier (the weakest there are, if none is).
+    // The toughest bandits (or the faction's troopers) up to its tier (the
+    // weakest there are, if none is).
     std::vector<size_t> fit;
     int best = -1;
     for (size_t i = 0; i < spawns_.bandits.size(); ++i) {
-        if (spawns_.bandits[i].tier <= tier) best = std::max(best, spawns_.bandits[i].tier);
+        if (spawns_.bandits[i].faction == faction && spawns_.bandits[i].tier <= tier) best = std::max(best, spawns_.bandits[i].tier);
     }
     if (best < 0) {
-        for (const BanditArchetype& b : spawns_.bandits) best = best < 0 ? b.tier : std::min(best, b.tier);
+        for (const BanditArchetype& b : spawns_.bandits) {
+            if (b.faction == faction) best = best < 0 ? b.tier : std::min(best, b.tier);
+        }
     }
     for (size_t i = 0; i < spawns_.bandits.size(); ++i) {
-        if (spawns_.bandits[i].tier == best) fit.push_back(i);
+        if (spawns_.bandits[i].faction == faction && spawns_.bandits[i].tier == best) fit.push_back(i);
     }
     if (fit.empty()) return out;
     center = world_.clamp(center);
@@ -833,7 +838,8 @@ std::vector<uint32_t> WorldPopulation::spawn_mark(const std::string& name, Vec3 
             spec.anim_set = w->anim_set;
         }
         const Vec3 pos = m == 0 ? center : random_point_around(center, 8.0);
-        const uint32_t entity = server_.add_combat_npc(m == 0 ? name : arch.name, pos, random_unit() * 2.0 * std::numbers::pi,
+        const uint32_t entity = server_.add_combat_npc(m == 0 && !name.empty() ? name : arch.name, pos,
+                                                       random_unit() * 2.0 * std::numbers::pi,
                                                        lit != look_indices_.end() ? lit->second : 0, spec,
                                                        uint16_t(random_unit() * 99.0) + 1);
         BanditMob mob;
