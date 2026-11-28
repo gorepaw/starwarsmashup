@@ -405,6 +405,10 @@ func _fill_bazaar(client: Object) -> void:
 	_bazaar.equipped = _equipped(client)
 	_bazaar.credits = int(client.get_player_status().get("credits", 0))
 	_bazaar.merchant_level = int(_levels(client).get("merchant", 0))
+	_bazaar.merchant_perks = []
+	for p: Dictionary in client.get_professions():
+		if str(p.get("id", "")) == "merchant":
+			_bazaar.merchant_perks = p.get("perks", [])
 
 
 # What the crosshair points at: the nearest fitting entity along it (within

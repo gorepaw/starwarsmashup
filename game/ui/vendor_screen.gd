@@ -158,6 +158,9 @@ func _paint() -> void:
 				continue
 			if int(def.get("cost_credits", 0)) <= 0:
 				continue
+			# Not what a city blueprint teaches (a crafter's) nor a blueprint (gear_vendor_sells).
+			if vendor_kind == "gear_vendor" and not bool(def.get("vendor_sells", true)):
+				continue
 			if _category != "all" and kind != _category:
 				continue
 			_filtered.append(def)

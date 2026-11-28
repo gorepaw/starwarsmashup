@@ -76,18 +76,30 @@ void GameServer::send_crafting_sync(Client& client) {
 
 bool GameServer::learn_blueprint(Client& client, const ItemDef& def, uint64_t item_id) {
     if (def.teaches.empty() || store_ == nullptr || client.character == 0) return false;
-    const SchematicDef* sch = config_.crafting ? config_.crafting->find_schematic(def.teaches) : nullptr;
-    if (sch == nullptr) {
+    // Its schematics (a whole armor set's, from a city blueprint): those
+    // still hidden from this crafter.
+    std::vector<const SchematicDef*> taught, fresh;
+    for (const std::string& id : blueprint_teaches(def)) {
+        const SchematicDef* sch = config_.crafting ? config_.crafting->find_schematic(id) : nullptr;
+        if (sch == nullptr) continue;
+        taught.push_back(sch);
+        if (sch->blueprint &&
+            std::find(client.blueprints.begin(), client.blueprints.end(), sch->id) == client.blueprints.end()) {
+            fresh.push_back(sch);
+        }
+    }
+    if (taught.empty()) {
         notify(client.entity, def.display_name + " teaches nothing anyone can make.");
         return true;
     }
-    if (!sch->blueprint ||
-        std::find(client.blueprints.begin(), client.blueprints.end(), sch->id) != client.blueprints.end()) {
-        notify(client.entity, std::format("You already know how to make {}.", sch->name));
+    if (fresh.empty()) {
+        notify(client.entity, taught.size() == 1 ? std::format("You already know how to make {}.", taught[0]->name)
+                                                 : std::format("You already know everything {} teaches.",
+                                                               def.display_name));
         return true;
     }
     if (!store_->remove_item(item_id)) return true;
-    client.blueprints.push_back(sch->id);
+    for (const SchematicDef* sch : fresh) client.blueprints.push_back(sch->id);
     std::string list;
     for (const std::string& id : client.blueprints) list += (list.empty() ? "" : ",") + id;
     store_->set_extra(client.character, "blueprints", list);
@@ -95,8 +107,72 @@ bool GameServer::learn_blueprint(Client& client, const ItemDef& def, uint64_t it
     ++client.inventory_rev;
     client.last_sync_tick = 0;
     ++client.crafting_rev;
-    notify(client.entity, std::format("Learned a blueprint: {} ({})", sch->name, sch->group));
+    notify(client.entity, fresh.size() == 1
+                              ? std::format("Learned a blueprint: {} ({})", fresh[0]->name, fresh[0]->group)
+                              : std::format("Learned a blueprint: {} ({} schematics, {})",
+                                            def.display_name.substr(def.display_name.starts_with("Blueprint: ") ? 11 : 0),
+                                            fresh.size(), fresh[0]->group));
     return true;
+}
+
+const GameServer::TownArea* GameServer::town_at(Vec3 at) const {
+    const TownArea* best = nullptr;
+    double best_d = 0;
+    for (const TownArea& t : towns_) {
+        const double d = std::hypot(at.x - t.center.x, at.z - t.center.z) - t.radius;
+        if (best == nullptr || d < best_d) {
+            best = &t;
+            best_d = d;
+        }
+    }
+    return best;
+}
+
+void GameServer::earn_town_reputation(Client& client, const TownArea& town, int64_t amount) {
+    if (amount == 0 || client.character == 0) return;
+    const std::string key = town_reputation_key(town.id);
+    const RepTier before = reputation_tier(client.reputation[key]);
+    client.reputation[key] = clamp_reputation(client.reputation[key] + amount);
+    const RepTier after = reputation_tier(client.reputation[key]);
+    if (store_ != nullptr) {
+        try {
+            store_->save_reputation(client.character, client.reputation);
+        } catch (const std::exception& error) {
+            say(std::format("reputation save error for {}: {}", client.name, error.what()));
+        }
+    }
+    ++client.inventory_rev;  // (reputation rides with the inventory)
+    client.last_sync_tick = 0;
+    notify(client.entity, after != before
+                              ? std::format("+{} {} reputation: you are now {}", amount, town.name,
+                                            reputation_tier_name(after))
+                              : std::format("+{} {} reputation", amount, town.name));
+}
+
+void GameServer::buy_city_blueprint(Client& client, const net::Quartermaster& qm, const ItemDef& def) {
+    if (store_ == nullptr || client.character == 0) return;
+    if (def.town != qm.town) {
+        notify(client.entity, qm.name + " doesn't sell that");
+        return;
+    }
+    const auto it = client.reputation.find(town_reputation_key(qm.town));
+    const int64_t standing = it == client.reputation.end() ? 0 : it->second;
+    if (reputation_tier(standing) < def.required_rank) {
+        notify(client.entity, std::format("Requires {} standing with {}", reputation_tier_name(def.required_rank),
+                                          qm.town_name));
+        return;
+    }
+    if (client.credits < def.cost_credits) {
+        notify(client.entity, "Not enough credits");
+        return;
+    }
+    client.credits -= def.cost_credits;
+    save_economy(client);
+    store_->grant_item({0, client.character, def.id, ItemGrade::standard, "", "{}", 1});
+    client.items = store_->list_items(client.character);
+    ++client.inventory_rev;
+    client.last_sync_tick = 0;
+    notify(client.entity, std::format("Purchased {} (-{} Cr)", def.display_name, def.cost_credits));
 }
 
 // A haul with a gathering profession's perks: more from each (Bonus =

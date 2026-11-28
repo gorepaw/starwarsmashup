@@ -71,7 +71,7 @@ Levels:
 | Speeders, robes | 30 |
 | Mounts | 40 |
 
-Weapons and armor aren't gated by level (playnotes, 2026-11-26): what a crafter can make grows with the blueprints they find in the world and buy from reputation vendors (below), not with their level. Until those sources exist every weapon type and armor class is open at level 1. Ammunition, modules, food, medicine and camp kits keep their levels.
+Weapons and armor aren't gated by level (playnotes, 2026-11-26): what a crafter can make grows with the blueprints they buy from city quartermasters (below), not with their level. A new weaponsmith or armorsmith makes only the basics. Ammunition, modules, food, medicine and camp kits keep their levels.
 
 ASSUMPTION: a starting point, to tune in play.
 
@@ -80,9 +80,85 @@ ASSUMPTION: a starting point, to tune in play.
 A schematic can be hidden until learned:
 
 - **Marking:** `Blueprint = yes` on a `[schematic]` or a `[family]` (all of its schematics), or `BlueprintMatch = <id globs>` on a family (only the matching items: the exotic ones).
-- **Learning:** a blueprint is a supply with `Teaches = <schematic id>`. Using it from the inventory teaches it for good and spends it. Known blueprints are kept per character (`character_extras` "blueprints") and sent in `CraftingSync`.
-- **Effect:** a blueprint schematic you don't know isn't listed at the workbench, and the server refuses to make it.
-- **Plan:** in time more than half the weapon and armor types come from blueprints (loot drops, reputation vendors). No schematic is marked yet: none moves out of the default pool until it has a drop source somewhere.
+- **Learning:** a blueprint is a supply with `Teaches = <schematic id>, ...`. Using it from the inventory teaches them for good and spends it (an armor set's blueprint teaches every piece). Known blueprints are kept per character (`character_extras` "blueprints") and sent in `CraftingSync`.
+- **Effect:** a blueprint schematic you don't know isn't listed at the workbench, and the server refuses to make it. Crafting orders never ask for one.
+- **What's marked:** every weapon, armor and Deflector Shield family (and the hand-written EE-3 and Energy Deflector) is `Blueprint = yes`, but a basic item's schematic never is (below). Everything else (ammunition, modules, clothing, consumables, speeders, mounts, the jump pack) is open as before.
+
+### The basics
+
+One item in each crafting group stays craftable from level 1 by anyone holding the licence. They're listed in `game/items/city_quartermasters.ini` (`[basic] Items = <id globs>`, `ItemDef::basic`):
+
+| Group | Basic |
+|---|---|
+| Pistols | D-18 Blaster Pistol |
+| Carbines | Laser Carbine |
+| Rifles | Light Laser Rifle |
+| Scatterguns | Spraystick |
+| Sniper Rifles | DLT-20A Longblaster |
+| Melee Weapons | Vibroblade |
+| Two-Handed Melee | Metal Staff |
+| Beams & Flamers | Flame Thrower |
+| Heavy Weapons | Plex Rocket Launcher |
+| Grenades & Mines | C-22 Frag Detonator |
+| Light Armor | Bone |
+| Medium Armor | Padded |
+| Heavy Armor | Composite |
+| Deflector Shields | Personal Shield Generator |
+
+Where they're bought:
+
+- **Gear vendors** sell the basics, and no weapon, armor or shield a city blueprint teaches (those are crafters'). What no crafter makes, like the Katarn, they still sell, and supplies, ammunition and modules as before (`gear_vendor_sells`).
+- **The bazaar's general store:** every bazaar terminal always lists the basics, sold by "Galactic Supply" at their vendor price. It never sells out and pays nobody, and its sales aren't counted in price trends. Its listings aren't saved; their ids start at `general_store_listing_base`. A player listing one for less sells first. It's a stopgap until there are enough players posting goods.
+
+ASSUMPTION: the picks are the plainest, cheapest generic item of each group (the starter schematics where one existed). Change them in that one file.
+
+## City quartermasters ✅
+
+Every town has a reputation and a quartermaster: the 10 planet hubs and their 34 towns, Ewok villages and outposts included.
+
+**Reputation:**
+
+- Kept with the factions' (`faction_reputation`), keyed `town:<id>`. A town's id is its hub or town file's stem (`anchorhead`, `lok_imperial_outpost`).
+- Same seven standings as the factions (Hated to Exalted, Friendly at 3000).
+- Nothing lowers it yet.
+
+**How it's earned:**
+
+| Source | Town | Amount |
+|---|---|---|
+| A quest | the town nearest its giver | 150 + 50 x its level |
+| A mission | the town nearest its target (its lair or camp) | 75 + 15 x its level |
+| A mission terminal's contract | the town of the terminal that offered it | 60 |
+
+The server knows each planet's towns (`GameServer::set_towns`, `town_at`: the nearest by its edge).
+
+ASSUMPTION: the amounts are a starting point, to tune in play. A town's quest chain earns most of Friendly; missions do the rest.
+
+**The quartermaster:**
+
+- A `[quartermaster]` with no `Faction` in a town's file is that town's (`Quartermaster::town`, `town_name`).
+- It sells only the town's blueprints, for credits, each at a standing with the town (`buy_city_blueprint`).
+- Each stands 3 m to the right of the town's quest giver (or its bazaar terminal, where it has no quest giver), dressed like the town's crowd. Lok's Pirate Outpost and Endor's Research Outpost already had quartermasters (Jessa Tarn, Dessa Rook), so those NPCs are the city quartermasters there.
+- Its screen lists the blueprints from the lowest standing up, with the town's standing bar. Hovering one shows what it makes. A blueprint you know is marked Learned.
+
+**The blueprints** (`game/items/city_quartermasters.ini`):
+
+- Each `[blueprint]` (Town, Rank, Items = id globs, Name, Cost) makes an item `bp_<item id>` (a set's: `bp_armor_ubese`).
+- 116 of them teach every weapon, armor set and shield that isn't a basic, each exactly once (`crafting_test` checks this). Every town sells two to seven.
+- Stock is themed by place: Tusken rifles at Anchorhead, Jawa ion guns at Mos Taike, CorSec at Coronet, Trandoshan gear at Lok's Pirate Outpost, Massassi blades and the Sith sword on Yavin 4, Ewok crossbows in the Ewok villages, the marauder sets at Endor's Smuggler Outpost, Wookiee goods at Dathomir's Trade Outpost, the Nightsister lance at the Imperial Prison.
+- **Cost by standing** (`city_blueprint_cost`; an armor set's is twice):
+
+  | Standing | Credits |
+  |---|---|
+  | Neutral | 800 |
+  | Friendly | 1,500 |
+  | Honored | 4,000 |
+  | Revered | 9,000 |
+  | Exalted | 20,000 |
+
+  A blueprint's standing follows its item's price and how exotic it is. Most towns have one at Neutral or Friendly; the frontier outposts (Yavin 4, Dathomir's Science Outpost and Imperial Prison, Dantooine's Imperial Outpost, and a few others) start at Honored or higher.
+
+ASSUMPTION: the standings, prices and which town sells what are a starting point, to tune in play.
 
 ## Mk tiers ✅
 
@@ -154,6 +230,8 @@ The Tailor has 152 pieces of Galaxies' clothing to make, in addition to the orig
 
 ## Open
 
+- City quartermasters' spots are 3 m off each town's quest giver (or bazaar terminal), a measured offset rather than a placement checked in the city; some may stand in a wall or off an Ewok platform. Check each in play and move it.
+- Blueprints from loot drops, and city reputation from more sources (supplying the quartermaster, hunting nearby).
 - Work orders for the new families (only the first five exist).
 - Female-only clothing (gowns, skirts) wants a gender rule for items.
 - Tuning: levels, material amounts and the module trade-offs, in play.

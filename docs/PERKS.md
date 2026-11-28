@@ -1,6 +1,6 @@
 # Trainer Perks
 
-The rework of what professions teach. It replaces milestones at 1 / 25 / 50 / 75 / 100 ([Professions](PROFESSIONS.md)) with two perks to choose between at each tier. Weapons and armor were first; then Squad Leader, Doctor and Entertainer, gathering and crafting, Bounty Hunter, Smuggler and Ranger (2026-11-27). The other advanced professions follow one by one and keep their milestones until their turn.
+The rework of what professions teach. It replaces milestones at 1 / 25 / 50 / 75 / 100 ([Professions](PROFESSIONS.md)) with two perks to choose between at each tier. Weapons and armor were first; then Squad Leader, Doctor and Entertainer, gathering and crafting, Bounty Hunter, Smuggler, Ranger and Merchant (2026-11-27). The other advanced professions follow one by one and keep their milestones until their turn.
 
 Status: **built** (see Order of work): the rules, the cap, trainers, licences, and all 90 perks. The tags say what each needed: nothing new, a trigger (**T**), or a new mechanic (**N**; [Mechanics](#mechanics)).
 
@@ -192,6 +192,18 @@ Tiers from 1 (hunts take the licence).
 | 45 | **Pathfinder**: sprinting drains 25% less stamina | **Keen Senses**: enemies within 15 m show through cloak and smoke |
 | 65 | **Trapper**: traps hold 5 s, two set at once | **Hamstring**: hits slow enemies 10% for 2 s |
 | 85 | **Survivalist**: out of a fight, 3% health back a second | **Scout Leader**: tracking and sensor finds show to your side, twice as long |
+
+### Merchant
+
+Tiers from 5: anyone sells on the bazaar, so there's no licence. No buttons.
+
+| Level | A | B |
+|---|---|---|
+| 5 | **Shopkeeper**: 5 more listings (`Bonus = listings`) | **Trader**: fees 2 points lower (`fee_cut`) |
+| 25 | **Shop Sign**: your shop's name, first at an equal price | **Haggler**: vendors and quartermasters 10% cheaper |
+| 45 | **Market Analytics**: price trends | **Appraiser**: vendors pay you 15% more |
+| 65 | **Bazaar Network**: the bazaar from anywhere | **Merchant's Ledger**: 25% more Merchant experience |
+| 85 | **Tycoon**: fees halved (`fee_halved`) | **Trade Empire**: 15 more listings |
 
 ## Triggers
 

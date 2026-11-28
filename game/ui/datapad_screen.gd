@@ -444,9 +444,6 @@ func _paint_slicing(body: Rect2) -> void:
 		button(Rect2(jr.end.x - 200 * u, jy + 4 * u, 96 * u, 26 * u), "Slice it", "jobyes:%d" % int(j.get("id", 0)))
 		button(Rect2(jr.end.x - 100 * u, jy + 4 * u, 92 * u, 26 * u), "Decline", "jobno:%d" % int(j.get("id", 0)))
 		jy -= 38 * u
-	if at_quartermaster and _level("merchant") >= 100:
-		button(Rect2(body.position.x, body.end.y - 30 * u, 300 * u, 28 * u), "Supply the selected item to the quartermaster",
-				"supply", false, false, _slice_item >= 0)
 
 
 # Inspiration (docs/PROFESSIONS.md): one long buff, built by watching an
@@ -575,9 +572,6 @@ func _on_click(id: String, _at: Vector2) -> void:
 		_send(SLICE_ANSWER, int(id.substr(6)), 0, "", "", 0)
 	elif id == "do_slice":
 		_send(SLICE, 0, _slice_item, _slice)
-	elif id == "supply":
-		_send(SUPPLY, 0, _slice_item)
-		_slice_item = -1
 	queue_redraw()
 
 

@@ -128,6 +128,25 @@ void GameServer::apply_quests(Client& client, QuestEffects effects) {
             route_xp(client, def->reward.experience);
             client.faction_points += int64_t(std::llround(double(def->reward.faction_points) * client.stats.faction_gain));
             save_economy(client);
+            // City reputation: with the giver's town (a mission's: its target's).
+            {
+                std::optional<Vec3> from;
+                if (def->mission) {
+                    for (const QuestStep& step : def->steps) {
+                        if (step.where) {
+                            from = step.where;
+                            break;
+                        }
+                    }
+                } else {
+                    const auto giver = std::find_if(quest_npcs_.begin(), quest_npcs_.end(),
+                                                    [&](const net::QuestNpc& n) { return n.name == def->giver; });
+                    if (giver != quest_npcs_.end()) from = giver->position;
+                }
+                if (const TownArea* town = from ? town_at(*from) : nullptr) {
+                    earn_town_reputation(client, *town, quest_town_reputation(def->level, def->mission));
+                }
+            }
             for (const std::string& item : def->reward.items) {
                 give_item(client, item);
                 inventory = true;

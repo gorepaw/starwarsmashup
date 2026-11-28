@@ -2038,9 +2038,11 @@ void GameServer::offer_contracts(Client& client, size_t terminal) {
     spec.offers.clear();
     spec.offer_source = t.name;
     const Vec3 at = client.state.position;
+    const TownArea* offered_in = town_at(t.position);
     const auto dressed = [&](Contract c) {
         c.id = next_contract_++;
         c.expires = specialist_clock_ + contract_lifetime;
+        if (offered_in != nullptr) c.town = offered_in->id;
         return c;
     };
     const auto pick_npcs = [&](uint8_t kind, double lo, double hi, size_t want) {
@@ -2293,6 +2295,9 @@ void GameServer::update_contracts(Client& client) {
             save_economy(client);
             notify(client.entity, std::format("Contract complete: {} (+{} credits)", c.title, c.reward));
             earn_specialist_xp(client, c.profession, c.xp);
+            for (const TownArea& town : towns_) {
+                if (town.id == c.town) earn_town_reputation(client, town, contract_town_reputation);
+            }
             it = spec.contracts.erase(it);
             changed = true;
         } else if (failed) {
@@ -2354,7 +2359,8 @@ void GameServer::save_bazaar() {
 void GameServer::bazaar_action(Client& client, const net::SpecialistRequest& request) {
     using R = net::SpecialistRequest;
     if (conquest_ || store_ == nullptr || client.character == 0) return;
-    if (service_near(client, "bazaar") == nullptr) {
+    // (A Merchant's Bazaar Network reaches it from anywhere.)
+    if (service_near(client, "bazaar") == nullptr && !granted(client, "merchant", "bazaar_network")) {
         notify(client.entity, "You need to be at a bazaar terminal");
         return;
     }
@@ -2368,17 +2374,29 @@ void GameServer::bazaar_action(Client& client, const net::SpecialistRequest& req
         const ItemDef* def = config_.catalog ? config_.catalog->find(item.def_id) : nullptr;
         return def ? def->display_name : item.def_id;
     };
+    // The general store's standing listings (the basics), with the players'.
+    const std::vector<BazaarListing> store_listings =
+        config_.catalog ? general_store_listings(*config_.catalog) : std::vector<BazaarListing>{};
     const auto refresh_view = [&]() {
         spec.bazaar_view.clear();
         for (const BazaarListing& l : bazaar_) {
             if (listing_matches(l, item_name(l.item), spec.bazaar_query)) spec.bazaar_view.push_back(l);
         }
-        std::sort(spec.bazaar_view.begin(), spec.bazaar_view.end(),
-                  [](const BazaarListing& a, const BazaarListing& b) { return a.price < b.price; });
-        if (spec.bazaar_view.size() > 40) spec.bazaar_view.resize(40);
+        for (const BazaarListing& l : store_listings) {
+            if (listing_matches(l, item_name(l.item), spec.bazaar_query)) spec.bazaar_view.push_back(l);
+        }
+        // Cheapest first; at a price, a player's before the store's.
+        std::stable_sort(spec.bazaar_view.begin(), spec.bazaar_view.end(),
+                         [](const BazaarListing& a, const BazaarListing& b) { return a.price < b.price; });
+        if (spec.bazaar_view.size() > 40) spec.bazaar_view.resize(40);  // (a page; SpecialistSync's)
         spec.bazaar_prices.clear();
-        // Market Analytics (Merchant 50, trained): price trends for what's shown.
-        if (merchant.level >= 50 && merchant.trained >= 50) {
+        // A Merchant's Shop Sign: theirs first among the page's at an equal price.
+        std::stable_sort(spec.bazaar_view.begin(), spec.bazaar_view.end(), [](const BazaarListing& x, const BazaarListing& y) {
+            const bool xs = x.seller != 0 && !x.shop.empty(), ys = y.seller != 0 && !y.shop.empty();
+            return x.price != y.price ? x.price < y.price : (xs && !ys);
+        });
+        // Market Analytics (a Merchant's 45): price trends for what's shown.
+        if (granted(client, "merchant", "market_analytics")) {
             for (const BazaarListing& l : spec.bazaar_view) {
                 if (std::none_of(spec.bazaar_prices.begin(), spec.bazaar_prices.end(),
                                  [&](const auto& p) { return p.first == l.item.def_id; })) {
@@ -2395,10 +2413,6 @@ void GameServer::bazaar_action(Client& client, const net::SpecialistRequest& req
         refresh_view();
         return;
     case R::bazaar_list: {
-        if (merchant.trained < 1) {
-            notify(client.entity, "Selling on the bazaar takes Merchant training (any trainer of merchants)");
-            return;
-        }
         const auto it = std::find_if(client.items.begin(), client.items.end(),
                                      [&](const ItemInstance& i) { return i.id == request.item_id; });
         if (it == client.items.end()) return;
@@ -2417,7 +2431,9 @@ void GameServer::bazaar_action(Client& client, const net::SpecialistRequest& req
         const int64_t price = std::clamp<int64_t>(request.amount, 1, bazaar_max_price);
         const auto mine = std::count_if(bazaar_.begin(), bazaar_.end(),
                                         [&](const BazaarListing& l) { return l.seller == client.character; });
-        if (mine >= bazaar_listing_limit(merchant.level)) {
+        const int limit = bazaar_listing_limit(merchant.level) +
+                          int(professions ? perk_bonus(*professions, client.professions, "merchant", "listings") : 0.0);
+        if (mine >= limit) {
             notify(client.entity, std::format("You have {} listings up, all your shop slots", mine));
             return;
         }
@@ -2425,7 +2441,7 @@ void GameServer::bazaar_action(Client& client, const net::SpecialistRequest& req
         l.id = next_listing_++;
         l.seller = client.character;
         l.seller_name = client.name;
-        l.shop = merchant.trained >= 25 ? client.name + "'s Shop" : std::string();
+        l.shop = granted(client, "merchant", "shop_sign") ? client.name + "'s Shop" : std::string();
         l.item = *it;
         l.price = price;
         l.listed_at = epoch_seconds();
@@ -2441,6 +2457,32 @@ void GameServer::bazaar_action(Client& client, const net::SpecialistRequest& req
         return;
     }
     case R::bazaar_buy: {
+        if (uint64_t(request.amount) >= general_store_listing_base) {
+            // The general store's: never sold out, nobody paid.
+            const auto sit = std::find_if(store_listings.begin(), store_listings.end(), [&](const BazaarListing& l) {
+                return int64_t(l.id) == request.amount;
+            });
+            const ItemDef* def = sit != store_listings.end() && config_.catalog ? config_.catalog->find(sit->item.def_id)
+                                                                                : nullptr;
+            if (def == nullptr) {
+                notify(client.entity, "That listing is gone");
+                refresh_view();
+                return;
+            }
+            if (client.credits < sit->price) {
+                notify(client.entity, "Not enough credits");
+                return;
+            }
+            client.credits -= sit->price;
+            save_economy(client);
+            store_->grant_item({0, client.character, def->id, ItemGrade::standard, "", "{}", 1});
+            client.items = store_->list_items(client.character);
+            ++client.inventory_rev;
+            client.last_sync_tick = 0;
+            notify(client.entity, std::format("Bought {} from {} (-{} credits)", def->display_name,
+                                              general_store_seller, sit->price));
+            return;
+        }
         const auto it = std::find_if(bazaar_.begin(), bazaar_.end(),
                                      [&](const BazaarListing& l) { return int64_t(l.id) == request.amount; });
         if (it == bazaar_.end()) {
@@ -2473,15 +2515,29 @@ void GameServer::bazaar_action(Client& client, const net::SpecialistRequest& req
             if (c.character == sold.seller) seller = &c;
         }
         int seller_level = 0;
+        double fee_cut = 0;
+        bool fee_halved = false;
         if (seller != nullptr && professions) {
             seller_level = profession_standing(*professions, seller->professions, "merchant").level;
+            fee_cut = perk_bonus(*professions, seller->professions, "merchant", "fee_cut");
+            fee_halved = perk_bonus(*professions, seller->professions, "merchant", "fee_halved") > 0;
         } else if (professions) {
             try {
                 seller_level = professions->level_for(profession_xp(store_->list_professions(sold.seller), "merchant"));
+                // (Away: their Merchant perks as saved.)
+                std::vector<std::string> known;
+                const std::string saved = store_->get_extra(sold.seller, "perks:merchant");
+                for (size_t a = 0; a < saved.size();) {
+                    const size_t b = std::min(saved.find(',', a), saved.size());
+                    if (b > a) known.push_back(saved.substr(a, b - a));
+                    a = b + 1;
+                }
+                fee_cut = perk_bonus(*professions, std::span<const std::string>(known), "fee_cut");
+                fee_halved = perk_bonus(*professions, std::span<const std::string>(known), "fee_halved") > 0;
             } catch (const std::exception&) {
             }
         }
-        const int64_t share = sold.price - bazaar_fee(sold.price, seller_level);
+        const int64_t share = sold.price - bazaar_fee(sold.price, seller_level, fee_cut, fee_halved);
         const int64_t xp = std::max<int64_t>(5, sold.price / 20);
         if (seller != nullptr) {
             seller->credits += share;
@@ -2822,33 +2878,8 @@ void GameServer::datapad_action(Client& client, const net::SpecialistRequest& re
         }
         changed();
         return;
-    case R::supply_contract: {
-        if (!world || config_.catalog == nullptr) return;
-        const ProfessionStanding m = standing("merchant");
-        if (m.level < 100 || m.trained < 100) {
-            notify(client.entity, "Faction supply contracts take Merchant 100");
-            return;
-        }
-        const net::Quartermaster* qm = nullptr;
-        for (const net::Quartermaster& q : quartermasters_) {
-            if (flat_distance(q.position, client.state.position) <= q.radius + 1.5) qm = &q;
-        }
-        ItemInstance* item = owned(request.item_id);
-        const ItemDef* def = item ? config_.catalog->find(item->def_id) : nullptr;
-        if (qm == nullptr || def == nullptr) {
-            notify(client.entity, "Stand at a quartermaster to supply them");
-            return;
-        }
-        const int64_t value = std::max<int64_t>(10, def->sell_value);
-        if (!consume(item->id)) return;
-        client.credits += value * 3 / 2;
-        client.faction_points += int64_t(std::llround(double(std::max<int64_t>(1, value / 10)) * client.stats.faction_gain));
-        save_economy(client);
-        notify(client.entity, std::format("Supplied {} with {} (+{} credits, +{} FP)", qm->name, def->display_name, value * 3 / 2,
-                                          std::max<int64_t>(1, value / 10)));
-        earn_specialist_xp(client, "merchant", std::max<int64_t>(10, value / 5));
-        return;
-    }
+    case R::supply_contract:
+        return;  // (faction supply contracts are gone: docs/PROFESSIONS.md, Merchant)
     case R::set_companion_slot: {
         if (!world || client.loadout >= client.char_loadouts.size()) return;
         CharacterLoadout& cl = client.char_loadouts[client.loadout];
@@ -3239,7 +3270,18 @@ void GameServer::update_bounties(double dt) {
 // Smuggler: slicing others' gear, the Black Market
 
 int64_t GameServer::black_market(const Client& client, int64_t value) const {
-    return granted(client, "smuggler", "black_market") ? value + value / 4 : value;
+    int64_t more = 0;
+    if (granted(client, "smuggler", "black_market")) more += value / 4;
+    if (granted(client, "merchant", "appraiser")) more += value * 15 / 100;
+    return value + more;
+}
+
+int64_t GameServer::haggled(const Client& client, int64_t price) const {
+    return granted(client, "merchant", "haggler") ? std::max<int64_t>(price > 0 ? 1 : 0, price - price / 10) : price;
+}
+
+void GameServer::vendor_trade_xp(Client& client, int64_t value) {
+    earn_profession_xp(client, "merchant", std::max<int64_t>(1, value / 10));
 }
 
 void GameServer::request_slice(Client& owner, uint64_t item_id, const std::string& slice_id, const std::string& smuggler) {

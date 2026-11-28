@@ -180,6 +180,9 @@ godot::Dictionary to_dict(const core::ItemDef& d, const core::ItemCatalog& catal
     out["grade"] = d.grade ? int64_t(*d.grade) : int64_t(-1);
     out["heal_amount"] = d.heal_amount;
     out["teaches"] = godot::String::utf8(d.teaches.c_str());
+    out["town"] = godot::String::utf8(d.town.c_str());  // a city quartermaster's blueprint: its town's id
+    out["basic"] = d.basic;
+    out["vendor_sells"] = core::gear_vendor_sells(d);  // what a gear vendor offers
     out["ammo_class"] = godot::String::utf8(std::string(core::ammo_class_name(d.ammo_class)).c_str());
     out["ammo_batch"] = int64_t(d.ammo_batch);
     out["damage_mult"] = d.damage_mult;

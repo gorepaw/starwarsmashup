@@ -20,7 +20,7 @@ namespace swm::core::net {
 // Every packet starts with a magic number, the protocol version and a message
 // type. Peers drop packets with another version. Bump it on any wire change.
 inline constexpr uint16_t protocol_magic = 0x4D53;  // "SM"
-inline constexpr uint16_t protocol_version = 52;
+inline constexpr uint16_t protocol_version = 53;
 // BoltState/Impact::weapon: a placed trap's shot, from that weapon slot
 // (drawn from the trap, not its owner's gun).
 inline constexpr uint8_t trap_shot_flag = 0x40;
@@ -56,12 +56,16 @@ struct Recruiter {
 };
 
 // A hub's faction quartermaster: standing within `radius` of it, a player can
-// browse and buy standard-issue gear for faction points or credits.
+// browse and buy standard-issue gear for faction points or credits. A city
+// quartermaster (`town` set) sells its town's blueprints for credits, each at
+// a standing with the town (docs/CRAFTING.md).
 struct Quartermaster {
     std::string name;
     std::string faction;  // "empire", "rebellion", or "neutral"
     Vec3 position;        // game space
     double radius = 4;
+    std::string town;       // a city quartermaster's town id ("anchorhead"); empty: a faction's
+    std::string town_name;  // ... and its name ("Anchorhead")
 
     friend bool operator==(const Quartermaster&, const Quartermaster&) = default;
 };

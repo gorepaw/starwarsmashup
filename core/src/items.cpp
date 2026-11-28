@@ -3,6 +3,9 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <format>
+#include <fstream>
+#include <iterator>
 #include <set>
 #include <sstream>
 #include <stdexcept>
@@ -414,6 +417,64 @@ int64_t clamp_reputation(int64_t reputation) {
     return std::clamp<int64_t>(reputation, -42000, 42999);
 }
 
+std::string town_reputation_key(std::string_view town) {
+    return "town:" + std::string(town);
+}
+
+int64_t quest_town_reputation(int quest_level, bool mission) {
+    // ASSUMPTION: a starting point, to tune in play. A town's quest chain
+    // (four to six quests) earns most of Friendly (3000); its missions the rest.
+    const int64_t level = std::clamp(quest_level, 1, 100);
+    return mission ? 75 + 15 * level : 150 + 50 * level;
+}
+
+bool id_glob_match(std::string_view pattern, std::string_view text) {
+    if (pattern.empty()) return text.empty();
+    if (pattern.front() == '*') {
+        for (size_t i = 0; i <= text.size(); ++i) {
+            if (id_glob_match(pattern.substr(1), text.substr(i))) return true;
+        }
+        return false;
+    }
+    return !text.empty() && pattern.front() == text.front() && id_glob_match(pattern.substr(1), text.substr(1));
+}
+
+bool is_smith_gear(const ItemDef& def) {
+    if (def.kind == ItemKind::armor || def.kind == ItemKind::deflector_shield) return true;
+    return def.kind == ItemKind::weapon && def.archetype != WeaponArchetype::medpack &&
+           def.archetype != WeaponArchetype::jump_pack;
+}
+
+bool gear_vendor_sells(const ItemDef& def) {
+    return def.cost_credits > 0 && def.town.empty() && !def.blueprint_taught;
+}
+
+std::vector<std::string> blueprint_teaches(const ItemDef& def) {
+    std::vector<std::string> out;
+    std::stringstream parts(def.teaches);
+    for (std::string id; std::getline(parts, id, ',');) {
+        id.erase(0, id.find_first_not_of(" \t"));
+        id.erase(id.find_last_not_of(" \t") + 1);
+        if (!id.empty()) out.push_back(id);
+    }
+    return out;
+}
+
+int64_t city_blueprint_cost(RepTier rank, bool armor_set) {
+    // ASSUMPTION: a starting point, to tune in play (weapons cost 200-900 Cr).
+    int64_t cost = 1500;
+    switch (rank) {
+    case RepTier::hated:
+    case RepTier::unfriendly:
+    case RepTier::neutral: cost = 800; break;
+    case RepTier::friendly: cost = 1500; break;
+    case RepTier::honored: cost = 4000; break;
+    case RepTier::revered: cost = 9000; break;
+    case RepTier::exalted: cost = 20000; break;
+    }
+    return armor_set ? cost * 2 : cost;
+}
+
 RepTier reputation_tier(int64_t reputation) {
     if (reputation < -3000) return RepTier::hated;
     if (reputation < 0) return RepTier::unfriendly;
@@ -516,10 +577,37 @@ void ItemCatalog::load(const std::filesystem::path& catalog_ini, const std::file
     hit_effects_.clear();
     species_looks_.clear();
 
-    const Ini ini = Ini::load(catalog_ini);
+    // The file, then each [include]d one after it, read as one.
     const std::string where = catalog_ini.string();
+    const auto file_text = [](const std::filesystem::path& p) {
+        std::ifstream file(p, std::ios::binary);
+        if (!file) throw std::runtime_error("cannot open " + p.string());
+        return std::string{std::istreambuf_iterator<char>(file), std::istreambuf_iterator<char>()};
+    };
+    std::string text = file_text(catalog_ini);
+    {
+        const Ini own = Ini::parse(text);
+        std::string more;
+        for (const Ini::Section& s : own.sections()) {
+            if (s.name != "include") continue;
+            const auto path = s.get("Path");
+            if (!path) throw std::runtime_error(where + ": an [include] needs a Path");
+            more += "\n" + file_text(catalog_ini.parent_path() / *path);
+        }
+        text += more;
+    }
+    const Ini ini = Ini::parse(text);
+    std::vector<const Ini::Section*> basics, blueprints;
 
     for (const Ini::Section& s : ini.sections()) {
+        if (s.name == "basic") {
+            basics.push_back(&s);
+            continue;
+        }
+        if (s.name == "blueprint") {
+            blueprints.push_back(&s);
+            continue;
+        }
         if (s.name == "species_armor") {
             SpeciesArmorLook look;
             const std::string sp = s.get("Species").value_or("");
@@ -788,6 +876,79 @@ void ItemCatalog::load(const std::filesystem::path& catalog_ini, const std::file
             }
         }
 
+        index_[def.id] = items_.size();
+        items_.push_back(std::move(def));
+    }
+    // Id globs, comma-separated.
+    const auto globs_of = [](std::string_view list) {
+        std::vector<std::string> out;
+        std::stringstream parts{std::string(list)};
+        for (std::string g; std::getline(parts, g, ',');) {
+            g.erase(0, g.find_first_not_of(" \t"));
+            g.erase(g.find_last_not_of(" \t") + 1);
+            if (!g.empty()) out.push_back(g);
+        }
+        return out;
+    };
+    const auto matching = [&](const std::vector<std::string>& globs) {
+        std::vector<size_t> out;
+        for (size_t i = 0; i < items_.size(); ++i) {
+            for (const std::string& g : globs) {
+                if (id_glob_match(g, items_[i].id)) {
+                    out.push_back(i);
+                    break;
+                }
+            }
+        }
+        return out;
+    };
+    for (const Ini::Section* s : basics) {
+        std::vector<std::string> globs;  // (Items, repeatable)
+        for (const auto& [k, v] : s->values) {
+            if (k != "Items") continue;
+            for (std::string& g : globs_of(v)) globs.push_back(std::move(g));
+        }
+        for (const std::string& g : globs) {
+            if (matching({g}).empty()) throw std::runtime_error(where + ": [basic] " + g + " matches no item");
+        }
+        for (const size_t i : matching(globs)) items_[i].basic = true;
+    }
+    // City quartermasters' blueprints (after the items they teach).
+    for (const Ini::Section* s : blueprints) {
+        const std::vector<std::string> globs = globs_of(s->get("Items").value_or(""));
+        const std::string town = s->get("Town").value_or("");
+        if (globs.empty() || town.empty()) {
+            throw std::runtime_error(where + ": a [blueprint] needs a Town and Items");
+        }
+        const std::vector<size_t> taught = matching(globs);
+        if (taught.empty()) throw std::runtime_error(where + ": [blueprint] " + globs[0] + " matches no item");
+        ItemDef def;
+        std::string stem = globs[0];
+        if (const size_t star = stem.find('*'); star != std::string::npos) stem = stem.substr(0, star);
+        while (!stem.empty() && stem.back() == '_') stem.pop_back();
+        def.id = s->get("Id").value_or("bp_" + stem);
+        if (index_.contains(def.id)) throw std::runtime_error(where + ": duplicate blueprint " + def.id);
+        const bool set = taught.size() > 1;
+        const std::string what = s->get("Name").value_or(items_[taught[0]].display_name);
+        def.display_name = "Blueprint: " + what;
+        def.kind = ItemKind::supply;
+        def.slot = "supply";
+        def.anim_set.clear();
+        def.town = town;
+        const auto rank = reputation_tier_from_name(s->get("Rank").value_or("friendly"));
+        if (!rank) throw std::runtime_error(where + ": [blueprint] " + def.id + " has an unknown Rank");
+        def.required_rank = *rank;
+        def.cost_credits = int64_t(s->number("Cost", double(city_blueprint_cost(*rank, set))));
+        def.sell_value = 0;
+        for (const size_t i : taught) {
+            if (items_[i].basic) {
+                throw std::runtime_error(where + ": [blueprint] " + def.id + " teaches a basic item, " + items_[i].id);
+            }
+            def.teaches += (def.teaches.empty() ? "" : ",") + ("sch_" + items_[i].id);
+            items_[i].blueprint_taught = true;
+        }
+        def.description = set ? std::format("Teaches a crafter to make the {} ({} pieces).", what, taught.size())
+                              : std::format("Teaches a crafter to make the {}.", what);
         index_[def.id] = items_.size();
         items_.push_back(std::move(def));
     }

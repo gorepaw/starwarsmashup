@@ -383,6 +383,7 @@ struct Contract {
     double needed = 0;          // ... and needed
     std::string profession;     // whose experience it is
     std::string item;           // a crafting order's item (its id); progress: how many are held
+    std::string town;           // (not sent) the town whose terminal offered it: its reputation's
     // A bounty mark's (not sent): its tier and how many guards it has, for
     // when it's spawned on accepting.
     int tier = 0;
@@ -448,7 +449,8 @@ struct BazaarSale {
 int bazaar_listing_limit(int merchant_level);
 // The market's cut of a sale, by the seller's Merchant level.
 double bazaar_fee_rate(int merchant_level);
-int64_t bazaar_fee(int64_t price, int merchant_level);
+// With a Merchant's perks: `cut` off the rate (Trader), and halved (Tycoon).
+int64_t bazaar_fee(int64_t price, int merchant_level, double cut = 0.0, bool halved = false);
 inline constexpr int64_t bazaar_max_price = 100'000'000;
 inline constexpr size_t bazaar_history = 500;  // sales remembered for price trends
 inline constexpr int64_t bazaar_listing_days = 14;
@@ -463,6 +465,14 @@ std::string format_listings(std::span<const BazaarListing> listings);
 std::vector<BazaarListing> parse_listings(std::string_view text);
 std::string format_sales(std::span<const BazaarSale> sales);
 std::vector<BazaarSale> parse_sales(std::string_view text);
+
+// The bazaar's general store: every basic item (catalog [basic]) with a
+// price, always listed and never sold out, sold by "Galactic Supply" at its
+// CostCredits. Not saved; their ids start at general_store_listing_base.
+// Players listing below that price sell first.
+inline constexpr uint64_t general_store_listing_base = uint64_t(1) << 62;
+inline constexpr std::string_view general_store_seller = "Galactic Supply";
+std::vector<BazaarListing> general_store_listings(const ItemCatalog& catalog);
 
 // Whether a listing matches a search: words in its item's name or id (any case).
 bool listing_matches(const BazaarListing& listing, std::string_view item_name, std::string_view query);

@@ -326,6 +326,18 @@ public:
     void set_cloning_facilities(std::vector<std::pair<std::string, Vec3>> facilities) {
         cloning_facilities_ = std::move(facilities);
     }
+    // A planet's towns, for city reputation: a quest earns its giver's
+    // nearest town's, a mission its target's, a contract its terminal's
+    // (docs/CRAFTING.md, City quartermasters).
+    struct TownArea {
+        std::string id;    // its file's stem (town_reputation_key)
+        std::string name;
+        Vec3 center;
+        double radius = 400;
+    };
+    void set_towns(std::vector<TownArea> towns) { towns_ = std::move(towns); }
+    // The town nearest a point (by its edge); nullptr if there are none.
+    const TownArea* town_at(Vec3 at) const;
     // Stage 13: more service points (another planet's starports, as
     // "travel_offworld": Detail "<planet>|<fare>"), for clients joining after.
     void add_vendors(std::vector<net::Vendor> vendors) {
@@ -727,10 +739,16 @@ private:
     void finish_extraction(Client& client, ResourceCategory category);
     void handle_craft_request(Client& client, const net::CraftRequest& request);
     void send_crafting_sync(Client& client);
-    // Uses a blueprint (an item that `Teaches`): learns its schematic, keeps
-    // it (character_extras "blueprints") and spends the item. False if it
-    // isn't one, or teaches nothing new.
+    // Uses a blueprint (an item that `Teaches`): learns its schematics, keeps
+    // them (character_extras "blueprints") and spends the item. False if it
+    // isn't one.
     bool learn_blueprint(Client& client, const ItemDef& def, uint64_t item_id);
+    // City reputation (docs/CRAFTING.md): `amount` more with a town, saved and
+    // told to the player.
+    void earn_town_reputation(Client& client, const TownArea& town, int64_t amount);
+    // A city quartermaster's sale: one of its town's blueprints, for credits
+    // at the standing it needs.
+    void buy_city_blueprint(Client& client, const net::Quartermaster& qm, const ItemDef& def);
     void save_materials(Client& client);
     // Quests (server_quests.cpp).
     void handle_quest_request(Client& client, const net::QuestRequest& request);
@@ -790,8 +808,13 @@ private:
     // Smuggler (server_specialists.cpp): a slice asked of a Smuggler, and their answer.
     void request_slice(Client& owner, uint64_t item_id, const std::string& slice, const std::string& smuggler);
     void answer_slice(Client& smuggler, uint64_t job, bool accept);
-    // What a vendor pays: a quarter more to a Smuggler's Black Market (85).
+    // What a vendor pays: a quarter more to a Smuggler's Black Market (85),
+    // 15% more to a Merchant's Appraiser (45).
     int64_t black_market(const Client& client, int64_t value) const;
+    // What a vendor or quartermaster charges: 10% less to a Merchant's Haggler (25).
+    int64_t haggled(const Client& client, int64_t price) const;
+    // A vendor's trade (buying or selling `value`): Merchant experience.
+    void vendor_trade_xp(Client& client, int64_t value);
     void load_posted_bounties();
     void save_posted_bounties();
     void refund_bounty(const PostedBounty& bounty, std::string_view why);
@@ -930,6 +953,7 @@ private:
     bool started_ = false;
     std::optional<Vec3> cloning_facility_;
     std::vector<std::pair<std::string, Vec3>> cloning_facilities_;
+    std::vector<TownArea> towns_;
     std::map<std::string, Vec3> arrivals_;  // Stage 13: players expected from another planet
     // Stage 12: what specialists have put in the field, the companions
     // fielded, marks shown to a side, and the bazaar.

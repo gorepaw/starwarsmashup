@@ -27,6 +27,11 @@ const REP_THRESHOLDS := [
 
 var title := "Quartermaster"
 var faction := "neutral"
+# A city quartermaster's town (its id, "anchorhead"; empty: a faction's): it
+# sells that town's blueprints for credits, each at a standing with the town.
+var town := ""
+var town_name := ""
+var known: PackedStringArray = []  # schematics learned (a blueprint all known is "Learned")
 var faction_points := 0
 var credits := 0
 var reputation: Dictionary = {}    # faction_id -> int rep
@@ -81,6 +86,9 @@ func _paint() -> void:
 	text("gamefont_large", title, Vector2(size.x * 0.5, box.position.y - 42 * u), "Center", ACCENT)
 	frame(box)
 
+	if town != "":
+		_paint_town(box)
+		return
 	var x := box.position.x + 18 * u
 	var y := box.position.y + 14 * u
 	var rinfo := _rep_info(faction)
@@ -170,6 +178,94 @@ func _paint() -> void:
 		ItemTooltip.draw(self, _mouse_pos, str(_hover_def.get("name", "")), lines)
 
 
+# A city quartermaster: the town's blueprints, lowest standing first, with the
+# player's standing with the town (earned by its quests and missions).
+func _paint_town(box: Rect2) -> void:
+	var x := box.position.x + 18 * u
+	var y := box.position.y + 14 * u
+	var rinfo := _rep_info("town:" + town)
+	text("gamefont_medium", "%s   [%s: %d]" % [town_name, rinfo["tier"], int(rinfo["val"])],
+			Vector2(x, y), "Left", TEXT)
+	text("gamefont_medium", "%d Cr   |   Blueprints" % credits, Vector2(box.end.x - 18 * u, y), "Right", ACCENT)
+	y += 24 * u
+	var rep_bar := Rect2(x, y, box.size.x - 36 * u, 6 * u)
+	draw_rect(rep_bar, Color(0.08, 0.1, 0.14, 0.9))
+	draw_rect(Rect2(rep_bar.position, Vector2(rep_bar.size.x * float(rinfo["frac"]), rep_bar.size.y)), Color(0.35, 0.78, 0.98, 0.9))
+	y += 10 * u
+	text("gamefont_tiny", "Next: %s at %d.  The town's quests and mission terminals raise your standing." % [
+			rinfo["next_name"], int(rinfo["next_v"])], Vector2(x, y), "Left", DIM)
+	y += 16 * u
+	button(Rect2(box.end.x - 110 * u, y, 92 * u, 28 * u), "Close", "close", false, true)
+	y += 40 * u
+
+	_filtered.clear()
+	for def: Dictionary in catalog:
+		if str(def.get("town", "")) == town:
+			_filtered.append(def)
+	_filtered.sort_custom(func(a: Dictionary, b: Dictionary) -> bool:
+		return int(a.get("required_rep", 0)) < int(b.get("required_rep", 0)))
+	var owned_counts := {}
+	for inst: Dictionary in inventory:
+		var did := str(inst.get("def_id", ""))
+		owned_counts[did] = int(owned_counts.get(did, 0)) + 1
+	_scroll = clampi(_scroll, 0, maxi(0, _filtered.size() - _rows_visible))
+	_hover_def = {}
+	var hover_name := ""
+	var list_w := box.size.x - 36 * u
+	var row_h := 36.0 * u
+	var cur_rep := int(rinfo["val"])
+	for row_i in _rows_visible:
+		var idx := _scroll + row_i
+		if idx >= _filtered.size():
+			break
+		var def: Dictionary = _filtered[idx]
+		var ry := y + row_i * (row_h + 4 * u)
+		var row_rect := Rect2(x, ry, list_w, row_h)
+		var did := str(def.get("id", ""))
+		var teaches := str(def.get("teaches", "")).split(",", false)
+		var learned := teaches.size() > 0
+		for sid in teaches:
+			if not known.has(sid.strip_edges()):
+				learned = false
+		var hovered := row_rect.has_point(_mouse_pos)
+		if hovered and teaches.size() > 0:
+			# What it teaches (a set's first piece), compared with what's worn.
+			var out_id := teaches[0].strip_edges().trim_prefix("sch_")
+			for cd: Dictionary in catalog:
+				if str(cd.get("id", "")) == out_id:
+					_hover_def = cd
+					break
+			hover_name = str(def.get("name", did))
+		frame(row_rect, "border_3_pieces", Color(0.75, 0.88, 1.0) if hovered else Color(0.85, 0.85, 0.9))
+		var name_str := str(def.get("name", did)).trim_prefix("Blueprint: ")
+		if teaches.size() > 1:
+			name_str += " (%d pieces)" % teaches.size()
+		if learned:
+			name_str += "  [Learned]"
+		elif int(owned_counts.get(did, 0)) > 0:
+			name_str += "  [Owned]"
+		text("gamefont_small", name_str, Vector2(x + 12 * u, ry + 8 * u), "Left", ACCENT if learned else TEXT)
+		var req_rank := str(def.get("required_rank", "Neutral"))
+		var rank_ok := cur_rep >= int(def.get("required_rep", 0))
+		text("gamefont_tiny", "Req: %s" % req_rank, Vector2(x + 400 * u, ry + 11 * u), "Left",
+				DIM if rank_ok else Color(1.0, 0.45, 0.35))
+		var cost := int(def.get("cost_credits", 0))
+		var btn_label := ("Buy %d Cr" % cost) if rank_ok else ("Need %s" % req_rank)
+		button(Rect2(box.end.x - 168 * u, ry + 4 * u, 140 * u, 28 * u),
+				btn_label, "buy_cr:" + did, false, false, rank_ok and credits >= cost)
+	if _filtered.is_empty():
+		text("gamefont_small", "Nothing to sell yet.", Vector2(box.get_center().x, y + 20 * u), "Center", DIM)
+	if _filtered.size() > _rows_visible:
+		text("gamefont_tiny", "Scroll mouse wheel (%d-%d of %d)" % [_scroll + 1, mini(_scroll + _rows_visible, _filtered.size()), _filtered.size()],
+				Vector2(box.get_center().x, box.end.y - 26 * u), "Center", DIM)
+	if feedback != "":
+		text("gamefont_small", feedback, Vector2(box.get_center().x, box.end.y - 46 * u), "Center", ACCENT)
+	if not _hover_def.is_empty():
+		var eq := _find_equipped(_hover_def)
+		var lines := ItemTooltip.build_lines(_hover_def, {}, store, eq.get("def", {}), eq.get("inst", {}))
+		ItemTooltip.draw(self, _mouse_pos, hover_name, lines)
+
+
 func _find_equipped(def: Dictionary) -> Dictionary:
 	var slot := str(def.get("slot", ""))
 	var kind := str(def.get("kind", ""))
@@ -199,5 +295,7 @@ func _on_click(id: String, _at: Vector2) -> void:
 		_scroll = 0
 	elif id.begins_with("buy_fp:"):
 		item_bought.emit(id.substr(7), true)
+	elif id.begins_with("buy_cr:"):  # a city quartermaster's blueprint
+		item_bought.emit(id.substr(7), false)
 	elif id == "close":
 		closed.emit()

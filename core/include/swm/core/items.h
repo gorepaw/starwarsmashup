@@ -50,6 +50,13 @@ std::string_view reputation_tier_name(RepTier tier);
 std::optional<RepTier> reputation_tier_from_name(std::string_view name);
 int64_t reputation_threshold(RepTier tier);
 int64_t clamp_reputation(int64_t reputation);
+// A city's reputation, kept with the factions' ("town:anchorhead"): its hub
+// or town file's stem.
+std::string town_reputation_key(std::string_view town);
+// City reputation a finished quest earns with its town (a mission's, less),
+// and a mission terminal's contract.
+int64_t quest_town_reputation(int quest_level, bool mission);
+inline constexpr int64_t contract_town_reputation = 60;
 
 inline constexpr double loadout_switch_time = 3.0;
 inline constexpr int max_character_loadouts = 5;
@@ -132,9 +139,21 @@ struct ItemDef {
     // A jump pack (Archetype = jump_pack): how fast it lifts, m/s (`Jump`; 0:
     // the archetype's 11), Carried hops a life (0: the archetype's 3).
     double jump = 0.0;
-    // A blueprint (a supply: `Teaches = <schematic id>`): used, its owner
-    // learns that `Blueprint = yes` schematic (docs/CRAFTING.md).
+    // A blueprint (a supply: `Teaches = <schematic id>, ...`): used, its
+    // owner learns those `Blueprint = yes` schematics (docs/CRAFTING.md). A
+    // [blueprint] section makes one (a city quartermaster's).
     std::string teaches;
+    // A city quartermaster's blueprint: the town that sells it (its hub or
+    // town file's stem, "anchorhead"), for CostCredits at RequiredRank with
+    // that town (town_reputation_key).
+    std::string town;
+    // A basic item ([basic] Items): the one weapon of each crafting group,
+    // armor set of each class and Deflector Shield anyone can make from level
+    // 1 (never a blueprint). Gear vendors and the bazaar's general store sell it.
+    bool basic = false;
+    // Whether a city blueprint teaches its schematic (set by the catalog): a
+    // crafter's, so no gear vendor sells it.
+    bool blueprint_taught = false;
     AmmoClass ammo_class = AmmoClass::none;
     int ammo_batch = 100;
     std::string armor_class;  // armor: light, medium or heavy (its armor profession's)
@@ -358,8 +377,29 @@ struct CharacterLoadout {
     friend bool operator==(const CharacterLoadout&, const CharacterLoadout&) = default;
 };
 
+// A glob with '*' for any run of characters ("armor_bone_*").
+bool id_glob_match(std::string_view pattern, std::string_view text);
+// Weapons (not medpacks or jump packs), armor and Deflector Shields: what
+// weaponsmiths and armorsmiths make.
+bool is_smith_gear(const ItemDef& def);
+// Whether a gear vendor sells it, for its CostCredits: anything priced but a
+// city's blueprint and what one teaches (of the smiths' gear, the basics and
+// what no crafter makes, like the Katarn).
+bool gear_vendor_sells(const ItemDef& def);
+// The schematics a blueprint teaches (its Teaches, comma-separated).
+std::vector<std::string> blueprint_teaches(const ItemDef& def);
+// What a city blueprint costs at a standing, in credits (a whole armor set's
+// twice as much).
+int64_t city_blueprint_cost(RepTier rank, bool armor_set);
+
 class ItemCatalog {
 public:
+    // A catalog file; its [include] Path = <file> sections (relative to it)
+    // are read with it. Besides [item]s: [basic] Items = <id globs> marks the
+    // basics, and each [blueprint] (Town, Rank, Items = <id globs>, Name,
+    // Cost) makes a city quartermaster's blueprint item that teaches the
+    // matching items' schematics (sch_<id>), its id bp_<item id> (a set's
+    // glob armor_bone_*: bp_armor_bone).
     void load(const std::filesystem::path& catalog_ini, const std::filesystem::path& bf2_items_dir = {});
 
     const ItemDef* find(std::string_view id) const;

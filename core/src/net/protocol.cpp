@@ -1018,6 +1018,8 @@ struct Encoder {
             const Quartermaster& q = m.quartermasters[i];
             out.put_string(q.name);
             out.put_string(q.faction);
+            out.put_string(q.town);
+            out.put_string(q.town_name);
             put_vec3(out, q.position);
             out.put(q.radius);
         }
@@ -1602,6 +1604,8 @@ Message decode(std::span<const uint8_t> packet) {
             Quartermaster q;
             q.name = in.get_string();
             q.faction = in.get_string();
+            q.town = in.get_string();
+            q.town_name = in.get_string();
             q.position = get_vec3(in);
             q.radius = in.get<double>();
             m.quartermasters.push_back(std::move(q));

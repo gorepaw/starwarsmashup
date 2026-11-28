@@ -656,15 +656,17 @@ int64_t contract_reward(ContractKind kind, int tier, double distance) {
 // The bazaar
 
 int bazaar_listing_limit(int merchant_level) {
-    return 5 + std::clamp(merchant_level, 0, profession_max_level) / 5;
+    // Anyone's 10, and more with Merchant levels (a Merchant's perks add more).
+    return 10 + std::clamp(merchant_level, 0, profession_max_level) / 5;
 }
 
 double bazaar_fee_rate(int merchant_level) {
     return 0.06 - 0.04 * std::clamp(merchant_level, 0, profession_max_level) / profession_max_level;
 }
 
-int64_t bazaar_fee(int64_t price, int merchant_level) {
-    return std::max<int64_t>(price > 0 ? 1 : 0, int64_t(std::llround(double(price) * bazaar_fee_rate(merchant_level))));
+int64_t bazaar_fee(int64_t price, int merchant_level, double cut, bool halved) {
+    const double rate = std::max(0.0, bazaar_fee_rate(merchant_level) - std::max(0.0, cut)) * (halved ? 0.5 : 1.0);
+    return std::max<int64_t>(price > 0 ? 1 : 0, int64_t(std::llround(double(price) * rate)));
 }
 
 PriceStats price_stats(std::span<const BazaarSale> sales, std::string_view def_id) {
@@ -735,6 +737,21 @@ std::vector<BazaarSale> parse_sales(std::string_view text) {
         const std::vector<std::string> f = split(line, '|');
         if (f.size() < 3 || f[0].empty()) continue;
         out.push_back({unescape(f[0]), to_int(f[1]), to_int(f[2])});
+    }
+    return out;
+}
+
+std::vector<BazaarListing> general_store_listings(const ItemCatalog& catalog) {
+    std::vector<BazaarListing> out;
+    for (const ItemDef& def : catalog.all()) {
+        if (!def.basic || def.cost_credits <= 0) continue;
+        BazaarListing l;
+        l.id = general_store_listing_base + out.size();
+        l.seller_name = std::string(general_store_seller);
+        l.shop = "General Store";
+        l.item.def_id = def.id;
+        l.price = def.cost_credits;
+        out.push_back(std::move(l));
     }
     return out;
 }

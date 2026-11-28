@@ -178,8 +178,10 @@ void test_rules(const SpecialistBook& book, const ProfessionBook& professions) {
     CHECK(near(st.damage, b1.damage * 1.25 * 1.5));
 
     // The bazaar: shop slots and fees by Merchant level; price trends.
-    CHECK(bazaar_listing_limit(0) == 5 && bazaar_listing_limit(100) == 25);
+    // Anyone's 10 listings, more with Merchant levels; a Trader's 2 points off, a Tycoon's half.
+    CHECK(bazaar_listing_limit(0) == 10 && bazaar_listing_limit(100) == 30);
     CHECK(bazaar_fee(1000, 0) == 60 && bazaar_fee(1000, 100) == 20 && bazaar_fee(1, 0) == 1);
+    CHECK(bazaar_fee(1000, 0, 0.02) == 40 && bazaar_fee(1000, 0, 0, true) == 30 && bazaar_fee(1000, 100, 0.02, true) == 1);
     const std::vector<BazaarSale> sales{{"x", 100, 1}, {"y", 5, 2}, {"x", 300, 3}};
     const PriceStats ps = price_stats(sales, "x");
     CHECK(ps.count == 2 && ps.low == 100 && ps.high == 300 && ps.average == 200 && ps.last == 300);
@@ -490,8 +492,18 @@ void test_server(const std::filesystem::path& root, const SpecialistBook& book, 
         CHECK(vet_client.specialist().my_listings.size() == 1);
         act(buyer, net::SpecialistRequest::bazaar_browse, 0, 0, "");
         run(0.5);
-        CHECK(buyer.specialist().bazaar.size() == 1);
-        const uint64_t id = buyer.specialist().bazaar.empty() ? 0 : buyer.specialist().bazaar[0].id;
+        // The player's listing, among the general store's (the basics).
+        uint64_t id = 0;
+        size_t players = 0;
+        for (const BazaarListing& l : buyer.specialist().bazaar) {
+            if (l.id >= general_store_listing_base) {
+                CHECK(l.seller_name == general_store_seller);
+                continue;
+            }
+            id = l.id;
+            ++players;
+        }
+        CHECK(players == 1);
         act(buyer, net::SpecialistRequest::bazaar_buy, int64_t(id));
         run(0.5);
         CHECK(server.bazaar_listings().empty());
@@ -499,6 +511,38 @@ void test_server(const std::filesystem::path& root, const SpecialistBook& book, 
         CHECK(vet_client.player_status().credits == seller_before + 1000 - bazaar_fee(1000, 100));
         CHECK(std::any_of(buyer.items().begin(), buyer.items().end(), [&](const ItemInstance& i) { return i.def_id == def_id; }));
         CHECK(!store.get_extra(0, "bazaar_sales").empty());
+    }
+
+    // The general store: a basic at its price, never sold out, nobody paid,
+    // and not a sale for the price trends.
+    if (const ItemDef* d18 = catalog.find("wp_pistol_d18"); d18 != nullptr && d18->basic) {
+        act(buyer, net::SpecialistRequest::bazaar_browse, 0, 0, "D-18");
+        run(0.5);
+        const auto stocked = [&]() -> const BazaarListing* {
+            for (const BazaarListing& l : buyer.specialist().bazaar) {
+                if (l.id >= general_store_listing_base && l.item.def_id == "wp_pistol_d18") return &l;
+            }
+            return nullptr;
+        };
+        CHECK(stocked() != nullptr && stocked()->price == d18->cost_credits);
+        if (stocked() != nullptr) {
+            const int64_t credits_before = buyer.player_status().credits;
+            const std::string sales_before = store.get_extra(0, "bazaar_sales");
+            const auto held = [&]() {
+                return std::count_if(buyer.items().begin(), buyer.items().end(),
+                                     [](const ItemInstance& i) { return i.def_id == "wp_pistol_d18"; });
+            };
+            const auto held_before = held();
+            const uint64_t store_id = stocked()->id;
+            act(buyer, net::SpecialistRequest::bazaar_buy, int64_t(store_id));
+            run(0.5);
+            CHECK(buyer.player_status().credits == credits_before - d18->cost_credits);
+            CHECK(held() == held_before + 1);
+            CHECK(server.bazaar_listings().empty() && store.get_extra(0, "bazaar_sales") == sales_before);
+            act(buyer, net::SpecialistRequest::bazaar_browse, 0, 0, "D-18");
+            run(0.5);
+            CHECK(stocked() != nullptr);  // still there
+        }
     }
 
     // Opting in to bounty hunters is saved with the character.
@@ -1065,6 +1109,61 @@ void test_ranger(const SpecialistBook& book, const ProfessionBook& professions, 
     CHECK(std::none_of(left.begin(), left.end(), [&](const ItemInstance& i) { return i.id == kit.id; }));
 }
 
+// A Merchant at a gear vendor: a Haggler pays 10% less, and buying and
+// selling there earn Merchant experience; anyone sells on the bazaar.
+void test_merchant(const SpecialistBook& book, const ProfessionBook& professions, const ItemCatalog& catalog) {
+    Heightfield ground{101, 2.0, -100, -100, std::vector<float>(101 * 101, 0.0f)};
+    World world{ground};
+    MemoryCharacterStore store;
+    const CharacterRecord rec = store.create("Trader", {0, 0, 0}, 0);
+    const int64_t xp0 = professions.xp_for_level(30);
+    store.save_professions(rec.id, std::vector<ProfessionProgress>{{"merchant", xp0, 0}});
+    store.set_extra(rec.id, "perks:merchant", "mer_perk_trader,mer_perk_haggler");
+    store.update_economy(rec.id, 1000, 0, 0, 0);
+    net::LoopbackHub links;
+    net::Endpoint server_ep{1, 1};
+    net::LoopbackLink srv_link{links, server_ep};
+    net::LoopbackLink link{links, {2, 1}};
+    ServerConfig config;
+    config.catalog = &catalog;
+    config.professions = &professions;
+    config.specialists = &book;
+    config.spawn = {0, 0, 0};
+    GameServer server(srv_link, world, config, &store);
+    server.set_vendors({{"Gear Vendor", "gear_vendor", {0, 0, 0}, 6, ""}});
+    GameClient client(link, world, ClientConfig{.server = server_ep, .name = "Trader"});
+    double now = 0;
+    const auto run = [&](double seconds) {
+        for (const double end = now + seconds; now < end; now += 1.0 / 30.0) {
+            server.update(now);
+            client.update(now);
+        }
+    };
+    run(1.0);
+    CHECK(client.status() == GameClient::Status::connected);
+    const ItemDef* kit = catalog.find("arch_field_camp");
+    CHECK(kit != nullptr && kit->cost_credits == 95 && kit->sell_value == 32);
+    const auto merchant_xp = [&] {
+        const auto* p = server.professions_of(client.entity_id());
+        return p ? profession_xp(*p, "merchant") : 0;
+    };
+    const int64_t credits = client.player_status().credits;
+    client.buy_item("arch_field_camp", false);
+    run(0.5);
+    CHECK(client.player_status().credits == credits - (95 - 9));  // a Haggler's 10% off
+    const int64_t after_buy = merchant_xp();
+    CHECK(after_buy > xp0);
+    uint64_t bought = 0;
+    for (const ItemInstance& i : client.items()) {
+        if (i.def_id == "arch_field_camp") bought = i.id;
+    }
+    CHECK(bought != 0);
+    client.sell_item(bought);
+    run(0.5);
+    CHECK(client.player_status().credits == credits - 86 + 32);
+    CHECK(merchant_xp() > after_buy);
+}
+
 // In a match: a loadout from a hub brings its kit and Companion Slot; a
 // cloak hides you from the other side (they aren't even sent you); a squad
 // beacon is somewhere to spawn; a big creature stays home.
@@ -1213,6 +1312,7 @@ int main() {
     test_doctor_heals(book, professions, catalog);
     test_smuggler(book, professions, catalog);
     test_ranger(book, professions, catalog);
+    test_merchant(book, professions, catalog);
     test_match(book, professions);
     return swm::test::finish("specialist_test");
 }

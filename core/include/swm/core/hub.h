@@ -73,6 +73,7 @@ struct HubRangeTarget {
 // CloningFacility x z (repeatable), and whose other sections (people, crowd,
 // terminals, services) are the hub's like the hub file's own.
 struct HubTown {
+    std::string id;             // its file's stem ("anchorhead"): its reputation's (town_reputation_key)
     std::string name;
     Vec3 center;                // game space
     double radius = 400;        // meters

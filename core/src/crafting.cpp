@@ -324,6 +324,7 @@ void CraftingBook::parse_schematics(const Ini& ini, const std::string& where, co
         const ItemDef* out = catalog->find(def.output_item);
         if (out == nullptr) throw std::runtime_error(where + " (" + def.id + "): no catalog item " + def.output_item);
         def.marks = item_takes_marks(*out);
+        if (out->basic) def.blueprint = false;  // anyone makes the basics (catalog [basic])
     }
 }
 

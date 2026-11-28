@@ -4,6 +4,8 @@
 #include <cmath>
 #include <cstdio>
 #include <filesystem>
+#include <map>
+#include <set>
 #include <vector>
 
 #include "swm/core/client.h"
@@ -357,6 +359,18 @@ void test_blueprints() {
     real.load_schematics(root / "game" / "crafting" / "schematics.ini");
     ItemCatalog catalog;
     catalog.load(root / "game" / "items" / "swg_catalog.ini");
+    // Every weaponsmith's and armorsmith's weapon, armor and shield is a
+    // blueprint but the basics: one in each crafting group, the same that
+    // gear vendors sell. Each blueprint is taught by exactly one city
+    // quartermaster's blueprint item (docs/CRAFTING.md).
+    std::map<std::string, int> taught_by;
+    for (const ItemDef& def : catalog.all()) {
+        if (def.town.empty()) continue;
+        CHECK(def.kind == ItemKind::supply && def.cost_credits > 0 && !gear_vendor_sells(def));
+        for (const std::string& id : blueprint_teaches(def)) ++taught_by[id];
+    }
+    std::map<std::string, int> basics_in;  // crafting group -> its basics (an armor set's pieces count once)
+    std::set<std::string> basic_sets;
     for (const SchematicDef& s : real.schematics()) {
         const ItemDef* out = catalog.find(s.output_item);
         const bool medicine = out != nullptr && out->archetype == WeaponArchetype::medpack;
@@ -364,12 +378,40 @@ void test_blueprints() {
                                             out->kind == ItemKind::deflector_shield)) {
             CHECK(s.required_level == 1);
         }
-        CHECK(!s.blueprint);  // none yet: not until they drop somewhere (docs/CRAFTING.md)
+        const bool smith = s.profession == "weaponsmith" || s.profession == "armorsmith";
+        if (out == nullptr || !smith || !is_smith_gear(*out)) {
+            CHECK(!s.blueprint);
+            continue;
+        }
+        CHECK(s.blueprint == !out->basic);
+        CHECK(gear_vendor_sells(*out) == (out->basic && out->cost_credits > 0));
+        if (s.blueprint) {
+            if (taught_by[s.id] != 1) std::printf("%s is taught by %d blueprints\n", s.id.c_str(), taught_by[s.id]);
+            CHECK(taught_by[s.id] == 1);
+        } else if (out->kind == ItemKind::armor) {
+            const std::string set = out->id.substr(0, out->id.rfind('_'));
+            if (basic_sets.insert(set).second) ++basics_in[s.group];
+        } else {
+            ++basics_in[s.group];
+        }
     }
+    for (const char* group : {"Pistols", "Carbines", "Rifles", "Scatterguns", "Sniper Rifles", "Melee Weapons",
+                              "Two-Handed Melee", "Beams & Flamers", "Heavy Weapons", "Grenades & Mines", "Light Armor",
+                              "Medium Armor", "Heavy Armor", "Deflector Shields"}) {
+        if (basics_in[group] != 1) std::printf("%s has %d basics\n", group, basics_in[group]);
+        CHECK(basics_in[group] == 1);
+    }
+    // What no crafter makes stays a gear vendor's (the Katarn: docs/ARMOR.md, Paint).
+    const ItemDef* katarn = catalog.find("armor_katarn_chest");
+    CHECK(katarn != nullptr && !katarn->blueprint_taught && gear_vendor_sells(*katarn));
+    // A whole set from one blueprint.
+    const ItemDef* ubese = catalog.find("bp_armor_ubese");
+    CHECK(ubese != nullptr && ubese->town == "dantooine_agro_outpost" && blueprint_teaches(*ubese).size() >= 6 &&
+          ubese->cost_credits == city_blueprint_cost(ubese->required_rank, true));
 
     CraftingBook book;
     book.load_resources(root / "game" / "crafting" / "resources.ini");
-    book.parse_schematics(Ini::parse("[schematic]\nId = sch_secret\nName = Secret\nOutput = wp_pistol_d18\n"
+    book.parse_schematics(Ini::parse("[schematic]\nId = sch_secret\nName = Secret\nOutput = wp_pistol_dh17\n"
                                      "Blueprint = yes\nSlot = mineral 2\n"
                                      "[schematic]\nId = sch_open\nName = Open\nOutput = wp_pistol_d18\nSlot = mineral 2\n"
                                      "[family]\nGroup = Carbines\nKind = weapon\nArchetype = carbine_burst\n"
@@ -532,6 +574,9 @@ void test_marks_modules_and_dyes() {
         const ItemInstance barrel = store.grant_item({0, smith.id, "mod_precision_barrel"});
         const ItemInstance plating = store.grant_item({0, smith.id, "mod_armor_plating"});
         const ItemInstance shirt = store.grant_item({0, smith.id, "cloth_shirt_s04"});
+        // The DH-17 is a blueprint (Coronet's quartermaster sells it).
+        const ItemInstance dh17_blueprint = store.grant_item({0, smith.id, "bp_wp_pistol_dh17"});
+        store.save_reputation(smith.id, {{town_reputation_key("coronet"), 3000}});  // Friendly with Coronet
 
         net::LoopbackHub links;
         net::Endpoint server_ep{1, 1}, client_ep{2, 1};
@@ -563,11 +608,41 @@ void test_marks_modules_and_dyes() {
         };
         run(0.5);
         CHECK(client.status() == GameClient::Status::connected);
-        CHECK(client.items().size() == 3);
+        CHECK(client.items().size() == 4);
 
         const SchematicDef* sch = crafting.find_schematic("sch_wp_pistol_dh17");
-        CHECK(sch != nullptr && sch->marks);
+        CHECK(sch != nullptr && sch->marks && sch->blueprint);
         const std::vector<std::string> rids = crafting.auto_fill(*sch, vault, AutoFillMode::best_stat, 2);
+        // Refused until its blueprint is learned; using the blueprint teaches
+        // it and spends it.
+        client.craft_item(sch->id, rids, {}, 0, 1, 2);
+        run(0.4);
+        CHECK(owned("wp_pistol_dh17").empty());
+        client.use_item(dh17_blueprint.id);
+        run(0.4);
+        CHECK(owned("bp_wp_pistol_dh17").empty());
+        CHECK(std::find(client.crafting().blueprints.begin(), client.crafting().blueprints.end(),
+                        "sch_wp_pistol_dh17") != client.crafting().blueprints.end());
+
+        // Coronet's quartermaster sells Coronet's blueprints for credits, each
+        // at its standing; nobody else's.
+        server.set_quartermasters({{"Coronet Quartermaster", "neutral", {0, 0, 0}, 6, "coronet", "Coronet"}});
+        server.award_credits(client.entity_id(), 10000);
+        run(0.3);
+        const int64_t cr = client.player_status().credits;
+        const ItemDef& corsec = *catalog.find("bp_wp_pistol_scout_corsec");  // Friendly
+        const ItemDef& tantel = *catalog.find("bp_armor_tantel");           // Honored
+        CHECK(corsec.town == "coronet" && corsec.required_rank == RepTier::friendly);
+        CHECK(tantel.town == "coronet" && tantel.required_rank == RepTier::honored);
+        client.buy_item(tantel.id, false);
+        client.buy_item("bp_wp_pistol_dl44_metal", false);  // Mos Eisley's
+        run(0.4);
+        CHECK(owned(tantel.id).empty() && owned("bp_wp_pistol_dl44_metal").empty());
+        CHECK(client.player_status().credits == cr);
+        client.buy_item(corsec.id, false);
+        run(0.4);
+        CHECK(owned(corsec.id).size() == 1 && client.player_status().credits == cr - corsec.cost_credits);
+        server.set_quartermasters({});
         const int64_t mineral_before = material_amount(client.crafting().materials, rids[0]);
 
         // Mk III takes level 30.

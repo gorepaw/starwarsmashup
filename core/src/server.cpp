@@ -1042,6 +1042,14 @@ void GameServer::handle(const net::Endpoint& from, const net::Datagram& datagram
                 for (const net::Quartermaster& q : quartermasters_) {
                     const Vec3 d = client->state.position - q.position;
                     if (std::hypot(d.x, d.z) > q.radius + 1.5) continue;
+                    // A city's blueprints from its own quartermaster, who sells nothing else.
+                    if (!def->town.empty() || !q.town.empty()) {
+                        if (def->town == q.town) {
+                            matched_qm = &q;
+                            break;
+                        }
+                        continue;
+                    }
                     const std::string qf = normalize_faction(q.faction);
                     const bool faction_ok = def->faction == "neutral" || qf == "neutral" || def->faction == qf;
                     if (faction_ok) {
@@ -1051,13 +1059,16 @@ void GameServer::handle(const net::Endpoint& from, const net::Datagram& datagram
                 }
                 const bool near_gear_vendor = std::any_of(vendors_.begin(), vendors_.end(),
                                                           [&](const net::Vendor& v) {
-                    // Gear vendors sell combat gear, weapons, supplies & enhancements for Credits; garages sell vehicles.
-                    if (!((v.kind == "gear_vendor" && def->cost_credits > 0) ||
+                    // Gear vendors sell supplies, enhancements and the basic weapons, armor and
+                    // shields for Credits (gear_vendor_sells); garages sell vehicles.
+                    if (!((v.kind == "gear_vendor" && gear_vendor_sells(*def)) ||
                           (v.kind == "garage" && def->kind == ItemKind::vehicle))) return false;
                     const Vec3 d = client->state.position - v.position;
                     return std::hypot(d.x, d.z) <= v.radius + 1.5;
                 });
-                if (buy->use_faction_points && matched_qm != nullptr) {
+                if (matched_qm != nullptr && !matched_qm->town.empty()) {
+                    buy_city_blueprint(*client, *matched_qm, *def);
+                } else if (buy->use_faction_points && matched_qm != nullptr) {
                     if (def->cost_faction_points <= 0) {
                         notify(client->entity, def->display_name + " is not available for Faction Points");
                     } else {
@@ -1069,8 +1080,10 @@ void GameServer::handle(const net::Endpoint& from, const net::Datagram& datagram
                         if (reputation_tier(rep_val) < def->required_rank) {
                             notify(client->entity,
                                    std::format("Requires {} standing", reputation_tier_name(def->required_rank)));
-                        } else if (client->faction_points >= def->cost_faction_points) {
-                            client->faction_points -= def->cost_faction_points;
+                        } else if (client->faction_points >= haggled(*client, def->cost_faction_points)) {
+                            const int64_t fp_cost = haggled(*client, def->cost_faction_points);
+                            client->faction_points -= fp_cost;
+                            vendor_trade_xp(*client, fp_cost);
                             store_->update_economy(client->character, client->credits, client->faction_points,
                                                    client->experience, int(client->loadout));
                             // In its quartermaster's faction's paint, if it has one (a Katarn).
@@ -1079,14 +1092,15 @@ void GameServer::handle(const net::Endpoint& from, const net::Datagram& datagram
                             client->items = store_->list_items(client->character);
                             ++client->inventory_rev;
                             client->last_sync_tick = 0;
-                            notify(client->entity, std::format("Purchased {} (-{} FP)", def->display_name,
-                                                               def->cost_faction_points));
+                            notify(client->entity, std::format("Purchased {} (-{} FP)", def->display_name, fp_cost));
                         }
                     }
                 } else if (!buy->use_faction_points && near_gear_vendor &&
-                           def->cost_credits > 0 && client->credits >= def->cost_credits) {
+                           def->cost_credits > 0 && client->credits >= haggled(*client, def->cost_credits)) {
                     sync_client_ammo(*client, true);
-                    client->credits -= def->cost_credits;
+                    const int64_t cost = haggled(*client, def->cost_credits);
+                    client->credits -= cost;
+                    vendor_trade_xp(*client, cost);
                     store_->update_economy(client->character, client->credits, client->faction_points,
                                            client->experience, int(client->loadout));
                     const int qty = def->kind == ItemKind::ammo ? def->ammo_batch : 1;
@@ -1095,9 +1109,8 @@ void GameServer::handle(const net::Endpoint& from, const net::Datagram& datagram
                     ++client->inventory_rev;
                     client->last_sync_tick = 0;
                     notify(client->entity, def->kind == ItemKind::ammo
-                                               ? std::format("Purchased {} x{} (-{} Cr)", def->display_name, qty,
-                                                             def->cost_credits)
-                                               : std::format("Purchased {} (-{} Cr)", def->display_name, def->cost_credits));
+                                               ? std::format("Purchased {} x{} (-{} Cr)", def->display_name, qty, cost)
+                                               : std::format("Purchased {} (-{} Cr)", def->display_name, cost));
                 }
             }
         }
@@ -1184,6 +1197,7 @@ void GameServer::handle(const net::Endpoint& from, const net::Datagram& datagram
                     }
                     if (sold_count > 0) {
                         client->credits += total_cr;
+                        vendor_trade_xp(*client, total_cr);
                         store_->update_economy(client->character, client->credits, client->faction_points,
                                                client->experience, int(client->loadout));
                         client->items = store_->list_items(client->character);
@@ -1200,6 +1214,7 @@ void GameServer::handle(const net::Endpoint& from, const net::Datagram& datagram
                             scrub_item_from_loadouts(*client, sell->item_id);
                             const int64_t paid = black_market(*client, def->sell_value);
                             client->credits += paid;
+                            vendor_trade_xp(*client, paid);
                             store_->update_economy(client->character, client->credits, client->faction_points,
                                                    client->experience, int(client->loadout));
                             client->items = store_->list_items(client->character);

@@ -357,6 +357,10 @@ void test_server_quest() {
         server.set_looks({"object/mobile/shared_dressed_commoner_tatooine_rodian_male_01.iff"});
         const uint32_t hunter = server.add_npc("Hunter", {3, 0, 0}, 0, 1);
         server.set_quests(&book, {{hunter, "Hunter", {3, 0, 0}, true}}, {{"Mission Terminal", {0, 0, 3}, 3}});
+        // Two towns: the hunter's, and one by the lair (city reputation).
+        server.set_towns({{"home", "Home", {0, 0, 0}, 100}, {"far", "Far", {0, 0, 650}, 100}});
+        CHECK(server.town_at({0, 0, 500}) && server.town_at({0, 0, 500})->id == "far");
+        CHECK(server.town_at({3, 0, 0}) && server.town_at({3, 0, 0})->id == "home");
         GameClient client(cli_link, world, ClientConfig{.server = server_ep, .name = "Questor"});
         double now = 0;
         const auto run = [&](double seconds) {
@@ -405,6 +409,11 @@ void test_server_quest() {
         CHECK(client.quests().offer_note == "__completed__");
         CHECK(client.quests().completed.size() == 1 && client.quests().completed[0] == "Rats");
         CHECK(client.player_status().credits == credits + 250);
+        // ... and standing with the giver's town, saved.
+        CHECK(client.reputation().contains("town:home") &&
+              client.reputation().at("town:home") == quest_town_reputation(1, false));
+        CHECK(!client.reputation().contains("town:far"));
+        CHECK(store.list_reputation(client.character_id())["town:home"] == quest_town_reputation(1, false));
         CHECK(client.items().size() == items + 1);  // the stim, not the ledger
         CHECK(std::none_of(client.items().begin(), client.items().end(),
                            [](const ItemInstance& i) { return i.def_id == "quest_valarian_ledger"; }));

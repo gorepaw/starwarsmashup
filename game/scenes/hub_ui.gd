@@ -325,6 +325,9 @@ func try_open_terminal(client: Object) -> bool:
 	if _qm_screen != null and not qm.is_empty():
 		_qm_screen.title = str(qm.get("name", "Quartermaster"))
 		_qm_screen.faction = str(qm.get("faction", "neutral"))
+		_qm_screen.town = str(qm.get("town", ""))
+		_qm_screen.town_name = str(qm.get("town_name", ""))
+		_qm_screen._scroll = 0
 		_qm_screen.feedback = ""
 		_qm_screen.visible = true
 		_qm_screen.queue_redraw()
@@ -1340,6 +1343,8 @@ func _sync_screen_data(client: Object) -> void:
 		_qm_screen.credits = int(status.get("credits", 0))
 		_qm_screen.faction_points = int(status.get("faction_points", 0))
 		_qm_screen.reputation = client.get_reputation()
+		if client.has_method("get_blueprints"):
+			_qm_screen.known = client.get_blueprints()
 		_qm_screen.inventory = inv
 		var cur_lo: Dictionary = {}
 		for lo: Dictionary in los:

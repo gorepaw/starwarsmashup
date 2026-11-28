@@ -337,6 +337,8 @@ godot::Array SwmClient::get_quartermasters() const {
             godot::Dictionary entry;
             entry["name"] = godot::String::utf8(q.name.c_str());
             entry["faction"] = godot::String::utf8(q.faction.c_str());
+            entry["town"] = godot::String::utf8(q.town.c_str());  // a city quartermaster's (else empty)
+            entry["town_name"] = godot::String::utf8(q.town_name.c_str());
             entry["position"] = to_godot(q.position);
             entry["radius"] = q.radius;
             out.push_back(entry);

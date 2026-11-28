@@ -158,6 +158,14 @@ func _initialize() -> void:
 	var qm_scr := QuartermasterScreen.new(art)
 	qm_scr.catalog = catalog
 	qm_scr.store = store
+	# A city quartermaster's stock, and the gear vendor's basics (docs/CRAFTING.md).
+	var anchorhead := catalog.filter(func(d: Dictionary) -> bool: return str(d.get("town", "")) == "anchorhead")
+	assert(anchorhead.size() == 3, "Anchorhead's quartermaster should sell 3 blueprints")
+	for d: Dictionary in catalog:
+		if str(d.get("id", "")) == "wp_rifle_tusken":
+			assert(not bool(d["vendor_sells"]) and not bool(d["basic"]), "the Tusken rifle isn't a basic")
+		elif str(d.get("id", "")) == "wp_pistol_d18":
+			assert(bool(d["vendor_sells"]) and bool(d["basic"]), "the D-18 is the basic pistol")
 	qm_scr.free()
 	var wt_scr := WarTerminalScreen.new(art)
 	wt_scr.free()
@@ -208,7 +216,8 @@ func _process(_delta: float) -> bool:
 				_cleanup_fail()
 				return true
 			return false
-		assert(client.get_quartermasters().size() == 4, "expected 4 quartermasters in Mos Eisley")
+		assert(client.get_quartermasters().filter(func(q: Dictionary) -> bool: return str(q.get("town", "")) == "").size() == 4, "expected 4 faction quartermasters in Mos Eisley")
+		assert(client.get_quartermasters().filter(func(q: Dictionary) -> bool: return str(q.get("town", "")) != "").size() == 7, "expected a city quartermaster in each of Tatooine's 7 towns")
 		assert(client.get_factions().size() == 4, "expected 4 factions in Mos Eisley")
 		assert(client.get_targets().size() == 4, "expected 4 range targets in Mos Eisley")
 		assert(client.get_character_loadouts().size() == 1, "expected starter loadout")

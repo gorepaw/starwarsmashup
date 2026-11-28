@@ -69,7 +69,17 @@ Ini load_hub_ini(const std::filesystem::path& path) {
     std::string text;
     for (const auto& [key, value] : main->values) {
         if (same_name(key, "Town")) {
-            text += "\n" + file_text(path.parent_path() / value);
+            // Its [town] is told its id (the file's stem: its reputation's).
+            const std::filesystem::path town_path = path.parent_path() / value;
+            std::string town = file_text(town_path);
+            const size_t header = town.find("[town]");
+            if (header != std::string::npos) {
+                const size_t line_end = town.find('\n', header);
+                const std::string id_line = "Id = " + town_path.stem().string() + "\n";
+                if (line_end == std::string::npos) town += "\n" + id_line;
+                else town.insert(line_end + 1, id_line);
+            }
+            text += "\n" + town;
         }
     }
     return Ini::parse(own + text);
@@ -195,7 +205,14 @@ HubConfig load_hub(const std::filesystem::path& path) {
         }
         return Vec3{-x, 0, z};  // Galaxies to game coordinates
     };
+    // A town's sections follow its [town] (the hub file's own come first).
+    std::string town_id = path.stem().string();
+    std::string town_name = hub.name;
     for (const Ini::Section& s : ini.sections()) {
+        if (s.name == "town") {
+            town_id = s.get("Id").value_or(town_id);
+            town_name = s.get("Name").value_or("Town");
+        }
         if (s.name == "npc") {
             HubPerson person;
             const auto template_name = s.get("Template");
@@ -226,6 +243,12 @@ HubConfig load_hub(const std::filesystem::path& path) {
             net::Quartermaster qm;
             qm.name = s.get("Name").value_or("Quartermaster");
             qm.faction = s.get("Faction").value_or("neutral");
+            // One without a Faction is its town's: it sells the town's
+            // blueprints for its reputation (docs/CRAFTING.md).
+            if (!s.get("Faction")) {
+                qm.town = town_id;
+                qm.town_name = town_name;
+            }
             qm.position = point(s.get("Position").value_or(""), "a [quartermaster]'s Position");
             qm.radius = s.number("Radius", qm.radius);
             hub.quartermasters.push_back(std::move(qm));
@@ -317,6 +340,7 @@ HubConfig load_hub(const std::filesystem::path& path) {
         } else if (s.name == "town") {
             // Another of the planet's towns (Stage 13).
             HubTown town;
+            town.id = town_id;
             town.name = s.get("Name").value_or("Town");
             town.center = point(s.get("Center").value_or(""), "a [town]'s Center");
             town.radius = std::max(50.0, s.number("Radius", town.radius));
@@ -335,6 +359,7 @@ HubConfig load_hub(const std::filesystem::path& path) {
     // radius and cloning facilities.
     {
         HubTown own;
+        own.id = path.stem().string();
         own.name = hub.name;
         if (const auto center = main->get("Center")) {
             own.center = point(*center, "Center");
@@ -413,6 +438,12 @@ Hub::Hub(GameServer& server, uint16_t port, const World& world, HubConfig config
     server_.set_pvp_enabled(false);
     if (config_.cloning_facility) {
         server_.set_cloning_facility(*config_.cloning_facility);
+    }
+    // Its towns, for city reputation.
+    {
+        std::vector<GameServer::TownArea> areas;
+        for (const HubTown& town : config_.towns) areas.push_back({town.id, town.name, town.center, town.radius});
+        server_.set_towns(std::move(areas));
     }
     // Every town's cloning facilities: the dead are cloned at the nearest (Stage 13).
     std::vector<std::pair<std::string, Vec3>> facilities;

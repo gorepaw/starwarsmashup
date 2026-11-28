@@ -23,6 +23,7 @@ var equipped := {}       # item id -> true, for what's in a loadout (can't be li
 var catalog: Array = []
 var credits := 0
 var merchant_level := 0
+var merchant_perks: Array = []  # the Merchant perks known (professions.ini: listings, fees)
 var feedback := ""
 
 var _scroll := 0
@@ -97,8 +98,17 @@ func _paint() -> void:
 	_search.size = Vector2(half - 110 * u, 26 * u)
 	button(Rect2(lx + half - 100 * u, y, 100 * u, 26 * u), "Search", "search")
 	text("gamefont_small", "%d Cr" % credits, Vector2(rx, y + 2 * u), "Left", TEXT)
-	var limit := 5 + clampi(merchant_level, 0, 100) / 5
+	# As the server works them out (bazaar_listing_limit, bazaar_fee) with the perks.
+	var limit := 10 + clampi(merchant_level, 0, 100) / 5
+	if "mer_perk_shopkeeper" in merchant_perks:
+		limit += 5
+	if "mer_perk_trade_empire" in merchant_perks:
+		limit += 15
 	var fee := 6.0 - 4.0 * clampi(merchant_level, 0, 100) / 100.0
+	if "mer_perk_trader" in merchant_perks:
+		fee = maxf(0.0, fee - 2.0)
+	if "mer_perk_tycoon" in merchant_perks:
+		fee *= 0.5
 	text("gamefont_tiny", "Merchant %d: %d shop slots, %.1f%% fee on sales" % [merchant_level, limit, fee],
 			Vector2(rx + half, y + 5 * u), "Right", DIM, 0.9)
 	y += 36 * u

@@ -2,6 +2,7 @@
 // filling the teams, transfers there and back, and admission by ticket.
 
 #include <cmath>
+#include <cstdio>
 #include <map>
 #include <numbers>
 #include <filesystem>
@@ -75,10 +76,13 @@ void test_hub_file() {
     std::ofstream(dir / "far.ini") << "[town]\nName = Far Town\nCenter = 100 200\nRadius = 250\n"
                                       "CloningFacility = 110 190\nCloningFacility = 90 210\n"
                                       "[crowd]\nCount = 3\nArea = 100 200 40\nTemplate = object/mobile/shared_x.iff\n"
-                                      "[service]\nName = Far Shuttleport\nType = travel\nPosition = 120 220\n";
+                                      "[service]\nName = Far Shuttleport\nType = travel\nPosition = 120 220\n"
+                                      "[quartermaster]\nName = Far Town Quartermaster\nPosition = 105 205\n";
     std::ofstream(dir / "towns.ini") << "[hub]\nName = Home\nSpawn = 10 20\nRadius = 500\nCloningFacility = 5 5\n"
                                         "Town = far.ini\nBattlefield = fields/dunes.ini\n"
                                         "[recruiter]\nPosition = 0 0\n"
+                                        "[quartermaster]\nName = Imperial Quartermaster\nFaction = empire\nPosition = 1 1\n"
+                                        "[quartermaster]\nName = Home Quartermaster\nPosition = 2 2\n"
                                         "[crowd]\nCount = 5\nArea = 10 20 30\nTemplate = object/mobile/shared_y.iff\n";
     const HubConfig towns = load_hub(dir / "towns.ini");
     CHECK(towns.towns.size() == 2 && towns.towns[0].name == "Home" && towns.towns[0].radius == 500);
@@ -87,7 +91,58 @@ void test_hub_file() {
           towns.towns[1].cloning.size() == 2 && towns.towns[1].radius == 250);
     CHECK(towns.crowds.size() == 2 && towns.crowd.count == 5 && towns.crowds[1].count == 3);
     CHECK(towns.vendors.size() == 1 && towns.vendors[0].kind == "travel" && towns.vendors[0].name == "Far Shuttleport");
+    // Ids are the files' stems; a quartermaster without a Faction is its town's.
+    CHECK(towns.towns[0].id == "towns" && towns.towns[1].id == "far");
+    CHECK(towns.quartermasters.size() == 3);
+    if (towns.quartermasters.size() == 3) {
+        CHECK(towns.quartermasters[0].town.empty() && towns.quartermasters[0].faction == "empire");
+        CHECK(towns.quartermasters[1].town == "towns" && towns.quartermasters[1].town_name == "Home");
+        CHECK(towns.quartermasters[2].town == "far" && towns.quartermasters[2].town_name == "Far Town");
+    }
     std::filesystem::remove_all(dir);
+}
+
+// Every town of every planet has its city quartermaster, and every city
+// blueprint is sold by one (docs/CRAFTING.md, City quartermasters).
+void test_city_quartermasters() {
+    auto root = std::filesystem::current_path();  // (the repo's, from below it too)
+    while (!std::filesystem::exists(root / "game" / "hubs" / "galaxy.ini") && root.parent_path() != root) {
+        root = root.parent_path();
+    }
+    const auto hubs = root / "game" / "hubs";
+    std::map<std::string, int> sellers;  // town id -> its city quartermasters
+    size_t town_count = 0;
+    for (const char* file : {"mos_eisley.ini", "theed.ini", "coronet.ini", "dearic.ini", "narmle.ini",
+                             "dantooine_imperial_outpost.ini", "lok_nyms_stronghold.ini", "yavin4_mining_outpost.ini",
+                             "endor_research_outpost.ini", "dathomir_science_outpost.ini"}) {
+        const HubConfig hub = load_hub(hubs / file);
+        for (const HubTown& town : hub.towns) {
+            CHECK(!town.id.empty() && !sellers.contains(town.id));
+            sellers.try_emplace(town.id, 0);
+            ++town_count;
+        }
+        for (const net::Quartermaster& qm : hub.quartermasters) {
+            if (!qm.town.empty()) ++sellers[qm.town];
+        }
+    }
+    CHECK(town_count == 44);
+    for (const auto& [town, count] : sellers) {
+        if (count != 1) std::printf("%s has %d city quartermasters\n", town.c_str(), count);
+        CHECK(count == 1);
+    }
+    ItemCatalog catalog;
+    catalog.load(root / "game" / "items" / "swg_catalog.ini");
+    std::map<std::string, int> stock;
+    for (const ItemDef& def : catalog.all()) {
+        if (def.town.empty()) continue;
+        CHECK(sellers.contains(def.town));
+        ++stock[def.town];
+    }
+    // Every town sells something.
+    for (const auto& [town, count] : sellers) {
+        if (!stock.contains(town)) std::printf("%s sells no blueprints\n", town.c_str());
+        CHECK(stock.contains(town));
+    }
 }
 
 // In-memory links: battle servers on address 1 (the hub's), bots elsewhere.
@@ -470,7 +525,9 @@ void test_stage4_hub_loop() {
             << "[item]\nId = cloth_imp_uniform\nName = Imperial Officer Jacket\nKind = clothing\nSlot = chest\n"
             << "Faction = empire\nCostFactionPoints = 50\nCostCredits = 0\n"
             << "[item]\nId = cloth_pants_cargo\nName = Pants\nKind = clothing\nSlot = leggings\nFaction = neutral\n"
-            << "[item]\nId = cloth_boots_leather\nName = Boots\nKind = clothing\nSlot = boots\nFaction = neutral\n";
+            << "[item]\nId = cloth_boots_leather\nName = Boots\nKind = clothing\nSlot = boots\nFaction = neutral\n"
+            // What a city blueprint teaches is a crafter's, not a gear vendor's (docs/CRAFTING.md).
+            << "[blueprint]\nTown = mos_eisley\nItems = wp_pistol_dh17\n";
     }
     ItemCatalog catalog;
     catalog.load(cat_path);
@@ -562,6 +619,10 @@ void test_stage4_hub_loop() {
     step_for(0.35);
     CHECK(session.client().items().size() == before_buy + 1);
     CHECK(session.client().player_status().faction_points == 50);
+    // A weapon that isn't a basic is a crafter's (from a city blueprint), not the vendor's.
+    session.client().buy_item("wp_pistol_dh17", false);
+    step_for(0.35);
+    CHECK(session.client().items().size() == before_buy + 1);
     session.client().buy_item("wp_rifle_t21", false);
     step_for(0.35);
     CHECK(session.client().items().size() == before_buy + 2);
@@ -632,6 +693,7 @@ void test_stock_bot_roster() {
 
 int main() {
     test_hub_file();
+    test_city_quartermasters();
     test_creature_body();
     test_queue_battle_and_back();
     test_people();
