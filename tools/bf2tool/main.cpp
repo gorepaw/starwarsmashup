@@ -3579,6 +3579,17 @@ int cmd_export_character(const std::vector<std::string>& args) {
         "human_bazooka_crouch_walkbackward",
         "human_bazooka_crouch_shoot",
         "human_bazooka_crouch_reload",
+        // Riders' (human_4, as export-species has them): without them a clone
+        // or droid on a speeder bike or at a turret stood upright beside it.
+        "human_speederbike_9pose",
+        "human_barc_9pose",
+        "human_stap_ride",
+        "human_speederbike_sit",
+        "human_minigun_9pose",
+        "human_dishcannon_9pose",
+        "human_drive",
+        "human_drivesnowspeeder",
+        "human_ride",
     };
 
     const auto find_clip = [&](const std::string& target_clip) -> std::optional<ModelClip> {

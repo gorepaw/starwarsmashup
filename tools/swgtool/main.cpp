@@ -1259,11 +1259,17 @@ int cmd_export_species(const std::vector<std::string>& args) {
         "human_bazooka_crouch_reload",
         // human_4: riders' (a vehicle's Pilot9Pose, nine still poses, or its
         // PilotAnimation): on speeder bikes, BARC speeders and STAPs, and
-        // seated.
+        // seated; and turret gunners' (the minigun, dish cannon and
+        // recoilless turrets) and drivers'.
         "human_speederbike_9pose",
         "human_barc_9pose",
         "human_stap_ride",
         "human_speederbike_sit",
+        "human_minigun_9pose",
+        "human_dishcannon_9pose",
+        "human_drive",
+        "human_drivesnowspeeder",
+        "human_ride",
     };
     if (!bf2_lvl.empty()) {
         std::ifstream lvl_file(bf2_lvl, std::ios::binary);

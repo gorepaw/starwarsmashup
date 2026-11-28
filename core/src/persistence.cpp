@@ -209,7 +209,6 @@ void ensure_starter_kit(CharacterStore& store, PersistentId char_id) {
     const auto sidearm = grant("wp_pistol_dh17");
     const auto grenade = grant("wp_grenade_c22");
     const auto psg = grant("psg_mark1");
-    const auto ammo_std = store.grant_item({0, char_id, "ammo_tibanna_standard", ItemGrade::standard, "", "{}", 250});
     grant("cloth_jacket_rebel");
     const auto shirt = grant("cloth_shirt_tunic");
     const auto pants = grant("cloth_pants_cargo");
@@ -222,7 +221,6 @@ void ensure_starter_kit(CharacterStore& store, PersistentId char_id) {
     lo.sidearm_id = sidearm.id;
     lo.secondary_id = grenade.id;
     lo.gear_ids["deflector_shield"] = psg.id;
-    lo.gear_ids["ammo_standard"] = ammo_std.id;
     lo.gear_ids["chest"] = shirt.id;  // clothes are worn like armor: unarmored
     lo.gear_ids["leggings"] = pants.id;
     lo.gear_ids["boots"] = boots.id;

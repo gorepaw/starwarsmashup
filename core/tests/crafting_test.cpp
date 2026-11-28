@@ -39,8 +39,10 @@ void test_crafting_book() {
     CHECK(book.resources().size() == 16);
     CHECK(book.schematics().size() > 300);  // the hand-written ones, and the families' (test_families)
     CHECK(book.work_orders().size() == 5);
-    const SchematicDef* std_ammo_sch = book.find_schematic("sch_ammo_tibanna_standard");
-    CHECK(std_ammo_sch != nullptr && std_ammo_sch->output_count == 100);
+    // (Plain ammo is never spent, so only effect ammo is crafted.)
+    CHECK(book.find_schematic("sch_ammo_tibanna_standard") == nullptr);
+    const SchematicDef* burn_ammo_sch = book.find_schematic("sch_ammo_tibanna_burning");
+    CHECK(burn_ammo_sch != nullptr && burn_ammo_sch->output_count == 100);
 
     CHECK(resource_category_label(ResourceCategory::mineral) == "Mineral");
     CHECK(resource_stat_label(ResourceStat::conductivity) == "Conductivity");

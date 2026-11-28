@@ -215,7 +215,12 @@ VehicleClass load_vehicle_class(const std::filesystem::path& path) {
         const int seat = int(ini.sections()[i].number("Seat", 0));
         if (seat < 0 || seat > int(v.seats.size()) || slots[size_t(seat)] >= hand_slots) continue;
         Loadout& loadout = seat == 0 ? v.loadout : v.seats[size_t(seat - 1)].loadout;
-        loadout.weapons[size_t(slots[size_t(seat)]++)] = weapon_from_section(ini, i, where, v.name + "_weapon");
+        WeaponDef& w = *(loadout.weapons[size_t(slots[size_t(seat)]++)] =
+                             weapon_from_section(ini, i, where, v.name + "_weapon"));
+        // A vehicle's or turret's guns never run dry: a WeaponAmmo there
+        // (the beam turret's 1, an AT-ST's 6) left one clip and no spare, so
+        // after a shot or a few it was dead for good. Clips still reload.
+        w.ammo = 0;
     }
     return v;
 }

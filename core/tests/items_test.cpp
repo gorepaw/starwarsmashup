@@ -1,4 +1,5 @@
 #include "swm/core/items.h"
+#include "swm/core/combat.h"
 #include "swm/core/persistence.h"
 
 #include <filesystem>
@@ -157,8 +158,9 @@ int main() {
     ensure_starter_kit(store, bob.id);
     const auto bob_items = store.list_items(bob.id);
     const auto bob_los = store.list_loadouts(bob.id);
-    CHECK(bob_items.size() == 9 && bob_los.size() == 1);
-    CHECK(!bob_los.empty() && bob_los[0].gear_ids.count("ammo_standard") == 1 &&
+    // (No ammo: plain ammo isn't counted, so an empty ammo slot fires as well.)
+    CHECK(bob_items.size() == 8 && bob_los.size() == 1);
+    CHECK(!bob_los.empty() && bob_los[0].gear_ids.count("ammo_standard") == 0 &&
           bob_los[0].gear_ids.count("chest") == 1 && bob_los[0].gear_ids.count("leggings") == 1 &&
           bob_los[0].gear_ids.count("boots") == 1 && bob_los[0].appearance_ids.empty());
     const auto bob_after = *store.find(bob.id);
@@ -290,8 +292,39 @@ int main() {
     hcl.primary_id = 3;
     hcl.gear_ids["ammo_heavy"] = 4;
     const Loadout hvy_lo = ammo_cat.build_loadout(hcl, ainv, Species::human);
-    CHECK(hvy_lo.unified_heavy_ammo == int(max_heavy_ammo * max_ammo_capacity));
+    // Plain warheads aren't counted: the launcher carries its own load (-1).
+    CHECK(ammo_cat.find("a_hvy") && is_generic_ammo(*ammo_cat.find("a_hvy")));
+    CHECK(!is_generic_ammo(*ammo_cat.find("a_burn")));
+    CHECK(hvy_lo.unified_heavy_ammo == -1 && hvy_lo.unified_standard_ammo == -1);
     CHECK(hvy_lo.weapons[primary_slot] && hvy_lo.weapons[primary_slot]->ammo_class == AmmoClass::heavy);
+    CHECK(ammo_cat.build_loadout(bare, ainv, Species::human).unified_standard_ammo == -1);
+    // Out in the world those guns never run dry; a match keeps their load.
+    {
+        Loadout world = hvy_lo;
+        const int match_load = hvy_lo.weapons[primary_slot]->ammo;
+        unlimited_world_ammo(world);
+        CHECK(match_load > 0 && world.weapons[primary_slot]->ammo == 0);
+        Loadout counted = std_lo;  // an effect ammo's stack is still spent
+        const int counted_load = counted.weapons[primary_slot]->ammo;
+        unlimited_world_ammo(counted);
+        CHECK(counted.weapons[primary_slot]->ammo == counted_load);
+    }
+    // In a match, an effect stack run dry: from the next respawn its guns are
+    // the plain ones, with their own load, and the stack counts as spent.
+    {
+        Loadout match = std_lo;
+        match.plain_weapons = ammo_cat.build_loadout(bare, ainv, Species::human).weapons;
+        CHECK(fall_back_to_plain_ammo(match, AmmoClass::standard));
+        CHECK(!fall_back_to_plain_ammo(match, AmmoClass::standard));  // (once)
+        CHECK(match.unified_standard_ammo == -1 && match.ammo_spent[size_t(AmmoClass::standard)]);
+        CHECK(!match.weapons[primary_slot]->hit_effect &&
+              std::abs(match.weapons[primary_slot]->damage - WeaponDef{}.damage) < 1e-6);
+        MoveState fresh;
+        reset_loadout(fresh, match, CharacterStats{});
+        CHECK(remaining_unified_ammo(fresh.combat, match, AmmoClass::standard) == 0);  // what's reported
+        CHECK(fresh.combat.weapons[primary_slot].rounds == match.weapons[primary_slot]->rounds_per_clip);
+        CHECK(!fall_back_to_plain_ammo(match, AmmoClass::heavy));  // (no heavy effect ammo)
+    }
 
     // The sidegrade budget: the archetype scores 1; trading damage for rate
     // of fire breaks even; every weapon and ammo in the real catalog is within

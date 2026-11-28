@@ -81,6 +81,19 @@ void reload_now(MoveState& state, const Loadout& loadout, int slot);
 // rested, holding its primary (or its sidearm, without one).
 void reset_loadout(MoveState& state, const Loadout& loadout, const CharacterStats& stats);
 
+// Out in the world, ammo isn't managed: every gun firing standard or heavy
+// rounds not drawn from an effect ammo's stack (the loadout's pool for its
+// class is -1) carries unlimited spare rounds (its WeaponAmmo 0), still
+// reloading clip by clip. Grenades, mines and medpacks keep their counts. A
+// match's loadouts keep each gun's Battlefront load instead.
+void unlimited_world_ammo(Loadout& loadout);
+
+// In a match, an effect ammo's stack run dry (`ac`'s pool at 0): from the
+// next respawn its guns fire plain ammo (the loadout's plain_weapons, with
+// their own Battlefront load), and the stack counts as spent
+// (remaining_unified_ammo: 0). Returns whether it changed anything.
+bool fall_back_to_plain_ammo(Loadout& loadout, AmmoClass ac);
+
 // One tick of a character: movement (with its statistics), then weapons. A
 // dead character stands still with its weapons idle. Driving a vehicle (its
 // state's vehicle, an index into `vehicles`), the vehicle moves and its

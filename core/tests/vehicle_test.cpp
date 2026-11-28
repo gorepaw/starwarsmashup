@@ -441,9 +441,33 @@ Projectile = bolt
 RoundsPerClip = 0
 MaxDamage = 50
 PersonScale = 1
+
+[weapon]
+Name = tur_weap_beam
+Projectile = bolt
+WeaponAmmo = 1
+RoundsPerClip = 1
+ReloadTime = 1.0
+MaxDamage = 1000
 )";
     const VehicleClass t = load_vehicle_class(dir / "test_turret" / "test_turret.ini");
     CHECK(t.kind == VehicleKind::turret && near(t.turn_rate, 2) && t.loadout.weapons[0]);
+    // A turret's gun never runs dry (the beam turret's WeaponAmmo 1 left it
+    // one shot): it fires, reloads its clip, and fires again.
+    {
+        CHECK(t.loadout.weapons[1] && t.loadout.weapons[1]->ammo == 0);
+        MoveState gun;
+        reset_loadout(gun, t.loadout, CharacterStats{});
+        CHECK(gun.combat.weapons[1].rounds == 1 && gun.combat.weapons[1].reserve < 0);
+        MoveInput pull;
+        pull.weapon = 1;
+        pull.buttons = MoveInput::fire;
+        int shots = 0;
+        for (int i = 0; i < 300; ++i) {
+            if (simulate_weapons(gun, pull, t.loadout, dt)) ++shots;
+        }
+        CHECK(shots >= 3);
+    }
     Heightfield flat{101, 1.0, -50, -50, std::vector<float>(101 * 101, 0.0f)};
     World world(flat);
     MoveState state;

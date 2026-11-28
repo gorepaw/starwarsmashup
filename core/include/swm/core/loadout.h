@@ -450,6 +450,13 @@ struct TriggeredPerk {
 struct Loadout {
     std::string name = "default";
     std::array<std::optional<WeaponDef>, weapon_slots> weapons{WeaponDef{}, std::nullopt, std::nullopt};
+    // A match's, with an effect ammo equipped: its guns as they'd be with
+    // plain ammo (its ammo slots empty), and which ammo classes' effect
+    // stacks ran dry there (by AmmoClass). Out of it, at the next respawn a
+    // class's guns go back to plain (fall_back_to_plain_ammo), and that
+    // stack's left is 0. Not sent to clients.
+    std::array<std::optional<WeaponDef>, weapon_slots> plain_weapons;
+    std::array<bool, 3> ammo_spent{};
     std::vector<Gear> gear;
     // What its armor makes it: none, light, medium or heavy (empty: not
     // known, Battlefront's own). Says which armor profession it levels.

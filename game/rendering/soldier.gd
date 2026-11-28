@@ -457,6 +457,12 @@ func _clip(animation: StringName, fallback: StringName = IDLE) -> AnimationNodeA
 # ("rifle", "pistol", "bazooka"; a WeaponDef's anim_set): its clips where the
 # export has them, the rifle's otherwise. A pistol is held raised (its set
 # has no idle of its own).
+# Whether its model has a clip (a ride pose: bodies exported before the
+# riders' poses were added lack them).
+func has_clip(clip: String) -> bool:
+	return _player != null and clip != "" and _player.has_animation(StringName(clip))
+
+
 func set_anim_set(anim_set: String) -> void:
 	_wanted_set = anim_set
 	if _quick <= 0.0:

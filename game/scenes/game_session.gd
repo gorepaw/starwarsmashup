@@ -49,6 +49,11 @@ const CROUCH_CAMERA_DROP := 0.5
 const CROUCH_CAMERA_RATE := 6.0
 const ZOOM_RATE := 12.0
 const AIM_DISTANCE := 40.0
+# Riding (_reticle_point): the farthest the reticle's point is looked for, m;
+# how near its line a soldier is under it; and gravity (m/s^2) for a shell's arc.
+const RETICLE_REACH := 400.0
+const RETICLE_BODY_RADIUS := 1.0
+const WORLD_GRAVITY := 9.8
 const MUZZLE_BLEND := 20.0
 const BOT_FIRE_RANGE := 40.0
 const SPAWN_FIRE_LOCKOUT := 0.35
@@ -930,8 +935,66 @@ func _aim() -> Vector2:
 		eye = Vehicles.to_world(own["position"], float(own["yaw"]),
 				_vehicles.class_of(driving).get("eye", Vector3.UP))
 	var target := _camera.global_position - _camera.global_basis.z * AIM_DISTANCE
+	var gunning := driving >= 0 and (seat > 0 or str(_vehicles.class_of(driving).get("kind", "")) != "flyer")
+	if gunning:
+		target = _reticle_point(eye, own)
 	var to := target - eye
-	return Vector2(atan2(-to.x, -to.z), atan2(to.y, Vector2(to.x, to.z).length()))
+	var pitch := atan2(to.y, Vector2(to.x, to.z).length())
+	if gunning:
+		pitch = _arc_pitch(pitch, to, own)
+	return Vector2(atan2(-to.x, -to.z), pitch)
+
+
+# Riding: what's under the reticle. A vehicle's guns fire from metres off the
+# chase camera's line (the Kashyyyk recoilless cannon's 8 m behind it and 4 m
+# under), so aimed at a point a set AIM_DISTANCE down that line, its shots
+# crossed it there and missed everything nearer or further. The point is
+# where the line meets the ground, a wall or a soldier, from abreast of the
+# gun on (not what stands behind it), or the gun's reach.
+func _reticle_point(muzzle: Vector3, own: Dictionary) -> Vector3:
+	var from := _camera.global_position
+	var dir := -_camera.global_basis.z
+	var start := maxf(0.0, (muzzle - from).dot(dir))
+	var weapon := _held_weapon(own)
+	var reach := clampf(float(weapon.get("bolt_speed", 0.0)) * float(weapon.get("bolt_life", 0.0)), 30.0, RETICLE_REACH)
+	var best := start + reach
+	var t: float = _client.raycast(from + dir * start, from + dir * best)
+	if t >= 0.0:
+		best = start + reach * t
+	for remote: Dictionary in _client.get_remotes():
+		if not remote["alive"] or int(remote.get("look", 0)) > 0:
+			continue
+		var body: Vector3 = (remote["position"] as Vector3) + Vector3.UP
+		var along := (body - from).dot(dir)
+		if along > start and along < best and (from + dir * along).distance_to(body) < RETICLE_BODY_RADIUS:
+			best = along
+	return from + dir * best
+
+
+# A shell's drop (its gravity: the recoilless cannon's 2.5 times the world's)
+# made up for: the lower arc from the gun that lands on the reticle's point.
+func _arc_pitch(pitch: float, to: Vector3, own: Dictionary) -> float:
+	var weapon := _held_weapon(own)
+	var g := float(weapon.get("bolt_gravity", 0.0)) * WORLD_GRAVITY
+	var v := float(weapon.get("bolt_speed", 0.0))
+	var dx := Vector2(to.x, to.z).length()
+	if g <= 0.0 or v <= 0.0 or dx <= 0.0:
+		return pitch
+	var v2 := v * v
+	var root := v2 * v2 - g * (g * dx * dx + 2.0 * to.y * v2)
+	if root < 0.0:
+		return pitch  # out of its reach: straight at it
+	return atan((v2 - sqrt(root)) / (g * dx))  # (core ballistic_pitch's)
+
+
+# The weapon fired now: the held one (a driver's second weapon is on the
+# secondary button).
+func _held_weapon(own: Dictionary) -> Dictionary:
+	var slot := int(own.get("weapon", 0))
+	if int(own.get("vehicle", -1)) >= 0 and Input.is_action_pressed("grenade") and _weapons.size() > 1 \
+			and not (_weapons[1] as Dictionary).is_empty():
+		slot = 1
+	return _weapons[slot] if slot < _weapons.size() and _weapons[slot] is Dictionary else {}
 
 
 func _resume() -> void:
@@ -1023,13 +1086,22 @@ func _ensure_character_appearance(character: Dictionary, state: Dictionary, is_o
 	if replacement.is_empty():
 		return
 	var old_model: Variant = character.get("model")
-	if old_model is Node and is_instance_valid(old_model):
-		(old_model as Node).queue_free()
 	for k: String in replacement:
 		character[k] = replacement[k]
 	character["raw_appearance"] = app
 	character["worn_override"] = ov
 	add_child(character["model"])
+	# Its name tag goes over to the new body. (It was the old one's child and
+	# went with it: the freed tag stopped _update_remotes at this soldier
+	# every frame after, so everyone after it in the list stood frozen, new
+	# soldiers never appeared and the gone never left, from the first bot
+	# that came back in another kit.)
+	var tag: Variant = character.get("tag")
+	if is_instance_valid(tag) and tag is Label3D:
+		(tag as Node).reparent(character["model"], false)
+		(tag as Label3D).position = Vector3.UP * (float(character.get("eye_height", 1.6)) + 0.65)
+	if old_model is Node and is_instance_valid(old_model):
+		(old_model as Node).queue_free()
 	if is_own:
 		PlayerAppearance.set_first_person(character, _first_person)
 
@@ -1053,16 +1125,6 @@ func _update_remotes(own_team: int) -> void:
 			if character.is_empty():
 				continue
 			character["raw_appearance"] = str(remote.get("appearance", ""))
-			var tag := Label3D.new()
-			tag.billboard = BaseMaterial3D.BILLBOARD_ENABLED
-			tag.fixed_size = true
-			tag.pixel_size = 0.0012
-			tag.font_size = 24
-			tag.outline_size = 6
-			tag.no_depth_test = true
-			tag.position = Vector3.UP * (float(character.get("eye_height", 1.6)) + 0.65)
-			(character["model"] as Node3D).add_child(tag)
-			character["tag"] = tag
 			_remotes[id] = character
 		elif int(remote["team"]) != NATIVES_TEAM:
 			_ensure_character_appearance(_remotes[id], remote, false)
@@ -1070,7 +1132,7 @@ func _update_remotes(own_team: int) -> void:
 			PlayerAppearance.set_worn_models(_remotes[id], str(remote.get("worn", "")))
 		_pose(_remotes[id], remote, id)
 		_remotes[id]["quiet"] = bool(remote.get("quiet", false))  # (Low Profile: firing doesn't show on radar)
-		var tag: Label3D = _remotes[id]["tag"]
+		var tag := _name_tag(_remotes[id])
 		var friend: bool = own_team >= 0 and _client.is_allied(own_team, int(remote["team"]))
 		# Natives' holograms over their own heads (soldiers': the usual height).
 		var holo_height := float(_remotes[id]["eye_height"]) + 0.65 if int(remote["team"]) == NATIVES_TEAM else 2.25
@@ -1094,6 +1156,25 @@ func _update_remotes(own_team: int) -> void:
 			_battle_ui.forget_team_tag(id)
 			if _hub_ui != null:
 				_hub_ui.forget_hologram(id)
+
+
+# A soldier's name tag over its head (made the first time, and again should
+# its body have been swapped without it).
+func _name_tag(character: Dictionary) -> Label3D:
+	var tag: Variant = character.get("tag")
+	if is_instance_valid(tag) and tag is Label3D:
+		return tag
+	var made := Label3D.new()
+	made.billboard = BaseMaterial3D.BILLBOARD_ENABLED
+	made.fixed_size = true
+	made.pixel_size = 0.0012
+	made.font_size = 24
+	made.outline_size = 6
+	made.no_depth_test = true
+	made.position = Vector3.UP * (float(character.get("eye_height", 1.6)) + 0.65)
+	(character["model"] as Node3D).add_child(made)
+	character["tag"] = made
+	return made
 
 
 func _update_person(id: int, state: Dictionary) -> void:
@@ -1235,7 +1316,9 @@ func _pose(character: Dictionary, state: Dictionary, entity_id: int = 0) -> void
 			seated["sprinting"] = false
 			seated["velocity"] = Vector3.ZERO
 			if is_open_turret:
-				seated["crouched"] = false
+				# At the gun in its pose; a body without it (exported before
+				# the gunners' poses) crouches there rather than stand upright.
+				seated["crouched"] = not soldier.has_clip(str(vclass.get("rider_pose", "")))
 				seated["ride_clip"] = str(vclass.get("rider_pose", ""))
 				seated["position"] = _vehicles.turret_gunner_pos(entity_id, state["position"], float(state["yaw"]))
 			else:

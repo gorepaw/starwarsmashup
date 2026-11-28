@@ -152,6 +152,29 @@ void reset_loadout(MoveState& state, const Loadout& loadout, const CharacterStat
     state.sprinting = false;
 }
 
+bool fall_back_to_plain_ammo(Loadout& loadout, AmmoClass ac) {
+    if (ac == AmmoClass::none || loadout.unified_ammo(ac) < 0) {
+        return false;  // (plain already, or fallen back)
+    }
+    loadout.set_unified_ammo(ac, -1);
+    loadout.ammo_spent[size_t(ac)] = true;
+    for (int s = 0; s < weapon_slots; ++s) {
+        std::optional<WeaponDef>& w = loadout.weapons[size_t(s)];
+        if (w && w->ammo_class == ac && loadout.plain_weapons[size_t(s)]) {
+            w = loadout.plain_weapons[size_t(s)];
+        }
+    }
+    return true;
+}
+
+void unlimited_world_ammo(Loadout& loadout) {
+    for (std::optional<WeaponDef>& w : loadout.weapons) {
+        if (w && w->ammo_class != AmmoClass::none && loadout.unified_ammo(w->ammo_class) < 0) {
+            w->ammo = 0;
+        }
+    }
+}
+
 namespace {
 
 void sync_unified_pool(CombatState& combat, const Loadout& loadout, AmmoClass ac, int new_reserve) {
@@ -273,6 +296,9 @@ bool resupply_clips(MoveState& state, const Loadout& loadout, int clips) {
 }
 
 int remaining_unified_ammo(const CombatState& combat, const Loadout& loadout, AmmoClass ac) {
+    if (ac != AmmoClass::none && loadout.ammo_spent[size_t(ac)]) {
+        return 0;  // its effect stack ran dry: firing plain ammo now
+    }
     if (ac == AmmoClass::none || loadout.unified_ammo(ac) < 0) {
         return -1;
     }

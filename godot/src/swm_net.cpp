@@ -1972,6 +1972,7 @@ godot::Array SwmClient::get_weapons() const {
         entry["heat_per_shot"] = w.heat_per_shot;
         entry["bolt_speed"] = w.bolt_speed;
         entry["bolt_life"] = w.bolt_life;
+        entry["bolt_gravity"] = w.bolt_gravity;  // times the world's gravity (a shell's arc)
         entry["bolt_color"] = godot::Color(float(w.bolt_color[0]), float(w.bolt_color[1]), float(w.bolt_color[2]),
                                            float(w.bolt_color[3]));
         entry["bolt_length"] = w.bolt_length;

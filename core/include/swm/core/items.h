@@ -303,6 +303,14 @@ double defense_mark_weight(std::string_view slot);
 // Whether a species may use an item: a species weapon only its own.
 bool species_can_use(const ItemDef& def, Species species);
 
+// Whether an ammo is the plain kind (Standard Tibanna Cells, Standard Heavy
+// Warheads): no effect on its hits and none of a sidegrade's multipliers.
+// Plain ammo is never counted: a loadout with it (or none) in an ammo slot
+// carries Battlefront's own load for each gun, unlimited out in the world
+// (unlimited_world_ammo) and a weapon's normal clips in a match. Only an
+// effect or sidegrade ammo is spent from its stack.
+bool is_generic_ammo(const ItemDef& def);
+
 // The sidegrade budget (docs/WEAPONS.md, Balance): what a weapon's or ammo's
 // multipliers over its archetype add up to, as one number. Damage and rate
 // of fire count in full; accuracy, range, heat, clip, reload and the rest by
@@ -358,6 +366,10 @@ public:
 
     WeaponDef resolve_weapon(const ItemDef& def, ItemGrade grade = ItemGrade::standard, int mark = 0) const;
     Gear resolve_gear(const ItemDef& def, ItemGrade grade = ItemGrade::standard, int mark = 0) const;
+    // A character loadout as fought with. An ammo slot holding an effect or
+    // sidegrade ammo gives its guns that ammo's pool (its stack's
+    // quantity); empty or plain (is_generic_ammo), the pool is -1: each gun's
+    // own load, as Battlefront's.
     Loadout build_loadout(const CharacterLoadout& cl, std::span<const ItemInstance> inventory, Species species) const;
     // An owned item's def, tuned by the modules crafted into it (item_modules;
     // those that don't fit it, or the catalog lacks, do nothing).

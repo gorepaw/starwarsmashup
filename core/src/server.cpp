@@ -104,6 +104,16 @@ std::vector<Loadout> GameServer::build_player_loadouts(uint32_t entity, std::vec
     for (const CharacterLoadout& cl : client->char_loadouts) {
         out.push_back(config_.catalog->build_loadout(cl, client->items, client->species));
         apply_professions(*client, cl, out.back());
+        // With an effect ammo, its guns with plain ammo too: what they fire
+        // once that ammo's stack runs dry in the match (fall_back_to_plain_ammo).
+        if (out.back().unified_standard_ammo >= 0 || out.back().unified_heavy_ammo >= 0) {
+            CharacterLoadout plain = cl;
+            plain.gear_ids.erase("ammo_standard");
+            plain.gear_ids.erase("ammo_heavy");
+            Loadout plain_lo = config_.catalog->build_loadout(plain, client->items, client->species);
+            apply_professions(*client, plain, plain_lo);
+            out.back().plain_weapons = plain_lo.weapons;
+        }
         if (out_worn) {
             out_worn->push_back(resolve_worn_models(*config_.catalog, cl, client->items, client->species, client->gender));
         }
@@ -258,7 +268,8 @@ ItemInstance GameServer::grant_stacked_item(Client& client, const ItemDef& def, 
                 if (!client.char_loadouts.empty()) {
                     const auto& cl = client.char_loadouts[std::min(client.loadout, client.char_loadouts.size() - 1)];
                     const auto git = cl.gear_ids.find(def.slot);
-                    if (git != cl.gear_ids.end() && git->second == inst.id) {
+                    // (Plain ammo isn't counted: its guns' rounds aren't the stack's.)
+                    if (git != cl.gear_ids.end() && git->second == inst.id && !is_generic_ammo(def)) {
                         int clip_sum = 0;
                         const Loadout& lo = loadout_of(client);
                         for (int s = 0; s < weapon_slots; ++s) {
@@ -786,6 +797,9 @@ void GameServer::rebuild_client_loadouts(Client& client) {
         client.custom_loadouts.push_back(
             config_.catalog->build_loadout(cl, client.items, client.species));
         apply_professions(client, cl, client.custom_loadouts.back());
+        if (!conquest_) {
+            unlimited_world_ammo(client.custom_loadouts.back());  // (a match keeps Battlefront's loads)
+        }
         client.worn_per_loadout.push_back(
             resolve_worn_models(*config_.catalog, cl, client.items, client.species, client.gender));
     }
@@ -2171,9 +2185,18 @@ void GameServer::spawn_at_post(Client& client, size_t loadout_index, size_t post
         const Loadout& prev = loadout_of(client);
         const int rem_std = remaining_unified_ammo(client.state.combat, prev, AmmoClass::standard);
         const int rem_hvy = remaining_unified_ammo(client.state.combat, prev, AmmoClass::heavy);
+        bool ran_dry = false;
         for (Loadout& lo : client.custom_loadouts) {
             if (rem_std >= 0 && lo.unified_standard_ammo >= 0) lo.unified_standard_ammo = rem_std;
             if (rem_hvy >= 0 && lo.unified_heavy_ammo >= 0) lo.unified_heavy_ammo = rem_hvy;
+            // An effect ammo run out last life: plain ammo from this one.
+            if (rem_std == 0) ran_dry |= fall_back_to_plain_ammo(lo, AmmoClass::standard);
+            if (rem_hvy == 0) ran_dry |= fall_back_to_plain_ammo(lo, AmmoClass::heavy);
+        }
+        if (ran_dry) {
+            ++client.inventory_rev;  // (its guns as they are now, to the client)
+            client.last_sync_tick = 0;
+            notify(client.entity, "Out of special ammo: firing standard rounds");
         }
     }
     client.loadout = loadout_index;

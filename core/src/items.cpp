@@ -1016,6 +1016,13 @@ bool species_can_use(const ItemDef& def, Species species) {
     return def.species.empty() || std::find(def.species.begin(), def.species.end(), species) != def.species.end();
 }
 
+bool is_generic_ammo(const ItemDef& def) {
+    return def.kind == ItemKind::ammo && def.hit_effect.empty() && !def.damage_type && def.bolt_color_name.empty() &&
+           def.damage_mult == 1.0 && def.rate_mult == 1.0 && def.heat_mult == 1.0 && def.spread_mult == 1.0 &&
+           def.velocity_mult == 1.0 && def.headshot_mult == 1.0 && def.vehicle_mult == 1.0 &&
+           def.shield_mult == 1.0 && def.crit_chance == 0.0;
+}
+
 double sidegrade_score(const ItemDef& d) {
     const auto pw = [](double v, double e) { return std::pow(std::max(v, 0.01), e); };
     const double crit_mult = d.crit_mult > 0 ? d.crit_mult : WeaponDef{}.crit_multiplier;
@@ -1211,22 +1218,20 @@ Loadout ItemCatalog::build_loadout(const CharacterLoadout& cl, std::span<const I
         out.weapons[primary_slot]->ammo_class = AmmoClass::standard;
     }
 
-    // Unified ammo stacks (standard & heavy) with horizontal sidegrade properties.
-    const auto catalog_has_ammo = [&](AmmoClass ac) {
-        for (const ItemDef& d : items_) {
-            if (d.kind == ItemKind::ammo && d.ammo_class == ac) return true;
-        }
-        return false;
-    };
-    out.unified_standard_ammo = catalog_has_ammo(AmmoClass::standard) ? 0 : -1;
-    out.unified_heavy_ammo = catalog_has_ammo(AmmoClass::heavy) ? 0 : -1;
+    // Ammo stacks (standard & heavy): an effect or sidegrade ammo is spent
+    // from its stack (the pool); plain ammo, or none, isn't counted (-1).
+    out.unified_standard_ammo = -1;
+    out.unified_heavy_ammo = -1;
     const auto apply_ammo_slot = [&](std::string_view slot_key, AmmoClass expected_ac) {
         const auto git = cl.gear_ids.find(std::string(slot_key));
         if (git == cl.gear_ids.end() || git->second == 0) return;
         const ItemInstance* inst = find_inst(git->second);
         if (inst == nullptr) return;
         const ItemDef* adef = find(inst->def_id);
-        if (adef == nullptr || adef->kind != ItemKind::ammo || adef->ammo_class != expected_ac) return;
+        if (adef == nullptr || adef->kind != ItemKind::ammo || adef->ammo_class != expected_ac ||
+            is_generic_ammo(*adef)) {
+            return;
+        }
         out.set_unified_ammo(expected_ac,
                              std::clamp(inst->quantity, 0, int(max_ammo_for(expected_ac) * max_ammo_capacity)));
         for (auto& opt_w : out.weapons) {

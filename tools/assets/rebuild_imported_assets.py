@@ -57,6 +57,9 @@ BAZOOKA = ["human_bazooka_stand_idle_emote", "human_bazooka_stand_runforward", "
            "human_bazooka_stand_shoot_full", "human_bazooka_stand_reload_full", "human_bazooka_crouch_idle_emote",
            "human_bazooka_crouch_walkforward", "human_bazooka_crouch_walkbackward", "human_bazooka_crouch_shoot",
            "human_bazooka_crouch_reload"]
+# Riders' and turret gunners' poses (human_4).
+RIDER = ["human_speederbike_9pose", "human_barc_9pose", "human_stap_ride", "human_speederbike_sit",
+         "human_minigun_9pose", "human_dishcannon_9pose", "human_drive", "human_drivesnowspeeder", "human_ride"]
 # A human male in the full stormtrooper armor set, holding an E-11.
 STORMTROOPER = ["hum_m"] + ["armor_stormtrooper_%s_m" % p for p in
                             ["helmet", "chest_plate", "chest_plate_pad", "bicep_l", "bicep_r", "bracer_l",
@@ -167,9 +170,9 @@ def plan(bf2, swg, scratch):
 
     # swg
     anims = []
-    for bank in ["human_0", "human_1", "human_2", "human_3"]:
+    for bank in ["human_0", "human_1", "human_2", "human_3", "human_4"]:
         anims += ["--bf2-bank", bank]
-    for a in RIFLE + PISTOL + BAZOOKA:
+    for a in RIFLE + PISTOL + BAZOOKA + RIDER:
         anims += ["--anim", a]
     steps.append(Step("swg", "species", [tool("swgtool"), "export-species", swg, os.path.join(OUT, "species"),
                                          "--bf2-lvl", ingame]))
