@@ -3,6 +3,7 @@
 // into and driven (predicted by its driver), shot until it blows up with
 // its driver, and given again after its spawn time.
 
+#include <algorithm>
 #include <cmath>
 #include <filesystem>
 #include <fstream>

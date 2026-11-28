@@ -1,6 +1,7 @@
 // Object templates and appearances' collision, read from a small synthetic
 // TRE archive (no game data): what export-city places and what it collides.
 
+#include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <cstring>

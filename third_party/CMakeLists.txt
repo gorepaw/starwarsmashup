@@ -102,7 +102,9 @@ if(MSVC)
   target_compile_options(swm_unshield PRIVATE /W0)
   target_compile_definitions(swm_unshield PRIVATE _CRT_SECURE_NO_WARNINGS _CRT_NONSTDC_NO_WARNINGS)
 endif()
-target_compile_definitions(swm_unshield PRIVATE HAVE_CONFIG_H)
+# PROTOTYPES: its RSA md5 code otherwise declares functions with empty
+# parameter lists, which C23 (GCC 15's default) reads as taking none.
+target_compile_definitions(swm_unshield PRIVATE HAVE_CONFIG_H PROTOTYPES=1)
 target_link_libraries(swm_unshield PUBLIC swm::zlib)
 add_library(swm::unshield ALIAS swm_unshield)
 

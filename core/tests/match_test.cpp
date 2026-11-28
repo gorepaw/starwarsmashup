@@ -2,6 +2,7 @@
 // match lifecycle; a match server with teams and spawning at posts; and bots
 // playing a whole match.
 
+#include <algorithm>
 #include <cmath>
 #include <filesystem>
 #include <fstream>

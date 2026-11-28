@@ -3,6 +3,7 @@
 // control chairs, mobile transport spawns, automated turrets, and exported
 // space battlefields / Mos Eisley hub integration.
 
+#include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <filesystem>

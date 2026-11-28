@@ -1,0 +1,37 @@
+# Builds the game server, core and tools on Linux (without Godot) and runs the
+# tests, so the dedicated server keeps building where it's hosted
+# (docs/BACKEND.md). Tests run one at a time from the repository root, as on
+# Windows. hub_test and quest_test load extracted Battlefront II data, which a
+# public repository never has, so they're skipped here.
+name: Linux
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    env:
+      CC: gcc-14
+      CXX: g++-14
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DSWM_BUILD_GODOT=OFF
+      - name: Build
+        run: cmake --build build -j "$(nproc)"
+      - name: Test
+        run: |
+          skip=" hub_test quest_test "
+          failed=0
+          for t in $(find build -maxdepth 3 -type f -executable -name '*_test' | sort); do
+            n=$(basename "$t")
+            if [[ "$skip" == *" $n "* ]]; then echo "skip  $n (needs extracted assets)"; continue; fi
+            if timeout 900 "$t" > "$n.log" 2>&1; then echo "ok    $n"; else echo "FAIL  $n"; tail -20 "$n.log"; failed=1; fi
+          done
+          exit $failed
