@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <cmath>
 #include <filesystem>
+#include <fstream>
 #include <vector>
 
 #include "swm/core/client.h"
@@ -441,6 +442,157 @@ void test_server_quest() {
     std::filesystem::remove(db_path);
 }
 
+// The Legacy's needs (docs/LEGACY.md, phase 1a): quests across planets,
+// branches that rule each other out, comms when a step starts, quest files
+// from a folder, and finished quests kept on planets that don't know them.
+void test_legacy_book() {
+    const auto dir = std::filesystem::temp_directory_path() / "swm_legacy_quests";
+    std::filesystem::remove_all(dir);
+    std::filesystem::create_directories(dir);
+    {
+        std::ofstream a(dir / "a_tatooine.ini");
+        a << "[quest]\nId = search_rebel\nTitle = Starting the Search\nGiver = Reimos\nPlanet = tatooine\n"
+             "Excludes = search_imperial\nNext = to_naboo\n"
+             "[step]\nKind = talk_to\nNpc = Captain Bastra\nCommFrom = Jabba\nComm = Find the head.\n"
+             "[quest]\nId = search_imperial\nTitle = Starting the Search\nGiver = Reimos\nPlanet = tatooine\n"
+             "[step]\nKind = talk_to\nNpc = Commander Barrezz\n";
+        std::ofstream b(dir / "b_naboo.ini");
+        b << "[quest]\nId = to_naboo\nTitle = To Naboo\nPlanet = tatooine\nRequires = search_rebel\n"
+             "[step]\nKind = go_to\nPosition = 10 0\nRadius = 5\nText = Leave Tatooine\n"
+             "[step]\nKind = talk_to\nNpc = Tchorshel\nPlanet = Naboo\nCommFrom = Panaka\nComm = Come to Kaadara.\n"
+             "[step]\nKind = kill\nTarget = skaak\nCount = 1\nPlanet = naboo\n";
+        std::ofstream ignored(dir / "notes.txt");
+        ignored << "not a quest file";
+    }
+    QuestBook tatooine;
+    tatooine.load(dir);
+    tatooine.set_planet("Tatooine");
+    QuestBook naboo;
+    naboo.load(dir);
+    naboo.set_planet("naboo");
+    CHECK(tatooine.quests().size() == 3 && naboo.quests().size() == 3);
+    CHECK(normalize_planet("Yavin 4") == "yavin4");
+    const QuestDef* to_naboo = naboo.find("to_naboo");
+    CHECK(to_naboo != nullptr && to_naboo->steps[0].planet == "tatooine" && to_naboo->steps[1].planet == "naboo");
+    CHECK(to_naboo != nullptr && to_naboo->steps[1].comm_from == "Panaka");
+
+    // Givers are only looked for on their own planet.
+    CHECK(tatooine.givers() == std::vector<std::string>{"Reimos"});
+    CHECK(naboo.givers().empty());
+
+    // A branch: taking one rules the other out, both ways, and isn't work left.
+    std::vector<QuestProgress> journal;
+    CHECK(tatooine.offered_by("Reimos", journal).size() == 2);
+    QuestEffects took = tatooine.accept(journal, *tatooine.find("search_rebel"));
+    CHECK(took.comms.size() == 1 && took.comms[0].from == "Jabba" && took.comms[0].text == "Find the head.");
+    CHECK(tatooine.offered_by("Reimos", journal).empty());
+    CHECK(!tatooine.can_accept(*tatooine.find("search_imperial"), journal));
+    tatooine.on_talk(journal, "Captain Bastra", {});
+    CHECK(journal[0].done);
+    CHECK(!tatooine.has_work_left("Reimos", journal));  // the Imperial branch isn't owed
+    CHECK(tatooine.why_none("Reimos", journal) == "Reimos has no more work for you.");
+
+    // The chain's next quest; its steps only advance on their planet.
+    CHECK(tatooine.can_accept(*to_naboo, journal));
+    tatooine.accept(journal, *tatooine.find("to_naboo"));
+    CHECK(naboo.on_position(journal, {-10, 0, 0}).changed == false);  // Tatooine's spot, but on Naboo
+    QuestEffects left = tatooine.on_position(journal, {-10, 0, 0});
+    CHECK(journal[1].step == 1);
+    CHECK(left.comms.size() == 1 && left.comms[0].from == "Panaka");  // the step that started calls
+    CHECK(!tatooine.on_talk(journal, "Tchorshel", {}).changed);  // a namesake on Tatooine doesn't count
+    CHECK(naboo.on_talk(journal, "Tchorshel", {}).changed && journal[1].step == 2);
+    CHECK(!tatooine.on_kill(journal, {"skaak", "", false}, {}, {}).changed);
+    CHECK(naboo.on_kill(journal, {"skaak", "", false}, {}, {}).changed && journal[1].done);
+
+    // A finished quest a planet doesn't know is kept there (it was erased).
+    QuestBook elsewhere;
+    QuestDef other = hunt_quest();
+    elsewhere.add(other);
+    std::vector<QuestProgress> kept = {{"search_rebel", 1, 0, true}, {"mission:lair:1", 2, 0, true}};
+    elsewhere.on_event(kept, "bank");
+    CHECK(kept.size() == 1 && kept[0].id == "search_rebel");
+
+    // Lairs grow for this planet's kill steps only.
+    WorldSpawns spawns;
+    spawns.lairs.push_back({"skaak", {0, 0, 0}, 20, 0});
+    tatooine.fit_lairs(spawns);
+    CHECK(spawns.lairs[0].count == 0);
+    naboo.fit_lairs(spawns);
+    CHECK(spawns.lairs[0].count == 1);
+    std::filesystem::remove_all(dir);
+}
+
+// Next = through a server: completing a quest starts the next one by itself,
+// with its comm.
+void test_server_chain() {
+    const auto root = repo_root();
+    ItemCatalog catalog;
+    catalog.load(root / "game" / "items" / "swg_catalog.ini");
+    Heightfield ground{201, 2.0, -200, -200, std::vector<float>(201 * 201, 0.0f)};
+    World world{ground};
+    QuestBook book;
+    {
+        QuestDef first;
+        first.id = "short_walk";
+        first.title = "Short Walk";
+        first.giver = "Vourk";
+        first.next = {"respect"};
+        QuestStep talk;
+        talk.kind = QuestStepKind::talk_to;
+        talk.npc = "Vourk";
+        first.steps = {talk};
+        book.add(first);
+        QuestDef second;
+        second.id = "respect";
+        second.title = "Respect";
+        second.prerequisites = {"short_walk"};
+        QuestStep kill;
+        kill.kind = QuestStepKind::kill;
+        kill.target = "swooper";
+        kill.text = "Kill swoopers";
+        kill.comm_from = "Bib Fortuna";
+        kill.comm = "You work for Jabba now.";
+        second.steps = {kill};
+        book.add(second);
+    }
+    net::LoopbackHub links;
+    net::Endpoint server_ep{1, 1}, client_ep{2, 1};
+    net::LoopbackLink srv_link{links, server_ep};
+    net::LoopbackLink cli_link{links, client_ep};
+    ServerConfig config;
+    config.catalog = &catalog;
+    config.pvp_enabled = false;
+    config.spawn = {0, 0, 0};
+    GameServer server(srv_link, world, config, nullptr);
+    server.set_looks({"object/mobile/shared_dressed_commoner_tatooine_rodian_male_01.iff"});
+    const uint32_t vourk = server.add_npc("Vourk", {3, 0, 0}, 0, 1);
+    server.set_quests(&book, {{vourk, "Vourk", {3, 0, 0}, true}}, {});
+    GameClient client(cli_link, world, ClientConfig{.server = server_ep, .name = "Chainer"});
+    double now = 0;
+    const auto run = [&](double seconds) {
+        for (const double end = now + seconds; now < end; now += 1.0 / 60.0) {
+            server.update(now);
+            client.update(now);
+        }
+    };
+    run(0.5);
+    client.talk_to(vourk);
+    run(0.3);
+    CHECK(client.quests().offers.size() == 1 && client.quests().offers[0].id == "short_walk");
+    client.accept_quest("short_walk");
+    run(0.3);
+    client.talk_to(vourk);  // completes it: Respect starts by itself
+    run(0.3);
+    CHECK(client.quests().active.size() == 1 && client.quests().active[0].id == "respect");
+    CHECK(client.quests().completed.size() == 1);
+    CHECK(client.player_status().notice.find("Short Walk") != std::string::npos ||
+          client.player_status().notice.find("Respect") != std::string::npos);
+    const auto journal = server.quests_of(client.entity_id());
+    CHECK(journal != nullptr && journal->size() == 2 && journal->at(1).id == "respect" && !journal->at(1).done);
+    client.disconnect();
+    run(0.1);
+}
+
 } // namespace
 
 int main() {
@@ -449,5 +601,7 @@ int main() {
     test_targets_and_waiting_givers();
     test_tatooine_quests();
     test_server_quest();
+    test_legacy_book();
+    test_server_chain();
     return swm::test::finish("quest_test");
 }

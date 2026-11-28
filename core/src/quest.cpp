@@ -139,7 +139,36 @@ std::string describe_direction(Vec3 from, Vec3 to) {
     return std::format("{:.1f} km {}", distance / 1000, direction);
 }
 
+std::string normalize_planet(std::string_view name) {
+    std::string out;
+    for (const char c : name) {
+        if (std::isalnum(uint8_t(c))) out.push_back(char(std::tolower(uint8_t(c))));
+    }
+    return out;
+}
+
+void QuestBook::set_planet(std::string_view planet) {
+    planet_ = normalize_planet(planet);
+}
+
+bool QuestBook::local(const QuestDef& def) const {
+    return planet_.empty() || def.planet.empty() || def.planet == planet_;
+}
+
+bool QuestBook::here(const QuestStep& step) const {
+    return planet_.empty() || step.planet.empty() || step.planet == planet_;
+}
+
 void QuestBook::load(const std::filesystem::path& path) {
+    if (std::filesystem::is_directory(path)) {
+        std::vector<std::filesystem::path> files;
+        for (const auto& entry : std::filesystem::directory_iterator(path)) {
+            if (entry.is_regular_file() && entry.path().extension() == ".ini") files.push_back(entry.path());
+        }
+        std::sort(files.begin(), files.end());
+        for (const auto& file : files) load(file);
+        return;
+    }
     const Ini ini = Ini::load(path);
     const std::string where = path.string();
     QuestDef* current = nullptr;
@@ -156,9 +185,14 @@ void QuestBook::load(const std::filesystem::path& path) {
             def.done_text = s.get("Done").value_or("");
             def.repeatable = s.number("Repeatable", 0) != 0;
             def.level = std::clamp(int(s.number("Level", 1)), 1, 100);
+            def.planet = normalize_planet(s.get("Planet").value_or(""));
             for (const auto& [key, value] : s.values) {
                 if (same_ci(key, "Requires")) {
                     for (std::string& id : split_list(value)) def.prerequisites.push_back(std::move(id));
+                } else if (same_ci(key, "Excludes")) {
+                    for (std::string& id : split_list(value)) def.excludes.push_back(std::move(id));
+                } else if (same_ci(key, "Next")) {
+                    for (std::string& id : split_list(value)) def.next.push_back(std::move(id));
                 } else if (same_ci(key, "Item")) {
                     def.reward.items.push_back(trim(value));
                 }
@@ -186,6 +220,13 @@ void QuestBook::load(const std::filesystem::path& path) {
             step.drop_from = s.get("DropFrom").value_or("");
             step.drop_chance = std::clamp(s.number("DropChance", 0), 0.0, 1.0);
             step.track = s.get("Track").value_or("");
+            if (const auto planet = s.get("Planet")) {
+                step.planet = normalize_planet(*planet);
+            } else {
+                step.planet = current->planet;
+            }
+            step.comm_from = s.get("CommFrom").value_or("");
+            step.comm = s.get("Comm").value_or("");
             Vec3 point;
             double radius = 0;
             if (const auto position = s.get("Position"); position && galaxies_point(*position, point)) {
@@ -245,7 +286,7 @@ const QuestDef* QuestBook::find(std::string_view id) const {
 std::vector<std::string> QuestBook::givers() const {
     std::vector<std::string> out;
     for (const QuestDef& def : quests_) {
-        if (!def.giver.empty() && std::find(out.begin(), out.end(), def.giver) == out.end()) {
+        if (local(def) && !def.giver.empty() && std::find(out.begin(), out.end(), def.giver) == out.end()) {
             out.push_back(def.giver);
         }
     }
@@ -355,6 +396,19 @@ const QuestDef* QuestBook::mission(std::string_view id) const {
     return &missions_.emplace(text, std::move(def)).first->second;
 }
 
+bool QuestBook::ruled_out(const QuestDef& def, const std::vector<QuestProgress>& journal) const {
+    const auto names = [](const std::vector<std::string>& ids, std::string_view id) {
+        return std::find(ids.begin(), ids.end(), id) != ids.end();
+    };
+    for (const QuestProgress& p : journal) {
+        if (p.id == def.id) continue;
+        if (names(def.excludes, p.id)) return true;
+        const QuestDef* other = p.id.starts_with("mission:") ? nullptr : find(p.id);
+        if (other != nullptr && names(other->excludes, def.id)) return true;
+    }
+    return false;
+}
+
 bool QuestBook::can_accept(const QuestDef& def, const std::vector<QuestProgress>& journal) const {
     if (const QuestProgress* p = find_progress(journal, def.id); p != nullptr && (!p->done || !def.repeatable)) {
         return false;
@@ -363,6 +417,7 @@ bool QuestBook::can_accept(const QuestDef& def, const std::vector<QuestProgress>
         const QuestProgress* p = find_progress(journal, required);
         if (p == nullptr || !p->done) return false;
     }
+    if (ruled_out(def, journal)) return false;
     int active = 0, missions = 0;
     for (const QuestProgress& p : journal) {
         if (p.done) continue;
@@ -374,8 +429,9 @@ bool QuestBook::can_accept(const QuestDef& def, const std::vector<QuestProgress>
 
 bool QuestBook::has_work_left(std::string_view giver, const std::vector<QuestProgress>& journal) const {
     for (const QuestDef& def : quests_) {
-        if (!same_ci(def.giver, giver)) continue;
+        if (!local(def) || !same_ci(def.giver, giver)) continue;
         const QuestProgress* p = find_progress(journal, def.id);
+        if (p == nullptr && ruled_out(def, journal)) continue;  // a branch not taken isn't work left
         if (p == nullptr || !p->done || def.repeatable) return true;
     }
     return false;
@@ -400,6 +456,9 @@ void QuestBook::fit_lairs(WorldSpawns& spawns) const {
     for (LairSpawn& lair : spawns.lairs) {
         for (const QuestDef& def : quests_) {
             for (const QuestStep& step : def.steps) {
+                // Only this planet's steps (before a planet is set, only
+                // untagged ones: the hub's own file).
+                if (planet_.empty() ? !step.planet.empty() : !here(step)) continue;
                 // Only a step naming this creature: "creature" or "any" can be
                 // met at any lair.
                 if (step.kind == QuestStepKind::kill && same_ci(step.target, lair.type_id)) {
@@ -447,7 +506,10 @@ std::string QuestBook::why_none(std::string_view giver, const std::vector<QuestP
         }
     }
     for (const QuestDef& def : quests_) {
-        if (!same_ci(def.giver, giver) || find_progress(journal, def.id) != nullptr) continue;
+        if (!local(def) || !same_ci(def.giver, giver) || find_progress(journal, def.id) != nullptr ||
+            ruled_out(def, journal)) {
+            continue;
+        }
         for (const std::string& required : def.prerequisites) {
             const QuestProgress* p = find_progress(journal, required);
             if (p != nullptr && p->done) continue;
@@ -470,7 +532,7 @@ std::vector<const QuestDef*> QuestBook::offered_by(std::string_view giver,
                                                    const std::vector<QuestProgress>& journal) const {
     std::vector<const QuestDef*> out;
     for (const QuestDef& def : quests_) {
-        if (same_ci(def.giver, giver) && can_accept(def, journal)) {
+        if (local(def) && same_ci(def.giver, giver) && can_accept(def, journal)) {
             out.push_back(&def);
         }
     }
@@ -524,18 +586,23 @@ void QuestBook::advance(QuestProgress& progress, const QuestDef& def, QuestEffec
         effects.completed.push_back(def.id);
         effects.notes.push_back({def.id, "Quest complete: " + def.title});
     } else {
-        effects.notes.push_back({def.id, def.title + ": " + def.steps[size_t(progress.step)].text});
+        const QuestStep& step = def.steps[size_t(progress.step)];
+        effects.notes.push_back({def.id, def.title + ": " + step.text});
+        if (!step.comm.empty()) effects.comms.push_back({def.id, step.comm_from, step.comm});
     }
 }
 
 namespace {
 
 // Drops finished missions and repeatable quests: nothing to keep them for.
+// A finished quest this book doesn't know (another planet's) is kept: it's
+// still somebody's prerequisite there.
 void tidy(std::vector<QuestProgress>& journal, const QuestBook& book) {
     std::erase_if(journal, [&](const QuestProgress& p) {
         if (!p.done) return false;
+        if (p.id.starts_with("mission:")) return true;
         const QuestDef* def = book.find(p.id);
-        return def == nullptr || def->mission || def->repeatable;
+        return def != nullptr && (def->mission || def->repeatable);
     });
 }
 
@@ -548,6 +615,7 @@ QuestEffects QuestBook::on_kill(std::vector<QuestProgress>& journal, const KillT
         const QuestDef* def = p.done ? nullptr : find(p.id);
         if (def == nullptr || p.step >= int(def->steps.size())) continue;
         const QuestStep& step = def->steps[size_t(p.step)];
+        if (!here(step)) continue;
         if (matches(step, tags, at)) {
             ++p.count;
             effects.changed = true;
@@ -571,7 +639,7 @@ QuestEffects QuestBook::on_event(std::vector<QuestProgress>& journal, std::strin
         const QuestDef* def = p.done ? nullptr : find(p.id);
         if (def == nullptr || p.step >= int(def->steps.size())) continue;
         const QuestStep& step = def->steps[size_t(p.step)];
-        if (step.kind != QuestStepKind::event || !same_ci(step.target, name)) continue;
+        if (step.kind != QuestStepKind::event || !same_ci(step.target, name) || !here(step)) continue;
         ++p.count;
         effects.changed = true;
         if (p.count >= step.count) {
@@ -590,7 +658,8 @@ QuestEffects QuestBook::on_position(std::vector<QuestProgress>& journal, Vec3 at
         const QuestDef* def = p.done ? nullptr : find(p.id);
         while (def != nullptr && !p.done && p.step < int(def->steps.size())) {
             const QuestStep& step = def->steps[size_t(p.step)];
-            if (step.kind != QuestStepKind::go_to || !step.where || flat_distance(*step.where, at) > step.radius) {
+            if (step.kind != QuestStepKind::go_to || !step.where || !here(step) ||
+                flat_distance(*step.where, at) > step.radius) {
                 break;
             }
             advance(p, *def, effects);
@@ -608,7 +677,7 @@ QuestEffects QuestBook::on_talk(std::vector<QuestProgress>& journal, std::string
         const QuestDef* def = p.done ? nullptr : find(p.id);
         if (def == nullptr || p.step >= int(def->steps.size())) continue;
         const QuestStep& step = def->steps[size_t(p.step)];
-        if (!same_ci(step.npc, npc)) continue;
+        if (!same_ci(step.npc, npc) || !here(step)) continue;
         if (step.kind == QuestStepKind::talk_to) {
             advance(p, *def, effects);
         } else if (step.kind == QuestStepKind::deliver) {
@@ -659,6 +728,9 @@ QuestEffects QuestBook::accept(std::vector<QuestProgress>& journal, const QuestD
     journal.push_back({def.id, 0, 0, false});
     effects.changed = true;
     effects.notes.push_back({def.id, "Quest accepted: " + def.title});
+    if (!def.steps.empty() && !def.steps[0].comm.empty()) {
+        effects.comms.push_back({def.id, def.steps[0].comm_from, def.steps[0].comm});
+    }
     return effects;
 }
 

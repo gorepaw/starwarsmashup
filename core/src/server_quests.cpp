@@ -1,6 +1,7 @@
 // GameServer's quests: the journal each character keeps, what advances it
 // (kills, places, talking, carrying), and the quest log clients are sent.
 #include <algorithm>
+#include <cctype>
 #include <cmath>
 #include <format>
 
@@ -98,17 +99,25 @@ void GameServer::save_economy(Client& client) {
 void GameServer::apply_quests(Client& client, QuestEffects effects) {
     if (quest_book_ == nullptr) return;
     std::vector<std::string> notes;
+    std::vector<std::string> comms;
     bool changed = false;
+    const auto hear = [&](const std::vector<QuestEffects::Comm>& from) {
+        for (const QuestEffects::Comm& comm : from) {
+            comms.push_back(comm.from.empty() ? "Comm: " + comm.text : comm.from + " (comm): " + comm.text);
+        }
+    };
     // An effect may finish what the next step waits on (a delivery's reward
     // completes a collect step, a step ends where the next one is): look
     // again, a few times at most.
     for (int pass = 0; pass < 6; ++pass) {
         bool inventory = false;
+        bool granted = false;
         for (const QuestEffects::Note& note : effects.notes) {
             if (!note.text.starts_with("Quest complete: ")) {  // said below, with the reward
                 notes.push_back(note.text);
             }
         }
+        hear(effects.comms);
         for (const std::string& item : effects.grant) {
             give_item(client, item);
             notes.push_back("Found " + item_name(item));
@@ -170,9 +179,25 @@ void GameServer::apply_quests(Client& client, QuestEffects effects) {
             }
             notes.push_back(std::move(line));
             say(std::format("{} completed {}", client.name, def->id));
+            // The chain goes on by itself (the Legacy's hand-offs and comm-given quests).
+            for (const std::string& next_id : def->next) {
+                const QuestDef* next = quest_book_->find(next_id);
+                if (next == nullptr) {
+                    say(std::format("{} names Next = {}, which isn't a quest", def->id, next_id));
+                    continue;
+                }
+                if (!quest_book_->can_accept(*next, client.quests)) {
+                    notify(client.entity, std::format("Make room in your journal to take on {}", next->title));
+                    continue;
+                }
+                QuestEffects started = quest_book_->accept(client.quests, *next);
+                for (const QuestEffects::Note& note : started.notes) notes.push_back(note.text);
+                hear(started.comms);
+                granted = true;
+            }
         }
-        changed = changed || effects.changed;
-        if (!effects.changed && !inventory) {
+        changed = changed || effects.changed || granted;
+        if (!effects.changed && !inventory && !granted) {
             break;
         }
         QuestEffects more = quest_book_->on_position(client.quests, client.state.position);
@@ -193,6 +218,10 @@ void GameServer::apply_quests(Client& client, QuestEffects effects) {
                 say(std::format("quest save error for {}: {}", client.name, error.what()));
             }
         }
+    }
+    // Comms first (until the comm window, Legacy phase 1b, they share the notice line).
+    for (const std::string& comm : comms) {
+        notify(client.entity, comm);
     }
     if (!notes.empty()) {
         // The newest few, newest last (a notice is one line).
@@ -351,7 +380,14 @@ net::QuestInfo GameServer::describe_quest(const Client& client, const QuestDef& 
     const size_t current = progress ? size_t(std::clamp(progress->step, 0, int(def.steps.size()) - 1)) : 0;
     const size_t shown = progress ? current + 1 : def.steps.size();
     for (size_t i = 0; i < shown && i < def.steps.size(); ++i) {
-        info.steps.push_back(step_text(def.steps[i]));
+        std::string text = step_text(def.steps[i]);
+        // A step on another planet says which (it can't be done, or shown, here).
+        if (quest_book_ != nullptr && !quest_book_->here(def.steps[i])) {
+            std::string planet = def.steps[i].planet;
+            planet[0] = char(std::toupper(uint8_t(planet[0])));
+            text += " (" + planet + ")";
+        }
+        info.steps.push_back(std::move(text));
     }
     if (def.steps.empty()) return info;
     const QuestStep& step = def.steps[current];
@@ -362,6 +398,9 @@ net::QuestInfo GameServer::describe_quest(const Client& client, const QuestDef& 
                              ? held_count(client, step.target)
                              : progress->count;
         info.count = uint16_t(std::clamp(have, 0, int(info.needed)));
+    }
+    if (quest_book_ != nullptr && !quest_book_->here(step)) {
+        return info;  // no waypoint or targets for a step on another planet
     }
     if (step.where) {
         info.has_waypoint = true;

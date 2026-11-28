@@ -383,11 +383,15 @@ HubConfig load_hub(const std::filesystem::path& path) {
             look_of(b.template_path);
         }
     }
-    if (const auto quests = main->get("Quests")) {
-        hub.quests.load(path.parent_path() / *quests);
-        if (hub.spawns) {
-            hub.quests.fit_lairs(*hub.spawns);
+    // Quests = a file or a folder of them, repeated (a planet's own, and the
+    // Legacy's, which every planet loads: docs/LEGACY.md).
+    for (const auto& [key, value] : main->values) {
+        if (same_name(key, "Quests")) {
+            hub.quests.load(path.parent_path() / value);
         }
+    }
+    if (hub.spawns) {
+        hub.quests.fit_lairs(*hub.spawns);  // the hub's own (untagged) quests; Hub fits its planet's
     }
     if (const auto loot = main->get("LootTables")) {
         hub.loot_tables.load(path.parent_path() / *loot);
@@ -522,6 +526,11 @@ Hub::Hub(GameServer& server, uint16_t port, const World& world, HubConfig config
         snap_object(wb.position);
     }
     server_.set_crafting(&config_.crafting, config_.workbenches);
+    // Quests know which planet they're on (tagged ones: the Legacy's).
+    config_.quests.set_planet(config_.planet);
+    if (config_.spawns && !config_.planet.empty()) {
+        config_.quests.fit_lairs(*config_.spawns);
+    }
     if (config_.spawns) {
         const Vec3 origin = config_.spawn ? *config_.spawn
                             : !config_.recruiters.empty() ? config_.recruiters[0].position
@@ -640,7 +649,7 @@ void Hub::add_people() {
     std::vector<std::string> quest_people = config_.quests.givers();
     for (const QuestDef& def : config_.quests.quests()) {
         for (const QuestStep& step : def.steps) {
-            if (!step.npc.empty()) quest_people.push_back(step.npc);
+            if (!step.npc.empty() && config_.quests.here(step)) quest_people.push_back(step.npc);
         }
     }
     const std::vector<std::string> givers = config_.quests.givers();
