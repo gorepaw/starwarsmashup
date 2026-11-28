@@ -1520,8 +1520,6 @@ struct Encoder {
         out.put_string(m.inspiration_choice);
         out.put_string(m.channel);
         out.put(m.channel_remaining);
-    }
-    void operator()(const SpecialistAck& m) {
         out.put(uint16_t(m.slice_jobs.size()));
         for (const SliceJob& j : m.slice_jobs) {
             out.put(j.id);
@@ -1533,6 +1531,8 @@ struct Encoder {
             out.put(j.fee);
             out.put(j.expires);
         }
+    }
+    void operator()(const SpecialistAck& m) {
         out.put(uint8_t(Type::specialist_ack));
         out.put(m.revision);
     }
@@ -2227,10 +2227,6 @@ Message decode(std::span<const uint8_t> packet) {
         m.inspiration_choice = in.get_string();
         m.channel = in.get_string();
         m.channel_remaining = in.get<float>();
-        message = std::move(m);
-        break;
-    }
-    case Type::specialist_ack:
         const uint16_t jobs = in.get<uint16_t>();
         for (uint16_t i = 0; i < jobs; ++i) {
             SliceJob j;
@@ -2244,6 +2240,10 @@ Message decode(std::span<const uint8_t> packet) {
             j.expires = in.get<double>();
             m.slice_jobs.push_back(std::move(j));
         }
+        message = std::move(m);
+        break;
+    }
+    case Type::specialist_ack:
         message = SpecialistAck{in.get<uint32_t>()};
         break;
     default:

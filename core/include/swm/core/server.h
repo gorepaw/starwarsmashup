@@ -784,6 +784,11 @@ private:
     void specialist_hit(uint32_t attacker, uint32_t victim);
     void update_spawn_points();
     void post_bounty(Client& client, const std::string& target, int64_t amount);
+    // Smuggler (server_specialists.cpp): a slice asked of a Smuggler, and their answer.
+    void request_slice(Client& owner, uint64_t item_id, const std::string& slice, const std::string& smuggler);
+    void answer_slice(Client& smuggler, uint64_t job, bool accept);
+    // What a vendor pays: a quarter more to a Smuggler's Black Market (85).
+    int64_t black_market(const Client& client, int64_t value) const;
     void load_posted_bounties();
     void save_posted_bounties();
     void refund_bounty(const PostedBounty& bounty, std::string_view why);
@@ -802,11 +807,6 @@ private:
     CharacterStats active_stats(const Client& client) const;
     // A perk's at-once part: stamina, shield, heat, a reload, a recharge, a cloak.
     void perk_act(Client& client, const TriggeredPerk& perk, int slot);
-    // Smuggler (server_specialists.cpp): a slice asked of a Smuggler, and their answer.
-    void request_slice(Client& owner, uint64_t item_id, const std::string& slice, const std::string& smuggler);
-    void answer_slice(Client& smuggler, uint64_t job, bool accept);
-    // What a vendor pays: a quarter more to a Smuggler's Black Market (85).
-    int64_t black_market(const Client& client, int64_t value) const;
     // A shot's damage before mitigation, as hit_damage, but a critical hit
     // where the shooter's perks make it one (Execution, or `crit`: a
     // riposte), and more from behind with a weapon that flanks (Flanker).
@@ -968,6 +968,7 @@ private:
     std::vector<PostedBounty> posted_;
     bool posted_loaded_ = false;
     double bounty_tick_ = 0;
+    uint64_t next_slice_job_ = 1;
     uint64_t next_listing_ = 1;
     uint64_t next_contract_ = 1;
     uint32_t next_field_id_ = 1;
@@ -976,4 +977,3 @@ private:
 };
 
 } // namespace swm::core
-    uint64_t next_slice_job_ = 1;

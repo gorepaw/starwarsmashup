@@ -2918,6 +2918,8 @@ void GameServer::send_specialist_sync(Client& client) {
     sync.samples = spec.samples;
     sync.contracts = spec.contracts;
     for (Contract& c : sync.contracts) c.expires = std::max(0.0, c.expires - specialist_clock_);
+    sync.slice_jobs = spec.slice_jobs;
+    for (SliceJob& j : sync.slice_jobs) j.expires = std::max(0.0, j.expires - specialist_clock_);
     sync.offers = spec.offers;
     for (Contract& c : sync.offers) c.expires = std::max(0.0, c.expires - specialist_clock_);
     sync.offer_source = spec.offer_source;
@@ -2956,8 +2958,6 @@ std::optional<Vec3> GameServer::bounty_spot(Vec3 from) {
         Vec3 p = world_.clamp({from.x + dist * std::cos(angle), 0, from.z + dist * std::sin(angle)});
         p.y = world_.terrain().height_at(p.x, p.z);
         if (world_.near_structure(p, 60.0)) continue;
-    sync.slice_jobs = spec.slice_jobs;
-    for (SliceJob& j : sync.slice_jobs) j.expires = std::max(0.0, j.expires - specialist_clock_);
         return p;
     }
     return std::nullopt;
@@ -3116,6 +3116,16 @@ void GameServer::update_bounties(double dt) {
     bounty_tick_ += dt;
     if (bounty_tick_ < 1.0 || conquest_) return;
     bounty_tick_ = 0;
+    // Slice asks no one answered in time, or whose asker left.
+    for (Client& c : clients_) {
+        const size_t before = c.spec.slice_jobs.size();
+        std::erase_if(c.spec.slice_jobs,
+                      [&](const SliceJob& j) { return j.expires < specialist_clock_ || find(j.owner) == nullptr; });
+        if (c.spec.slice_jobs.size() != before) {
+            ++c.spec.revision;
+            c.spec.sync_tick = 0;
+        }
+    }
     // Bloodhound, in the world: marks within 150 m stay on the hunter's HUD.
     for (Client& c : clients_) {
         if (c.life != Life::alive || c.spec.contracts.empty() || !granted(c, "bounty_hunter", "bloodhound")) continue;
@@ -3145,17 +3155,6 @@ void GameServer::update_bounties(double dt) {
     }
 }
 
-} // namespace swm::core
-    // Slice asks no one answered in time, or whose asker left.
-    for (Client& c : clients_) {
-        const size_t before = c.spec.slice_jobs.size();
-        std::erase_if(c.spec.slice_jobs,
-                      [&](const SliceJob& j) { return j.expires < specialist_clock_ || find(j.owner) == nullptr; });
-        if (c.spec.slice_jobs.size() != before) {
-            ++c.spec.revision;
-            c.spec.sync_tick = 0;
-        }
-    }
 // ---------------------------------------------------------------------------
 // Smuggler: slicing others' gear, the Black Market
 
@@ -3251,3 +3250,4 @@ void GameServer::answer_slice(Client& smuggler, uint64_t job_id, bool accept) {
     earn_specialist_xp(smuggler, "smuggler", 60 + slice->level);
 }
 
+} // namespace swm::core

@@ -33,10 +33,10 @@ const std::array<WeaponArchetypeInfo, 17> archetype_table{{
     {WeaponArchetype::placed, "placed", "", "grenade", "secondary"},
     {WeaponArchetype::utility, "utility", "", "grenade", "secondary"},
     {WeaponArchetype::medpack, "medpack", "", "grenade", "secondary"},
+    {WeaponArchetype::jump_pack, "jump_pack", "", "grenade", "secondary"},
 }};
 
 WeaponDef default_archetype_weapon(WeaponArchetype a) {
-    {WeaponArchetype::jump_pack, "jump_pack", "", "grenade", "secondary"},
     WeaponDef w;
     switch (a) {
     case WeaponArchetype::rifle_auto:
@@ -260,9 +260,6 @@ WeaponDef default_archetype_weapon(WeaponArchetype a) {
         w.fire_sound = "com_weap_throw";
         w.muzzle_flash.clear();
         break;
-    case WeaponArchetype::melee:
-    case WeaponArchetype::melee_2h:
-        // One-handed: a sidearm. Two-handed is a primary, so it outweighs
     case WeaponArchetype::jump_pack:
         // No shot: a hop (its item's Jump), three a life, a second and a half apart.
         w.name = "swg_jump_pack";
@@ -279,6 +276,9 @@ WeaponDef default_archetype_weapon(WeaponArchetype a) {
         w.fire_sound.clear();
         w.muzzle_flash.clear();
         break;
+    case WeaponArchetype::melee:
+    case WeaponArchetype::melee_2h:
+        // One-handed: a sidearm. Two-handed is a primary, so it outweighs
         // it: slower swings that hit harder, about a fifth more damage a
         // second, with more reach, a wider arc and more stagger, and a
         // shorter lunge.
@@ -638,6 +638,7 @@ void ItemCatalog::load(const std::filesystem::path& catalog_ini, const std::file
         def.heal_amount = s.number("HealAmount", 0.0);
         def.heal_time = std::max(0.0, s.number("HealTime", 0.0));
         def.carried = std::max(0, int(s.number("Carried", 0)));
+        def.jump = std::max(0.0, s.number("Jump", 0.0));
         def.teaches = s.get("Teaches").value_or("");
         def.vehicle = s.get("Vehicle").value_or("");
         if (def.kind == ItemKind::vehicle && def.vehicle.empty()) {
@@ -726,7 +727,6 @@ void ItemCatalog::load(const std::filesystem::path& catalog_ini, const std::file
                     throw std::runtime_error(where + " (" + def.id + "): Paint is '<scheme>: <variable>=<index>, ...'");
                 }
                 query += (query.empty() ? "" : "&") + part;
-        def.jump = std::max(0.0, s.number("Jump", 0.0));
             }
             if (scheme.empty() || query.empty()) {
                 throw std::runtime_error(where + " (" + def.id + "): Paint is '<scheme>: <variable>=<index>, ...'");
@@ -1136,6 +1136,10 @@ WeaponDef ItemCatalog::resolve_weapon(const ItemDef& def, ItemGrade grade, int m
         w.heal_time = def.heal_time;
         if (def.carried > 0) w.ammo = def.carried;
     }
+    if (w.projectile == Projectile::jump) {
+        if (def.jump > 0) w.jump = def.jump;
+        if (def.carried > 0) w.ammo = def.carried;
+    }
     if (w.projectile == Projectile::melee) {
         w.melee_range *= def.range_mult;
     }
@@ -1292,10 +1296,6 @@ BattleReward compute_battle_reward(bool won, bool draw, uint16_t kills, uint16_t
         return battle_reward({250, 100, 200}, kills, captures);
     }
     if (draw) {
-    if (w.projectile == Projectile::jump) {
-        if (def.jump > 0) w.jump = def.jump;
-        if (def.carried > 0) w.ammo = def.carried;
-    }
         return battle_reward({150, 60, 120}, kills, captures);
     }
     return battle_reward({100, 40, 80}, kills, captures);

@@ -651,12 +651,12 @@ struct SpecialistRequest {
         cancel_channel = 26,
         choose_inspiration = 27,  // `id`: the Inspiration to build in a performer's audience ("": theirs)
         post_bounty = 28,         // `id`: an opted-in player's name; `amount`: credits put up (at a bounty terminal)
+        slice_request = 29,       // `item_id`: yours; `id`: the slice; `text`: the Smuggler (near) to ask
+        slice_answer = 30,        // `amount`: a slice job's id; `target`: 1 do it, 0 decline (the Smuggler's)
     };
     uint8_t action = 0;
     std::string id;
     uint32_t target = 0;
-        slice_request = 29,       // `item_id`: yours; `id`: the slice; `text`: the Smuggler (near) to ask
-        slice_answer = 30,        // `amount`: a slice job's id; `target`: 1 do it, 0 decline (the Smuggler's)
     Vec3 position;
     int64_t amount = 0;
     uint64_t item_id = 0;
@@ -704,11 +704,11 @@ struct SpecialistSync {
     std::string inspiration_choice;  // what it builds in an audience (empty: the performer's)
     std::string channel;            // an ability being channeled (empty: none)
     float channel_remaining = 0;
+    std::vector<SliceJob> slice_jobs;  // a Smuggler's: asks from others (expires: seconds left)
 
     friend bool operator==(const SpecialistSync&, const SpecialistSync&) = default;
 };
 
-    std::vector<SliceJob> slice_jobs;  // a Smuggler's: asks from others (expires: seconds left)
 struct SpecialistAck {
     uint32_t revision = 0;
 };

@@ -387,8 +387,8 @@ struct Contract {
     // when it's spawned on accepting.
     int tier = 0;
     int guards = 0;
-
     bool ambushed = false;  // a contraband run's: its ambush has sprung
+
     friend bool operator==(const Contract&, const Contract&) = default;
 };
 
@@ -470,6 +470,8 @@ bool listing_matches(const BazaarListing& listing, std::string_view item_name, s
 
 // The slice an item carries (its color_json's "slice"), if any.
 std::string item_slice(const ItemInstance& item);
+// How strong an item's slice is (1: as written; a Master Slicer's 1.5).
+double item_slice_power(const ItemInstance& item);
 // The item with a slice set (replacing any other).
 void set_item_slice(ItemInstance& item, std::string_view slice_id, double power = 1.0);
 // A slice made `power` times as strong, its upsides and downsides alike.
@@ -481,8 +483,6 @@ void apply_slice(Gear& gear, const SliceDef& slice);
 // ---------------------------------------------------------------------------
 // Entertainer
 
-// How strong an item's slice is (1: as written; a Master Slicer's 1.5).
-double item_slice_power(const ItemInstance& item);
 // Inspiration: one long buff, built by watching a performance (every pulse
 // in the audience adds `inspiration_per_second` of it per second watched,
 // more with a band of performers within `band_radius`), up to a cap (a
@@ -577,15 +577,6 @@ struct ActiveCompanion {
 
 // A character's Stage 12 state on the server: its kit's cooldowns, the
 // effects on it, its datapad, samples, contracts and offers.
-struct SpecialistState {
-    std::vector<std::string> abilities;      // the active loadout's (unlocked_abilities)
-    std::map<std::string, double> cooldowns; // ability id -> seconds left
-    std::vector<TimedEffect> effects;
-    std::vector<CompanionRecord> companions;
-    uint64_t next_companion_id = 1;
-    uint64_t next_sample_id = 1;
-    std::vector<DnaSample> samples;
-    uint64_t active_companion = 0;   // the fielded one's record (0: none)
 // A slice another player asked of a Smuggler (docs/PROFESSIONS.md): their
 // item, the slice, and the fee they'll pay on it being done.
 struct SliceJob {
@@ -603,6 +594,15 @@ struct SliceJob {
 inline constexpr int64_t slice_job_fee = 500;     // what the asker pays the Smuggler
 inline constexpr double slice_job_seconds = 120;  // how long an ask stands
 
+struct SpecialistState {
+    std::vector<std::string> abilities;      // the active loadout's (unlocked_abilities)
+    std::map<std::string, double> cooldowns; // ability id -> seconds left
+    std::vector<TimedEffect> effects;
+    std::vector<CompanionRecord> companions;
+    uint64_t next_companion_id = 1;
+    uint64_t next_sample_id = 1;
+    std::vector<DnaSample> samples;
+    uint64_t active_companion = 0;   // the fielded one's record (0: none)
     uint32_t companion_entity = 0;
     double companion_cooldown = 0;   // seconds until another can be fielded
     std::vector<Contract> contracts;  // accepted
@@ -618,6 +618,8 @@ inline constexpr double slice_job_seconds = 120;  // how long an ask stands
     mutable std::string saved_inspiration;
     bool inspiration_carried = false;
     bool second_wind_used = false;  // this life (a Squad Leader's Second Wind)
+    bool lucky_used = false;        // this life (a Smuggler's Lucky)
+    std::vector<SliceJob> slice_jobs;  // a Smuggler's: slices others asked of them
     bool bounty_flag = false;  // opted in to being hunted
     // A channel under way (taming, sampling): its ability, target, time left, where it began.
     std::string channel;
@@ -627,8 +629,6 @@ inline constexpr double slice_job_seconds = 120;  // how long an ask stands
     std::vector<BazaarListing> bazaar_view;  // the last browse
     std::string bazaar_query;
     std::vector<std::pair<std::string, PriceStats>> bazaar_prices;
-    bool lucky_used = false;        // this life (a Smuggler's Lucky)
-    std::vector<SliceJob> slice_jobs;  // a Smuggler's: slices others asked of them
     uint32_t revision = 1;
     uint32_t acked = 0;
     uint32_t sync_tick = 0;

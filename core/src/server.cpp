@@ -2240,17 +2240,6 @@ void GameServer::fire(Client& shooter, const Shot& shot, double view_tick) {
         return;
     }
     const WeaponDef& weapon = *def;
-    if (weapon.projectile == Projectile::heal) {
-        // A medpack: no shot, its user healed, at once or over its time.
-        if (weapon.heal_time > 0) {
-            TimedEffect e;
-            e.id = "medpack";
-            e.name = "Medpack";
-            e.source = shooter.entity;
-            e.remaining = e.duration = weapon.heal_time;
-            e.heal_per_second = weapon.heal / weapon.heal_time;
-            give_effect(shooter, std::move(e));
-        } else {
     if (weapon.projectile == Projectile::jump) {
         // A jump pack: no shot, its user lifted up and forward (not from a vehicle).
         if (driving) return;
@@ -2263,6 +2252,17 @@ void GameServer::fire(Client& shooter, const Shot& shot, double view_tick) {
         set_state(shooter.entity, s);
         return;
     }
+    if (weapon.projectile == Projectile::heal) {
+        // A medpack: no shot, its user healed, at once or over its time.
+        if (weapon.heal_time > 0) {
+            TimedEffect e;
+            e.id = "medpack";
+            e.name = "Medpack";
+            e.source = shooter.entity;
+            e.remaining = e.duration = weapon.heal_time;
+            e.heal_per_second = weapon.heal / weapon.heal_time;
+            give_effect(shooter, std::move(e));
+        } else {
             heal(shooter, weapon.heal);
         }
         return;
@@ -3352,6 +3352,12 @@ void GameServer::damage(Client& victim, double raw, DamageType type, uint32_t at
             }
         }
     }
+    // Lucky (a Smuggler's 85): once a life, a killing blow leaves 1 health.
+    if (victim.health <= 0 && !victim.spec.lucky_used && granted(victim, "smuggler", "lucky")) {
+        victim.spec.lucky_used = true;
+        victim.health = 1;
+        notify(victim.entity, "Lucky: that should have killed you");
+    }
     if (victim.health <= 0 && !(perks && perk_lethal(victim))) {
         kill(victim, attacker);
     }
@@ -3363,12 +3369,6 @@ void GameServer::kill(Client& victim, uint32_t attacker, bool is_flyer) {
         // (state.vehicle is its class, not an index into vehicles_.)
         const size_t vi = size_t(victim.state.vehicle);
         if (vi < classes.size() && classes[vi].kind == VehicleKind::flyer) {
-    // Lucky (a Smuggler's 85): once a life, a killing blow leaves 1 health.
-    if (victim.health <= 0 && !victim.spec.lucky_used && granted(victim, "smuggler", "lucky")) {
-        victim.spec.lucky_used = true;
-        victim.health = 1;
-        notify(victim.entity, "Lucky: that should have killed you");
-    }
             is_flyer = true;
         }
         leave_vehicle(victim);

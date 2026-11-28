@@ -84,6 +84,7 @@ enum class WeaponArchetype : uint8_t {
     placed,          // a mine or trap: tossed down, it goes off when an enemy comes near (tactical)
     utility,         // a tactical one-shot: a bolt that leaves its effect (the flare, tangle pistols)
     medpack,         // a tactical heal: used, it heals its user, at once or over time (a Doctor's)
+    jump_pack,       // a tactical hop: used, it lifts its user up and forward, a few times a life
 };
 
 // A melee archetype: one-handed (`melee`, a sidearm) or two-handed (`melee_2h`).
@@ -91,7 +92,6 @@ bool is_melee_archetype(WeaponArchetype a);
 
 struct WeaponArchetypeInfo {
     WeaponArchetype archetype = WeaponArchetype::rifle_auto;
-    jump_pack,       // a tactical hop: used, it lifts its user up and forward, a few times a life
     std::string id;
     std::string bf2_weapon_base;
     std::string anim_set;
