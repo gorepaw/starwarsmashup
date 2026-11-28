@@ -112,7 +112,7 @@ Protocol change: `Hello` gains `join_token` and `character_id` (a character chos
 |---|---|
 | Domain | about $10–15 a year |
 | Cloudflare (Workers, D1, Pages, R2, Email, Turnstile) | Workers Paid, $5 a month (needed for password hashing; also lifts the request budget); the rest within free tiers |
-| VPS: Contabo, 8 vCPU, 24 GB, unlimited traffic | Contabo's monthly price for the plan |
+| VPS: Contabo, 8 vCPU, 24 GB, unlimited traffic | about $22 a month |
 | Code signing for the launcher (optional) | about $10 a month |
 
 ## Milestones
