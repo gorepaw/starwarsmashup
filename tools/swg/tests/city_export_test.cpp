@@ -495,6 +495,13 @@ void test_room_terrain_holes() {
     CHECK(cell(above, 3.375, 0.375) == 2 && cell(below, 3.375, 0.375) == 0);  // on the drawn floor
     CHECK(!above.at(3.375, 0.375));
     CHECK(room_terrain_holes({}, {}, [](double, double) { return 0.0; }).empty());
+
+    // A site's cave (keep_deeper): a room 10 m under the hillside keeps the
+    // terrain over it; one 4 m under (an entrance) is opened as a town's.
+    const auto deep = room_terrain_holes(walked, drawn, [](double, double) { return 10.0; }, site_room_depth);
+    CHECK(!deep.at(1.0, 0.5) && cell(deep, 1.0, 0.5) == 0 && cell(deep, 3.375, 0.375) == 0);
+    const auto shallow = room_terrain_holes(walked, drawn, [](double, double) { return 4.0; }, site_room_depth);
+    CHECK(shallow.at(1.0, 0.5) && cell(shallow, 3.375, 0.375) == 2);
 }
 
 // A particle effect: a fire's emitter, its waveforms in their places (the

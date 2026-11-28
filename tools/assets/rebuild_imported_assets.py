@@ -93,17 +93,23 @@ def ini_values(path, key):
 
 
 def first_section(path, section):
-    vals, cur = {}, None
+    found = all_sections(path, section)
+    return found[0] if found else {}
+
+
+def all_sections(path, section):
+    """Every [section] of an ini file, each a dict of its keys (the first value of each)."""
+    out, cur = [], None
     for ln in open(path, encoding="utf-8", errors="replace"):
         s = ln.strip()
         if s.startswith("["):
-            if cur == section:
-                break
-            cur = s.strip("[]")
-        elif cur == section and "=" in s and not s.startswith(";"):
+            cur = {} if s.strip("[]") == section else None
+            if cur is not None:
+                out.append(cur)
+        elif cur is not None and "=" in s and not s.startswith(";"):
             k, v = s.split("=", 1)
-            vals.setdefault(k.strip(), v.strip())
-    return vals
+            cur.setdefault(k.strip(), v.strip())
+    return out
 
 
 class Step:
@@ -235,6 +241,15 @@ def plan(bf2, swg, scratch):
                 hubs.append(tf)
             else:
                 print("warning: %s names a missing town file %s" % (hub, tf), file=sys.stderr)
+        # The Legacy's sites on this planet (docs/LEGACY.md), out in the
+        # country: exported with its towns, each [site] an area, the file's
+        # [place]s the caves and bunkers the snapshot lacks.
+        sites = os.path.join("game", "hubs", "legacy", "sites", slug + ".ini")
+        if os.path.exists(sites):
+            for sv in all_sections(sites, "site"):
+                a = sv["Area"].split()
+                city += ["--site", sv["Name"], a[0], a[1], a[2]]
+            hubs.append(sites)
         for h in hubs:
             city += ["--hub", h]
         steps.append(Step("planets", "city " + slug, city))

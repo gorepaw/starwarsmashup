@@ -100,8 +100,9 @@ core::Vec3 to_core(Vec3 v) {
 // The hub's war terminals, as snapshot objects on the terrain (parent id -1
 // marks them), and the terminals its [service]s and [vendor]s name a
 // Template for (parent id -2): what Galaxies' servers spawned, which its
-// world snapshot doesn't have (Naboo's banks' terminals). At their Height
-// where the hub gives one, else on the terrain.
+// world snapshot doesn't have (Naboo's banks' terminals); and its [place]s
+// (parent id -3): any object, as the Legacy's caves and bunkers, which were
+// server-spawned too. At their Height where the hub gives one, else on the terrain.
 std::vector<SnapshotNode> recruiters(const CityExport& city) {
     std::vector<SnapshotNode> out;
     if (city.hub.empty()) {
@@ -112,17 +113,18 @@ std::vector<SnapshotNode> recruiters(const CityExport& city) {
     for (const core::Ini::Section& section : hub.sections()) {
         const auto template_name = section.get("Template");
         const bool recruiter = section.name == "recruiter";
-        if (!(recruiter || section.name == "service" || section.name == "vendor") || !template_name) {
+        const bool place = section.name == "place";
+        if (!(recruiter || place || section.name == "service" || section.name == "vendor") || !template_name) {
             continue;
         }
         std::istringstream fields(section.get("Position").value_or(""));
         double x = 0, z = 0;
         if (!(fields >> x >> z)) {
-            throw std::runtime_error(city.hub.string() + ": a recruiter needs Position = x z");
+            throw std::runtime_error(city.hub.string() + ": a [" + section.name + "] needs Position = x z");
         }
         const double yaw = section.number("Yaw", 0) * std::numbers::pi / 180;
         SnapshotNode node;
-        node.parent_id = recruiter ? -1 : -2;
+        node.parent_id = recruiter ? -1 : place ? -3 : -2;
         node.template_name = *template_name;
         node.position = {float(x), float(section.number("Height", ground.height_at(-x, z))), float(z)};
         node.rotation = {float(std::cos(yaw / 2)), 0, float(std::sin(yaw / 2)), 0};
@@ -441,11 +443,16 @@ void export_city(TreLibrary& library, const CityExport& city, std::ostream& log)
     if (areas.empty()) {
         areas.push_back({city.bake.filename().string(), city.center_x, city.center_z, city.radius});
     }
-    // The town an object stands in (its index in areas), or -1.
+    // The town an object stands in (its index in areas), or -1. A site first:
+    // one at a town's edge (Mos Eisley's reaches 700 m out) is still a site.
     const auto area_of = [&](const SnapshotNode& node) {
-        for (size_t i = 0; i < areas.size(); ++i) {
-            if (std::hypot(node.position.x - areas[i].center_x, node.position.z - areas[i].center_z) <= areas[i].radius) {
-                return int(i);
+        for (const bool sites : {true, false}) {
+            for (size_t i = 0; i < areas.size(); ++i) {
+                if (areas[i].site == sites &&
+                    std::hypot(node.position.x - areas[i].center_x, node.position.z - areas[i].center_z) <=
+                        areas[i].radius) {
+                    return int(i);
+                }
             }
         }
         return -1;
@@ -683,7 +690,9 @@ void export_city(TreLibrary& library, const CityExport& city, std::ostream& log)
 
     for (const SnapshotNode& node : nodes) {
         const bool recruiter = node.parent_id == -1;
-        if (node.parent_id != 0 && node.parent_id != -1 && node.parent_id != -2) {
+        // The snapshot's own (0), and a hub's: war terminals (-1), service
+        // terminals (-2) and [place]s (-3).
+        if (node.parent_id != 0 && node.parent_id != -1 && node.parent_id != -2 && node.parent_id != -3) {
             continue;
         }
         const int in_area = area_of(node);
@@ -756,8 +765,9 @@ void export_city(TreLibrary& library, const CityExport& city, std::ostream& log)
         if (!ground) {
             ground = core::load_bake(city.bake);
         }
-        patches.push_back(
-            room_terrain_holes(rooms[i], drawn_rooms[i], [&](double x, double z) { return ground->height_at(x, z); }));
+        patches.push_back(room_terrain_holes(
+            rooms[i], drawn_rooms[i], [&](double x, double z) { return ground->height_at(x, z); },
+            areas[i].site ? site_room_depth : 0));
         holes_text += std::format("; {} {} x {}", areas[i].name, patches.back().width, patches.back().height);
     }
     if (!patches.empty()) {
@@ -787,7 +797,8 @@ void export_hub_people(TreLibrary& library, const CityExport& city, std::ostream
 
 core::TerrainHoles room_terrain_holes(const std::vector<std::array<Vec3, 3>>& walked,
                                       const std::vector<std::array<Vec3, 3>>& drawn,
-                                      const std::function<double(double, double)>& terrain_height) {
+                                      const std::function<double(double, double)>& terrain_height,
+                                      double keep_deeper) {
     core::TerrainHoles holes;
     if (walked.empty() && drawn.empty()) {
         return holes;
@@ -822,6 +833,9 @@ core::TerrainHoles room_terrain_holes(const std::vector<std::array<Vec3, 3>>& wa
                     const double b = side(t[1].x, t[1].z, t[2].x, t[2].z, px, pz);
                     const double c = side(t[2].x, t[2].z, t[0].x, t[0].z, px, pz);
                     const bool center = (a >= 0 && b >= 0 && c >= 0) || (a <= 0 && b <= 0 && c <= 0);
+                    if (keep_deeper > 0 && terrain_height(px, pz) > plane_height(t, px, pz) + keep_deeper) {
+                        continue;  // deep under the hillside: the terrain over it stays
+                    }
                     if (center && walked_on) {
                         holes.set(column, row);
                     } else if ((center || square_meets_triangle(holes.x0 + column * holes.cell,

@@ -74,7 +74,8 @@ files byte-identical to the reference's are read.
   swgtool pob-check <dir>
   swgtool snapshot <dir> <path.ws> [--match <text>] [--near <x> <z> <radius>] [--inside <id>]
   swgtool export-city <dir> <bake_prefix> --snapshot <path.ws> --center <x> <z> --radius <m> [--hub <hub.ini>]...
-  swgtool export-city <dir> <bake_prefix> --snapshot <path.ws> --area <name> <x> <z> <radius>... [--hub <hub.ini>]...
+  swgtool export-city <dir> <bake_prefix> --snapshot <path.ws> --area <name> <x> <z> <radius>...
+                     [--site <name> <x> <z> <radius>]... [--hub <hub.ini>]...
   swgtool export-people <dir> <bake_prefix> --hub <hub.ini> [--bf2-lvl <ingame.lvl>]
 )";
 
@@ -1143,10 +1144,12 @@ int cmd_datatable(const std::vector<std::string>& args) {
 int cmd_export_city(const std::vector<std::string>& args) {
     const auto center = std::find(args.begin(), args.end(), "--center");
     CityExport city;
-    // --area <name> <x> <z> <radius>, repeated: several towns on one bake.
+    // --area <name> <x> <z> <radius>, repeated: several towns on one bake;
+    // --site, likewise: a site out in the country (CityArea::site).
     for (size_t i = 0; i + 4 < args.size(); ++i) {
-        if (args[i] == "--area") {
-            city.areas.push_back({args[i + 1], std::stod(args[i + 2]), std::stod(args[i + 3]), std::stod(args[i + 4])});
+        if (args[i] == "--area" || args[i] == "--site") {
+            city.areas.push_back({args[i + 1], std::stod(args[i + 2]), std::stod(args[i + 3]), std::stod(args[i + 4]),
+                                  args[i] == "--site"});
         }
     }
     const bool one_center = center != args.end() && center + 2 < args.end() && !option(args, "--radius").empty();

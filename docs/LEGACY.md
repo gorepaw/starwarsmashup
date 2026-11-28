@@ -44,7 +44,8 @@ Nym's Themepark is **not** part of it (only swgr.org links them). Part 18 needs 
 
 ### Data layout
 
-- `game/hubs/legacy/<planet>.ini` holds the Legacy's quests, one file per planet, in the usual `[quest]`/`[step]` format. Every planet's hub loads the whole folder (`Quests = legacy`), so a Legacy quest is known wherever the player is.
+- `game/hubs/legacy/quests/<planet>.ini` holds the Legacy's quests, one file per planet, in the usual `[quest]`/`[step]` format. Every planet's hub loads the whole folder (`Quests = legacy/quests`), so a Legacy quest is known wherever the player is.
+- `game/hubs/legacy/sites/<planet>.ini` lists the planet's Legacy sites out in the country. Each `[site]` is exported with the planet's towns as an `export-city --site` area. Its `[place]`s are Total Experience templates (caves, bunkers) standing where Galaxies' servers spawned them. A site's rooms more than 6 m under the terrain keep the terrain over them.
 - Each quest says where it happens: `Planet = tatooine` on the `[quest]`, overridden by a step's own `Planet =` (for example, "report to Tchorshel on Naboo").
 - Legacy NPCs stand in their town's file (`anchorhead.ini`, `kaadara.ini`, ...) as `[npc]`s, positioned from the guide's coordinates and checked against the city export.
 
@@ -84,7 +85,18 @@ Nym's Themepark is **not** part of it (only swgr.org links them). Part 18 needs 
    - [ ] 1d. `battle` steps and Skip.
    - [ ] 1e. The special mechanics, each when its content comes up.
 2. **Sites and data checks**
-   - [ ] Check every site against the *Total Experience* snapshots (about 45 caves, bunkers and buildings). Sort each into "exists and can be entered", "outdoor camp", or "missing, needs building".
+   - [x] Check every site against the *Total Experience* snapshots. The checker is `E:\swm_work\legacy\site_check.py` and writes `sites.md` next to it. Results, 2026-11-28, for 97 sites:
+     - **About 14 exist as the Legacy's site.**
+       - 9 interiors: Jabba's palace, Theed palace, the Squill cave, Lok's droid-engineer cave, Coronet's Capitol, the Wayfar and Moenia cantinas, Tosche Station, the hermit's house.
+       - About 5 outdoor spots: the krayt skeleton, the Sarlacc, the Lars homestead's harvesters, the Gungan ruins by Boss Nass, a tent camp on Lok.
+     - **Everything else was server-spawned in Galaxies.** That's about 75 sites, including nearly every bunker, cave, camp and lab. The other snapshot "hits" are coincidences (Jedi shrines, gravestones, guild halls). Only Kashyyyk has buildout tables in *The Total Experience*.
+     - **Templates exist to place them with.** *The Total Experience* has generic interiors: caves `general/cave_01..08` (plus the damprock, ice and mirror variants) and `tatooine/cave_tatooine_style_*`; bunkers `general/bunker_imperial_*`, `bunker_rebel_*`, `bunker_small_outpost_*`, `bunker_research_facility_01`, `bunker_warren_01`. It also has some that match by name: `naboo_pirate_bunker`, `rori_cobral_bunker`, `rori_garyn_bunker`, `corellia_nyax_bunker`, `corellia_drall_cave`, `talus_*_bunker`, `lok_evil_droid_engineer_cave`, `tatooine_tusken_bunker`.
+     - **City exports only cover towns** (the hub and its `Town =` areas). So even the sites that are in the snapshot but outside a town (Jabba's palace, the Squill cave, Lok's cave) aren't in the game yet.
+   - [x] **Site export tooling** (2026-11-28):
+     - `export-city --site`, a hub file's `[place]`, deep rooms keeping their terrain (`site_room_depth`, 6 m), and site areas winning over a town's.
+     - `rebuild_imported_assets.py` reads `game/hubs/legacy/sites/<planet>.ini`.
+     - Tested on Tatooine with the Squill cave, Jabba's palace and a placed small-outpost bunker for Viagon Shinn. All three export with their interiors and doors. The bunker opens only an 11 × 18 m entrance patch; the cave opens about 1,300 m² over its shallow parts (still to be checked in game).
+   - [ ] **Every Legacy site in the export.** One data file (planned: `game/hubs/legacy/sites.ini`) with each site's planet, centre and radius, and for a missing site the template to place, its position and its yaw. `rebuild_imported_assets.py` exports them like towns: `export-city` gets each site as an `--area`, plus a new option to place templates the snapshot lacks. That gives them the same collision, interior rooms and terrain holes as town buildings. Caves may need the terrain shaped around their mouths; check with the first one. `tools/swg` is shared with the distribution/backend session, so coordinate with it first.
    - [ ] The enemies the Legacy names (swoop gangs, Valarians, Skaak Tippers, Mummers, ...) against our spawn files.
    - [ ] Legacy rewards against the item catalog.
 3. **Content, part by part.** Each part ships playable: NPCs placed, quests written, sites and enemies in place.
