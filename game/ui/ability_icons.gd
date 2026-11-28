@@ -53,7 +53,8 @@ static func _draw(image: Image, ability: String) -> bool:
 		"ent_holo_emitter": _projector(image)
 		"pl_field_repair": _wrench(image)
 		"pl_evasive": _swerve(image)
-		"pl_emergency_power": _battery(image)
+		"pl_afterburner": _afterburner(image)
+		"pl_flare": _flares(image)
 		"bio_sample": _helix(image)
 		"ch_tranq_dart": _dart(image, "moon")
 		"ch_tame": _paw(image, false)
@@ -429,10 +430,21 @@ static func _swerve(image: Image) -> void:
 	_line(image, Vector2(30, 76), Vector2(10, 76), 6.0)
 
 
-static func _battery(image: Image) -> void:
-	_paint(image, func(p: Vector2) -> float:
-		return minf(_box(p, Vector2(48, 54), Vector2(22, 34), 4.0), _box(p, Vector2(48, 16), Vector2(9, 5), 1.5)))
-	_bolt(image, Vector2(48, 55), 0.5)
+static func _afterburner(image: Image) -> void:
+	# Three chevrons, flat out to the right.
+	for i in 3:
+		var x := 22.0 + i * 20.0
+		_line(image, Vector2(x, 26), Vector2(x + 18, 48), 6.0)
+		_line(image, Vector2(x + 18, 48), Vector2(x, 70), 6.0)
+
+
+static func _flares(image: Image) -> void:
+	# Flares fanning down and away from a ship's tail, each a bright dot.
+	for i in 3:
+		var angle := PI * (0.3 + 0.2 * i)
+		var tip := Vector2(48, 22) + Vector2(cos(angle), sin(angle)) * 52.0
+		_line(image, Vector2(48, 22), tip, 3.5)
+		_solid(image, func(p: Vector2) -> float: return _circle(p, tip, 8.0))
 
 
 static func _helix(image: Image) -> void:

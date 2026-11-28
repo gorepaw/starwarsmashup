@@ -704,7 +704,9 @@ private:
     // In the world: an owned vehicle item used: its vehicle called beside
     // its owner, or (called already) put away.
     void call_vehicle(Client& client, const ItemDef& def);
-    void damage_vehicle(Vehicle& vehicle, double amount, uint32_t attacker, std::vector<Blast>& blasts);
+    // (`explosive`: a rocket's, a missile's or a blast's, which a Pilot's Flares stop.)
+    void damage_vehicle(Vehicle& vehicle, double amount, uint32_t attacker, std::vector<Blast>& blasts,
+                        bool explosive = false);
     net::VehicleState describe(const Vehicle& vehicle) const;
     // Professions (server_professions.cpp).
     std::string held_profession(const Client& client) const;   // the weapon in hand's
@@ -888,6 +890,10 @@ private:
     void specialist_kill(uint32_t victim, uint32_t killer, bool npc);
     bool bounty_pvp_allowed(uint32_t shooter, uint32_t victim) const;
     double vehicle_damage_factor(uint32_t driver) const;
+    // Times the damage `attacker` deals: a Pilot's Gunnery from a vehicle.
+    double gunnery(uint32_t attacker) const;
+    // Pilot experience for time riding on the move (vehicles, speeders, mounts).
+    void ride_xp(Client& client, double dt);
     void break_cloak(Client& client);
     void offer_contracts(Client& client, size_t terminal);
     void update_contracts(Client& client);

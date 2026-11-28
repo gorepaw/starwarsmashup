@@ -250,7 +250,8 @@ std::vector<VehicleClass> load_vehicle_classes(const std::filesystem::path& dir)
 }
 
 void simulate_flyer(MoveState& state, const MoveState& before, const MoveInput& input, const World& world,
-                    const VehicleClass& vehicle, double dt, const Battlefield* field) {
+                    const VehicleClass& vehicle, double dt, const Battlefield* field, double scale,
+                    double boost_drain) {
     const double f = input.forward / 127.0;
     const bool space = field != nullptr && field->is_space();
     const bool in_hangar = space && field->in_landing_region(before.position);
@@ -334,12 +335,13 @@ void simulate_flyer(MoveState& state, const MoveState& before, const MoveInput& 
     state.pitch = float(pitch);
     const bool boosting = vehicle.boost_speed > 0 && input.held(MoveInput::sprint) && state.energy > 0;
     state.sprinting = boosting;
-    state.energy = boosting ? std::max(0.0, state.energy - vehicle.energy_boost_drain * dt)
+    state.energy = boosting ? std::max(0.0, state.energy - vehicle.energy_boost_drain * boost_drain * dt)
                             : std::min(100.0, state.energy + vehicle.energy_restore * dt);
-    const double wished = boosting ? vehicle.boost_speed
-                          : f > 0.1 ? vehicle.max_speed
+    const double top = vehicle.max_speed * scale;
+    const double wished = boosting ? vehicle.boost_speed * scale
+                          : f > 0.1 ? top
                           : f < -0.1 ? vehicle.min_speed
-                                     : std::clamp(speed, vehicle.min_speed, vehicle.max_speed);
+                                     : std::clamp(speed, vehicle.min_speed, std::max(vehicle.min_speed, top));
     const double rate = boosting ? vehicle.boost_acceleration : vehicle.acceleration;
     // (Slowed by a landing it broke off: back up to MinSpeed at once.)
     double next = std::max(vehicle.min_speed, speed + std::clamp(wished - speed, -rate * dt, rate * dt));
@@ -420,7 +422,9 @@ void simulate_flyer(MoveState& state, const MoveState& before, const MoveInput& 
 }
 
 void simulate_vehicle(MoveState& state, const MoveInput& input, const World& world, const VehicleClass& vehicle,
-                      double dt, const Battlefield* field) {
+                      double dt, const Battlefield* field, double speed, double boost_drain) {
+    speed = std::clamp(speed, 0.1, 3.0);
+    boost_drain = std::max(0.0, boost_drain);
     const MoveState before = state;
     // Turn toward where the pilot looks, at most turn_rate.
     const double turn = std::clamp(wrap_angle(double(input.yaw) - double(state.yaw)), -vehicle.turn_rate * dt,
@@ -436,7 +440,7 @@ void simulate_vehicle(MoveState& state, const MoveInput& input, const World& wor
         return;  // it stays where it stands
     }
     if (vehicle.kind == VehicleKind::flyer) {
-        simulate_flyer(state, before, input, world, vehicle, dt, field);
+        simulate_flyer(state, before, input, world, vehicle, dt, field, speed, boost_drain);
         return;
     }
     const double s = std::sin(double(state.yaw)), c = std::cos(double(state.yaw));
@@ -447,7 +451,7 @@ void simulate_vehicle(MoveState& state, const MoveInput& input, const World& wor
     // Boost (sprint) drains energy; energy comes back otherwise.
     const bool boosting = vehicle.boost_speed > 0 && input.held(MoveInput::sprint) && f > 0 && state.energy > 0;
     state.sprinting = boosting;
-    state.energy = boosting ? std::max(0.0, state.energy - vehicle.energy_boost_drain * dt)
+    state.energy = boosting ? std::max(0.0, state.energy - vehicle.energy_boost_drain * boost_drain * dt)
                             : std::min(100.0, state.energy + vehicle.energy_restore * dt);
 
     // Along its heading: toward the wished speed at its acceleration (its
@@ -455,9 +459,9 @@ void simulate_vehicle(MoveState& state, const MoveInput& input, const World& wor
     // its traction taking out any slide.
     double along = state.velocity.x * forward.x + state.velocity.z * forward.z;
     double side = state.velocity.x * right.x + state.velocity.z * right.z;
-    const double wish_along = f >= 0 ? f * (boosting ? vehicle.boost_speed : vehicle.forward_speed)
-                                     : f * vehicle.reverse_speed;
-    const double wish_side = r * vehicle.strafe_speed;
+    const double wish_along = f >= 0 ? f * (boosting ? vehicle.boost_speed : vehicle.forward_speed) * speed
+                                     : f * vehicle.reverse_speed * speed;
+    const double wish_side = r * vehicle.strafe_speed * speed;
     const auto toward = [&](double value, double target, double rate) {
         const double step = rate * dt;
         return std::abs(target - value) <= step ? target : value + (target > value ? step : -step);

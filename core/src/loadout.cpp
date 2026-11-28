@@ -12,7 +12,7 @@ namespace swm::core {
 
 namespace {
 
-constexpr std::array<std::pair<std::string_view, Stat>, 39> stat_names{{
+constexpr std::array<std::pair<std::string_view, Stat>, 41> stat_names{{
     {"max_health", Stat::max_health},
     {"run_speed", Stat::run_speed},
     {"strafe_speed", Stat::strafe_speed},
@@ -52,6 +52,8 @@ constexpr std::array<std::pair<std::string_view, Stat>, 39> stat_names{{
     {"radar_quiet", Stat::radar_quiet},
     {"xp_gain", Stat::xp_gain},
     {"faction_gain", Stat::faction_gain},
+    {"vehicle_speed", Stat::vehicle_speed},
+    {"vehicle_boost_drain", Stat::vehicle_boost_drain},
 }};
 
 constexpr std::array<std::string_view, damage_type_count> damage_type_names{"ballistic", "laser",     "electro",
@@ -93,6 +95,8 @@ double& stat_value(CharacterStats& stats, Stat stat, double& jump_height) {
     case Stat::radar_quiet: return stats.radar_quiet;
     case Stat::xp_gain: return stats.xp_gain;
     case Stat::faction_gain: return stats.faction_gain;
+    case Stat::vehicle_speed: return stats.vehicle_speed;
+    case Stat::vehicle_boost_drain: return stats.vehicle_boost_drain;
     default: return stats.mitigation_by_type[size_t(stat) - size_t(Stat::mitigation_ballistic)];
     }
 }

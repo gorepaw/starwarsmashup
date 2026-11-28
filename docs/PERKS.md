@@ -1,6 +1,6 @@
 # Trainer Perks
 
-The rework of what professions teach. It replaces milestones at 1 / 25 / 50 / 75 / 100 ([Professions](PROFESSIONS.md)) with two perks to choose between at each tier. Weapons and armor were first; then Squad Leader, Doctor and Entertainer, gathering and crafting, Bounty Hunter, Smuggler, Ranger and Merchant (2026-11-27). The other advanced professions follow one by one and keep their milestones until their turn.
+The rework of what professions teach. It replaces milestones at 1 / 25 / 50 / 75 / 100 ([Professions](PROFESSIONS.md)) with two perks to choose between at each tier. Weapons and armor were first; then Squad Leader, Doctor and Entertainer, gathering and crafting, Bounty Hunter, Smuggler, Ranger, Merchant and Pilot (2026-11-27). The other advanced professions follow one by one and keep their milestones until their turn.
 
 Status: **built** (see Order of work): the rules, the cap, trainers, licences, and all 90 perks. The tags say what each needed: nothing new, a trigger (**T**), or a new mechanic (**N**; [Mechanics](#mechanics)).
 
@@ -204,6 +204,18 @@ Tiers from 5: anyone sells on the bazaar, so there's no licence. No buttons.
 | 45 | **Market Analytics**: price trends | **Appraiser**: vendors pay you 15% more |
 | 65 | **Bazaar Network**: the bazaar from anywhere | **Merchant's Ledger**: 25% more Merchant experience |
 | 85 | **Tycoon**: fees halved (`fee_halved`) | **Trade Empire**: 15 more listings |
+
+### Pilot
+
+Tiers from 5: anyone drives, so there's no licence. Two buttons at most: one at 25, one at 65. Pilot experience comes from riding on the move (6 a minute: `GameServer::ride_xp`), kills from a vehicle in battle, and the buttons.
+
+| Level | A | B |
+|---|---|---|
+| 5 | **Hotshot**: vehicles you drive 10% faster, speeders and mounts too (`Modifier = vehicle_speed * 1.1`, predicted: `simulate_vehicle`'s `speed`) | **Gunnery**: your vehicle's guns hit 10% harder (`gunnery`) |
+| 25 | **Field Repair** *(button)*: a quarter of its health back, 45 s | **Evasive Maneuvers** *(button)*: half damage for 5 s, 30 s |
+| 45 | **Reactor Tuning**: 10% less vehicle damage | **Ejection Seat**: thrown clear alive when it's destroyed, the blast kept off for 2 s (not in space) |
+| 65 | **Afterburner** *(button)*: boost for 5 s on no energy (`vehicle_boost_drain * 0`), 30 s | **Flares** *(button)*: rockets, missiles and blasts do nothing to your vehicle for 3 s, 40 s |
+| 85 | **Ace**: each kill from your vehicle gives back 10% of its health | **Armored Hull**: a further 15% less vehicle damage |
 
 ## Triggers
 

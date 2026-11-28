@@ -149,9 +149,10 @@ VehicleClass load_vehicle_class(const std::filesystem::path& path);
 // One tick of a vehicle under its pilot's input: it turns toward the
 // input's yaw, speeds along its heading, hovers over the ground or walks on
 // it. Its state's yaw is its heading; pitch is the input's. Like
-// simulate_move, deterministic.
+// simulate_move, deterministic. `speed` scales its speeds and `boost_drain`
+// the energy its boost burns (its driver's vehicle_speed, vehicle_boost_drain).
 void simulate_vehicle(MoveState& state, const MoveInput& input, const World& world, const VehicleClass& vehicle,
-                      double dt, const Battlefield* field = nullptr);
+                      double dt, const Battlefield* field = nullptr, double speed = 1.0, double boost_drain = 1.0);
 
 // Where its guns aim for an input: the input's yaw and pitch, within their
 // limits round its heading.

@@ -2823,7 +2823,7 @@ void GameServer::advance_bolts() {
         if (hit_vehicle != nullptr) {
             const Vec3 at = from + (to - from) * *nearest;
             damage_vehicle(*hit_vehicle, bolt_damage(def, def.bolt_life - bolt.life) * def.vehicle_factor, bolt.owner,
-                           blasts);
+                           blasts, def.explosion_damage > 0);
             if (def.explosion_damage > 0 && def.explosion_outer > 0) {
                 blasts.push_back({bolt, at, normal, false});
             } else {
@@ -3236,7 +3236,7 @@ void GameServer::explode(const Blast& blast, std::vector<Blast>& blasts) {
                                       : full * (def.explosion_outer - distance) /
                                             std::max(1e-6, def.explosion_outer - def.explosion_inner);
             if (amount > 0) {
-                damage_vehicle(v, amount, bolt.owner, blasts);
+                damage_vehicle(v, amount, bolt.owner, blasts, true);
             }
         }
     }
@@ -3277,6 +3277,7 @@ void GameServer::damage_npc(Npc& npc, double raw, DamageType type, uint32_t atta
     if (npc.hidden || npc.actor_kind < 2 || npc.life != Life::alive || raw <= 0) {
         return;
     }
+    raw *= gunnery(attacker);
     raw = companion_hit(npc.entity, attacker, raw, type);  // Stage 12
     if (raw <= 0) {
         return;
@@ -3321,6 +3322,7 @@ void GameServer::damage(Client& victim, double raw, DamageType type, uint32_t at
     if (victim.life != Life::alive) {
         return;
     }
+    raw *= gunnery(attacker);
     const bool perks = !loadout_of(victim).triggered.empty();
     double amount = mitigated_damage(perks ? active_stats(victim) : victim.stats, raw, type);
     if (amount <= 0) {

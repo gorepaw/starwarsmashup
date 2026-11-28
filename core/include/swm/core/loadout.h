@@ -62,8 +62,11 @@ enum class Stat : uint8_t {
     // An Entertainer's progression Inspirations' (docs/PROFESSIONS.md):
     xp_gain,            // times the profession experience earned
     faction_gain,       // times the faction points earned
+    // A Pilot's (docs/PERKS.md):
+    vehicle_speed,        // times the speeds of a vehicle it drives (Hotshot)
+    vehicle_boost_drain,  // times the energy a vehicle's boost burns (Afterburner: 0)
 };
-inline constexpr Stat last_stat = Stat::faction_gain;
+inline constexpr Stat last_stat = Stat::vehicle_boost_drain;
 
 std::optional<Stat> stat_from_name(std::string_view name);
 std::string_view stat_name(Stat stat);
@@ -105,6 +108,8 @@ struct CharacterStats {
     double radar_quiet = 0;
     double xp_gain = 1;
     double faction_gain = 1;
+    double vehicle_speed = 1;
+    double vehicle_boost_drain = 1;
 };
 
 // The most of any damage mitigation can absorb.

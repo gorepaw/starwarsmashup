@@ -190,8 +190,8 @@ void test_training() {
 
     // Ten at most in a pool: Rifles, Creature Handler and Pilot all fight.
     me.push_back({"pilot", book.xp_for_level(100)});
-    for (const int level : {1, 25, 50, 75, 100}) {
-        CHECK(learn_milestone(book, me, "pilot", level, 100'000).ok);
+    for (const char* perk : {"pl_perk_hotshot", "pl_perk_evasive", "pl_perk_reactor", "pl_perk_flare", "pl_perk_ace"}) {
+        CHECK(learn_perk(book, me, perk, 100'000).ok);
     }
     CHECK(perks_learned(book, me, PerkPool::combat) == 10);
     r = learn_perk(book, me, "rifles_spotter", 100'000);
@@ -208,7 +208,7 @@ void test_training() {
     CHECK(licensed(book, me, "entertainer") && has_grant(book, me, "entertainer", "dancer"));
     CHECK(!has_grant(book, me, "entertainer", "musician"));
     CHECK(perks_learned(book, me, PerkPool::noncombat) == 1 && perks_learned(book, me, PerkPool::combat) == 10);
-    CHECK(forget(book, me, "pilot").ok);
+    CHECK(forget(book, me, "pl_perk_ace").ok);  // (a perk is given up by name)
     CHECK(learn_perk(book, me, "rifles_spotter", 100'000).ok);
     CHECK(perks_learned(book, me, PerkPool::combat) == 10);
     // Giving up every milestone of a profession takes its licence too.

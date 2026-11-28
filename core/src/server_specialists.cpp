@@ -274,9 +274,7 @@ void GameServer::fill_specialist_loadout(const Client& client, const CharacterLo
         if (!def.available || !is_specialist_profession(def)) continue;
         const ProfessionStanding st = profession_standing(*professions, client.professions, def.id);
         if (st.trained < 1) continue;
-        // Reactor Tuning is Pilot's milestone 75: without it learned, the
-        // loadout carries the level only below it.
-        loadout.specialist_levels[def.id] = def.id == "pilot" && st.trained < 75 ? std::min(st.level, 74) : st.level;
+        loadout.specialist_levels[def.id] = st.level;
     }
     // Its perks' switches, for a match to know them by.
     loadout.grants.clear();
@@ -551,11 +549,31 @@ double GameServer::vehicle_damage_factor(uint32_t driver) const {
     for (const TimedEffect& e : client->spec.effects) {
         if (e.flags & effect_flag::vehicle_guard) factor = std::min(factor, std::clamp(e.heal_per_second, 0.1, 1.0));
     }
-    // Reactor Tuning (Pilot 75, learned): up to 10% less.
-    if (const int level = specialist_level(*client, "pilot"); level >= 75) {
-        factor *= 1 - 0.1 * std::min(1.0, double(level - 74) / 26.0);
-    }
+    // A Pilot's Reactor Tuning (45) and Armored Hull (85).
+    if (granted(*client, "pilot", "reactor_tuning")) factor *= 0.9;
+    if (granted(*client, "pilot", "armored_hull")) factor *= 0.85;
     return factor;
+}
+
+double GameServer::gunnery(uint32_t attacker) const {
+    const Client* c = attacker != 0 ? find(attacker) : nullptr;
+    return c != nullptr && c->state.vehicle >= 0 && granted(*c, "pilot", "gunnery") ? 1.1 : 1.0;
+}
+
+void GameServer::ride_xp(Client& client, double dt) {
+    // A minute riding on the move (driving, or in a gunner's seat): Pilot experience.
+    constexpr double ride_minute = 60;
+    constexpr int64_t ride_minute_xp = 6;
+    if (client.life != Life::alive || client.state.vehicle < 0) return;
+    // (A driver's state is the vehicle's; a gunner rides on its.)
+    const Vehicle* gunned = client.state.seat > 0 ? vehicle_gunned_by(client.entity) : nullptr;
+    const Vec3 moving = client.state.seat == 0 ? client.state.velocity : gunned ? gunned->state.velocity : Vec3{};
+    if (std::hypot(moving.x, moving.z) < 2.0 && std::abs(moving.y) < 2.0) return;
+    client.spec.ride_time += dt;
+    if (client.spec.ride_time >= ride_minute) {
+        client.spec.ride_time -= ride_minute;
+        earn_profession_xp(client, "pilot", ride_minute_xp);
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -721,7 +739,8 @@ void GameServer::handle_specialist_request(Client& client, const net::Specialist
 bool GameServer::use_ability(Client& client, const AbilityDef& a, uint32_t target, Vec3 at) {
     const Vec3 from = client.state.position;
     const bool driving = client.state.vehicle >= 0;
-    const bool vehicle_ability = a.effect == AbilityEffect::vehicle_repair || a.effect == AbilityEffect::vehicle_guard;
+    const bool vehicle_ability = a.effect == AbilityEffect::vehicle_repair || a.effect == AbilityEffect::vehicle_guard ||
+                                 a.effect == AbilityEffect::vehicle_boost || a.effect == AbilityEffect::vehicle_flare;
     if (driving != vehicle_ability) {
         notify(client.entity, vehicle_ability ? "You need to be driving or flying" : "Not from a vehicle");
         return false;
@@ -1088,10 +1107,14 @@ bool GameServer::use_ability(Client& client, const AbilityDef& a, uint32_t targe
         earn_specialist_xp(client, profession, a.xp);
         return true;
     case AbilityEffect::vehicle_repair: {
-        const size_t vi = size_t(client.state.vehicle);
+        // (The one it drives: state.vehicle is its class.)
         const auto classes = vehicle_classes();
-        if (vi >= vehicles_.size() || size_t(vehicles_[vi].cls) >= classes.size()) return false;
-        Vehicle& v = vehicles_[vi];
+        Vehicle* driven = vehicle_of(client.entity);
+        if (driven == nullptr || size_t(driven->cls) >= classes.size()) {
+            notify(client.entity, "You need to be driving or flying");
+            return false;
+        }
+        Vehicle& v = *driven;
         const double top = classes[size_t(v.cls)].max_health;
         if (v.health >= top) {
             notify(client.entity, "Your vehicle isn't damaged");
@@ -1107,6 +1130,19 @@ bool GameServer::use_ability(Client& client, const AbilityDef& a, uint32_t targe
         e.heal_per_second = 0;
         // (Carried in heal_per_second: the share of damage the vehicle still takes.)
         e.heal_per_second = std::clamp(a.amount > 0 ? a.amount : 0.5, 0.1, 1.0);
+        give_effect(client, std::move(e));
+        earn_specialist_xp(client, profession, a.xp);
+        return true;
+    }
+    case AbilityEffect::vehicle_boost: {
+        // (Its modifiers reach the client's own prediction as the effects' gear.)
+        give_effect(client, buff_effect());
+        earn_specialist_xp(client, profession, a.xp);
+        return true;
+    }
+    case AbilityEffect::vehicle_flare: {
+        TimedEffect e = buff_effect();
+        e.flags |= effect_flag::vehicle_flare;
         give_effect(client, std::move(e));
         earn_specialist_xp(client, profession, a.xp);
         return true;
@@ -1585,9 +1621,17 @@ void GameServer::specialist_kill(uint32_t victim, uint32_t killer, bool npc) {
         give_effect(*hunter, {"bh_clean_getaway", "Clean Getaway", hunter->entity, 4, 4, {{Stat::run_speed, 0, 1.2}}});
         hunter->shield_recharge_timer = 0;
     }
-    // A kill from a vehicle: the Pilot's (licensed, in a match).
-    if (!npc && conquest_ && hunter->state.vehicle >= 0 && specialist_level(*hunter, "pilot") > 0) {
-        earn_specialist_xp(*hunter, "pilot", 40);
+    // A kill from a vehicle: Pilot experience (anyone's; a player's, in a match),
+    // and a Pilot's Ace patches the hull.
+    if (hunter->state.vehicle >= 0) {
+        if (!npc && conquest_) earn_specialist_xp(*hunter, "pilot", 40);
+        if (granted(*hunter, "pilot", "ace")) {
+            const auto classes = vehicle_classes();
+            if (Vehicle* v = vehicle_of(hunter->entity); v != nullptr && size_t(v->cls) < classes.size()) {
+                const double top = classes[size_t(v->cls)].max_health;
+                v->health = std::min(top, v->health + top * 0.1);
+            }
+        }
     }
     // A kill on a marked enemy: the marker's too.
     for (const Mark& m : marks_) {
@@ -1647,6 +1691,7 @@ void GameServer::specialist_kill(uint32_t victim, uint32_t killer, bool npc) {
 void GameServer::update_effects(Client& client, double dt) {
     update_perks(client);   // (triggered perks' held conditions)
     update_charge(client);  // (a perk's shoulder charge)
+    ride_xp(client, dt);    // (time riding: Pilot experience)
     SpecialistState& spec = client.spec;
     // Inspiration counts down while its character plays; a death in the open
     // world ends it, one in a match doesn't (docs/PROFESSIONS.md).

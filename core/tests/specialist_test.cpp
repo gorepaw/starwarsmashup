@@ -18,6 +18,7 @@
 #include "swm/core/profession.h"
 #include "swm/core/server.h"
 #include "swm/core/specialist.h"
+#include "swm/core/vehicle.h"
 #include "swm/core/world.h"
 #include "test.h"
 
@@ -1164,6 +1165,96 @@ void test_merchant(const SpecialistBook& book, const ProfessionBook& professions
     CHECK(merchant_xp() > after_buy);
 }
 
+// Pilots on speeder bikes: a Hotshot's goes faster, Afterburner boosts on no
+// energy, the kit is two buttons, and anyone riding earns Pilot experience.
+void test_pilot(const std::filesystem::path& root, const SpecialistBook& book, const ProfessionBook& professions,
+                const ItemCatalog& catalog) {
+    const std::vector<VehicleClass> classes = load_vehicle_classes(root / "game" / "vehicles");
+    Heightfield ground{401, 2.0, -400, -400, std::vector<float>(401 * 401, 0.0f)};
+    World world{ground};
+    MemoryCharacterStore store;
+    const CharacterRecord ace = store.create("Ace", {0, 0, 0}, 0);
+    const CharacterRecord rookie = store.create("Rookie", {0, 0, 20}, 0);
+    store.save_professions(ace.id, std::vector<ProfessionProgress>{{"pilot", professions.xp_for_level(90), 0}});
+    store.set_extra(ace.id, "perks:pilot",
+                    "pl_perk_hotshot,pl_perk_field_repair,pl_perk_reactor,pl_perk_afterburner,pl_perk_ace");
+    ensure_starter_kit(store, ace.id);  // (loadouts to carry the perks in, before the bikes below)
+    ensure_starter_kit(store, rookie.id);
+    const ItemInstance ace_bike = store.grant_item({0, ace.id, "vehicle_speeder_bike", ItemGrade::standard, "", "{}"});
+    const ItemInstance rookie_bike =
+        store.grant_item({0, rookie.id, "vehicle_speeder_bike", ItemGrade::standard, "", "{}"});
+    net::LoopbackHub links;
+    net::Endpoint server_ep{1, 1};
+    net::LoopbackLink srv_link{links, server_ep};
+    net::LoopbackLink link_a{links, {2, 1}};
+    net::LoopbackLink link_b{links, {3, 1}};
+    ServerConfig config;
+    config.catalog = &catalog;
+    config.professions = &professions;
+    config.specialists = &book;
+    config.world_vehicles = classes;
+    config.pvp_enabled = false;
+    config.spawn = {0, 0, 0};
+    GameServer server(srv_link, world, config, &store);
+    ClientConfig ca{.server = server_ep, .name = "Ace"};
+    ca.world_vehicles = classes;
+    ClientConfig cb{.server = server_ep, .name = "Rookie"};
+    cb.world_vehicles = classes;
+    GameClient a(link_a, world, ca);
+    GameClient b(link_b, world, cb);
+    double now = 0;
+    const auto run = [&](double seconds, auto steer) {
+        for (const double end = now + seconds; now < end; now += 1.0 / 30.0) {
+            steer();
+            server.update(now);
+            a.update(now);
+            b.update(now);
+        }
+    };
+    run(1.0, [] {});
+    CHECK(a.status() == GameClient::Status::connected && b.status() == GameClient::Status::connected);
+    CHECK(near(a.character_stats().vehicle_speed, 1.1, 1e-9) && near(b.character_stats().vehicle_speed, 1.0, 1e-9));
+    // Two buttons: Field Repair and Afterburner.
+    std::vector<std::string> kit;
+    for (const net::AbilityStatus& s : a.specialist().abilities) kit.push_back(s.id);
+    CHECK(kit.size() == 2 && std::find(kit.begin(), kit.end(), "pl_field_repair") != kit.end() &&
+          std::find(kit.begin(), kit.end(), "pl_afterburner") != kit.end());
+    // On their bikes.
+    a.use_item(ace_bike.id);
+    b.use_item(rookie_bike.id);
+    run(0.5, [] {});
+    run(0.1, [&] { a.set_input({.use = true}); b.set_input({.use = true}); });
+    run(0.5, [&] { a.set_input({}); b.set_input({}); });
+    CHECK(a.predicted().vehicle >= 0 && b.predicted().vehicle >= 0);
+    // Flat out for 4 s: the Hotshot's further.
+    const Vec3 a0 = a.predicted().position, b0 = b.predicted().position;
+    run(4, [&] { a.set_input({.forward = 1, .yaw = 0}); b.set_input({.forward = 1, .yaw = 0}); });
+    const double da = (a.predicted().position - a0).length(), db = (b.predicted().position - b0).length();
+    CHECK(db > 40 && da > db * 1.06);
+    // Afterburner: boosting burns no energy while it lasts; the rookie's runs down.
+    const auto pilot_xp = [&](const GameClient& c) {
+        const auto* p = server.professions_of(c.entity_id());
+        return p ? profession_xp(*p, "pilot") : 0;
+    };
+    const int64_t before_burn = pilot_xp(a);
+    net::SpecialistRequest use;
+    use.action = net::SpecialistRequest::use_ability;
+    use.id = "pl_afterburner";
+    a.specialist_request(use);
+    run(0.3, [&] { a.set_input({.forward = 1, .yaw = 0}); b.set_input({.forward = 1, .yaw = 0}); });
+    CHECK(pilot_xp(a) > before_burn);  // (using it earns experience)
+    run(3, [&] { a.set_input({.forward = 1, .yaw = 0, .sprint = true}); b.set_input({.forward = 1, .yaw = 0, .sprint = true}); });
+    CHECK(a.predicted().energy > 95 && b.predicted().energy < 60);
+    // Riding a minute on the move: Pilot experience, the rookie's too.
+    const int64_t a_xp = pilot_xp(a), b_xp = pilot_xp(b);
+    run(62, [&] {
+        const double turn = now * 0.4;
+        a.set_input({.forward = 1, .yaw = turn});
+        b.set_input({.forward = 1, .yaw = turn});
+    });
+    CHECK(pilot_xp(a) > a_xp && pilot_xp(b) > b_xp);
+}
+
 // In a match: a loadout from a hub brings its kit and Companion Slot; a
 // cloak hides you from the other side (they aren't even sent you); a squad
 // beacon is somewhere to spawn; a big creature stays home.
@@ -1313,6 +1404,7 @@ int main() {
     test_smuggler(book, professions, catalog);
     test_ranger(book, professions, catalog);
     test_merchant(book, professions, catalog);
+    test_pilot(root, book, professions, catalog);
     test_match(book, professions);
     return swm::test::finish("specialist_test");
 }

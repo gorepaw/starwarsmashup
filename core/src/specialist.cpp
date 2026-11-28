@@ -119,13 +119,13 @@ uint64_t to_uint(const std::string& text) {
     }
 }
 
-constexpr std::array<std::string_view, 26> effect_names{
+constexpr std::array<std::string_view, 28> effect_names{
     "buff",          "heal",        "heal_area", "damage_area",      "hazard",
     "cleanse",       "revive",      "cloak",     "mark",             "snare",
     "jump",          "deploy",      "strike",    "supply",           "vehicle_repair",
     "vehicle_guard", "companion_repair", "companion_overcharge", "perform", "track",
     "seeker",        "hvt",         "tranquilize", "tame",           "sample_dna",
-    "blind",
+    "blind",         "vehicle_boost", "vehicle_flare",
 };
 constexpr std::array<std::string_view, 5> target_names{"self", "ally", "enemy", "ground", "creature"};
 constexpr std::array<std::string_view, 7> deploy_names{"none",         "heal_aura", "buff_aura", "sensor",

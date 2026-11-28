@@ -584,11 +584,19 @@ void GameServer::leave_vehicle(Client& client) {
 }
 
 // Damage to a vehicle; at none left it blows up, taking its driver with it.
-void GameServer::damage_vehicle(Vehicle& v, double amount, uint32_t attacker, std::vector<Blast>& blasts) {
+void GameServer::damage_vehicle(Vehicle& v, double amount, uint32_t attacker, std::vector<Blast>& blasts,
+                                bool explosive) {
     if (v.dead_for >= 0 || amount <= 0) {
         return;
     }
-    amount *= vehicle_damage_factor(v.driver);  // Stage 12: Pilot's Evasive Maneuvers and Reactor Tuning
+    // A Pilot's Flares: explosives do nothing for a moment.
+    if (const Client* driver = explosive && v.driver != 0 ? find(v.driver) : nullptr) {
+        for (const TimedEffect& e : driver->spec.effects) {
+            if (e.flags & effect_flag::vehicle_flare) return;
+        }
+    }
+    amount *= gunnery(attacker);
+    amount *= vehicle_damage_factor(v.driver);  // A Pilot's Evasive Maneuvers, Reactor Tuning, Armored Hull
     v.health = std::max(0.0, v.health - amount);
     events_.push_back({net::CombatEvent::hit, attacker, v.id, float(amount)});
     if (v.health > 0) {
@@ -605,8 +613,19 @@ void GameServer::damage_vehicle(Vehicle& v, double amount, uint32_t attacker, st
     if (v.driver != 0) {
         if (Client* driver = find(v.driver)) {
             v.state = driver->state;
+            // A Pilot's Ejection Seat: thrown clear alive (not into space), the blast mostly kept off.
+            const bool eject = driver->life == Life::alive && granted(*driver, "pilot", "ejection_seat") &&
+                               !(conquest_ && conquest_->battlefield().is_space());
             leave_vehicle(*driver);
-            kill(*driver, attacker, cls.kind == VehicleKind::flyer);
+            if (eject) {
+                driver->state.velocity.y = std::max(driver->state.velocity.y, 9.0);
+                driver->state.grounded = false;
+                give_effect(*driver, {"pl_ejected", "Ejected", driver->entity, 2, 2,
+                                      {{Stat::mitigation_explosive, 1.0, 1.0}}});
+                notify(driver->entity, "Ejected!");
+            } else {
+                kill(*driver, attacker, cls.kind == VehicleKind::flyer);
+            }
         }
         v.driver = 0;
     }

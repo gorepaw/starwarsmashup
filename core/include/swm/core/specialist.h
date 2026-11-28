@@ -63,6 +63,8 @@ enum class AbilityEffect : uint8_t {
     tame,          // a creature: a bonding channel, then it's yours (Creature Handler)
     sample_dna,    // a creature, living or dead: a DNA sample (Bio-Engineer)
     blind,         // enemy players within `radius` see white, no HUD, for `duration` (Smuggler)
+    vehicle_boost,   // the user's modifiers while driving, for `duration` (a Pilot's Afterburner)
+    vehicle_flare,   // explosives do nothing to the user's vehicle for `duration` (a Pilot's Flares)
 };
 
 // Who an ability is aimed at.
@@ -246,6 +248,7 @@ inline constexpr uint16_t overcharged = 1 << 5;   // a companion's hits are stro
 inline constexpr uint16_t marked = 1 << 6;        // shown to the other side
 inline constexpr uint16_t holo_flair = 1 << 7;    // a holographic aura, for show
 inline constexpr uint16_t blinded = 1 << 8;       // a flashbang's: the screen white, no HUD
+inline constexpr uint16_t vehicle_flare = 1 << 9; // explosives do nothing to the vehicle driven
 }  // namespace effect_flag
 
 // A buff or debuff on a character. The same id refreshes rather than stacks.
@@ -631,6 +634,7 @@ struct SpecialistState {
     bool inspiration_carried = false;
     bool second_wind_used = false;  // this life (a Squad Leader's Second Wind)
     bool lucky_used = false;        // this life (a Smuggler's Lucky)
+    double ride_time = 0;           // s riding on the move toward the next Pilot experience
     std::vector<SliceJob> slice_jobs;  // a Smuggler's: slices others asked of them
     bool bounty_flag = false;  // opted in to being hunted
     // A channel under way (taming, sampling): its ability, target, time left, where it began.

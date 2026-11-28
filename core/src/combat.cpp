@@ -517,7 +517,7 @@ std::optional<Shot> simulate_character(MoveState& state, const MoveInput& input,
             steer.buttons = 0;
             steer.yaw = state.yaw;
         }
-        simulate_vehicle(state, steer, world, vehicle, dt, field);
+        simulate_vehicle(state, steer, world, vehicle, dt, field, stats.vehicle_speed, stats.vehicle_boost_drain);
         if (!alive) {
             return std::nullopt;
         }
