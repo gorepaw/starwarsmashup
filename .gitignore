@@ -83,3 +83,6 @@ Thumbs.db
 # The update Worker's local leftovers (tools/release/worker)
 /tools/release/worker/node_modules/
 /tools/release/worker/.wrangler/
+
+# Python bytecode caches
+__pycache__/
