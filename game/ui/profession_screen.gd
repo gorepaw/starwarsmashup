@@ -79,10 +79,12 @@ func _learned() -> Array:
 		var mine: Array = known.get(id, [])
 		for perk: Dictionary in p.get("perks", []):
 			if str(perk.get("id", "")) in mine:
-				out.append({"name": str(perk.get("name", "")), "profession": str(p.get("name", id))})
+				out.append({"name": str(perk.get("name", "")), "profession": str(p.get("name", id)),
+						"pool": str(p.get("pool", "combat"))})
 		for m: Dictionary in p.get("milestones", []):
 			if int(m.get("level", 0)) <= int(trained.get(id, 0)):
-				out.append({"name": str(m.get("name", "")), "profession": str(p.get("name", id))})
+				out.append({"name": str(m.get("name", "")), "profession": str(p.get("name", id)),
+						"pool": str(p.get("pool", "combat"))})
 	return out
 
 
@@ -252,8 +254,15 @@ func _paint_known(rect: Rect2) -> void:
 	var x := rect.position.x + 10 * u
 	var y := rect.position.y + 8 * u
 	var learned := _learned()
-	text("gamefont_small", "Known  %d / %d" % [learned.size(), cap], Vector2(x, y), "Left",
-			ACCENT if learned.size() < cap else Color(0.95, 0.55, 0.35))
+	var kx := x
+	for pool: String in ["combat", "noncombat"]:
+		var n := 0
+		for l: Dictionary in learned:
+			if str(l.get("pool", "combat")) == pool:
+				n += 1
+		text("gamefont_small", "%s  %d / %d" % ["Combat" if pool == "combat" else "Non-combat", n, cap],
+				Vector2(kx, y), "Left", ACCENT if n < cap else Color(0.95, 0.55, 0.35))
+		kx += 200 * u
 	text("gamefont_tiny", "Learned and given up at trainers; giving up is free, and so is learning again.",
 			Vector2(rect.end.x - 10 * u, y + 3 * u), "Right", DIM)
 	y += 28 * u

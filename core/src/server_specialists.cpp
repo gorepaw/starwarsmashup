@@ -387,18 +387,24 @@ void GameServer::give_effect(Client& client, TimedEffect effect) {
     client.spec.sync_tick = 0;
 }
 
+bool GameServer::granted(const Client& client, std::string_view profession, std::string_view grant) const {
+    return config_.professions != nullptr && has_grant(*config_.professions, client.professions, profession, grant);
+}
+
 ProfessionStanding GameServer::entertainer_standing(const Client& client) const {
     if (config_.professions == nullptr) return {};
     return profession_standing(*config_.professions, client.professions, "entertainer");
 }
 
-bool GameServer::inspire(Client& listener, const ProfessionStanding& performer, double gain) {
+bool GameServer::inspire(Client& listener, const Client& performer_client, double gain) {
     const SpecialistBook* book = config_.specialists;
+    const ProfessionStanding performer = entertainer_standing(performer_client);
     if (book == nullptr || performer.trained < 1 || gain <= 0 || listener.life != Life::alive) return false;
     SpecialistState& spec = listener.spec;
+    // The menu grows with the performer's level (docs/PROFESSIONS.md).
     const auto offered = [&](const std::string& id) -> const InspirationDef* {
         const InspirationDef* d = book->inspiration(id);
-        return d != nullptr && d->level <= performer.trained ? d : nullptr;
+        return d != nullptr && d->level <= performer.level ? d : nullptr;
     };
     // The listener's choice, if this performer offers it; else more of what
     // it has; else (having none) the first this performer offers. One it
@@ -407,17 +413,19 @@ bool GameServer::inspire(Client& listener, const ProfessionStanding& performer, 
     if (def == nullptr) def = offered(spec.inspiration.id);
     if (def == nullptr && !spec.inspiration.id.empty()) return false;
     for (const InspirationDef& d : book->inspirations()) {
-        if (def == nullptr && d.level <= performer.trained) def = &d;
+        if (def == nullptr && d.level <= performer.level) def = &d;
     }
     if (def == nullptr) return false;
     Inspiration& insp = spec.inspiration;
-    const double strength = inspiration_strength(performer.level);
+    const bool virtuoso = granted(performer_client, "entertainer", "virtuoso");
+    const double strength = (virtuoso ? 1.0 : inspiration_strength(performer.level)) *
+                            (granted(performer_client, "entertainer", "crowd_pleaser") ? 1.1 : 1.0);
     if (insp.id != def->id) {
         insp = Inspiration{def->id, 0, strength};
     } else {
         insp.strength = std::max(insp.strength, strength);
     }
-    const double cap = performer.trained >= 100 ? virtuoso_inspiration_cap : inspiration_cap;
+    const double cap = virtuoso ? virtuoso_inspiration_cap : inspiration_cap;
     insp.remaining = std::max(insp.remaining, std::min(cap, insp.remaining + gain));
     std::erase_if(spec.effects, [](const TimedEffect& e) { return e.id == "inspiration"; });
     sync_inspiration(listener);
@@ -704,12 +712,15 @@ bool GameServer::use_ability(Client& client, const AbilityDef& a, uint32_t targe
         npc_base_speed_.try_emplace(e, n->walk_speed, n->run_speed);
         npc_effects_.push_back({e, a.id, seconds, speed, dps, a.damage_type, me, tranq});
     };
+    // A Squad Leader's orders: a Field Commander's last and reach half again.
+    const bool order = a.profession == "squad_leader" && a.effect == AbilityEffect::buff;
+    const double order_scale = order && granted(client, "squad_leader", "field_commander") ? 1.5 : 1.0;
     const auto buff_effect = [&]() {
         TimedEffect e;
         e.id = a.id;
         e.name = a.name;
         e.source = me;
-        e.remaining = e.duration = std::max(1.0, a.duration);
+        e.remaining = e.duration = std::max(1.0, a.duration * order_scale);
         e.modifiers = a.modifiers;
         if (a.flair) e.flags |= effect_flag::holo_flair;
         return e;
@@ -724,11 +735,20 @@ bool GameServer::use_ability(Client& client, const AbilityDef& a, uint32_t targe
             if (t != &client && (conquest_ ? !allied(t->team, client.team) : bounty_pvp_allowed(me, t->entity))) t = &client;
             targets.push_back(t);
         } else if (a.radius > 0) {
-            targets = allies_near(from, a.radius);
+            targets = allies_near(from, a.radius * order_scale);
         } else {
             targets.push_back(&client);
         }
         for (Client* t : targets) give_effect(*t, buff_effect());
+        // Second Wind: once a life, an order fills its side's stamina too.
+        if (order && !client.spec.second_wind_used && granted(client, "squad_leader", "second_wind")) {
+            client.spec.second_wind_used = true;
+            for (Client* t : targets) {
+                MoveState s = t->state;
+                s.energy = t->stats.move.max_energy;
+                set_state(t->entity, s);
+            }
+        }
         earn_specialist_xp(client, profession, a.xp + int64_t(targets.size() - 1) * a.xp / 4);
         return true;
     }
@@ -786,12 +806,22 @@ bool GameServer::use_ability(Client& client, const AbilityDef& a, uint32_t targe
         return true;
     }
     case AbilityEffect::cleanse: {
-        Client* t = target != 0 ? find(target) : &client;
-        if (t == nullptr || t->life != Life::alive || !in_reach(t->state.position)) t = &client;
-        const bool had = has_effect_flag(t->spec.effects, effect_flag::debuff);
-        if (remove_effects(t->spec.effects, effect_flag::debuff)) refresh_effect_gear(*t);
-        ++t->spec.revision;
-        t->spec.sync_tick = 0;
+        // One ally, or (with a Radius: Purge) everyone of its side near.
+        std::vector<Client*> targets;
+        if (a.radius > 0) {
+            targets = allies_near(from, a.radius);
+        } else {
+            Client* t = target != 0 ? find(target) : &client;
+            if (t == nullptr || t->life != Life::alive || !in_reach(t->state.position)) t = &client;
+            targets.push_back(t);
+        }
+        bool had = false;
+        for (Client* t : targets) {
+            had |= has_effect_flag(t->spec.effects, effect_flag::debuff);
+            if (remove_effects(t->spec.effects, effect_flag::debuff)) refresh_effect_gear(*t);
+            ++t->spec.revision;
+            t->spec.sync_tick = 0;
+        }
         earn_specialist_xp(client, profession, had ? a.xp : a.xp / 4);
         return true;
     }
@@ -1429,6 +1459,7 @@ void GameServer::update_effects(Client& client, double dt) {
     SpecialistState& spec = client.spec;
     // Inspiration counts down while its character plays; a death in the open
     // world ends it, one in a match doesn't (docs/PROFESSIONS.md).
+    if (client.life != Life::alive) spec.second_wind_used = false;  // (each life its own)
     if (!spec.inspiration.id.empty()) {
         spec.inspiration.remaining -= dt;
         if (spec.inspiration.remaining <= 0 || (!conquest_ && client.life == Life::dead)) spec.inspiration = {};
@@ -1552,20 +1583,24 @@ void GameServer::update_specialists(double dt) {
             if (other.spec.performing && flat_distance(other.state.position, performer.state.position) <= band_radius) ++band;
         }
         const ProfessionStanding st = entertainer_standing(performer);
+        const auto has = [&](std::string_view flag) { return granted(performer, "entertainer", flag); };
         const bool flourish = std::any_of(performer.spec.effects.begin(), performer.spec.effects.end(),
                                           [](const TimedEffect& e) { return e.id == "ent_flourish"; });
-        const double gain = inspiration_gain(performance_pulse, band, st.trained >= 75, flourish);
+        if (band == 1 && has("soloist")) band = 2;  // alone, as fast as a band of two
+        const double gain =
+            inspiration_gain(performance_pulse, band, has("band_leader"), flourish) * (has("dancer") ? 1.25 : 1.0);
+        const double radius = has("musician") ? 20.0 : performance_radius;
         int audience = 0;
         for (Client& listener : clients_) {
             if (&listener == &performer || listener.spec.performing || listener.life != Life::alive ||
-                flat_distance(listener.state.position, performer.state.position) > performance_radius) {
+                flat_distance(listener.state.position, performer.state.position) > radius) {
                 continue;
             }
-            if (inspire(listener, st, gain)) ++audience;
+            if (inspire(listener, performer, gain)) ++audience;
         }
         earn_specialist_xp(performer, "entertainer", 6 + 6 * std::min(audience, 8) + 3 * (band - 1));
         if (st.trained >= 1) {  // tips, even to an empty room
-            performer.credits += performance_tips(st.level, audience);
+            performer.credits += performance_tips(st.level, audience) * (has("showstopper") ? 3 : has("encore") ? 2 : 1);
             save_economy(performer);
         }
         for (Contract& c : performer.spec.contracts) {
@@ -1582,7 +1617,10 @@ void GameServer::update_specialists(double dt) {
         for (const Client& leader : clients_) {
             if (leader.life != Life::alive || specialist_level(leader, "squad_leader") <= 0) continue;
             const Loadout& lo = loadout_of(leader);
-            if (std::find(lo.abilities.begin(), lo.abilities.end(), "sl_rally") == lo.abilities.end()) continue;
+            const auto rallies = [&](const char* id) {
+                return std::find(lo.abilities.begin(), lo.abilities.end(), id) != lo.abilities.end();
+            };
+            if (!rallies("sl_rally") && !rallies("sl_steady_rally")) continue;
             for (Client& ally : clients_) {
                 if (&ally == &leader || ally.life != Life::alive) continue;
                 if (flat_distance(ally.state.position, leader.state.position) > cohesion_radius) continue;
@@ -1634,12 +1672,11 @@ void GameServer::update_specialists(double dt) {
             // builds Inspiration from it at half speed.
             if (d.pulse <= 0) {
                 d.pulse = performance_pulse;
-                const ProfessionStanding st = entertainer_standing(*owner);
                 const double gain = inspiration_gain(performance_pulse, 1, false, false) * 0.5;
                 int audience = 0;
                 for (Client& c : clients_) {
                     if (c.life == Life::alive && !c.spec.performing && friendly(c) &&
-                        flat_distance(c.state.position, d.position) <= d.radius && inspire(c, st, gain)) {
+                        flat_distance(c.state.position, d.position) <= d.radius && inspire(c, *owner, gain)) {
                         ++audience;
                     }
                 }
@@ -1999,6 +2036,9 @@ void GameServer::update_contracts(Client& client) {
             client.items = store_->list_items(client.character);
             ++client.inventory_rev;
             client.last_sync_tick = 0;
+        }
+        if (done && c.kind == ContractKind::gig && granted(client, "entertainer", "encore")) {
+            c.reward += c.reward / 2;  // an Encore's
         }
         if (done) {
             client.credits += c.reward;

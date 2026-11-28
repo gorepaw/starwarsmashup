@@ -42,13 +42,26 @@ bool has(const std::vector<std::string>& list, std::string_view id) {
 
 void test_shipped_data(const SpecialistBook& book, const ProfessionBook& professions, const ItemCatalog& catalog) {
     CHECK(book.abilities().size() >= 40);
-    // Every ability belongs to a real, available profession, at one of its milestones.
+    // Every ability belongs to a real, available profession: at one of its
+    // milestones, or taught by one of its perks (at the perk's level).
     for (const AbilityDef& a : book.abilities()) {
         const ProfessionDef* def = professions.find(a.profession);
         CHECK(def != nullptr && def->available);
         if (def == nullptr) continue;
-        CHECK(std::any_of(def->milestones.begin(), def->milestones.end(),
-                          [&](const ProfessionMilestone& m) { return m.level == a.level; }));
+        if (def->chooses()) {
+            CHECK(std::any_of(def->perks.begin(), def->perks.end(), [&](const ProfessionPerkDef& p) {
+                return p.level == a.level && std::find(p.abilities.begin(), p.abilities.end(), a.id) != p.abilities.end();
+            }));
+        } else {
+            CHECK(std::any_of(def->milestones.begin(), def->milestones.end(),
+                              [&](const ProfessionMilestone& m) { return m.level == a.level; }));
+        }
+    }
+    // ...and every perk's ability is one.
+    for (const ProfessionDef& def : professions.all()) {
+        for (const ProfessionPerkDef& p : def.perks) {
+            for (const std::string& id : p.abilities) CHECK(book.ability(id) != nullptr);
+        }
     }
     // All 12 Wave 7B/7C professions are live (Image Designer and Combat Medic are gone); 29 in all.
     int live = 0;
@@ -79,10 +92,15 @@ void test_rules(const SpecialistBook& book, const ProfessionBook& professions) {
     // Abilities: every profession's in every loadout (no slots), each once its
     // milestone is learned (docs/PERKS.md).
     const int64_t master = professions.xp_for_level(100);
-    std::vector<ProfessionProgress> progress{{"bounty_hunter", master, 100}, {"entertainer", master, 25},
-                                             {"doctor", master, 0}};
+    std::vector<ProfessionProgress> progress{
+        {"bounty_hunter", master, 100},
+        {"entertainer", master, 0, 0, {"ent_perk_dancer", "ent_perk_flourish"}},
+        {"doctor", master, 0},
+        {"squad_leader", master, 0, 0, {"sl_perk_steady_rally", "sl_perk_shields_up"}}};
     auto world = unlocked_abilities(book, professions, progress, false);
     CHECK(has(world, "ent_perform") && has(world, "ent_flourish") && !has(world, "ent_holo_emitter"));
+    // Perks teach their abilities: this Squad Leader's two orders, not the other rally.
+    CHECK(has(world, "sl_steady_rally") && has(world, "sl_shields_up") && !has(world, "sl_rally"));
     CHECK(has(world, "bh_bolas") && has(world, "bh_seeker_probe") && !has(world, "bh_recon_probe"));
     CHECK(!has(world, "doc_heal_dart"));  // not learned
     auto match = unlocked_abilities(book, professions, progress, true);
@@ -252,8 +270,11 @@ void test_server(const std::filesystem::path& root, const SpecialistBook& book, 
     std::vector<ProfessionProgress> progress;
     for (const char* id : {"bounty_hunter", "creature_handler", "entertainer", "bio_engineer", "merchant", "smuggler"}) {
         progress.push_back({id, master, 0});
-        store.set_extra(vet.id, std::string("trained:") + id, "100");
+        if (std::string(id) != "entertainer") store.set_extra(vet.id, std::string("trained:") + id, "100");
     }
+    // Entertainer teaches perks: a musician who leads bands and holo-records.
+    store.set_extra(vet.id, "perks:entertainer",
+                    "ent_perk_musician,ent_perk_flourish,ent_perk_holo_emitter,ent_perk_band_leader,ent_perk_virtuoso");
     store.save_professions(vet.id, progress);
     store.create("Buyer", {3, 0, 3}, 0);
 

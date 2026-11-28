@@ -7,7 +7,7 @@
 #
 #   screen.trainer_name = ...; screen.professions = [{id, name, perks: [...], milestones: [...]}]
 #   screen.progress = {profession id: {level, trained, paid, perks, paid_perks}}
-#   screen.credits = ...; screen.known_count = ...; screen.cap = ...
+#   screen.credits = ...; screen.known_counts = ...; screen.cap = ...
 #   screen.open_trainer()   # signal service_requested(action, id, amount):
 #                           # 0 train (profession, level), 8 learn_perk (perk), 9 forget (perk or profession)
 extends "res://ui/bf2_screen.gd"
@@ -25,7 +25,7 @@ var trainer_name := "Trainer"
 var professions: Array = []      # the ones this trainer teaches (their defs)
 var progress := {}               # profession id -> {level, trained, paid, perks, paid_perks}
 var credits := 0
-var known_count := 0             # perks and milestones known, across every profession
+var known_counts := {"combat": 0, "noncombat": 0}  # perks and milestones known, by pool (cap in each)
 var cap := 10
 var feedback := ""
 
@@ -104,8 +104,18 @@ func _paint() -> void:
 	var x := box.position.x + 18 * u
 	var y := box.position.y + 14 * u
 	text("gamefont_medium", "Learn what you've earned", Vector2(x, y), "Left", TEXT)
-	text("gamefont_small", "Known %d / %d" % [known_count, cap], Vector2(x + 330 * u, y + 3 * u), "Left",
-			ACCENT if known_count < cap else Color(0.95, 0.55, 0.35))
+	# The pools this trainer's professions count against.
+	var pools: Array = []
+	for p: Dictionary in professions:
+		var pool := str(p.get("pool", "combat"))
+		if not pool in pools:
+			pools.append(pool)
+	var kx := x + 330 * u
+	for pool: String in pools:
+		var n := int(known_counts.get(pool, 0))
+		var label := "%s %d / %d" % ["Combat" if pool == "combat" else "Non-combat", n, cap]
+		text("gamefont_small", label, Vector2(kx, y + 3 * u), "Left", ACCENT if n < cap else Color(0.95, 0.55, 0.35))
+		kx += 190 * u
 	text("gamefont_medium", "%d Credits" % credits, Vector2(box.end.x - 130 * u, y), "Right", ACCENT)
 	button(Rect2(box.end.x - 110 * u, y - 2 * u, 92 * u, 28 * u), "Close", "close", false, true)
 	y += 40 * u
@@ -158,6 +168,14 @@ func _paint_or(center: Vector2) -> void:
 	text("gamefont_tiny", "OR", center - Vector2(0, 7 * u), "Center", ACCENT)
 
 
+# Whether the pool a profession's perks count against is full.
+func _full(profession: String) -> bool:
+	for p: Dictionary in professions:
+		if str(p.get("id", "")) == profession:
+			return int(known_counts.get(str(p.get("pool", "combat")), 0)) >= cap
+	return false
+
+
 func _paint_perk(rect: Rect2, profession: String, perk: Dictionary, other: Dictionary, level: int) -> void:
 	var mine: Dictionary = progress.get(profession, {})
 	var known: Array = mine.get("perks", [])
@@ -186,7 +204,7 @@ func _paint_perk(rect: Rect2, profession: String, perk: Dictionary, other: Dicti
 		text("gamefont_tiny", "Needs level %d" % at, label_at, "Center", DIM)
 	elif other_learned:
 		text("gamefont_tiny", "Give up %s" % str(other.get("name", "")), label_at, "Center", DIM)
-	elif known_count >= cap:
+	elif _full(profession):
 		text("gamefont_tiny", "Give one up first", label_at, "Center", DIM)
 	else:
 		var cost := 0 if id in paid else int(perk.get("cost", 0))
@@ -213,7 +231,7 @@ func _paint_milestone(rect: Rect2, row: Dictionary) -> void:
 			else:
 				text("gamefont_small", "Learned", Vector2(button_rect.get_center().x, ry + 12 * u), "Center", color)
 		"ready":
-			if known_count >= cap:
+			if _full(str(row["profession"])):
 				text("gamefont_tiny", "Give one up first", label_at, "Center", DIM)
 			else:
 				button(button_rect, "Learn" if cost == 0 else "Learn  %d Cr" % cost,

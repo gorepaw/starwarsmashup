@@ -145,6 +145,10 @@ std::string_view profession_category_name(ProfessionCategory category) {
     return category_names[size_t(category)];
 }
 
+std::string_view perk_pool_name(PerkPool pool) {
+    return pool == PerkPool::combat ? "combat" : "noncombat";
+}
+
 void ProfessionBook::load(const std::filesystem::path& path) {
     parse(Ini::load(path), path.string());
 }
@@ -195,6 +199,20 @@ void ProfessionBook::parse(const Ini& ini, const std::string& where) {
                 throw std::runtime_error(at + ": an armor profession's ArmorClass is none, light, medium or heavy");
             }
             def.earns = s.get("Earns").value_or("");
+            // Its pool: weapons and armor fight; gathering and crafting don't;
+            // a specialist or companion profession says (Pool = combat or noncombat).
+            const bool fights = def.category == ProfessionCategory::weapon || def.category == ProfessionCategory::armor ||
+                                def.category == ProfessionCategory::specialist ||
+                                def.category == ProfessionCategory::companion;
+            const std::string pool = s.get("Pool").value_or(fights ? "combat" : "noncombat");
+            if (pool != "combat" && pool != "noncombat") {
+                throw std::runtime_error(at + ": Pool is combat or noncombat");
+            }
+            def.pool = pool == "combat" ? PerkPool::combat : PerkPool::noncombat;
+            def.first_perk_level = int(s.number("FirstPerk", perk_levels[0]));
+            if (def.first_perk_level != 1 && def.first_perk_level != perk_levels[0]) {
+                throw std::runtime_error(at + ": FirstPerk is 1 or 5");
+            }
             def.rank_every = int(s.number("RankEvery", 0));
             read_perk(s, "Rank", def.rank, at);
             if (def.rank_every <= 0 && !def.rank.empty()) {
@@ -230,8 +248,14 @@ void ProfessionBook::parse(const Ini& ini, const std::string& where) {
                 throw std::runtime_error(at + ": perk " + perk.id + " twice");
             }
             perk.level = int(s.number("Level", 0));
-            if (std::find(perk_levels.begin(), perk_levels.end(), perk.level) == perk_levels.end()) {
-                throw std::runtime_error(at + ": perk " + perk.id + "'s Level is 5, 25, 45, 65 or 85");
+            const auto tiers = def.perk_tiers();
+            if (std::find(tiers.begin(), tiers.end(), perk.level) == tiers.end()) {
+                throw std::runtime_error(std::format("{}: perk {}'s Level is {}, 25, 45, 65 or 85", at, perk.id,
+                                                     def.first_perk_level));
+            }
+            for (const auto& [key, value] : s.values) {
+                if (same(key, "Ability")) perk.abilities.push_back(value);
+                if (same(key, "Grants")) perk.grants.push_back(value);
             }
             const std::string choice = s.get("Choice").value_or("");
             if (choice != "A" && choice != "B") {
@@ -329,7 +353,7 @@ void ProfessionBook::parse(const Ini& ini, const std::string& where) {
             return a.level != b.level ? a.level < b.level : a.choice < b.choice;
         });
         // Two at each level: an A and a B.
-        for (const int level : perk_levels) {
+        for (const int level : def.perk_tiers()) {
             int a = 0, b = 0;
             for (const ProfessionPerkDef& perk : def.perks) {
                 if (perk.level == level) (perk.choice == 'A' ? a : b) += 1;
@@ -440,14 +464,27 @@ int learned_count(const ProfessionDef& def, const ProfessionProgress& progress) 
                              [&](const ProfessionMilestone& m) { return m.level <= progress.trained; }));
 }
 
-int perks_learned(const ProfessionBook& book, std::span<const ProfessionProgress> progress) {
+int perks_learned(const ProfessionBook& book, std::span<const ProfessionProgress> progress, PerkPool pool) {
     int count = 0;
     for (const ProfessionProgress& p : progress) {
-        if (const ProfessionDef* def = book.find(p.id)) {
+        if (const ProfessionDef* def = book.find(p.id); def != nullptr && def->pool == pool) {
             count += learned_count(*def, p);
         }
     }
     return count;
+}
+
+bool has_grant(const ProfessionBook& book, std::span<const ProfessionProgress> progress, std::string_view profession,
+               std::string_view grant) {
+    const ProfessionProgress* p = find_progress(progress, profession);
+    if (p == nullptr) return false;
+    for (const std::string& id : p->perks) {
+        const ProfessionPerkDef* perk = book.find_perk(id);
+        if (perk != nullptr && std::find(perk->grants.begin(), perk->grants.end(), grant) != perk->grants.end()) {
+            return true;
+        }
+    }
+    return false;
 }
 
 bool licensed(const ProfessionBook& book, std::span<const ProfessionProgress> progress, std::string_view id) {
@@ -455,6 +492,15 @@ bool licensed(const ProfessionBook& book, std::span<const ProfessionProgress> pr
     if (def == nullptr || !def->available) return false;
     if (def->category == ProfessionCategory::weapon || def->category == ProfessionCategory::armor) return true;
     const ProfessionProgress* p = find_progress(progress, id);
+    if (def->chooses()) {
+        // A licence tier (FirstPerk = 1): one of its level-1 perks; else none needed.
+        if (def->first_perk_level > 1) return true;
+        if (p == nullptr) return false;
+        return std::any_of(p->perks.begin(), p->perks.end(), [&](const std::string& known) {
+            const ProfessionPerkDef* perk = book.find_perk(known);
+            return perk != nullptr && perk->level == def->first_perk_level;
+        });
+    }
     return p != nullptr && p->trained >= 1;
 }
 
@@ -464,8 +510,9 @@ TrainResult refused(std::string message) {
     return {false, 0, std::move(message)};
 }
 
-std::string full_message(const ProfessionBook& book, std::span<const ProfessionProgress> progress) {
-    return std::format("You know {} of {} already: give one up first.", perks_learned(book, progress), perk_cap);
+std::string full_message(const ProfessionBook& book, std::span<const ProfessionProgress> progress, PerkPool pool) {
+    return std::format("You know {} of {} {} perks already: give one up first.", perks_learned(book, progress, pool),
+                       perk_cap, pool == PerkPool::combat ? "combat" : "non-combat");
 }
 
 } // namespace
@@ -493,8 +540,8 @@ TrainResult learn_perk(const ProfessionBook& book, std::vector<ProfessionProgres
             }
         }
     }
-    if (perks_learned(book, progress) >= perk_cap) {
-        return refused(full_message(book, progress));
+    if (perks_learned(book, progress, def->pool) >= perk_cap) {
+        return refused(full_message(book, progress, def->pool));
     }
     const bool paid_before = mine != nullptr && std::find(mine->paid_perks.begin(), mine->paid_perks.end(), perk->id) !=
                                                     mine->paid_perks.end();
@@ -528,8 +575,8 @@ TrainResult learn_milestone(const ProfessionBook& book, std::vector<ProfessionPr
     if (book.level_for(mine ? mine->xp : 0) < level) {
         return refused(std::format("You need {} level {}.", def->name, level));
     }
-    if (perks_learned(book, progress) >= perk_cap) {
-        return refused(full_message(book, progress));
+    if (perks_learned(book, progress, def->pool) >= perk_cap) {
+        return refused(full_message(book, progress, def->pool));
     }
     const bool paid_before = mine != nullptr && mine->paid >= level;
     const int64_t cost = paid_before ? 0 : milestone_cost(level);
@@ -662,8 +709,7 @@ void apply_profession_perks(Loadout& loadout, const ProfessionBook& book, std::s
         if (def->category == ProfessionCategory::armor && def->armor_class != armor) {
             continue;  // trained for other armor than this loadout's
         }
-        if (def->category != ProfessionCategory::weapon && def->category != ProfessionCategory::armor &&
-            mine.trained < 1) {
+        if (!licensed(book, progress, def->id)) {
             continue;  // not licensed: none of it
         }
         if (def->category == ProfessionCategory::weapon &&

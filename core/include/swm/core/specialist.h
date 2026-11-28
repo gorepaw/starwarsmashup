@@ -569,6 +569,7 @@ struct SpecialistState {
     std::string inspiration_choice;
     mutable std::string saved_inspiration;
     bool inspiration_carried = false;
+    bool second_wind_used = false;  // this life (a Squad Leader's Second Wind)
     bool bounty_flag = false;  // opted in to being hunted
     // A channel under way (taming, sampling): its ability, target, time left, where it began.
     std::string channel;

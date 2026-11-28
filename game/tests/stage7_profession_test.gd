@@ -39,8 +39,14 @@ func _initialize() -> void:
 	assert(first["id"] == "rifles_long_barrel" and first["choice"] == "A" and int(first["level"]) == 5)
 	assert(first["perks"] == ["20% longer full-damage range"], "perk words: %s" % [first["perks"]])
 	assert(int(first["cost"]) == 500 and str(first["needs"]) == "")
+	# An advanced profession of perks (from 5: no licence), and one still of milestones.
 	var doctor: Dictionary = roster.filter(func(p: Dictionary) -> bool: return p["id"] == "doctor")[0]
-	assert((doctor["milestones"] as Array).size() == 5 and (doctor["perks"] as Array).is_empty())
+	assert((doctor["milestones"] as Array).is_empty() and (doctor["perks"] as Array).size() == 10)
+	assert(str(doctor["pool"]) == "combat" and int(doctor["first_perk"]) == 5)
+	var ranger: Dictionary = roster.filter(func(p: Dictionary) -> bool: return p["id"] == "ranger")[0]
+	assert((ranger["milestones"] as Array).size() == 5 and (ranger["perks"] as Array).is_empty())
+	var entertainer: Dictionary = roster.filter(func(p: Dictionary) -> bool: return p["id"] == "entertainer")[0]
+	assert(str(entertainer["pool"]) == "noncombat" and int(entertainer["first_perk"]) == 1)
 	var lv: Dictionary = store.profession_level(215 + 50)
 	assert(int(lv["level"]) == 3 and int(lv["into"]) == 50 and int(lv["needed"]) == 130, "curve: %s" % lv)
 	assert(int(store.get_perk_cap()) == 10)
@@ -51,9 +57,9 @@ func _initialize() -> void:
 	_screen.professions = roster
 	_screen.store = store
 	_screen.cap = int(store.get_perk_cap())
-	_screen.progress = {"rifles": 21000, "medium_armor": 4000, "pistols": 300, "doctor": 9000}
+	_screen.progress = {"rifles": 21000, "medium_armor": 4000, "pistols": 300, "ranger": 9000}
 	_screen.known = {"rifles": ["rifles_long_barrel", "rifles_braced"], "medium_armor": ["medium_conditioning"]}
-	_screen.trained = {"doctor": 25}
+	_screen.trained = {"ranger": 25}
 	_screen.open_screen()
 	assert(_screen._learned().size() == 5, "known: %s" % [_screen._learned()])
 	_screen._on_click("row:6", Vector2.ZERO)  # Rifles, in Combat
@@ -65,7 +71,7 @@ func _initialize() -> void:
 	root.add_child(trainer)
 	trainer.professions = [rifles]
 	trainer.progress = {"rifles": {"level": 30, "perks": ["rifles_long_barrel"], "paid_perks": ["rifles_long_barrel"]}}
-	trainer.known_count = 1
+	trainer.known_counts = {"combat": 1, "noncombat": 0}
 	trainer.credits = 1000
 	var asked := []
 	trainer.service_requested.connect(func(action: int, id: String, amount: int) -> void: asked.append([action, id, amount]))

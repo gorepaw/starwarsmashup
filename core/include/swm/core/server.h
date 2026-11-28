@@ -755,7 +755,9 @@ private:
     // Inspiration (docs/PROFESSIONS.md): `gain` seconds of it from a
     // performer of this standing, built toward the listener's choice;
     // whether any was. Its effect kept in step with what's built.
-    bool inspire(Client& listener, const ProfessionStanding& performer, double gain);
+    bool inspire(Client& listener, const Client& performer, double gain);
+    // Whether a perk the character knows in a profession Grants a flag.
+    bool granted(const Client& client, std::string_view profession, std::string_view grant) const;
     void sync_inspiration(Client& client);
     ProfessionStanding entertainer_standing(const Client& client) const;
 

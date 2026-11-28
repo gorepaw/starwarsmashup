@@ -397,6 +397,15 @@ ProfessionStanding profession_standing(const ProfessionBook& professions, std::s
         if (p.id == id) {
             out.level = professions.level_for(p.xp);
             out.trained = p.trained;
+            // A profession of perks: licensed, and the highest tier known.
+            if (const ProfessionDef* def = professions.find(id); def != nullptr && def->chooses()) {
+                out.trained = licensed(professions, progress, id) ? 1 : 0;
+                for (const std::string& known : p.perks) {
+                    if (const ProfessionPerkDef* perk = professions.find_perk(known); perk && out.trained > 0) {
+                        out.trained = std::max(out.trained, perk->level);
+                    }
+                }
+            }
             return out;
         }
     }
@@ -411,6 +420,16 @@ std::vector<std::string> unlocked_abilities(const SpecialistBook& book, const Pr
         if ((in_match && a.world_only) || (!in_match && a.match_only)) continue;
         const ProfessionDef* def = professions.find(a.profession);
         if (def == nullptr || !def->available) continue;
+        if (def->chooses()) {
+            // A profession of perks: the abilities its known perks teach.
+            const ProfessionProgress* p = find_progress(progress, def->id);
+            const bool taught = p != nullptr && std::any_of(p->perks.begin(), p->perks.end(), [&](const std::string& id) {
+                const ProfessionPerkDef* perk = professions.find_perk(id);
+                return perk != nullptr && std::find(perk->abilities.begin(), perk->abilities.end(), a.id) != perk->abilities.end();
+            });
+            if (taught) out.push_back(a.id);
+            continue;
+        }
         const ProfessionStanding st = profession_standing(professions, progress, def->id);
         if (st.level >= a.level && st.trained >= a.level) out.push_back(a.id);
     }

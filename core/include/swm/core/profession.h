@@ -26,10 +26,15 @@ std::optional<ProfessionCategory> profession_category_from_name(std::string_view
 std::string_view profession_category_name(ProfessionCategory category);
 
 inline constexpr int profession_max_level = 100;
-// How many perks and milestones a character may know at once, across every
-// profession (like mastering two trees in Galaxies).
+// Perks and milestones fall in two pools (docs/PERKS.md): combat (weapons,
+// armor, the fighting specialists) and non-combat (gathering, crafting, the
+// social and building ones). A character may know `perk_cap` in each.
+enum class PerkPool : uint8_t { combat, noncombat };
+std::string_view perk_pool_name(PerkPool pool);
 inline constexpr int perk_cap = 10;
-// The levels a weapon or armor profession offers its perks at, two at each.
+// The levels a profession offers its perks at, two at each. A profession you
+// can't do at all without its first perk (its licence: gathering, performing,
+// rallying) offers that tier at level 1 instead of 5 (FirstPerk = 1).
 inline constexpr std::array<int, 5> perk_levels{5, 25, 45, 65, 85};
 
 // (WeaponModifier, a handling change, is in loadout.h.)
@@ -66,6 +71,11 @@ struct ProfessionPerkDef {
     std::vector<std::string> archetypes;
     // Its Modifier and Weapon lines: always, or while its trigger holds.
     ProfessionPerk perk;
+    // An advanced profession's: the abilities it teaches (Ability = <id>,
+    // specialists.ini), and what it switches on that the server looks for by
+    // name (Grants = <flag>: band_leader, field_commander ...).
+    std::vector<std::string> abilities;
+    std::vector<std::string> grants;
     // Working only on something (Trigger = ...): what, and what it does.
     // Its slots and modifiers are filled in for a loadout.
     std::optional<TriggeredPerk> trigger;
@@ -87,10 +97,16 @@ struct ProfessionDef {
     int rank_every = 0;
     ProfessionPerk rank;
     std::vector<ProfessionMilestone> milestones;  // by level
-    std::vector<ProfessionPerkDef> perks;         // by level, A before B (weapon and armor professions)
+    std::vector<ProfessionPerkDef> perks;         // by level, A before B
+    PerkPool pool = PerkPool::combat;  // whose cap its perks count against
+    int first_perk_level = 5;          // 1 for a licence tier (FirstPerk = 1)
 
     // Whether it teaches perks to choose from rather than milestones in order.
     bool chooses() const { return !perks.empty(); }
+    // The levels its perks are at: its first tier's, then 25, 45, 65, 85.
+    std::array<int, 5> perk_tiers() const {
+        return {first_perk_level, perk_levels[1], perk_levels[2], perk_levels[3], perk_levels[4]};
+    }
 };
 
 // A character's experience in one profession.
@@ -143,12 +159,16 @@ ProfessionProgress& progress_for(std::vector<ProfessionProgress>& progress, std:
 // How many of perk_cap one profession's learning takes: its perks, or its
 // milestones learned.
 int learned_count(const ProfessionDef& def, const ProfessionProgress& progress);
-// How many a character has learned in all.
-int perks_learned(const ProfessionBook& book, std::span<const ProfessionProgress> progress);
+// How many a character has learned in one pool.
+int perks_learned(const ProfessionBook& book, std::span<const ProfessionProgress> progress, PerkPool pool);
 // Whether a character may do what a profession is about (gather, craft,
-// heal, tame, perform): its level-1 milestone learned. Weapons and armor
-// need no licence: anyone can fight in anything.
+// heal, tame, perform): its level-1 milestone, or a level-1 perk (FirstPerk
+// = 1), learned. Weapons, armor and a profession whose perks start at 5
+// (Doctor: medicine is crafted from level 1) need no licence.
 bool licensed(const ProfessionBook& book, std::span<const ProfessionProgress> progress, std::string_view id);
+// Whether a perk the character knows in a profession Grants this flag.
+bool has_grant(const ProfessionBook& book, std::span<const ProfessionProgress> progress, std::string_view profession,
+               std::string_view grant);
 
 // A trainer's answer: whether it happened, what it cost and what to tell them.
 struct TrainResult {

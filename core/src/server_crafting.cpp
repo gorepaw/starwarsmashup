@@ -457,8 +457,11 @@ void GameServer::handle_craft_request(Client& client, const net::CraftRequest& r
             store_->remove_item(eid);
             std::erase_if(client.items, [&](const ItemInstance& inst) { return inst.id == eid; });
         }
-        const CraftPreview preview =
-            book.preview_craft(*sch, req.resource_ids, int(enh_ids.size()), lv, uint8_t(focus));
+        // A Pharmacologist's medicine rolls as if a module more went in (docs/PROFESSIONS.md).
+        const bool pharmacologist = sch->profession == "doctor" && config_.professions != nullptr &&
+                                    has_grant(*config_.professions, client.professions, "doctor", "pharmacologist");
+        const int modules = std::min(2, int(enh_ids.size()) + (pharmacologist ? 1 : 0));
+        const CraftPreview preview = book.preview_craft(*sch, req.resource_ids, modules, lv, uint8_t(focus));
         std::array<int, item_grade_count> made{};
         const int unit_count = sch->output_count > 1 ? sch->output_count
                                                      : (out_def && out_def->kind == ItemKind::ammo ? out_def->ammo_batch : 1);

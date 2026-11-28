@@ -61,7 +61,7 @@ void GameServer::earn_profession_xp(Client& client, const std::string& id, int64
             text += std::format(": a trainer can teach you {}", m.name);
         }
     }
-    for (const int level : perk_levels) {
+    for (const int level : def->perk_tiers()) {
         if (def->chooses() && level > before && level <= after) {
             text += std::format(": a trainer can teach you a level-{} perk", level);
         }

@@ -66,15 +66,22 @@ void test_roster() {
         CHECK(def.available);  // all of them are in play since Stage 12
         CHECK(!def.name.empty() && !def.description.empty());
         const bool combat = def.category == ProfessionCategory::weapon || def.category == ProfessionCategory::armor;
-        // Weapons and armor teach perks, two at each of 5/25/45/65/85; the
-        // rest milestones at 1, 25, 50, 75 and 100.
-        CHECK(def.chooses() == combat);
-        if (combat) {
+        // Weapons, armor and the advanced professions done so far teach perks,
+        // two at each tier (5, or 1 for a licence, then 25/45/65/85); the rest
+        // milestones at 1, 25, 50, 75 and 100.
+        if (combat) CHECK(def.chooses() && def.first_perk_level == 5 && def.pool == PerkPool::combat);
+        if (def.chooses()) {
             CHECK(def.perks.size() == 10 && def.milestones.empty() && def.rank_every == 0);
+            const auto tiers = def.perk_tiers();
             for (size_t i = 0; i < def.perks.size(); ++i) {
                 const ProfessionPerkDef& perk = def.perks[i];
-                CHECK(perk.level == perk_levels[i / 2] && perk.choice == (i % 2 == 0 ? 'A' : 'B'));
+                CHECK(perk.level == tiers[i / 2] && perk.choice == (i % 2 == 0 ? 'A' : 'B'));
                 CHECK(!perk.name.empty() && !perk.description.empty());
+                if (!combat) {
+                    // An advanced profession's: an ability, a flag or a modifier.
+                    CHECK(!perk.abilities.empty() || !perk.grants.empty() || !perk.perk.empty());
+                    continue;
+                }
                 // One that works changes something, always or on its trigger;
                 // one that waits (for a new mechanic) changes nothing yet.
                 if (perk.needs.empty()) {
@@ -94,6 +101,16 @@ void test_roster() {
     }
     CHECK(perks == 90);
     CHECK(triggered == 31);
+    // The advanced trees so far, and their pools.
+    const ProfessionDef* sl = book.find("squad_leader");
+    const ProfessionDef* doc = book.find("doctor");
+    const ProfessionDef* ent = book.find("entertainer");
+    CHECK(sl && sl->chooses() && sl->first_perk_level == 1 && sl->pool == PerkPool::combat);
+    CHECK(doc && doc->chooses() && doc->first_perk_level == 5 && doc->pool == PerkPool::combat);
+    CHECK(ent && ent->chooses() && ent->first_perk_level == 1 && ent->pool == PerkPool::noncombat);
+    CHECK(book.find("surveying") && book.find("surveying")->pool == PerkPool::noncombat);
+    CHECK(book.find("merchant") && book.find("merchant")->pool == PerkPool::noncombat);
+    CHECK(book.find("ranger") && book.find("ranger")->pool == PerkPool::combat);
     CHECK(waiting == 0);  // every perk works (step 3 built the last of the mechanics)
     for (const auto& a : {"pistol", "carbine_burst", "scatter", "rifle_auto", "sniper", "heavy_launcher", "melee"}) {
         CHECK(book.for_archetype(a) != nullptr);
@@ -148,45 +165,64 @@ void test_training() {
     CHECK(!forget(book, me, "rifles_high_velocity").ok);  // not known
     CHECK(learn_perk(book, me, "rifles_braced", 10'000).ok);  // level 25, waits for triggers: learnable all the same
     CHECK(!learn_perk(book, me, "rifles_spotter", 10'000).ok);  // level 45
-    CHECK(perks_learned(book, me) == 2);
+    CHECK(perks_learned(book, me, PerkPool::combat) == 2);
 
     // Milestones: in order; the level-1 one is the licence.
-    me.push_back({"doctor", book.xp_for_level(60)});
-    CHECK(!licensed(book, me, "doctor"));
+    me.push_back({"ranger", book.xp_for_level(60)});
+    CHECK(!licensed(book, me, "ranger"));
     CHECK(licensed(book, me, "rifles") && licensed(book, me, "heavy_armor"));  // fighting needs none
-    CHECK(!learn_milestone(book, me, "doctor", 25, 10'000).ok);  // the one before first
-    r = learn_milestone(book, me, "doctor", 1, 0);
+    CHECK(!learn_milestone(book, me, "ranger", 25, 10'000).ok);  // the one before first
+    r = learn_milestone(book, me, "ranger", 1, 0);
     CHECK(r.ok && r.cost == 0);
-    CHECK(licensed(book, me, "doctor"));
-    CHECK(learn_milestone(book, me, "doctor", 25, 500).ok);
-    CHECK(learn_milestone(book, me, "doctor", 50, 2500).ok);
-    CHECK(!learn_milestone(book, me, "doctor", 75, 10'000).ok);  // Doctor 60
+    CHECK(licensed(book, me, "ranger"));
+    CHECK(learn_milestone(book, me, "ranger", 25, 500).ok);
+    CHECK(learn_milestone(book, me, "ranger", 50, 2500).ok);
+    CHECK(!learn_milestone(book, me, "ranger", 75, 10'000).ok);  // Ranger 60
     CHECK(!learn_milestone(book, me, "rifles", 1, 0).ok);        // rifles teach perks
-    CHECK(perks_learned(book, me) == 5);
+    CHECK(perks_learned(book, me, PerkPool::combat) == 5);
     // Giving one up takes the last learned; learning it again is free.
-    CHECK(forget(book, me, "doctor").ok);
-    CHECK(find_progress(me, "doctor")->trained == 25 && perks_learned(book, me) == 4);
-    r = learn_milestone(book, me, "doctor", 50, 0);
+    CHECK(forget(book, me, "ranger").ok);
+    CHECK(find_progress(me, "ranger")->trained == 25 && perks_learned(book, me, PerkPool::combat) == 4);
+    r = learn_milestone(book, me, "ranger", 50, 0);
     CHECK(r.ok && r.cost == 0);
 
-    // Ten at most, across every profession.
+    // Ten at most in a pool: Rifles, Ranger and Pilot all fight.
     me.push_back({"pilot", book.xp_for_level(100)});
     for (const int level : {1, 25, 50, 75, 100}) {
         CHECK(learn_milestone(book, me, "pilot", level, 100'000).ok);
     }
-    CHECK(perks_learned(book, me) == 10);
+    CHECK(perks_learned(book, me, PerkPool::combat) == 10);
     r = learn_perk(book, me, "rifles_spotter", 100'000);
     CHECK(!r.ok);
     me[0].xp = book.xp_for_level(100);
     r = learn_perk(book, me, "rifles_spotter", 100'000);
     CHECK(!r.ok && r.message.find("give one up") != std::string::npos);
-    CHECK(!learn_milestone(book, me, "doctor", 75, 100'000).ok);
+    CHECK(!learn_milestone(book, me, "ranger", 75, 100'000).ok);
+    // ...but the non-combat ten are their own: an Entertainer's licence still fits.
+    me.push_back({"entertainer", book.xp_for_level(30)});
+    CHECK(!licensed(book, me, "entertainer"));
+    r = learn_perk(book, me, "ent_perk_dancer", 0);
+    CHECK(r.ok && r.cost == 0);  // a level-1 perk is free
+    CHECK(licensed(book, me, "entertainer") && has_grant(book, me, "entertainer", "dancer"));
+    CHECK(!has_grant(book, me, "entertainer", "musician"));
+    CHECK(perks_learned(book, me, PerkPool::noncombat) == 1 && perks_learned(book, me, PerkPool::combat) == 10);
     CHECK(forget(book, me, "pilot").ok);
     CHECK(learn_perk(book, me, "rifles_spotter", 100'000).ok);
-    CHECK(perks_learned(book, me) == 10);
+    CHECK(perks_learned(book, me, PerkPool::combat) == 10);
     // Giving up every milestone of a profession takes its licence too.
-    for (int i = 0; i < 3; ++i) CHECK(forget(book, me, "doctor").ok);
-    CHECK(!licensed(book, me, "doctor") && !forget(book, me, "doctor").ok);
+    for (int i = 0; i < 3; ++i) CHECK(forget(book, me, "ranger").ok);
+    CHECK(!licensed(book, me, "ranger") && !forget(book, me, "ranger").ok);
+
+    // An advanced profession of perks: a level-1 perk is its licence (Squad
+    // Leader); one whose perks start at 5 needs none (Doctor: medicine is
+    // crafted from level 1).
+    std::vector<ProfessionProgress> sl{{"squad_leader", book.xp_for_level(30)}, {"doctor", 0}};
+    CHECK(!licensed(book, sl, "squad_leader") && licensed(book, sl, "doctor"));
+    CHECK(!learn_perk(book, sl, "doc_perk_heal_dart", 10'000).ok);  // Doctor 1: its perks start at 5
+    CHECK(learn_perk(book, sl, "sl_perk_steady_rally", 0).ok);
+    CHECK(licensed(book, sl, "squad_leader"));
+    CHECK(!learn_perk(book, sl, "sl_perk_rally", 0).ok);  // the other kind of rally
+    CHECK(learn_perk(book, sl, "sl_perk_shields_up", 500).ok);
 }
 
 void test_perks() {

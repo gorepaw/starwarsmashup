@@ -1346,7 +1346,7 @@ func _sync_screen_data(client: Object) -> void:
 			learned[str(p["id"])] = {"xp": xp, "level": level, "trained": int(p.get("trained", 0)),
 					"paid": int(p.get("paid", 0)), "perks": p.get("perks", []), "paid_perks": p.get("paid_perks", [])}
 		_trainer_screen.progress = learned
-		_trainer_screen.known_count = _known_count(client)
+		_trainer_screen.known_counts = _known_count(client)
 		_trainer_screen.credits = int(status.get("credits", 0))
 		if _trainer_screen.visible:
 			_trainer_screen.professions = _professions_of(_trainer_detail(client))
@@ -1375,20 +1375,22 @@ func _sync_screen_data(client: Object) -> void:
 			_workbench_screen.queue_redraw()
 
 
-# How many perks and milestones the character knows, across every profession
-# (docs/PERKS.md: at most the store's perk cap).
-func _known_count(client: Object) -> int:
-	var count := 0
+# How many perks and milestones the character knows in each pool, combat
+# and noncombat (docs/PERKS.md: at most the store's perk cap in each).
+func _known_count(client: Object) -> Dictionary:
+	var counts := {"combat": 0, "noncombat": 0}
 	for p: Dictionary in client.get_professions():
 		var id := str(p["id"])
-		count += (p.get("perks", []) as Array).size()
 		for def: Dictionary in _professions:
 			if str(def.get("id", "")) != id:
 				continue
+			var pool := str(def.get("pool", "combat"))
+			var count := (p.get("perks", []) as Array).size()
 			for m: Dictionary in def.get("milestones", []):
 				if int(m.get("level", 0)) <= int(p.get("trained", 0)):
 					count += 1
-	return count
+			counts[pool] = int(counts.get(pool, 0)) + count
+	return counts
 
 
 # What the trainer whose screen is open teaches (their `detail`).

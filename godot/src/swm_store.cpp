@@ -423,6 +423,8 @@ godot::Array SwmCharacterStore::get_professions() const {
         entry["available"] = def.available;
         entry["armor_class"] = godot::String::utf8(def.armor_class.c_str());
         entry["earns"] = godot::String::utf8(def.earns.c_str());
+        entry["pool"] = godot::String::utf8(std::string(core::perk_pool_name(def.pool)).c_str());  // whose cap
+        entry["first_perk"] = int64_t(def.first_perk_level);  // 1: its first tier is its licence
         entry["rank_every"] = int64_t(def.rank_every);
         entry["rank"] = perk_lines(def.rank);
         godot::Array milestones;
