@@ -7,7 +7,8 @@
 #               mount, rename, release
 #   Lab         DNA samples: engineer eggs (tissues and additives are a workbench's); hatch
 #               eggs and register droids you carry
-#   Droids      assemble a chassis with modules from the Material Vault
+#   Droids      assemble a chassis with modules from the Material Vault;
+#               a Droid Engineer's Refit changes a carried droid's modules
 #   Contracts   bounties, contraband runs, tracking jobs and gigs
 #   Slicing     a Smuggler's permanent sidegrades on weapons and armor
 #   Inspiration what to build in an Entertainer's audience, and what you have
@@ -44,6 +45,7 @@ const CHOOSE_INSPIRATION := 27
 const POST_BOUNTY := 28
 const SLICE_REQUEST := 29
 const SLICE_ANSWER := 30
+const REFIT := 31
 const POSTED_AMOUNTS := [500, 2500]  # what a "Post" button puts up on an opted-in player
 
 const TABS := ["Kit", "Companions", "Lab", "Droids", "Contracts", "Slicing", "Inspiration"]
@@ -54,6 +56,7 @@ var book := {}             # SwmClient.get_specialist_book()
 var items: Array = []      # what you carry (SwmClient.get_inventory())
 var catalog: Array = []    # item defs, for names
 var levels := {}           # profession id -> level
+var perks: Array = []      # the perks learned (ids), every profession's
 var terminal := {}         # a mission terminal in reach: {index, kind, name}; empty: none
 var at_quartermaster := false
 var nearby: Array = []     # players within 10 m (names), to ask a slice of
@@ -67,6 +70,8 @@ var _sample_a := -1
 var _sample_b := -1
 var _chassis := ""
 var _modules: Array = []
+var _refit := 0            # a carried droid being refitted (its item id; 0: assembling)
+var _refit_extra := false  # whether it has an Extra Bay
 var _slice_item := -1
 var _slice := ""
 var _confirm_release := -1
@@ -299,6 +304,22 @@ func _paint_lab(body: Rect2) -> void:
 		text("gamefont_tiny", "None. Engineer an egg, or buy a droid from a Droid Engineer.", Vector2(x + 8 * u, y + 6 * u), "Left", DIM)
 
 
+# A droid item's companion record, split: [id, template, name, origin,
+# quality, health, damage, speed, colors, modules, mount, tactical, extra_bay, hardened].
+func _droid_record(item: Dictionary) -> PackedStringArray:
+	var parsed: Variant = JSON.parse_string(str(item.get("color_json", "")))
+	if not parsed is Dictionary:
+		return PackedStringArray()
+	return str((parsed as Dictionary).get("companion", "")).split("|")
+
+
+# How many modules the droid on the bench takes: its chassis's bays, and an
+# Extra Bay's (the engineer's when assembling, the droid's own when refitting).
+func _bays() -> int:
+	var extra := _refit_extra if _refit != 0 else perks.has("de_perk_extra_bay")
+	return int(_companion_template(_chassis).get("bays", 0)) + (1 if extra else 0)
+
+
 func _paint_droids(body: Rect2) -> void:
 	var x := body.position.x
 	var y := body.position.y
@@ -312,17 +333,38 @@ func _paint_droids(body: Rect2) -> void:
 		var cid := str(c["id"])
 		var rect := Rect2(x, y, col, 40 * u)
 		var ok := int(c.get("build_level", 1)) <= level
-		_row(rect, "chassis:" + cid if ok else "", cid == _chassis)
+		_row(rect, "chassis:" + cid if ok else "", cid == _chassis and _refit == 0)
 		text("gamefont_tiny", "%s  (%s, %d bays)" % [str(c.get("name", cid)), str(c.get("role", "")), int(c.get("bays", 0))],
 				Vector2(rect.position.x + 8 * u, y + 3 * u), "Left", TEXT if ok else DIM)
 		text("gamefont_tiny", "DE %d  ·  %s" % [int(c.get("build_level", 1)), ", ".join(c.get("materials", []))],
 				Vector2(rect.position.x + 8 * u, y + 21 * u), "Left", DIM, 0.85)
 		y += 44 * u
+	# A Droid Engineer's Refit: the droids you carry, to change the modules of.
+	if perks.has("de_perk_refit"):
+		y += 6 * u
+		text("gamefont_small", "Refit a droid you carry", Vector2(x, y), "Left", TEXT)
+		y += 24 * u
+		var shown := 0
+		for item: Dictionary in items:
+			if str(item.get("def_id", "")) != "companion_droid" or shown >= 4:
+				continue
+			var record := _droid_record(item)
+			if record.size() < 10:
+				continue
+			shown += 1
+			var iid := int(item["id"])
+			var rect := Rect2(x, y, col, 28 * u)
+			_row(rect, "refit:%d" % iid, iid == _refit)
+			text("gamefont_tiny", _item_name(item) + ("  [%s]" % record[9] if record[9] != "" else ""),
+					Vector2(rect.position.x + 8 * u, y + 7 * u), "Left", ACCENT if iid == _refit else TEXT)
+			y += 30 * u
+		if shown == 0:
+			text("gamefont_tiny", "None carried.", Vector2(x + 8 * u, y + 4 * u), "Left", DIM)
 	# Modules for the chosen chassis.
 	x += col + 18 * u
 	y = body.position.y
 	var chassis := _companion_template(_chassis)
-	text("gamefont_small", "Modules%s" % ("" if chassis.is_empty() else " (%d of %d bays)" % [_modules.size(), int(chassis.get("bays", 0))]),
+	text("gamefont_small", "Modules%s" % ("" if chassis.is_empty() else " (%d of %d bays)" % [_modules.size(), _bays()]),
 			Vector2(x, y), "Left", TEXT)
 	y += 26 * u
 	for m: Dictionary in book.get("modules", []):
@@ -334,7 +376,8 @@ func _paint_droids(body: Rect2) -> void:
 				str(m.get("description", ""))], Vector2(rect.position.x + 8 * u, y + 9 * u), "Left",
 				ACCENT if _modules.has(mid) else (TEXT if ok else DIM), 0.85)
 		y += 36 * u
-	button(Rect2(body.end.x - 200 * u, body.end.y - 30 * u, 200 * u, 28 * u), "Assemble", "assemble", false, false, _chassis != "")
+	button(Rect2(body.end.x - 200 * u, body.end.y - 30 * u, 200 * u, 28 * u), "Refit" if _refit != 0 else "Assemble",
+			"assemble", false, false, _chassis != "")
 
 
 func _paint_contracts(body: Rect2) -> void:
@@ -540,14 +583,26 @@ func _on_click(id: String, _at: Vector2) -> void:
 	elif id.begins_with("chassis:"):
 		_chassis = id.substr(8)
 		_modules.clear()
+		_refit = 0
+	elif id.begins_with("refit:"):
+		_refit = int(id.substr(6))
+		for item: Dictionary in items:
+			if int(item.get("id", 0)) == _refit:
+				var record := _droid_record(item)
+				_chassis = record[1] if record.size() > 1 else ""
+				_modules = Array(record[9].split(",", false)) if record.size() > 9 else []
+				_refit_extra = record.size() > 12 and record[12] == "1"
 	elif id.begins_with("module:"):
 		var mid := id.substr(7)
 		if _modules.has(mid):
 			_modules.erase(mid)
-		elif _modules.size() < int(_companion_template(_chassis).get("bays", 0)):
+		elif _modules.size() < _bays():
 			_modules.append(mid)
 	elif id == "assemble":
-		_send(ASSEMBLE, 0, 0, _chassis, ",".join(_modules))
+		if _refit != 0:
+			_send(REFIT, 0, _refit, "", ",".join(_modules))
+		else:
+			_send(ASSEMBLE, 0, 0, _chassis, ",".join(_modules))
 	elif id == "ask":
 		_send(CONTRACTS, 0, 0, "", "", int(terminal.get("index", 0)))
 	elif id.begins_with("post:"):

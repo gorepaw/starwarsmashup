@@ -1458,6 +1458,7 @@ void GameServer::summon_companion(Client& client, uint64_t record_id) {
     active.template_id = tpl->id;
     active.name = record->name;
     active.stats = stats;
+    active.hardened = record->hardened;
     companions_.push_back(active);
     if (client.spec.active_companion == 0) {
         client.spec.active_companion = record->id;
@@ -1532,8 +1533,9 @@ double GameServer::companion_hit(uint32_t npc_entity, uint32_t attacker, double 
             if (const Client* shooter = find(attacker); shooter && !is_enemy(*shooter, c.owner)) return 0;
         }
         const CompanionTemplate* tpl = config_.specialists ? config_.specialists->companion(c.template_id) : nullptr;
-        // Droids take bonus electro (ion) damage (docs/PROFESSIONS.md).
-        if (tpl && tpl->kind == CompanionKind::droid && type == DamageType::electro) return raw * 1.5;
+        // Droids take bonus electro (ion) damage (docs/PROFESSIONS.md); a
+        // Droid Engineer's Hardened Circuits halve the extra.
+        if (tpl && tpl->kind == CompanionKind::droid && type == DamageType::electro) return raw * (c.hardened ? 1.25 : 1.5);
         return raw;
     }
     return raw;
@@ -2908,15 +2910,31 @@ void GameServer::datapad_action(Client& client, const net::SpecialistRequest& re
         changed();
         return;
     }
-    case R::assemble_droid: {
+    case R::assemble_droid:
+    case R::refit_droid: {
         if (!world || book == nullptr || config_.crafting == nullptr) return;
-        const CompanionTemplate* chassis = book->companion(request.id);
+        const bool refit = request.action == R::refit_droid;
+        ItemInstance* carried = refit ? owned(request.item_id) : nullptr;
+        std::optional<CompanionRecord> old;
+        if (refit) {
+            if (carried == nullptr || carried->def_id != "companion_droid") return;
+            old = parse_companion(json_value(carried->color_json, "companion"));
+            if (!old) return;
+        }
+        const CompanionTemplate* chassis = book->companion(refit ? old->template_id : request.id);
         if (chassis == nullptr || chassis->kind != CompanionKind::droid) return;
         const ProfessionStanding de = standing("droid_engineer");
         if (de.level < chassis->build_level || de.trained < 1) {
-            notify(client.entity, std::format("Assembling a {} needs Droid Engineer {}", chassis->name, chassis->build_level));
+            notify(client.entity, std::format("{} a {} needs Droid Engineer {}", refit ? "Refitting" : "Assembling",
+                                              chassis->name, chassis->build_level));
             return;
         }
+        if (refit && !granted(client, "droid_engineer", "refit")) {
+            notify(client.entity, "Refitting droids takes the Droid Engineer's Refit");
+            return;
+        }
+        // A Droid Engineer's Extra Bay: theirs, and kept by a droid they built.
+        const bool extra_bay = refit ? old->extra_bay : granted(client, "droid_engineer", "extra_bay");
         std::vector<std::string> modules;
         std::string item;
         for (const char c : request.text + ",") {
@@ -2927,19 +2945,40 @@ void GameServer::datapad_action(Client& client, const net::SpecialistRequest& re
                 item += c;
             }
         }
-        if (const std::string why = check_droid_modules(*book, *chassis, modules, de.level); !why.empty()) {
+        if (const std::string why = check_droid_modules(*book, *chassis, modules, de.level, extra_bay ? 1 : 0); !why.empty()) {
             notify(client.entity, why);
             return;
         }
-        // What it takes from the Material Vault, by category; better materials, a better droid.
-        std::vector<std::pair<std::string, int>> needs = chassis->materials;
+        // What it takes from the Material Vault, by category; better materials,
+        // a better droid. A refit pays for its new modules only.
+        std::vector<std::pair<std::string, int>> needs;
+        if (!refit) needs = chassis->materials;
+        int fitted = 0;
         for (const std::string& m : modules) {
+            if (refit && std::find(old->modules.begin(), old->modules.end(), m) != old->modules.end()) continue;
+            ++fitted;
             if (const DroidModule* mod = book->module(m)) needs.insert(needs.end(), mod->materials.begin(), mod->materials.end());
+        }
+        if (refit && fitted == 0 && modules.size() == old->modules.size()) {
+            notify(client.entity, std::format("{} already has those modules", old->name));
+            return;
+        }
+        // The Droid Engineer's fewer-materials perks (each in turn, as a workbench's).
+        double material_mult = 1.0;
+        if (const ProfessionProgress* p = professions ? find_progress(client.professions, "droid_engineer") : nullptr) {
+            for (const std::string& id : p->perks) {
+                if (const ProfessionPerkDef* perk = professions->find_perk(id)) {
+                    for (const auto& [k, v] : perk->bonuses) {
+                        if (k == "materials") material_mult *= std::clamp(1.0 - v, 0.0, 1.0);
+                    }
+                }
+            }
         }
         std::vector<MaterialStack> vault = client.materials;
         double quality_sum = 0;
         int units = 0;
-        for (const auto& [category, amount] : needs) {
+        for (const auto& [category, full] : needs) {
+            const int amount = std::max(1, int(std::ceil(full * material_mult - 1e-6)));
             int left = amount;
             for (MaterialStack& stack : vault) {
                 if (left <= 0) break;
@@ -2958,19 +2997,42 @@ void GameServer::datapad_action(Client& client, const net::SpecialistRequest& re
                 return;
             }
         }
+        if (refit) {
+            // The same droid, its modules changed (its quality is its own).
+            CompanionRecord r = *old;
+            r.modules = modules;
+            ItemInstance changed_item = *carried;
+            changed_item.color_json = companion_payload(r);
+            if (store_ == nullptr || !store_->update_item_colors(carried->id, changed_item.color_json)) return;
+            std::erase_if(vault, [](const MaterialStack& m) { return m.amount <= 0; });
+            client.materials = std::move(vault);
+            ++client.crafting_rev;
+            client.crafting_sync_tick = 0;
+            save_materials(client);
+            client.items = store_->list_items(client.character);
+            ++client.inventory_rev;
+            client.last_sync_tick = 0;
+            notify(client.entity, std::format("Refitted {}", r.name));
+            earn_specialist_xp(client, "droid_engineer", 50 + int64_t(fitted) * 25);
+            return;
+        }
         std::erase_if(vault, [](const MaterialStack& m) { return m.amount <= 0; });
         client.materials = std::move(vault);
         ++client.crafting_rev;
         client.crafting_sync_tick = 0;
         save_materials(client);
+        // Precision Assembly's and Masterwork Droids' better droids.
+        const double bonus = professions ? perk_bonus(*professions, client.professions, "droid_engineer", "droid_quality") : 0.0;
         CompanionRecord r;
         r.template_id = chassis->id;
         r.name = chassis->name;
         r.origin = "assembled";
-        r.quality = std::clamp((units ? quality_sum / units : 0.5) * 0.7 + de.level * 0.003, 0.0, 1.0);
+        r.quality = std::clamp((units ? quality_sum / units : 0.5) * 0.7 + de.level * 0.003 + bonus, 0.0, 1.0);
         r.health = 0.9 + r.quality * 0.25;
         r.damage = 0.9 + r.quality * 0.25;
         r.modules = modules;
+        r.extra_bay = extra_bay;
+        r.hardened = granted(client, "droid_engineer", "hardened_circuits");
         grant("companion_droid", std::format("{} (Q{})", chassis->name, int(std::round(r.quality * 100))),
               companion_payload(r));
         notify(client.entity, std::format("Assembled a {}", chassis->name));
@@ -3062,7 +3124,7 @@ void GameServer::datapad_action(Client& client, const net::SpecialistRequest& re
 
 // Pharmaceuticals and droid repair kits used from the inventory.
 bool GameServer::use_specialist_item(Client& client, const ItemDef& def, uint64_t item_id) {
-    if (def.id == "droid_repair_kit") {
+    if (def.id == "droid_repair_kit" || def.id == "droid_repair_kit_advanced") {
         ActiveCompanion* comp = nullptr;
         for (ActiveCompanion& c : companions_) {
             if (c.owner == client.entity && c.template_id.starts_with("droid_")) comp = &c;
@@ -3073,7 +3135,9 @@ bool GameServer::use_specialist_item(Client& client, const ItemDef& def, uint64_
             return true;
         }
         if (store_ == nullptr || !store_->remove_item(item_id)) return true;
-        npc->health = std::min(npc->max_health, npc->health + npc->max_health * 0.4);
+        // (A Repair Bay's advanced kit: 60%.)
+        const double share = def.id == "droid_repair_kit_advanced" ? 0.6 : 0.4;
+        npc->health = std::min(npc->max_health, npc->health + npc->max_health * share);
     } else if (def.id == "arch_field_camp") {
         // A camp (docs/PROFESSIONS.md, Ranger's Forward Camp moved to
         // Architect): 6 health a second to your side within 8 m, and quick

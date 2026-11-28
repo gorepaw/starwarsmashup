@@ -20,7 +20,7 @@ namespace swm::core::net {
 // Every packet starts with a magic number, the protocol version and a message
 // type. Peers drop packets with another version. Bump it on any wire change.
 inline constexpr uint16_t protocol_magic = 0x4D53;  // "SM"
-inline constexpr uint16_t protocol_version = 56;
+inline constexpr uint16_t protocol_version = 57;
 // BoltState/Impact::weapon: a placed trap's shot, from that weapon slot
 // (drawn from the trap, not its owner's gun).
 inline constexpr uint8_t trap_shot_flag = 0x40;
@@ -658,6 +658,7 @@ struct SpecialistRequest {
         post_bounty = 28,         // `id`: an opted-in player's name; `amount`: credits put up (at a bounty terminal)
         slice_request = 29,       // `item_id`: yours; `id`: the slice; `text`: the Smuggler (near) to ask
         slice_answer = 30,        // `amount`: a slice job's id; `target`: 1 do it, 0 decline (the Smuggler's)
+        refit_droid = 31,         // `item_id`: a droid you carry; `text`: its modules now (a Droid Engineer's Refit)
     };
     uint8_t action = 0;
     std::string id;

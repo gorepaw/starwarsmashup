@@ -197,6 +197,13 @@ func _levels(client: Object) -> Dictionary:
 	return out
 
 
+func _perks(client: Object) -> Array:
+	var out: Array = []
+	for p: Dictionary in client.get_professions():
+		out.append_array(p.get("perks", []))
+	return out
+
+
 func _own(client: Object) -> Dictionary:
 	return client.get_presented() if client.is_spawned() else {}
 
@@ -379,6 +386,7 @@ func _fill_datapad(client: Object) -> void:
 	_datapad.items = client.get_inventory()
 	_datapad.catalog = _catalog
 	_datapad.levels = _levels(client)
+	_datapad.perks = _perks(client)
 	_datapad.bar_ids = bar_ids()
 	_datapad.key_names = {}
 	for i in ABILITY_KEYS:

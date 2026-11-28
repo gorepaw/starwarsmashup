@@ -492,7 +492,15 @@ void GameServer::handle_craft_request(Client& client, const net::CraftRequest& r
             notify(client.entity, std::format("Learn the blueprint for {} first.", sch->name));
             return;
         }
-        const ItemDef* out_def = config_.catalog->find(sch->output_item);
+        // A Droid Engineer's Repair Bay: advanced kits, four at a time.
+        const bool repair_bay = sch->output_item == "droid_repair_kit" && config_.professions != nullptr &&
+                                has_grant(*config_.professions, client.professions, "droid_engineer", "repair_bay");
+        const std::string output_id = repair_bay ? std::string("droid_repair_kit_advanced") : sch->output_item;
+        const ItemDef* out_def = config_.catalog->find(output_id);
+        // A Droid Engineer's Speeder Mechanic: better speeders, from less.
+        const bool speeder_mechanic = sch->profession == "droid_engineer" && sch->group == "Speeders" &&
+                                      config_.professions != nullptr &&
+                                      has_grant(*config_.professions, client.professions, "droid_engineer", "speeder_mechanic");
         // Its mark: up to its crafter's level's, costing more the higher.
         int mark = 0;
         if (out_def != nullptr && item_takes_marks(*out_def)) {
@@ -513,7 +521,7 @@ void GameServer::handle_craft_request(Client& client, const net::CraftRequest& r
             return;
         }
         // A crafting perk's fewer materials (each in turn: 20% and 20% is 36%).
-        double material_mult = 1.0;
+        double material_mult = speeder_mechanic ? 0.75 : 1.0;
         if (config_.professions != nullptr) {
             if (const ProfessionProgress* p = find_progress(client.professions, sch->profession)) {
                 for (const std::string& id : p->perks) {
@@ -578,7 +586,8 @@ void GameServer::handle_craft_request(Client& client, const net::CraftRequest& r
         const auto bonus = [&](std::string_view key) {
             return config_.professions ? perk_bonus(*config_.professions, client.professions, sch->profession, key) : 0.0;
         };
-        const CraftPreview preview = book.preview_craft(*sch, req.resource_ids, modules, lv, uint8_t(focus), bonus("grade"),
+        const CraftPreview preview = book.preview_craft(*sch, req.resource_ids, modules, lv, uint8_t(focus),
+                                                        bonus("grade") + (speeder_mechanic ? 0.15 : 0.0),
                                                         1.0 + bonus("exceptional"));
         // (A Bio-Engineer's Tissue Culture: tissues and additives two at a time.)
         const bool culture = (sch->output_item == "bio_tissue_organic" || sch->output_item == "bio_stim_additive") &&
@@ -586,8 +595,9 @@ void GameServer::handle_craft_request(Client& client, const net::CraftRequest& r
                              has_grant(*config_.professions, client.professions, "bio_engineer", "tissue_culture");
         const double extra_chance = culture ? 1.0 : bonus("extra_item");
         std::array<int, item_grade_count> made{};
-        const int unit_count = sch->output_count > 1 ? sch->output_count
-                                                     : (out_def && out_def->kind == ItemKind::ammo ? out_def->ammo_batch : 1);
+        const int unit_count = repair_bay ? 4
+                               : sch->output_count > 1 ? sch->output_count
+                                                       : (out_def && out_def->kind == ItemKind::ammo ? out_def->ammo_batch : 1);
         int extras = 0;
         for (int i = 0; i < batch; ++i) {
             const ItemGrade grade =
@@ -600,7 +610,7 @@ void GameServer::handle_craft_request(Client& client, const net::CraftRequest& r
                 if (out_def != nullptr && (unit_count > 1 || out_def->kind == ItemKind::ammo)) {
                     grant_stacked_item(client, *out_def, unit_count, grade);
                 } else {
-                    client.items.push_back(store_->grant_item({0, client.character, sch->output_item, grade, "",
+                    client.items.push_back(store_->grant_item({0, client.character, output_id, grade, "",
                                                                with_item_json_field("{}", "mods", mods), 1, mark}));
                 }
             }

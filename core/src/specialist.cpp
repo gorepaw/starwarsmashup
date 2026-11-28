@@ -528,10 +528,11 @@ CompanionStats companion_stats(const SpecialistBook& book, const CompanionTempla
 }
 
 std::string check_droid_modules(const SpecialistBook& book, const CompanionTemplate& chassis,
-                                std::span<const std::string> modules, int engineer_level) {
+                                std::span<const std::string> modules, int engineer_level, int extra_bays) {
     if (chassis.kind != CompanionKind::droid) return chassis.name + " isn't a droid chassis";
-    if (int(modules.size()) > chassis.bays) {
-        return std::format("{} has {} bay(s), not {}", chassis.name, chassis.bays, modules.size());
+    const int bays = chassis.bays + std::max(0, extra_bays);
+    if (int(modules.size()) > bays) {
+        return std::format("{} has {} bay(s), not {}", chassis.name, bays, modules.size());
     }
     int primaries = 0;
     for (size_t i = 0; i < modules.size(); ++i) {
@@ -593,9 +594,9 @@ std::string format_companion(const CompanionRecord& r) {
         if (i) modules += ',';
         modules += escape(r.modules[i]);
     }
-    return std::format("{}|{}|{}|{}|{:.4f}|{:.4f}|{:.4f}|{:.4f}|{}|{}|{}|{}", r.id, escape(r.template_id), escape(r.name),
-                       escape(r.origin), r.quality, r.health, r.damage, r.speed, r.colors, modules, r.mount ? 1 : 0,
-                       r.tactical ? 1 : 0);
+    return std::format("{}|{}|{}|{}|{:.4f}|{:.4f}|{:.4f}|{:.4f}|{}|{}|{}|{}|{}|{}", r.id, escape(r.template_id),
+                       escape(r.name), escape(r.origin), r.quality, r.health, r.damage, r.speed, r.colors, modules,
+                       r.mount ? 1 : 0, r.tactical ? 1 : 0, r.extra_bay ? 1 : 0, r.hardened ? 1 : 0);
 }
 
 std::optional<CompanionRecord> parse_companion(std::string_view line) {
@@ -618,6 +619,8 @@ std::optional<CompanionRecord> parse_companion(std::string_view line) {
     }
     r.mount = f[10] == "1";
     r.tactical = f.size() > 11 && f[11] == "1";  // (saved before Tactical Strain: not)
+    r.extra_bay = f.size() > 12 && f[12] == "1";  // (and before the Droid Engineer's perks)
+    r.hardened = f.size() > 13 && f[13] == "1";
     if (r.template_id.empty()) return std::nullopt;
     return r;
 }

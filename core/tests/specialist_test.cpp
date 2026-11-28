@@ -5,6 +5,7 @@
 // fielding a companion, DNA and eggs, the bazaar between two players.
 
 #include <algorithm>
+#include <cmath>
 #include <filesystem>
 #include <vector>
 
@@ -83,7 +84,7 @@ void test_shipped_data(const SpecialistBook& book, const ProfessionBook& profess
     const CompanionTemplate* b1 = book.companion("droid_battle");
     CHECK(b1 && b1->kind == CompanionKind::droid && b1->bays == 3 && !b1->materials.empty());
     for (const char* item : {"bio_creature_egg", "companion_droid", "bio_tissue_organic", "bio_stim_additive",
-                             "droid_repair_kit", "doc_antidote", "doc_performance_stim"}) {
+                             "droid_repair_kit", "droid_repair_kit_advanced", "doc_antidote", "doc_performance_stim"}) {
         CHECK(catalog.find(item) != nullptr);
     }
     CHECK(book.slice("slice_overclock") && book.slice("slice_featherweight")->applies == "armor");
@@ -169,6 +170,11 @@ void test_rules(const SpecialistBook& book, const ProfessionBook& professions) {
                       {"dmod_blaster", "dmod_armor_plating"}, true};
     const auto back = parse_companion(format_companion(r));
     CHECK(back && back->name == r.name && back->modules == r.modules && back->mount && near(back->damage, 1.2, 1e-3));
+    CHECK(!back->extra_bay && !back->hardened);
+    CompanionRecord built = r;
+    built.extra_bay = built.hardened = true;
+    const auto built_back = parse_companion(format_companion(built));
+    CHECK(built_back && built_back->extra_bay && built_back->hardened);
     CHECK(parse_samples(format_samples(std::vector<DnaSample>{a, b})).size() == 2);
 
     // Droid modules: bays, levels, one primary function.
@@ -181,6 +187,9 @@ void test_rules(const SpecialistBook& book, const ProfessionBook& professions) {
     CHECK(!check_droid_modules(book, b1, too_many, 100).empty());
     const std::vector<std::string> above{"dmod_repeater"};
     CHECK(!check_droid_modules(book, b1, above, 30).empty());
+    // An Extra Bay's fourth (one primary still).
+    const std::vector<std::string> four{"dmod_blaster", "dmod_armor_plating", "dmod_servo_motors", "dmod_scanner"};
+    CHECK(check_droid_modules(book, b1, four, 100, 1).empty());
     CompanionRecord droid{1, "droid_battle", "B1", "assembled", 0.5, 1, 1, 1, 0, {"dmod_blaster", "dmod_bacta_sprayer"}};
     const CompanionStats st = companion_stats(book, b1, droid, 100);
     CHECK(near(st.max_health, b1.health * 1.5) && st.role == CompanionRole::support);
@@ -1176,6 +1185,127 @@ void test_merchant(const SpecialistBook& book, const ProfessionBook& professions
     CHECK(merchant_xp() > after_buy);
 }
 
+// The companion record an egg or droid item carries ({"companion":"..."}).
+std::string carried_record(const std::string& json) {
+    const std::string key = "\"companion\":\"";
+    const size_t at = json.find(key);
+    std::string out;
+    if (at == std::string::npos) return out;
+    for (size_t i = at + key.size(); i < json.size() && json[i] != '"'; ++i) {
+        if (json[i] == '\\' && i + 1 < json.size()) ++i;
+        out += json[i];
+    }
+    return out;
+}
+
+// A Droid Engineer with Extra Bay, Hardened Circuits, Refit and Heavy
+// Industry: a probe with three modules from 35% less, baked with its perks;
+// refitted, paying for the new module only; fielded, hardened.
+void test_droid_engineer(const std::filesystem::path& root, const SpecialistBook& book, const ProfessionBook& professions,
+                         const ItemCatalog& catalog) {
+    CraftingBook crafting;
+    crafting.load_resources(root / "game" / "crafting" / "resources.ini");
+    crafting.load_schematics(root / "game" / "crafting" / "schematics.ini");
+    Heightfield ground{201, 2.0, -200, -200, std::vector<float>(201 * 201, 0.0f)};
+    World world{ground};
+    MemoryCharacterStore store;
+    const CharacterRecord rec = store.create("Engineer", {0, 0, 0}, 0);
+    const int64_t master = professions.xp_for_level(100);
+    store.save_professions(rec.id, std::vector<ProfessionProgress>{{"droid_engineer", master, 0}, {"droid_operations", master, 5}});
+    store.set_extra(rec.id, "perks:droid_engineer",
+                    "de_perk_precision,de_perk_extra_bay,de_perk_hardened,de_perk_refit,de_perk_industry");
+    std::vector<MaterialStack> vault;
+    for (const ResourceDef& r : crafting.resources()) vault.push_back({r.id, 200});
+    store.save_materials(rec.id, vault);
+    net::LoopbackHub links;
+    net::Endpoint server_ep{1, 1};
+    net::LoopbackLink srv_link{links, server_ep};
+    net::LoopbackLink link{links, {2, 1}};
+    ServerConfig config;
+    config.catalog = &catalog;
+    config.professions = &professions;
+    config.specialists = &book;
+    config.crafting = &crafting;
+    config.pvp_enabled = false;
+    config.spawn = {0, 0, 0};
+    GameServer server(srv_link, world, config, &store);
+    server.set_looks({"object/mobile/shared_probot.iff"});
+    GameClient client(link, world, ClientConfig{.server = server_ep, .name = "Engineer"});
+    double now = 0;
+    const auto run = [&](double seconds) {
+        for (const double end = now + seconds; now < end; now += 1.0 / 30.0) {
+            server.update(now);
+            client.update(now);
+        }
+    };
+    run(1.0);
+    CHECK(client.status() == GameClient::Status::connected);
+    const auto vault_total = [&] {
+        int64_t n = 0;
+        if (const auto* m = server.materials_of(client.entity_id())) {
+            for (const MaterialStack& s : *m) n += s.amount;
+        }
+        return n;
+    };
+    const auto cost = [&](const std::vector<std::pair<std::string, int>>& needs) {
+        int64_t n = 0;
+        for (const auto& [category, amount] : needs) n += std::max(1, int(std::ceil(amount * 0.65 - 1e-6)));
+        return n;
+    };
+    const auto request = [&](net::SpecialistRequest::Action action, std::string id, uint64_t item, std::string text) {
+        net::SpecialistRequest r;
+        r.action = action;
+        r.id = std::move(id);
+        r.item_id = item;
+        r.text = std::move(text);
+        client.specialist_request(r);
+        run(0.4);
+    };
+    const auto droid_item = [&]() -> std::optional<ItemInstance> {
+        for (const ItemInstance& i : store.list_items(rec.id)) {
+            if (i.def_id == "companion_droid") return i;
+        }
+        return std::nullopt;
+    };
+    // A probe has two bays: three modules with Extra Bay.
+    const CompanionTemplate* probe = book.companion("droid_probe");
+    CHECK(probe && probe->bays == 2);
+    if (probe == nullptr) return;
+    int64_t expected = cost(probe->materials);
+    for (const char* m : {"dmod_blaster", "dmod_armor_plating", "dmod_scanner"}) expected += cost(book.module(m)->materials);
+    const int64_t before = vault_total();
+    request(net::SpecialistRequest::assemble_droid, "droid_probe", 0, "dmod_blaster,dmod_armor_plating,dmod_scanner");
+    const auto item = droid_item();
+    CHECK(item.has_value());
+    if (!item) return;
+    CHECK(before - vault_total() == expected);  // (Heavy Industry: 35% fewer)
+    const auto built = parse_companion(carried_record(item->color_json));
+    CHECK(built && built->modules.size() == 3 && built->extra_bay && built->hardened);
+    CHECK(built && built->quality >= 100 * 0.003 + 0.05 - 1e-9);  // (Precision Assembly's 5%)
+    // Refit: armor plating out, servos in; the servos alone are paid for.
+    const int64_t before_refit = vault_total();
+    request(net::SpecialistRequest::refit_droid, "", item->id, "dmod_blaster,dmod_servo_motors,dmod_scanner");
+    const auto refitted = droid_item();
+    const auto again = refitted ? parse_companion(carried_record(refitted->color_json)) : std::nullopt;
+    CHECK(refitted && refitted->id == item->id && again);
+    CHECK(again && std::find(again->modules.begin(), again->modules.end(), "dmod_servo_motors") != again->modules.end() &&
+          std::find(again->modules.begin(), again->modules.end(), "dmod_armor_plating") == again->modules.end());
+    CHECK(again && again->extra_bay && again->hardened && near(again->quality, built->quality, 1e-3));
+    CHECK(before_refit - vault_total() == cost(book.module("dmod_servo_motors")->materials));
+    // Registered and fielded: its circuits hardened.
+    request(net::SpecialistRequest::register_droid, "", item->id, "");
+    const SpecialistState* spec = server.specialist_state(client.entity_id());
+    CHECK(spec && spec->companions.size() == 1);
+    if (spec == nullptr || spec->companions.empty()) return;
+    net::SpecialistRequest summon;
+    summon.action = net::SpecialistRequest::companion_summon;
+    summon.amount = int64_t(spec->companions[0].id);
+    client.specialist_request(summon);
+    run(0.4);
+    const auto fielded = server.companion_of(client.entity_id());
+    CHECK(fielded && fielded->hardened);
+}
+
 // A handler with The Pack fields two creatures at once (a third sends the
 // first back); Pack Leader's are tougher; one stored, the other stays out.
 void test_creature_handler(const SpecialistBook& book, const ProfessionBook& professions, const ItemCatalog& catalog) {
@@ -1589,6 +1719,7 @@ int main() {
     test_pilot(root, book, professions, catalog);
     test_bio_engineer(book, professions, catalog);
     test_creature_handler(book, professions, catalog);
+    test_droid_engineer(root, book, professions, catalog);
     test_match(book, professions);
     return swm::test::finish("specialist_test");
 }

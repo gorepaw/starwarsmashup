@@ -2158,7 +2158,7 @@ Message decode(std::span<const uint8_t> packet) {
     case Type::specialist_request: {
         SpecialistRequest m;
         m.action = in.get<uint8_t>();
-        if (m.action > uint8_t(SpecialistRequest::slice_answer)) throw PacketError("bad specialist action");
+        if (m.action > uint8_t(SpecialistRequest::refit_droid)) throw PacketError("bad specialist action");
         m.id = in.get_string();
         m.target = in.get<uint32_t>();
         m.position = get_vec3(in);

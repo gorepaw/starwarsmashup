@@ -1,6 +1,6 @@
 # Trainer Perks
 
-The rework of what professions teach. It replaces milestones at 1 / 25 / 50 / 75 / 100 ([Professions](PROFESSIONS.md)) with two perks to choose between at each tier. Weapons and armor were first; then Squad Leader, Doctor and Entertainer, gathering and crafting, Bounty Hunter, Smuggler, Ranger, Merchant, Pilot, Bio-Engineer and Creature Handler (2026-11-27). The other advanced professions follow one by one and keep their milestones until their turn.
+The rework of what professions teach. It replaces milestones at 1 / 25 / 50 / 75 / 100 ([Professions](PROFESSIONS.md)) with two perks to choose between at each tier. Weapons and armor were first; then Squad Leader, Doctor and Entertainer, gathering and crafting, Bounty Hunter, Smuggler, Ranger, Merchant, Pilot, Bio-Engineer, Creature Handler and Droid Engineer (2026-11-27). The other advanced professions follow one by one and keep their milestones until their turn.
 
 Status: **built** (see Order of work): the rules, the cap, trainers, licences, and all 90 perks. The tags say what each needed: nothing new, a trigger (**T**), or a new mechanic (**N**; [Mechanics](#mechanics)).
 
@@ -240,6 +240,18 @@ A licence at 1 (no creature without it); two buttons at most. The tier you can t
 | 45 | **Pack Leader**: your creatures +15% health | **Fierce Bond**: your creatures +15% damage |
 | 65 | **Steady Hand**: Tame drugs it as it begins, bonding in 3 s | **Quick Recovery**: half the wait after a companion falls (`companion_death_wait`) |
 | 85 | **Beast Master**: taming +15% likelier, tamed +10% quality | **The Pack**: two companions out at once in the open world (`SpecialistSync::second_companion`; a third sends the first back) |
+
+### Droid Engineer
+
+A licence at 1 (no assembling without it); no buttons. The chassis and modules you can build stay levels. The quality and materials perks reach assembly and the Droid Engineer's schematics (kits, speeders) alike. Extra Bay and Hardened Circuits are baked into the droid (`CompanionRecord::extra_bay`, `hardened`), so a buyer gets them.
+
+| Level | A | B |
+|---|---|---|
+| 1 | **Precision Assembly**: droids +5% quality (`Bonus = droid_quality`), better grades | **Salvage Engineer**: 20% fewer materials |
+| 25 | **Extra Bay**: one more module bay on droids you build; one primary still | **Repair Bay**: Advanced Droid Repair Kits (60%), four at a time |
+| 45 | **Hardened Circuits**: droids you build take ×1.25 ion damage, not ×1.5 | **Engineer's Notes**: 25% more Droid Engineer experience |
+| 65 | **Refit**: change a carried droid's modules, paying for the new ones (`SpecialistRequest::refit_droid`, protocol 57) | **Speeder Mechanic**: speeders +0.15 grade odds, 25% fewer materials |
+| 85 | **Masterwork Droids**: droids +10% quality, exceptional grades twice as likely | **Heavy Industry**: 35% fewer materials |
 
 ## Triggers
 

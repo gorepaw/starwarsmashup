@@ -293,6 +293,8 @@ struct CompanionRecord {
     std::vector<std::string> modules;  // a droid's
     bool mount = false;                // trained as a mount (its mount item granted)
     bool tactical = false;             // a Bio-Engineer's Tactical Strain: bred small, tactical-sized
+    bool extra_bay = false;            // a Droid Engineer's Extra Bay: one more module bay
+    bool hardened = false;             // a Droid Engineer's Hardened Circuits: half the extra ion damage
 
     friend bool operator==(const CompanionRecord&, const CompanionRecord&) = default;
 };
@@ -312,11 +314,11 @@ struct CompanionStats {
 CompanionStats companion_stats(const SpecialistBook& book, const CompanionTemplate& tpl, const CompanionRecord& record,
                                int handler_level);
 
-// Whether a droid's modules fit its chassis and the engineer's level: at
-// most one per bay kind beyond the first core, no more than its bays, each
-// known. Returns why not (empty: they fit).
+// Whether a droid's modules fit its chassis and the engineer's level: one
+// primary function, no more than its bays (and `extra_bays`: an Extra Bay's),
+// each known. Returns why not (empty: they fit).
 std::string check_droid_modules(const SpecialistBook& book, const CompanionTemplate& chassis,
-                                std::span<const std::string> modules, int engineer_level);
+                                std::span<const std::string> modules, int engineer_level, int extra_bays = 0);
 
 // The highest creature tier a Creature Handler of `level` can tame.
 int tameable_tier(int level);
@@ -592,6 +594,7 @@ struct ActiveCompanion {
     double overcharge = 0;   // seconds left
     double overcharge_factor = 1;
     double recall_cooldown = 0;  // seconds until a leash teleport may happen again
+    bool hardened = false;       // its record's Hardened Circuits
 };
 
 // A character's Stage 12 state on the server: its kit's cooldowns, the
