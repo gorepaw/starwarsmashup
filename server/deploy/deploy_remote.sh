@@ -37,9 +37,15 @@ tar -xf ~/deploy/src.tar -C ~/deploy/src
 rsync -rc --delete ~/deploy/src/ ~/src/
 say "building $COMMIT"
 export CC=gcc-14 CXX=g++-14
-[ -f ~/build/CMakeCache.txt ] || cmake -S ~/src -B ~/build -DCMAKE_BUILD_TYPE=Release -DSWM_BUILD_GODOT=OFF >/dev/null
+# Configure every time (a second when nothing changed): make won't build a
+# target added since the last configure.
+if ! cmake -S ~/src -B ~/build -DCMAKE_BUILD_TYPE=Release -DSWM_BUILD_GODOT=OFF > ~/deploy/configure.log 2>&1; then
+  tail -20 ~/deploy/configure.log
+  say "configure failed"
+  exit 1
+fi
 if ! cmake --build ~/build -j "$(nproc)" --target swm_server swm_probe > ~/deploy/build.log 2>&1; then
-  grep -E 'error' ~/deploy/build.log | sort -u | head -20
+  { grep -E 'error|Error|No rule' ~/deploy/build.log || tail -20 ~/deploy/build.log; } | sort -u | head -20
   say "build failed"
   exit 1
 fi
