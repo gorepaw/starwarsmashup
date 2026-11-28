@@ -176,7 +176,12 @@ class Aimer extends SkeletonModifier3D:
 	var melee_block := false
 	var two_handed := false  # a two-handed melee weapon: the chest swings it, both hands on it
 	var place := 0.0         # 0..1 bent low, setting a mine down
+	# How far the fingers close (0 flat, as the model was made; 1 around a
+	# grip): Battlefront's animations don't move Galaxies' finger bones.
+	var right_curl := 1.0
+	var left_curl := 0.0
 	var _spine: Array[int] = []
+	var _fingers := {"r": [], "l": []}  # side -> [[knuckle, middle, curl scale]]
 	var _left_arm := -1
 	var _left_forearm := -1
 	var _left_wrist := -1
@@ -208,6 +213,13 @@ class Aimer extends SkeletonModifier3D:
 		_right_forearm = skeleton.find_bone("rForeArm")
 		_hold_left = skeleton.find_bone("hold_l")
 		_hold_right = skeleton.find_bone("hold_r")
+		# The thumb closes less than the fingers (ASSUMPTION: by eye).
+		for side: String in ["r", "l"]:
+			for finger: Array in [["Index", 1.0], ["Ring", 1.0], ["Thumb", 0.45]]:
+				var knuckle := skeleton.find_bone("%s%s01" % [side, finger[0]])
+				var middle := skeleton.find_bone("%s%s02" % [side, finger[0]])
+				if knuckle >= 0 and middle >= 0:
+					(_fingers[side] as Array).append([knuckle, middle, finger[1]])
 
 	func _process_modification_with_delta(delta: float) -> void:
 		var skeleton := get_skeleton()
@@ -259,6 +271,8 @@ class Aimer extends SkeletonModifier3D:
 			for bone in _spine:
 				_rotate_global(skeleton, bone, Basis(Vector3.RIGHT, bow / _spine.size()))
 		_grip(skeleton)
+		_curl(skeleton, "r", _hold_right, right_curl)
+		_curl(skeleton, "l", _hold_left, left_curl if grip != null else 0.0)
 		if melee_block and _right_arm >= 0:
 			_rotate_global(skeleton, _right_arm, Basis(Vector3.UP, 0.7) * Basis(Vector3.RIGHT, -0.55))
 			if _right_forearm >= 0:
@@ -310,6 +324,29 @@ class Aimer extends SkeletonModifier3D:
 		var to := (target - a).normalized()
 		if from.cross(to).length() > 1e-6:
 			_rotate_global(skeleton, _left_arm, Basis(Quaternion(from, to)))
+
+	# Closes a hand's fingers toward its hold point (where the weapon sits in
+	# the palm): each finger's two joints turn the same way, about the axis
+	# that brings the finger toward the hold point.
+	const KNUCKLE_CURL := 0.8  # radians at the knuckle, fully curled (ASSUMPTION: by eye)
+	const MIDDLE_CURL := 0.9   # and at the middle joint
+
+	func _curl(skeleton: Skeleton3D, side: String, hold: int, amount: float) -> void:
+		if amount <= 0.0 or hold < 0:
+			return
+		var palm := skeleton.get_bone_global_pose(hold).origin
+		for finger: Array in _fingers[side]:
+			var knuckle: int = finger[0]
+			var middle: int = finger[1]
+			var base := skeleton.get_bone_global_pose(knuckle).origin
+			var along := skeleton.get_bone_global_pose(middle).origin - base
+			var axis := along.cross(palm - base)
+			if axis.length() < 1e-6:
+				continue
+			axis = axis.normalized()
+			var bend: float = finger[2] * amount
+			_rotate_global(skeleton, knuckle, Basis(axis, KNUCKLE_CURL * bend))
+			_rotate_global(skeleton, middle, Basis(axis, MIDDLE_CURL * bend))
 
 	static func _local(skeleton: Skeleton3D, bone: int) -> Transform3D:
 		return Transform3D(Basis(skeleton.get_bone_pose_rotation(bone)).scaled(skeleton.get_bone_pose_scale(bone)),
@@ -829,12 +866,15 @@ func _set_grip() -> void:
 		return
 	if _anim_set == "melee_2h":
 		_aimer.grip = Vector3(0.0, 0.0, GRIP_2H)  # up the haft (melee models lie along +Z from the hand)
+		_aimer.left_curl = 1.0
 		return
 	if _anim_set != "rifle" or _muzzle == null:
 		_aimer.grip = null
 		return
 	var reach := clampf(_muzzle.position.z * 0.55, 0.12, 0.42)
 	_aimer.grip = Vector3(0.0, _muzzle.position.y * 0.6, reach)
+	# The left hand under the barrel: cupped, not closed round it.
+	_aimer.left_curl = 0.6
 
 
 # The model's own weapon: the mesh on its right hand's hold point.

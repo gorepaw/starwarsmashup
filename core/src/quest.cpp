@@ -396,6 +396,20 @@ std::vector<std::string> QuestBook::target_names(std::string_view target) const 
     return out;
 }
 
+void QuestBook::fit_lairs(WorldSpawns& spawns) const {
+    for (LairSpawn& lair : spawns.lairs) {
+        for (const QuestDef& def : quests_) {
+            for (const QuestStep& step : def.steps) {
+                // Only a step naming this creature: "creature" or "any" can be
+                // met at any lair.
+                if (step.kind == QuestStepKind::kill && same_ci(step.target, lair.type_id)) {
+                    lair.count = std::max(lair.count, step.count);
+                }
+            }
+        }
+    }
+}
+
 std::optional<Vec3> QuestBook::nearest_of(std::string_view target, Vec3 from) const {
     if (spawns_ == nullptr || target.empty()) return std::nullopt;
     std::optional<Vec3> best;

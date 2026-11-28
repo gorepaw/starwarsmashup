@@ -82,9 +82,11 @@ func show(id: int, model: Node3D, side: String, friend: bool, alive: bool, heigh
 func forget(id: int) -> void:
 	if not _tags.has(id):
 		return
-	var pivot: Node3D = _tags[id]["pivot"]
+	# (Untyped: its soldier's model, and the tag with it, may be freed already,
+	# and a freed node can't be assigned to a typed variable.)
+	var pivot: Variant = _tags[id]["pivot"]
 	if is_instance_valid(pivot):
-		pivot.queue_free()
+		(pivot as Node).queue_free()
 	_tags.erase(id)
 	_order.erase(id)
 

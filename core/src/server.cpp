@@ -354,6 +354,16 @@ void GameServer::notify(uint32_t entity, const std::string& text) {
     }
 }
 
+bool GameServer::notify_player(const std::string& name, const std::string& text) {
+    for (const Client& client : clients_) {
+        if (client.name == name && client.character != 0) {
+            notify(client.entity, text);
+            return true;
+        }
+    }
+    return false;
+}
+
 void GameServer::transfer(uint32_t entity, const net::Transfer& transfer) {
     if (Client* client = find(entity)) {
         client->transfer = transfer;
@@ -1994,18 +2004,7 @@ void GameServer::run_match() {
             for (const Client& client : clients_) {
                 say(std::format("  {:<16} {:<12} {} kills, {} deaths, {} captures", client.name,
                                 field.team(client.team).name, client.kills, client.deaths, client.captures));
-                const Loadout& lo = loadout_of(client);
-                const CombatState own = soldier_combat(client);  // (not a vehicle's guns)
-                result.players.push_back({client.name, client.team, client.kills, client.deaths, client.captures,
-                                          client.battle_profession_xp,
-                                          remaining_unified_ammo(own, lo, AmmoClass::standard),
-                                          remaining_unified_ammo(own, lo, AmmoClass::heavy),
-                                          format_inspiration(client.spec.inspiration), client.stats.xp_gain,
-                                          client.stats.faction_gain});
-                if (const WeaponDef* primary = weapon_in_slot(lo, 0)) {
-                    result.players.back().primary_weapon = primary->name;
-                }
-                result.players.back().weapon_kills = client.weapon_kills;
+                result.players.push_back(player_result(client));
             }
             if (on_match_ended) {
                 on_match_ended(result);
@@ -3255,8 +3254,8 @@ void GameServer::damage_npc(Npc& npc, double raw, DamageType type, uint32_t atta
         return;
     }
     const double amount = raw * (1.0 - npc.mitigation);
-    specialist_hit(attacker, npc.entity);  // (Spotter)
     npc.health = std::max(0.0, npc.health - amount);
+    specialist_hit(attacker, npc.entity);  // (Spotter)
     npc.last_attacker = attacker;
     npc.last_damaged_tick = tick_;
     events_.push_back({net::CombatEvent::hit, attacker, npc.entity, float(amount)});
@@ -3302,8 +3301,8 @@ void GameServer::damage(Client& victim, double raw, DamageType type, uint32_t at
     if (perks) {
         amount = perk_incoming(victim, amount, type);
     }
-    specialist_hit(attacker, victim.entity);  // (Bloodhound, Spotter)
     victim.last_hurt_at = perk_clock();
+    specialist_hit(attacker, victim.entity);  // (Bloodhound, Spotter)
     if (victim.spec.performing) {  // (an Entertainer never performs in a fight)
         victim.spec.performing = false;
         ++victim.spec.revision;
@@ -3525,14 +3524,27 @@ void GameServer::respawn(Client& client) {
     say(std::format("{} respawned", client.name));
 }
 
+PlayerResult GameServer::player_result(const Client& client) {
+    const Loadout& lo = loadout_of(client);
+    const CombatState own = soldier_combat(client);  // (not a vehicle's guns)
+    PlayerResult out{client.name, client.team, client.kills, client.deaths, client.captures,
+                     client.battle_profession_xp,
+                     remaining_unified_ammo(own, lo, AmmoClass::standard),
+                     remaining_unified_ammo(own, lo, AmmoClass::heavy),
+                     format_inspiration(client.spec.inspiration), client.stats.xp_gain,
+                     client.stats.faction_gain};
+    if (const WeaponDef* primary = weapon_in_slot(lo, 0)) {
+        out.primary_weapon = primary->name;
+    }
+    out.weapon_kills = client.weapon_kills;
+    return out;
+}
+
 void GameServer::report_left_match(const Client& client) {
     if (!conquest_ || !on_left_match || conquest_->state().phase == Phase::ended) {
         return;  // (at the end, MatchResult carries it)
     }
-    const Loadout& lo = loadout_of(client);
-    const CombatState own = soldier_combat(client);
-    on_left_match(client.name, remaining_unified_ammo(own, lo, AmmoClass::standard),
-                  remaining_unified_ammo(own, lo, AmmoClass::heavy), format_inspiration(client.spec.inspiration));
+    on_left_match(player_result(client));
 }
 
 CombatState GameServer::soldier_combat(const Client& client) {

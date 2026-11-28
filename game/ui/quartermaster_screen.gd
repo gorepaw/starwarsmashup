@@ -148,7 +148,7 @@ func _paint() -> void:
 		var req_rank := str(def.get("required_rank", "Neutral"))
 		var req_rep := int(def.get("required_rep", 0))
 		var rank_ok := cur_rep >= req_rep
-		var slot_label := str(def.get("slot", "")).replace("_", " ").capitalize()
+		var slot_label := ItemTooltip.slot_label(str(def.get("slot", "")))
 		text("gamefont_tiny", "%s  |  Req: %s" % [slot_label, req_rank],
 				Vector2(x + 370 * u, ry + 11 * u), "Left", DIM if rank_ok else Color(1.0, 0.45, 0.35))
 

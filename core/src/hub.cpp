@@ -360,6 +360,9 @@ HubConfig load_hub(const std::filesystem::path& path) {
     }
     if (const auto quests = main->get("Quests")) {
         hub.quests.load(path.parent_path() / *quests);
+        if (hub.spawns) {
+            hub.quests.fit_lairs(*hub.spawns);
+        }
     }
     if (const auto loot = main->get("LootTables")) {
         hub.loot_tables.load(path.parent_path() / *loot);
@@ -668,14 +671,14 @@ void Hub::add_people() {
         population_->spawn_all();
         say(std::format("populated world with {} creature(s) and {} bandit(s)", population_->creature_count(),
                         population_->bandit_count()));
-    }
-}
-
         // Bounty marks: outlaws of the population's, with its gangs' wits.
         server_.on_spawn_mark = [this](const std::string& name, Vec3 at, int tier, int guards) {
             return population_->spawn_mark(name, at, tier, guards);
         };
         server_.on_retire_mark = [this](const std::vector<uint32_t>& entities) { population_->retire_mark(entities); };
+    }
+}
+
 // Somewhere in the crowd's area to walk to: on the ground (not a roof),
 // where a soldier could stand.
 std::optional<Vec3> Hub::wander_point(size_t crowd_index) {
@@ -768,11 +771,11 @@ void Hub::walk_people() {
 Hub::~Hub() {
     server_.on_queue = nullptr;
     server_.on_join = nullptr;
+    server_.on_spawn_mark = nullptr;
+    server_.on_retire_mark = nullptr;
     for (auto& battle : battles_) {
         battle->bots->disconnect();
     }
-    server_.on_spawn_mark = nullptr;
-    server_.on_retire_mark = nullptr;
 }
 
 void Hub::say(const std::string& text) const {
@@ -1032,43 +1035,53 @@ void Hub::start_battle(const QueueKey& key) {
             say(std::format("{} left battle {}", name, b->id));
         }
     };
-    // Leaving before the end (Leave Match, quitting): the ammo spent is spent.
-    b->server->on_left_match = [this, b](const std::string& name, int std_ammo, int hvy_ammo,
-                                         const std::string& inspiration) {
-        if (std::any_of(b->tickets.begin(), b->tickets.end(), [&](const auto& t) { return t.second.first == name; })) {
-            server_.apply_match_ammo_consumption(name, std_ammo, hvy_ammo);
-            server_.apply_match_inspiration(name, inspiration);
+    // A player's rewards for a battle (at its end, or leaving early, when
+    // only their kills and captures count), the ammo they spent, and a line
+    // for them when they're back (or now, if they are).
+    const auto reward_player = [this, b](const PlayerResult& player, BattleReward reward, std::string_view outcome) {
+        // Progression Inspirations (docs/PROFESSIONS.md).
+        reward.xp = int64_t(std::llround(double(reward.xp) * std::max(0.0, player.xp_gain)));
+        reward.faction_points = int64_t(std::llround(double(reward.faction_points) * std::max(0.0, player.faction_gain)));
+        const std::string fought_faction =
+            (player.team == 0 || player.team == 1) ? b->field.field.teams[size_t(player.team)].name : std::string();
+        server_.award_battle_rewards(player.name, fought_faction, reward);
+        server_.award_profession_xp(player.name, player.profession_xp, reward.xp);
+        server_.apply_match_ammo_consumption(player.name, player.remaining_std_ammo, player.remaining_hvy_ammo);
+        server_.apply_match_inspiration(player.name, player.inspiration);
+        const auto count = [](int n, const char* one, const char* many) {
+            return std::format("{} {}", n, n == 1 ? one : many);
+        };
+        const std::string line = std::format("{} at {}: {}, {}, {} (+{} FP, +{} Cr, +{} XP)", outcome,
+                                             b->field.field.name, count(player.kills, "kill", "kills"),
+                                             count(player.deaths, "death", "deaths"),
+                                             count(player.captures, "capture", "captures"),
+                                             reward.faction_points, reward.credits, reward.xp);
+        if (!server_.notify_player(player.name, line)) {
+            notices_[player.name] = line;
         }
     };
-    b->server->on_match_ended = [this, b](const MatchResult& result) {
+    const auto sent_here = [b](const std::string& name) {
+        return std::any_of(b->tickets.begin(), b->tickets.end(), [&](const auto& t) { return t.second.first == name; });
+    };
+    // Leaving before the end (Leave Match, quitting): the ammo spent is spent,
+    // and the kills and captures (and the professions' xp) are kept.
+    b->server->on_left_match = [reward_player, sent_here](const PlayerResult& player) {
+        if (sent_here(player.name)) {
+            reward_player(player, compute_left_battle_reward(player.kills, player.captures), "Left the battle");
+        }
+    };
+    b->server->on_match_ended = [this, b, reward_player, sent_here](const MatchResult& result) {
         last_result_ = result;
         record_telemetry(*b, result);
         for (const PlayerResult& player : result.players) {
-            const bool sent = std::any_of(b->tickets.begin(), b->tickets.end(),
-                                          [&](const auto& t) { return t.second.first == player.name; });
-            if (!sent) {
+            if (!sent_here(player.name)) {
                 continue;  // a bot
             }
             const char* outcome = result.winner < 0 ? "Draw" : result.winner == player.team ? "Victory" : "Defeat";
-            BattleReward reward = compute_battle_reward(
-                result.winner == player.team, result.winner < 0, player.kills, player.captures);
-            // Progression Inspirations (docs/PROFESSIONS.md).
-            reward.xp = int64_t(std::llround(double(reward.xp) * std::max(0.0, player.xp_gain)));
-            reward.faction_points = int64_t(std::llround(double(reward.faction_points) * std::max(0.0, player.faction_gain)));
-            const std::string fought_faction =
-                (player.team == 0 || player.team == 1) ? b->field.field.teams[size_t(player.team)].name : std::string();
-            server_.award_battle_rewards(player.name, fought_faction, reward);
-            server_.award_profession_xp(player.name, player.profession_xp, reward.xp);
-            server_.apply_match_ammo_consumption(player.name, player.remaining_std_ammo, player.remaining_hvy_ammo);
-            server_.apply_match_inspiration(player.name, player.inspiration);
-            const auto count = [](int n, const char* one, const char* many) {
-                return std::format("{} {}", n, n == 1 ? one : many);
-            };
-            notices_[player.name] = std::format("{} at {}: {}, {}, {} (+{} FP, +{} Cr, +{} XP)", outcome,
-                                                result.battlefield, count(player.kills, "kill", "kills"),
-                                                count(player.deaths, "death", "deaths"),
-                                                count(player.captures, "capture", "captures"),
-                                                reward.faction_points, reward.credits, reward.xp);
+            reward_player(player,
+                          compute_battle_reward(result.winner == player.team, result.winner < 0, player.kills,
+                                                player.captures),
+                          outcome);
         }
     };
 

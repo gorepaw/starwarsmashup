@@ -1,6 +1,6 @@
 # Planetary weather (Stage 11): what falls or blows on a battlefield (or the
 # open world) by its planet: Kamino's storm (rain streaks, a darker sky,
-# lightning and thunder), Tatooine's and Geonosis's blowing sand, Hoth's and
+# lightning and thunder), Geonosis's blowing sand, Hoth's and
 # Mygeeto's snow, Mustafar's ash and embers, Dagobah's and Felucia's mist
 # (Dagobah's with a drizzle). Particles fall in a box that follows the
 # camera; the ambience (rain hiss, wind, thunder) is made here from noise,
@@ -16,10 +16,7 @@ const PROFILES := {
 			"fog_color": Color(0.5, 0.56, 0.5), "dim": 0.85, "lightning": false, "hiss": 0.2},
 	"fel": {"kind": "mist", "amount": 900, "fall": -0.15, "wind": Vector3(0.3, 0, 0.1), "fog": 0.006,
 			"fog_color": Color(0.55, 0.62, 0.5), "dim": 0.95, "lightning": false, "hiss": 0.0},
-	"tat": {"kind": "sand", "amount": 1400, "fall": 0.4, "wind": Vector3(7.0, 0, 2.0), "fog": 0.0012,
-			"fog_color": Color(0.86, 0.74, 0.55), "dim": 1.0, "lightning": false, "hiss": 0.18},
-	"swg_tat": {"kind": "sand", "amount": 700, "fall": 0.3, "wind": Vector3(5.0, 0, 1.5), "fog": 0.0,
-			"fog_color": Color(0.86, 0.74, 0.55), "dim": 1.0, "lightning": false, "hiss": 0.1},
+	# Tatooine ("tat", "swg_tat") has no weather: the blowing sand was cut.
 	"geo": {"kind": "sand", "amount": 3200, "fall": 0.6, "wind": Vector3(9.0, 0, -3.0), "fog": 0.0028,
 			"fog_color": Color(0.8, 0.55, 0.38), "dim": 0.92, "lightning": false, "hiss": 0.3},
 	"hot": {"kind": "snow", "amount": 4500, "fall": 2.2, "wind": Vector3(6.0, 0, 2.5), "fog": 0.0026,

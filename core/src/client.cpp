@@ -624,12 +624,19 @@ void GameClient::advance_clocks(double now) {
         return;
     }
     // The remote clock runs at the tick rate and is steered toward
-    // `interpolation_delay` behind the newest snapshot.
+    // `interpolation_delay` behind the newest snapshot. Between snapshots the
+    // target runs on, but never past the newest: when the server falls behind
+    // (a hitch) the clock would overshoot, then be pulled back, and everyone
+    // shown would run ahead and snap back along their path.
+    const double before = render_tick_;
     render_tick_ += elapsed * tick_rate_;
-    const double target =
-        latest_tick_ + (now - latest_tick_time_) * tick_rate_ - config_.interpolation_delay * tick_rate_;
+    const double delay = config_.interpolation_delay * tick_rate_;
+    const double target = latest_tick_ + std::min((now - latest_tick_time_) * tick_rate_, delay) - delay;
     const double error = target - render_tick_;
-    render_tick_ = std::abs(error) > 10 ? target : render_tick_ + error * std::min(1.0, 2 * elapsed);
+    const double next = std::abs(error) > 10 ? target : render_tick_ + error * std::min(1.0, 2 * elapsed);
+    // Ahead of it, the clock waits rather than going back (unless it's far
+    // out, a second or more: then it jumps).
+    render_tick_ = error < -tick_rate_ ? target : std::max(before, next);
 }
 
 MoveState GameClient::presented() const {

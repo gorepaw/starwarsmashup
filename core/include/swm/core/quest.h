@@ -145,6 +145,10 @@ public:
     std::vector<std::string> target_names(std::string_view target) const;
     // The nearest lair or camp of a kill target to `from`, if the hub's world has one.
     std::optional<Vec3> nearest_of(std::string_view target, Vec3 from) const;
+    // Grows every lair a quest sends players to so it holds at least as many
+    // as the quest's kill step asks for (a "kill 5" never waits on a lair of 4
+    // to respawn). Call before the world is populated.
+    void fit_lairs(WorldSpawns& spawns) const;
 
     // Events. Each advances whatever the journal's quests are waiting on.
     // `held(item)` counts the items of a def the character carries; `roll()`

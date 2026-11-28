@@ -169,6 +169,9 @@ int main() {
     // Reward calculation: always Gear-Matters rules (+15% FP & Credits).
     const BattleReward gear_win = compute_battle_reward(true, false, 4, 2);
     CHECK(gear_win.xp == 470 && gear_win.faction_points == 218 && gear_win.credits == 391);
+    // Leaving early keeps the kills' and captures' share, not the outcome's.
+    const BattleReward left = compute_left_battle_reward(4, 2);
+    CHECK(left.xp == 220 && left.faction_points == 103 && left.credits == 161);
     static_assert(max_character_loadouts == 5);
 
     // Worn models: appearance overrides armor visually; a Wookiee's chest armor doesn't show

@@ -934,6 +934,11 @@ func _aim() -> Vector2:
 		# Its guns fire from its eye point.
 		eye = Vehicles.to_world(own["position"], float(own["yaw"]),
 				_vehicles.class_of(driving).get("eye", Vector3.UP))
+	var flying := driving >= 0 and seat == 0 and str(_vehicles.class_of(driving).get("kind", "")) == "flyer"
+	if flying and _first_person:
+		# From the cockpit the camera is fixed to the nose: aimed by it, the
+		# nose would only ever turn toward itself. The mouse's look steers.
+		return Vector2(_yaw, _pitch)
 	var target := _camera.global_position - _camera.global_basis.z * AIM_DISTANCE
 	var gunning := driving >= 0 and (seat > 0 or str(_vehicles.class_of(driving).get("kind", "")) != "flyer")
 	if gunning:
@@ -1390,13 +1395,17 @@ func _camera_pivot(target: Vector3) -> Vector3:
 
 
 # Getting on a Galaxies vehicle or mount (a speeder bike, a dewback: "swg_"
-# classes, the open world's) from first person goes to third, to see it
-# ridden; getting off goes back. A view chosen while riding stays.
+# classes, the open world's), or into a starfighter's pilot seat, from first
+# person goes to third, to see it ridden (a starfighter flown from behind,
+# as Battlefront's are); getting off goes back. A view chosen while riding
+# stays.
 func _update_ride_view(driving: int) -> void:
 	if driving == _ride_vehicle:
 		return
 	if driving >= 0 and _ride_vehicle < 0:
-		if _first_person and str(_vehicles.class_of(driving).get("name", "")).begins_with("swg_"):
+		var cls := _vehicles.class_of(driving)
+		var piloting := str(cls.get("kind", "")) == "flyer" and int(_client.get_presented().get("seat", 0)) == 0
+		if _first_person and (str(cls.get("name", "")).begins_with("swg_") or piloting):
 			_first_person = false
 			_view_after_ride = true
 	elif driving < 0 and _view_after_ride:

@@ -252,6 +252,8 @@ public:
     net::PlayerStatus* status(uint32_t entity);
     // Shows a client a message.
     void notify(uint32_t entity, const std::string& text);
+    // Shows the player by that name a message, if they're here (whether they were).
+    bool notify_player(const std::string& name, const std::string& text);
     // Sends a client (or everyone) to another server. It's dropped, and
     // saved, when it says goodbye or after a few seconds.
     void transfer(uint32_t entity, const net::Transfer& transfer);
@@ -352,8 +354,6 @@ public:
     size_t hazard_count() const { return hazards_.size(); }
     // A bazaar terminal's listings, everyone's (they're saved with the world).
     const std::vector<BazaarListing>& bazaar_listings() const { return bazaar_; }
-    // The field as a player sees it (what their snapshots carry).
-    net::FieldState field_state_for(uint32_t entity) const;
     // Bounty marks (docs/PROFESSIONS.md, Bounty Hunter): the hub's population
     // spawns a contract's outlaw and guards (their entities, the leader
     // first) and takes them away. Unset: lone outlaws without a gang's wits.
@@ -361,6 +361,8 @@ public:
     std::function<void(const std::vector<uint32_t>& entities)> on_retire_mark;
     // Bounties players have put up, outstanding (saved with the world).
     const std::vector<PostedBounty>& posted_bounties() const { return posted_; }
+    // The field as a player sees it (what their snapshots carry).
+    net::FieldState field_state_for(uint32_t entity) const;
     // Whether `entity` is hidden from `viewer` (cloaked, or in smoke, and an enemy).
     bool hidden_from(uint32_t viewer, uint32_t entity) const;
     // Whether a player is cloaked (creatures and outlaws don't pick them as targets).
@@ -397,11 +399,10 @@ public:
     // pause menu's Leave Match). Unset: a match no hub runs; nothing happens.
     std::function<void(uint32_t entity)> on_leave_match;
     // A player leaving a match before it ends (Leave Match, quitting, timing
-    // out), with the ammo they had left (-1: none of that class): what the
-    // hub keeps of it, as it does for those there at the end (MatchResult).
-    std::function<void(const std::string& name, int remaining_std_ammo, int remaining_hvy_ammo,
-                       const std::string& inspiration)>
-        on_left_match;
+    // out), with how they did so far (kills, captures, profession xp earned)
+    // and the ammo they had left (-1: none of that class): what the hub keeps
+    // of it, as it does for those there at the end (MatchResult).
+    std::function<void(const PlayerResult& player)> on_left_match;
 
 private:
     // What a character's triggered perks remember (server_perks.cpp).
@@ -516,6 +517,8 @@ private:
     };
 
     void report_left_match(const Client& client);
+    // How a player in this match has done so far, for the hub (MatchResult).
+    PlayerResult player_result(const Client& client);
     // A soldier's own weapons' state: aboard a vehicle, what's stashed with
     // it (their state there is the vehicle's guns').
     CombatState soldier_combat(const Client& client);
@@ -772,9 +775,6 @@ private:
     bool inspire(Client& listener, const Client& performer, double gain);
     // Whether a perk the character knows in a profession Grants a flag.
     bool granted(const Client& client, std::string_view profession, std::string_view grant) const;
-    void sync_inspiration(Client& client);
-    ProfessionStanding entertainer_standing(const Client& client) const;
-
     // Bounty Hunter (server_specialists.cpp): an ability's charges (Twin
     // Charges: 2 for the profession's level-25 button), marks spawned for
     // contracts and retired after, posted bounties, Bloodhound.
@@ -790,6 +790,9 @@ private:
     int64_t posted_on(std::string_view target);
     int64_t wall_now() const;
     std::optional<Vec3> bounty_spot(Vec3 from);
+    void sync_inspiration(Client& client);
+    ProfessionStanding entertainer_standing(const Client& client) const;
+
     // Triggered perks (server_perks.cpp, docs/PERKS.md).
     double perk_clock() const;
     // In a fight: hurt, or landed a hit, in the last out_of_combat_delay s.
@@ -950,9 +953,6 @@ private:
     std::vector<BazaarListing> bazaar_;
     std::vector<BazaarSale> bazaar_sales_;
     bool bazaar_loaded_ = false;
-    uint64_t next_listing_ = 1;
-    uint64_t next_contract_ = 1;
-    uint32_t next_field_id_ = 1;
     struct BountyMark {
         uint32_t hunter = 0;
         uint64_t contract = 0;
@@ -963,6 +963,9 @@ private:
     std::vector<PostedBounty> posted_;
     bool posted_loaded_ = false;
     double bounty_tick_ = 0;
+    uint64_t next_listing_ = 1;
+    uint64_t next_contract_ = 1;
+    uint32_t next_field_id_ = 1;
     double specialist_clock_ = 0;  // seconds of ticks (contracts expire by it)
     double cohesion_pulse_ = 0;
 };

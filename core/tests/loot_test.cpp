@@ -46,12 +46,18 @@ void test_catalog_junk_and_supplies() {
     CHECK(hide->kind == ItemKind::junk);
     CHECK(hide->sell_value == 22);
 
+    // The vendors' Bacta Stimpack is tactical gear, like a Doctor's medpack.
     const ItemDef* stim = catalog.find("supply_bacta_stim");
     CHECK(stim != nullptr);
-    CHECK(stim->kind == ItemKind::supply);
+    CHECK(stim->kind == ItemKind::weapon);
+    CHECK(stim->slot == "secondary");
     CHECK(stim->cost_credits == 45);
     CHECK(stim->sell_value == 15);
-    CHECK(stim->heal_amount == 120.0);
+    CHECK(stim->heal_amount == 100.0);
+    CHECK(stim->carried == 2);
+
+    const ItemDef* rations = catalog.find("supply_field_rations");
+    CHECK(rations != nullptr && rations->kind == ItemKind::supply && rations->cost_credits == 25);
 
     const ItemDef* rifle = catalog.find("wp_carbine_ee3");
     CHECK(rifle != nullptr && rifle->cost_credits == 400 && rifle->sell_value == 100);
@@ -302,19 +308,19 @@ void test_corpse_loot_vendor_and_credit_persistence() {
         CHECK(client.player_status().credits == start_credits + 35 + 22 + 32);
         CHECK(client.items().size() == start_items);
 
-        // Walk to Gear & Supplies Vendor at (20, 0, 0) and buy a Bacta Stimpack (45 Cr)
+        // Walk to Gear & Supplies Vendor at (20, 0, 0) and buy Field Rations (25 Cr)
         client.set_input({.forward = 1.0, .yaw = east_yaw});
         for (int i = 0; i < 180 && client.predicted().position.x < 19.0; ++i) {
             step_both(1.0 / 60.0);
         }
         client.set_input({});
         step_both(0.1);
-        client.buy_item("supply_bacta_stim", false);
+        client.buy_item("supply_field_rations", false);
         step_both(0.25);
-        CHECK(client.player_status().credits == start_credits + 35 + 54 - 45);
+        CHECK(client.player_status().credits == start_credits + 35 + 54 - 25);
         CHECK(client.items().size() == start_items + 1);
 
-        // Damage player via NPC melee, then consume Bacta Stimpack
+        // Damage player via NPC melee, then eat the rations
         server.npc_melee(mob_id, client.entity_id(), 100.0, DamageType::melee);
         step_both(0.15);
         const double hurt_hp = client.health();
@@ -322,13 +328,13 @@ void test_corpse_loot_vendor_and_credit_persistence() {
 
         uint64_t stim_id = 0;
         for (const ItemInstance& inst : client.items()) {
-            if (inst.def_id == "supply_bacta_stim") {
+            if (inst.def_id == "supply_field_rations") {
                 stim_id = inst.id;
                 break;
             }
         }
         CHECK(stim_id != 0);
-        // Just hit: it waits for the fight to be over (food and stims heal out of combat).
+        // Just hit: it waits for the fight to be over (food heals out of combat).
         client.use_item(stim_id);
         step_both(0.25);
         CHECK(client.items().size() == start_items + 1);
@@ -349,7 +355,7 @@ void test_corpse_loot_vendor_and_credit_persistence() {
         SqliteCharacterStore store2(db_path);
         const auto saved = store2.find_by_name("LootHunter");
         CHECK(saved.has_value());
-        CHECK(saved->credits == 500 + 35 + 54 - 45);
+        CHECK(saved->credits == 500 + 35 + 54 - 25);
     }
     std::filesystem::remove(db_path);
 }

@@ -101,7 +101,7 @@ var _world_root: Node3D
 var _recruiter_nodes: Array = []
 var _bare_recruiters: Array = []  # battle terminals the city draws none for: a hologram stands for each
 var _recruiters_added := false
-var _corpse_nodes: Dictionary = {}  # corpse_entity -> {icon (its loot beam), label, color}
+var _corpse_nodes: Dictionary = {}  # corpse_entity -> {icon (its loot beam), color}
 var _catalog_by_id: Dictionary = {}  # item id -> catalog entry (for loot beams' colors)
 var _holograms: TeamTags      # holograms over the world's people and places (null: no insignia exported)
 var _holograms_looked := false
@@ -848,7 +848,7 @@ func tracked_quest(client: Object) -> Dictionary:
 
 # What the radar shows for quests: the tracked step's place (on the rim when
 # it's further than the radar reaches), the other quests' dimmer, and the
-# quest givers and mission terminals near by.
+# quest givers, mission terminals and the map's other places near by.
 func radar_markers(client: Object) -> Array:
 	var out: Array = []
 	if client == null or not client.is_spawned() or client.get_recruiters().is_empty():
@@ -871,6 +871,13 @@ func radar_markers(client: Object) -> Array:
 	for t: Dictionary in client.get_mission_terminals():
 		var at: Vector3 = t["position"]
 		out.append({"position": Vector2(at.x, at.z), "kind": "terminal", "color": _mission_terminal_color(str(t.get("kind", "general")))})
+	# The rest of the map's places (shops, services, workbenches, battle
+	# terminals), in the map's colors, so the radar shows every dot it does.
+	for place: Dictionary in map_places(client):
+		if str(place["kind"]) in ["quest", "terminal"]:
+			continue  # the givers and mission terminals, above
+		var at: Vector3 = place["position"]
+		out.append({"position": Vector2(at.x, at.z), "kind": str(place["kind"]), "color": place["color"]})
 	return out
 
 
@@ -893,16 +900,44 @@ func _update_quest_hud(client: Object) -> void:
 	var own: Vector3 = client.get_presented()["position"]
 	var distance := ""
 	var waypoint := {}
+	var step_text := str(steps.back()) if not steps.is_empty() else ""
 	if quest.has("waypoint"):
 		var at: Vector3 = quest["waypoint"]
 		var meters := Vector2(at.x - own.x, at.z - own.z).length()
 		distance = "%d m" % roundi(meters) if meters < 1000 else "%.1f km" % (meters / 1000.0)
+		step_text = live_step_text(step_text, own, at)
 		var camera := _world_root.get_viewport().get_camera_3d() if _world_root != null else null
 		if camera != null and meters > 3.0:
 			waypoint = _screen_marker(camera, _waypoint_marker(client, at, own), distance)
-	_hub_hud.tracker = {"title": str(quest.get("title", "")), "step": str(steps.back()) if not steps.is_empty() else "",
+	_hub_hud.tracker = {"title": str(quest.get("title", "")), "step": step_text,
 			"progress": progress, "distance": distance, "log_key": _key_name("quest_log")}
 	_hub_hud.waypoint = waypoint
+
+
+# A step's "(1.2 km north-east)" was measured when the quest was given (from
+# the mission terminal): measured again from where the player stands now.
+static func live_step_text(text: String, own: Vector3, at: Vector3) -> String:
+	var re := RegEx.create_from_string("\\((\\d+ m|\\d+(\\.\\d+)? km) (north|south|east|west)(-(east|west))?\\)")
+	var found := re.search(text)
+	if found == null:
+		return text
+	return text.substr(0, found.get_start()) + "(" + describe_direction(own, at) + ")" + text.substr(found.get_end())
+
+
+# "1.2 km north-east", from `from` to `to`, as the server words it
+# (describe_direction in quest.cpp; +z is north, -x is east).
+static func describe_direction(from: Vector3, to: Vector3) -> String:
+	var east := -(to.x - from.x)
+	var north := to.z - from.z
+	var meters := Vector2(east, north).length()
+	var bearing := rad_to_deg(atan2(east, north))
+	if bearing < 0.0:
+		bearing += 360.0
+	var names := ["north", "north-east", "east", "south-east", "south", "south-west", "west", "north-west"]
+	var direction: String = names[roundi(bearing / 45.0) % 8]
+	if meters < 1000.0:
+		return "%d m %s" % [roundi(meters / 10.0) * 10, direction]
+	return "%.1f km %s" % [meters / 1000.0, direction]
 
 
 # Where a place is on screen, or the edge it lies past.
@@ -1682,7 +1717,7 @@ static func _make_loot_beam(color: Color) -> MeshInstance3D:
 
 
 # A lootable corpse: a beam of light in its best loot's grade color (white for
-# anything ungraded), and "Loot" under, in Battlefront's font.
+# anything ungraded). No text: the beam says it.
 func _update_corpse_markers(client: Object) -> void:
 	if _world_root == null:
 		return
@@ -1702,32 +1737,16 @@ func _update_corpse_markers(client: Object) -> void:
 				if beam_node is MeshInstance3D and is_instance_valid(beam_node):
 					var mat := (beam_node as MeshInstance3D).material_override as StandardMaterial3D
 					mat.albedo_color = Color(color.r, color.g, color.b, 0.75)
-				var label_node: Variant = entry.get("label")
-				if label_node is Label3D and is_instance_valid(label_node):
-					(label_node as Label3D).modulate = color
 		if not _corpse_nodes.has(cid):
 			var pos: Vector3 = c["position"]
-			var art: RefCounted = _hub_hud.art if _hub_hud != null else null
 			var icon := _make_loot_beam(color)
 			icon.position = pos + Vector3.UP * (LOOT_BEAM_HEIGHT * 0.5)
-			var label := Label3D.new()
-			label.text = art.localize("common.loot") if art != null and art.localize("common.loot") != "common.loot" else "Loot"
-			label.billboard = BaseMaterial3D.BILLBOARD_ENABLED
-			label.fixed_size = true
-			label.pixel_size = 0.0011
-			label.font_size = 32
-			if art != null and art.godot_font("gamefont_small") != null:
-				label.font = art.godot_font("gamefont_small")
-			label.outline_size = 0
-			label.modulate = color
-			label.position = pos + Vector3.UP * 0.95
 			_world_root.add_child(icon)
-			_world_root.add_child(label)
-			_corpse_nodes[cid] = {"icon": icon, "label": label, "color": color}
+			_corpse_nodes[cid] = {"icon": icon, "color": color}
 	for cid: int in _corpse_nodes.keys():
 		if not seen.has(cid):
 			var entry: Dictionary = _corpse_nodes[cid]
-			for k in ["icon", "label"]:
+			for k in ["icon"]:
 				var n: Variant = entry.get(k)
 				if n is Node and is_instance_valid(n):
 					(n as Node).queue_free()

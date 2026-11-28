@@ -21,7 +21,7 @@ const ACTIONS := [
 	["zoom", "Zoom", KEY_Z],
 	["fire", "Fire", "mouse:1"],
 	["block", "Block / Parry (Melee)", KEY_F],
-	["grenade", "Throw Grenade", "mouse:2"],
+	["grenade", "Use Tactical", "mouse:2"],
 	["reload", "Reload", KEY_R],
 	["primary", "Primary Weapon", KEY_1],
 	["sidearm", "Sidearm", KEY_2],

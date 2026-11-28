@@ -1255,15 +1255,9 @@ Loadout ItemCatalog::build_loadout(const CharacterLoadout& cl, std::span<const I
     return out;
 }
 
-BattleReward compute_battle_reward(bool won, bool draw, uint16_t kills, uint16_t captures) {
-    BattleReward r;
-    if (won) {
-        r = {250, 100, 200};
-    } else if (draw) {
-        r = {150, 60, 120};
-    } else {
-        r = {100, 40, 80};
-    }
+namespace {
+
+BattleReward battle_reward(BattleReward r, uint16_t kills, uint16_t captures) {
     r.xp += int64_t(kills) * 25 + int64_t(captures) * 60;
     r.faction_points += int64_t(kills) * 10 + int64_t(captures) * 25;
     r.credits += int64_t(kills) * 15 + int64_t(captures) * 40;
@@ -1271,6 +1265,22 @@ BattleReward compute_battle_reward(bool won, bool draw, uint16_t kills, uint16_t
     r.faction_points = int64_t(std::llround(double(r.faction_points) * 1.15));
     r.credits = int64_t(std::llround(double(r.credits) * 1.15));
     return r;
+}
+
+} // namespace
+
+BattleReward compute_battle_reward(bool won, bool draw, uint16_t kills, uint16_t captures) {
+    if (won) {
+        return battle_reward({250, 100, 200}, kills, captures);
+    }
+    if (draw) {
+        return battle_reward({150, 60, 120}, kills, captures);
+    }
+    return battle_reward({100, 40, 80}, kills, captures);
+}
+
+BattleReward compute_left_battle_reward(uint16_t kills, uint16_t captures) {
+    return battle_reward({}, kills, captures);
 }
 
 namespace {

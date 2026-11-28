@@ -4,6 +4,20 @@
 # matching slot.
 extends RefCounted
 
+
+# An armor class's name for the player ("none" is clothing's: Unarmored).
+static func armor_class_label(armor_class: String) -> String:
+	if armor_class == "none" or armor_class == "":
+		return "Unarmored"
+	return armor_class.capitalize() + " Armor"
+
+
+# A slot's name for the player: the "secondary" slot is the Tactical slot.
+static func slot_label(slot: String) -> String:
+	if slot == "secondary":
+		return "Tactical"
+	return slot.replace("_", " ").capitalize()
+
 const Bf2Screen = preload("res://ui/bf2_screen.gd")
 const ItemGrade = preload("res://ui/item_grade.gd")
 const GOOD := Color(0.45, 0.95, 0.5)
@@ -82,8 +96,13 @@ static func build_lines(def: Dictionary, inst: Dictionary, store: Object, equipp
 	var kind := str(def.get("kind", "weapon"))
 	var slot := str(def.get("slot", ""))
 	var faction := str(def.get("faction", "neutral")).capitalize()
-	lines.append({"text": "%s | %s | %s" % [kind.replace("_", " ").capitalize(), slot.replace("_", " ").capitalize(), faction],
+	var kind_label := kind.replace("_", " ").capitalize()
+	if kind == "armor" and str(def.get("armor_class", "")) != "":
+		kind_label = armor_class_label(str(def["armor_class"]))  # "Medium Armor"
+	lines.append({"text": "%s | %s | %s" % [kind_label, slot_label(slot), faction],
 			"color": Bf2Screen.DIM})
+	if kind == "clothing":
+		lines.append({"text": "Clothing: counts as Unarmored", "color": Bf2Screen.DIM})
 	var grade_label := ItemGrade.label(def, inst)
 	if grade_label != "":
 		lines.append({"text": grade_label, "color": ItemGrade.color(def, inst)})

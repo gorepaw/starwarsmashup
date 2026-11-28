@@ -33,7 +33,7 @@ func _initialize() -> void:
 			supply_count += 1
 			# Tatooine's healing supplies heal and sell (later supplies, like a
 			# creature egg or a droid, needn't do either).
-			if str(def.get("id", "")) in ["supply_field_rations", "supply_bacta_stim", "supply_medpac_adv"]:
+			if str(def.get("id", "")) in ["supply_field_rations", "supply_spiced_tea", "supply_bantha_steak"]:
 				assert(float(def.get("heal_amount", 0.0)) > 0.0, "supply missing heal_amount: " + str(def["id"]))
 				assert(int(def.get("cost_credits", 0)) > 0, "supply missing cost_credits: " + str(def["id"]))
 	assert(junk_count >= 14, "expected >= 14 junk items, got %d" % junk_count)

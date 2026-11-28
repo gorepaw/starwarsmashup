@@ -63,6 +63,9 @@ struct BattleReward {
 };
 
 BattleReward compute_battle_reward(bool won, bool draw, uint16_t kills, uint16_t captures);
+// Leaving a battle before its end: what the kills and captures earned, without
+// the outcome's share.
+BattleReward compute_left_battle_reward(uint16_t kills, uint16_t captures);
 
 enum class WeaponArchetype : uint8_t {
     rifle_auto,

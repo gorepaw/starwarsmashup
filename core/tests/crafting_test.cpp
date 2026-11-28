@@ -297,10 +297,14 @@ void test_families() {
         return std::any_of(book.schematics().begin(), book.schematics().end(),
                            [&](const SchematicDef& s) { return s.output_item == item; });
     };
-    // Every neutral weapon but the trap (the scout's, later); every Tailor's
-    // piece; every vehicle and Deflector Shield.
+    // Every neutral weapon but the trap (the scout's, later) and the vendors'
+    // and loot's medpacks ("supply_", a Doctor makes their own); every
+    // Tailor's piece; every vehicle and Deflector Shield.
     for (const ItemDef& def : catalog.all()) {
-        if (def.kind == ItemKind::weapon && def.faction == "neutral" && def.id != "wp_trap_laser") CHECK(made(def.id));
+        if (def.kind == ItemKind::weapon && def.faction == "neutral" && def.id != "wp_trap_laser" &&
+            !def.id.starts_with("supply_")) {
+            CHECK(made(def.id));
+        }
         if (def.kind == ItemKind::clothing && def.faction == "neutral") CHECK(made(def.id));
         if (def.kind == ItemKind::vehicle || (def.kind == ItemKind::deflector_shield && def.faction == "neutral")) {
             CHECK(made(def.id));

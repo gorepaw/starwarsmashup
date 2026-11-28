@@ -817,6 +817,9 @@ godot::Dictionary SwmCharacterStore::compute_loadout_stats(const godot::String& 
     const core::Loadout built = catalog_.build_loadout(cl, inv, sp);
     const core::CharacterStats stats = core::stats_for(built, sp);
     godot::Dictionary out;
+    // The class the loadout counts as (most pieces; clothing is "none"), which
+    // is the armor profession it levels; "" for no armor or clothing at all.
+    out["armor_class"] = godot::String::utf8(built.armor_class.c_str());
     out["max_health"] = stats.max_health;
     out["run_speed"] = stats.move.run_speed;
     out["sprint_factor"] = stats.move.sprint_factor;

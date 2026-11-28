@@ -16,7 +16,7 @@ signal closed
 const GEAR_SLOTS := [
 	["primary", "Primary"],
 	["sidearm", "Sidearm"],
-	["secondary", "Secondary"],
+	["secondary", "Tactical"],
 	["deflector_shield", "Deflector Shield"],
 	["helmet", "Helmet"],
 	["chest", "Chest"],
@@ -447,8 +447,11 @@ func _paint_paperdoll(box: Rect2) -> void:
 	var stats_y := box.end.y - 104 * u
 	var st: Dictionary = store.compute_loadout_stats(species, lo, inventory, true) if store != null else {}
 	if not st.is_empty():
-		text("gamefont_tiny", "Health: %.0f   |   Run: %.1f m/s   |   Energy: %.0f" % [
-				float(st.get("max_health", 400)), float(st.get("run_speed", 6.5)), float(st.get("max_energy", 100))],
+		# Worn as: the class most pieces are (clothing is Unarmored), the
+		# armor profession taking hits levels.
+		text("gamefont_tiny", "Health: %.0f   |   Run: %.1f m/s   |   Energy: %.0f   |   Worn as: %s" % [
+				float(st.get("max_health", 400)), float(st.get("run_speed", 6.5)), float(st.get("max_energy", 100)),
+				ItemTooltip.armor_class_label(str(st.get("armor_class", "none")))],
 				Vector2(x, stats_y), "Left", TEXT)
 		text("gamefont_tiny", "Armor: %d%%   |   Laser: %d%%   |   Ballistic: %d%%   |   Explosive: %d%%" % [
 				roundi(float(st.get("mitigation", 0)) * 100),
@@ -539,7 +542,7 @@ func _paint_inventory(box: Rect2) -> void:
 			sub_txt = "Vehicle | Use to call it, again to put it away"
 		else:
 			var grade_label := ItemGrade.label(def, inst)
-			sub_txt = "%s%s %s" % [str(def.get("slot", "")).replace("_", " ").capitalize(),
+			sub_txt = "%s%s %s" % [ItemTooltip.slot_label(str(def.get("slot", ""))),
 					" | " + grade_label if grade_label != "" else "", used_in]
 		text("gamefont_tiny", sub_txt, Vector2(x + 8 * u, ry + 20 * u), "Left", DIM)
 
