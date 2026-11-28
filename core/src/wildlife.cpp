@@ -664,7 +664,8 @@ void WorldPopulation::update_bandits(double now) {
                 server_.set_npc_hidden(mob.entity, true);
                 mob.corpse_hidden = true;
             }
-            if (awake && now - mob.dead_since >= arch.respawn_time * respawn_scale(camp_states_[mob.camp].center,
+            if (awake && !camp_states_[mob.camp].temporary &&
+                now - mob.dead_since >= arch.respawn_time * respawn_scale(camp_states_[mob.camp].center,
                                                                                   camp_states_[mob.camp].radius)) {
                 const Vec3 spawn_pos = random_point_around(camp_states_[mob.camp].center, camp_states_[mob.camp].radius * 0.65);
                 mob.home = spawn_pos;
@@ -785,8 +786,80 @@ std::vector<uint32_t> WorldPopulation::mob_entities() const {
     std::vector<uint32_t> ids;
     ids.reserve(creatures_.size() + bandits_.size());
     for (const CreatureMob& m : creatures_) ids.push_back(m.entity);
-    for (const BanditMob& m : bandits_) ids.push_back(m.entity);
+    for (const BanditMob& m : bandits_) {
+        if (!m.gone) ids.push_back(m.entity);
+    }
     return ids;
+}
+
+std::vector<uint32_t> WorldPopulation::spawn_mark(const std::string& name, Vec3 center, int tier, int guards) {
+    std::vector<uint32_t> out;
+    // The toughest bandits up to its tier (the weakest there are, if none is).
+    std::vector<size_t> fit;
+    int best = -1;
+    for (size_t i = 0; i < spawns_.bandits.size(); ++i) {
+        if (spawns_.bandits[i].tier <= tier) best = std::max(best, spawns_.bandits[i].tier);
+    }
+    if (best < 0) {
+        for (const BanditArchetype& b : spawns_.bandits) best = best < 0 ? b.tier : std::min(best, b.tier);
+    }
+    for (size_t i = 0; i < spawns_.bandits.size(); ++i) {
+        if (spawns_.bandits[i].tier == best) fit.push_back(i);
+    }
+    if (fit.empty()) return out;
+    center = world_.clamp(center);
+    center.y = world_.terrain().height_at(center.x, center.z);
+    const size_t camp = camp_states_.size();
+    camp_states_.push_back({center, 12.0, true});
+    for (int m = 0; m <= guards; ++m) {
+        const size_t arch_idx = fit[size_t(random_unit() * double(fit.size())) % fit.size()];
+        const BanditArchetype& arch = spawns_.bandits[arch_idx];
+        const auto lit = look_indices_.find(arch.template_path);
+        GameServer::NpcCombatSpec spec;
+        spec.actor_kind = 3;
+        // The mark himself is tougher than his gang, more so the higher the tier.
+        spec.max_health = m == 0 ? arch.health * (1.5 + 0.25 * tier) : arch.health;
+        spec.hit_radius = 0.45;
+        spec.hit_height = 1.8;
+        spec.walk_speed = 4.2;
+        spec.run_speed = 6.5;
+        spec.loadout = build_bandit_loadout(arch);
+        if (const WeaponDef* w = weapon_in_slot(spec.loadout, primary_slot)) {
+            spec.weapon_model = w->model;
+            spec.anim_set = w->anim_set;
+        }
+        const Vec3 pos = m == 0 ? center : random_point_around(center, 8.0);
+        const uint32_t entity = server_.add_combat_npc(m == 0 ? name : arch.name, pos, random_unit() * 2.0 * std::numbers::pi,
+                                                       lit != look_indices_.end() ? lit->second : 0, spec,
+                                                       uint16_t(random_unit() * 99.0) + 1);
+        BanditMob mob;
+        mob.entity = entity;
+        mob.archetype = arch_idx;
+        mob.camp = camp;
+        mob.home = pos;
+        mob.patrol_goal = pos;
+        mob.wait_until = random_unit() * 3.0;
+        mob.loadout = std::move(spec.loadout);
+        mob.brain.aim_phase = random_unit() * 100.0;
+        camp_states_[camp].mobs.push_back(bandits_.size());
+        by_entity_[entity] = {true, bandits_.size()};
+        bandits_.push_back(std::move(mob));
+        out.push_back(entity);
+    }
+    return out;
+}
+
+void WorldPopulation::retire_mark(const std::vector<uint32_t>& entities) {
+    for (const uint32_t entity : entities) {
+        const auto it = by_entity_.find(entity);
+        if (it == by_entity_.end() || !it->second.first) continue;
+        BanditMob& mob = bandits_[it->second.second];
+        std::erase(camp_states_[mob.camp].mobs, it->second.second);
+        mob.gone = true;
+        mob.dormant = true;  // (never updated again)
+        by_entity_.erase(it);
+        server_.remove_npc(entity);
+    }
 }
 
 int64_t WorldPopulation::xp_for(uint32_t entity) const {

@@ -3255,6 +3255,7 @@ void GameServer::damage_npc(Npc& npc, double raw, DamageType type, uint32_t atta
         return;
     }
     const double amount = raw * (1.0 - npc.mitigation);
+    specialist_hit(attacker, npc.entity);  // (Spotter)
     npc.health = std::max(0.0, npc.health - amount);
     npc.last_attacker = attacker;
     npc.last_damaged_tick = tick_;
@@ -3301,6 +3302,7 @@ void GameServer::damage(Client& victim, double raw, DamageType type, uint32_t at
     if (perks) {
         amount = perk_incoming(victim, amount, type);
     }
+    specialist_hit(attacker, victim.entity);  // (Bloodhound, Spotter)
     victim.last_hurt_at = perk_clock();
     if (victim.spec.performing) {  // (an Entertainer never performs in a fight)
         victim.spec.performing = false;

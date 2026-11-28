@@ -43,6 +43,10 @@ struct ServerConfig {
     size_t max_inputs_per_tick = 3;   // lets a client catch up after jitter, but not speed up for long
     size_t max_queued_inputs = 30;
     double save_interval = 10;   // seconds between saves of every connected character
+    // How long a player-posted bounty stands (docs/PROFESSIONS.md, Bounty
+    // Hunter), and the clock it's timed by (unix seconds; unset: the system's).
+    int64_t bounty_post_seconds = 24 * 3600;
+    std::function<int64_t()> wall_clock;
     double respawn_delay = 5;    // seconds dead before respawning (in a match: before choosing a spawn)
     double max_rewind = 0.5;     // seconds: the most the server rewinds targets for a shooter
     Loadout loadout;             // everyone's outside a match; must match the clients'
@@ -350,6 +354,13 @@ public:
     const std::vector<BazaarListing>& bazaar_listings() const { return bazaar_; }
     // The field as a player sees it (what their snapshots carry).
     net::FieldState field_state_for(uint32_t entity) const;
+    // Bounty marks (docs/PROFESSIONS.md, Bounty Hunter): the hub's population
+    // spawns a contract's outlaw and guards (their entities, the leader
+    // first) and takes them away. Unset: lone outlaws without a gang's wits.
+    std::function<std::vector<uint32_t>(const std::string& name, Vec3 at, int tier, int guards)> on_spawn_mark;
+    std::function<void(const std::vector<uint32_t>& entities)> on_retire_mark;
+    // Bounties players have put up, outstanding (saved with the world).
+    const std::vector<PostedBounty>& posted_bounties() const { return posted_; }
     // Whether `entity` is hidden from `viewer` (cloaked, or in smoke, and an enemy).
     bool hidden_from(uint32_t viewer, uint32_t entity) const;
     // Whether a player is cloaked (creatures and outlaws don't pick them as targets).
@@ -764,6 +775,21 @@ private:
     void sync_inspiration(Client& client);
     ProfessionStanding entertainer_standing(const Client& client) const;
 
+    // Bounty Hunter (server_specialists.cpp): an ability's charges (Twin
+    // Charges: 2 for the profession's level-25 button), marks spawned for
+    // contracts and retired after, posted bounties, Bloodhound.
+    int ability_charges(const Client& client, const AbilityDef& a) const;
+    void update_bounties(double dt);
+    // A hit's marks (Bloodhound, Spotter): from damage() and damage_npc().
+    void specialist_hit(uint32_t attacker, uint32_t victim);
+    void update_spawn_points();
+    void post_bounty(Client& client, const std::string& target, int64_t amount);
+    void load_posted_bounties();
+    void save_posted_bounties();
+    void refund_bounty(const PostedBounty& bounty, std::string_view why);
+    int64_t posted_on(std::string_view target);
+    int64_t wall_now() const;
+    std::optional<Vec3> bounty_spot(Vec3 from);
     // Triggered perks (server_perks.cpp, docs/PERKS.md).
     double perk_clock() const;
     // In a fight: hurt, or landed a hit, in the last out_of_combat_delay s.
@@ -927,6 +953,16 @@ private:
     uint64_t next_listing_ = 1;
     uint64_t next_contract_ = 1;
     uint32_t next_field_id_ = 1;
+    struct BountyMark {
+        uint32_t hunter = 0;
+        uint64_t contract = 0;
+        std::vector<uint32_t> entities;  // the outlaw first
+        double retire_in = -1;           // once its contract is over: seconds left (its body lies a while)
+    };
+    std::vector<BountyMark> bounty_marks_;
+    std::vector<PostedBounty> posted_;
+    bool posted_loaded_ = false;
+    double bounty_tick_ = 0;
     double specialist_clock_ = 0;  // seconds of ticks (contracts expire by it)
     double cohesion_pulse_ = 0;
 };

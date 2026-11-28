@@ -1,6 +1,6 @@
 # Trainer Perks
 
-The rework of what professions teach. It replaces milestones at 1 / 25 / 50 / 75 / 100 ([Professions](PROFESSIONS.md)) with two perks to choose between at each tier. Weapons and armor were first; then Squad Leader, Doctor and Entertainer, and gathering and crafting (2026-11-27). The other advanced professions follow one by one and keep their milestones until their turn.
+The rework of what professions teach. It replaces milestones at 1 / 25 / 50 / 75 / 100 ([Professions](PROFESSIONS.md)) with two perks to choose between at each tier. Weapons and armor were first; then Squad Leader, Doctor and Entertainer, gathering and crafting, and Bounty Hunter (2026-11-27). The other advanced professions follow one by one and keep their milestones until their turn.
 
 Status: **built** (see Order of work): the rules, the cap, trainers, licences, and all 90 perks. The tags say what each needed: nothing new, a trigger (**T**), or a new mechanic (**N**; [Mechanics](#mechanics)).
 
@@ -15,6 +15,7 @@ The old milestones were a fixed chain of small multipliers that every character 
 - **No chain.** A perk needs only its profession's level. Dropping one never takes others with it, so a Melee 85 perk can be learned alone. That's why the 85 perks are the most defining, not the strongest.
 - **Ten combat perks and ten non-combat perks per character** (2026-11-27; it was ten in all), across all three loadouts. Combat: weapons, armor, Bounty Hunter, Smuggler, Squad Leader, Doctor, Ranger, Pilot, Creature Handler, Droid Operations. Non-combat: gathering, crafting, Entertainer, Merchant, Bio-Engineer, Droid Engineer (`Pool =` in professions.ini). Milestones count toward their profession's pool the same way, level 1 included. A fighter no longer gives up gathering or crafting to fight well, but within a pool nothing is free.
 - **Advanced trees.** An advanced profession's perks are abilities (`Ability =`), switches the server looks for (`Grants =`), or stat changes. Its tiers are 5 / 25 / 45 / 65 / 85, or **1** / 25 / 45 / 65 / 85 (`FirstPerk = 1`) when you can't do it at all without its first perk: then either level-1 perk is its licence, and it's free (Squad Leader: two kinds of rally; Doctor: a healing dart or field dressing, which also licenses medicine; Entertainer: Musician or Dancer). Tiers from 5 (`FirstPerk = 5`, the default) are for a profession you can practise without a perk; none does now.
+- **Two buttons at most.** No profession adds more than two abilities to a character's bar: two of its tiers are a pair of buttons (one of each pair learned), the rest passives. Using a profession's abilities earns its experience. A perk's switches travel with a loadout into a match (`Loadout::grants`), so they work there too. Squad Leader's Shields Up and Press On ride on its orders; Doctor's Splash, Lingering Bacta, Defibrillator and Field Triage are what its heal does besides; Spotter and Squad Spawn Point replace Mark Target and the beacon.
 - **The level-1 perk is the licence.** A non-combat or specialist profession's level-1 milestone is what lets you do its activity at all: survey and harvest, craft its schematics, heal, tame, perform. Without it you can't, and you earn none of its experience. To level a profession you hold its level-1 perk while you do it; give it up later and you keep the level, and learning it again is free.
 - **No slots.** Active Specialization Slots are gone. What a character has learned works everywhere: a weapon perk whenever you fight with that profession's weapons, an armor perk whenever your armor is that class, a specialist's abilities in every loadout. The cap does the limiting the slots did. Levelling stays uncapped: every profession can reach 100.
 - **Trainers.**
@@ -155,6 +156,18 @@ Crafting (Weaponsmith, Armorsmith, Tailor, Chef, Architect):
 - An extra item has the same grade as the one rolled.
 - `xp` works for any profession's perk.
 - Old saves' gathering and crafting milestones are refunded, and a licence milestone becomes the A licence perk.
+
+### Bounty Hunter
+
+Tiers from 1 (taking bounties needs the licence).
+
+| Level | A | B |
+|---|---|---|
+| 1 | **Seeker Probe** (button): your marks on the map for 30 s; in a battle, a recon probe spotting within 25 m | **HVT Spotting** (button): in a battle, the enemy's deadliest marked for your side 15 s; in the world, your marks for 60 s |
+| 25 | **Toxin Dart** (button): 14 bio a second for 8 s, slower stamina | **Wrist Rocket** (button): 150 explosive within 3 m |
+| 45 | **Bloodhound**: marks within 150 m stay on your HUD; in a battle whoever shoots you shows to your side 5 s | **Relentless**: slows on you halved |
+| 65 | **Big Game**: also a tier-harder mark with a bigger gang, double pay | **Twin Charges**: your level-25 button holds two charges |
+| 85 | **Collector**: bounties pay half again, credits and experience | **Clean Getaway**: after a kill, 20% faster 4 s and the shield recharging at once |
 
 ## Triggers
 

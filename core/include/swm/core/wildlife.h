@@ -124,6 +124,14 @@ public:
     // Whether a creature or bandit is asleep (out of the world until a player comes near).
     bool dormant(uint32_t entity) const;
 
+    // A bounty mark (docs/PROFESSIONS.md, Bounty Hunter): a named outlaw and
+    // `guards` gang members at `center`, of bandits up to `tier`, who fight
+    // like any camp's but never come back once dead. Their entities, the
+    // leader first; empty if there are no bandits to make them of.
+    std::vector<uint32_t> spawn_mark(const std::string& name, Vec3 center, int tier, int guards);
+    // Takes a mark's outlaws (spawn_mark's entities) out of the world for good.
+    void retire_mark(const std::vector<uint32_t>& entities);
+
 private:
     struct CreatureMob {
         uint32_t entity = 0;
@@ -170,11 +178,13 @@ private:
         Loadout loadout;
         CombatBrain brain;
         bool dormant = false;
+        bool gone = false;  // a retired mark's: out of the world for good
     };
 
     struct CampState {
         Vec3 center;
         double radius = 22;
+        bool temporary = false;  // a bounty mark's: its dead stay dead
         bool awake = true;
         double quiet_since = -1;
         std::vector<size_t> mobs;  // indices into bandits_

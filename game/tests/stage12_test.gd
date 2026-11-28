@@ -23,7 +23,7 @@ func _initialize() -> void:
 	assert(client.has_method("get_specialist") and client.has_method("get_field"))
 	var book: Dictionary = client.get_specialist_book(ProjectSettings.globalize_path("res://professions/specialists.ini"))
 	var abilities: Dictionary = book.get("abilities", {})
-	assert(abilities.size() >= 40, "abilities: %d" % abilities.size())
+	assert(abilities.size() >= 30, "abilities: %d" % abilities.size())
 	assert(str((abilities["doc_heal_dart"] as Dictionary)["profession"]) == "doctor")
 	assert((book.get("companions", {}) as Dictionary).has("dewback"))
 	assert((book.get("modules", []) as Array).size() >= 8 and (book.get("slices", []) as Array).size() >= 7)

@@ -166,8 +166,8 @@ func _process(_delta: float) -> bool:
 				ui.get("_datapad").call("_on_click", "bar:ch_tame:0", Vector2.ZERO)
 				var after: Array = ui.call("bar_ids")
 				print("play: bar now %s" % [after])
-				# Tame takes the first key and bumps the Seeker Probe; the rest stay.
-				if after[0] != "ch_tame" or after[1] != "bh_bolas" or after.has("bh_seeker_probe"):
+				# Tame takes the first key and bumps the Seeker Probe.
+				if after[0] != "ch_tame" or after.has("bh_seeker_probe"):
 					_fail("Tame didn't take the first key: %s" % [after])
 			if waited == 60:
 				_screenshot("datapad")

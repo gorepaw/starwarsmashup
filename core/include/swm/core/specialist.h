@@ -380,6 +380,10 @@ struct Contract {
     double needed = 0;          // ... and needed
     std::string profession;     // whose experience it is
     std::string item;           // a crafting order's item (its id); progress: how many are held
+    // A bounty mark's (not sent): its tier and how many guards it has, for
+    // when it's spawned on accepting.
+    int tier = 0;
+    int guards = 0;
 
     friend bool operator==(const Contract&, const Contract&) = default;
 };
@@ -390,6 +394,25 @@ struct Contract {
 // one day).
 inline constexpr std::array<std::string_view, 1> artisan_order_professions{"doctor"};
 int64_t contract_reward(ContractKind kind, int tier, double distance);
+
+// A bounty a player put up on an opted-in player (docs/PROFESSIONS.md,
+// Bounty Hunter): held until a hunter collects it (on top of the base pay),
+// or given back when it expires or its mark opts out. Saved with the world.
+struct PostedBounty {
+    uint64_t poster = 0;      // the poster's character
+    std::string poster_name;
+    std::string target;       // the mark's character name
+    int64_t amount = 0;       // credits
+    int64_t expires = 0;      // unix seconds
+
+    friend bool operator==(const PostedBounty&, const PostedBounty&) = default;
+};
+inline constexpr int64_t pvp_bounty_base = 1000;  // what a player mark pays before what's posted
+// A made-up outlaw's name for a bounty mark, from two rolls in [0, 1).
+std::string bounty_mark_name(double first_roll, double last_roll);
+inline constexpr int64_t min_posted_bounty = 500;
+std::string format_posted_bounties(std::span<const PostedBounty> bounties);
+std::vector<PostedBounty> parse_posted_bounties(std::string_view text);
 // How many contracts a character may hold at once.
 inline constexpr size_t max_contracts = 3;
 inline constexpr double contract_lifetime = 1800;  // seconds

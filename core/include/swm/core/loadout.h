@@ -467,6 +467,9 @@ struct Loadout {
     // professions, and its Companion Slot's companion (format_companion; empty: none).
     std::vector<std::string> abilities;
     std::map<std::string, int> specialist_levels;
+    // The switches its perks turn on, "<profession>:<grant>" (field_commander,
+    // bloodhound ...): a match has no professions to look them up in.
+    std::vector<std::string> grants;
     std::string companion;
     // An Entertainer's Inspiration it carries into a match (format_inspiration;
     // empty: none). The server's alone: clients see it as an effect.

@@ -41,6 +41,8 @@ const BOUNTY_FLAG := 23
 const SUPPLY := 24
 const COMPANION_SLOT := 25
 const CHOOSE_INSPIRATION := 27
+const POST_BOUNTY := 28
+const POSTED_AMOUNTS := [500, 2500]  # what a "Post" button puts up on an opted-in player
 
 const TABS := ["Kit", "Companions", "Lab", "Droids", "Contracts", "Slicing", "Inspiration"]
 const ROWS := 8
@@ -371,6 +373,13 @@ func _paint_contracts(body: Rect2) -> void:
 			text("gamefont_tiny", "%s  ·  %d cr" % [str(c.get("title", "")), int(c.get("reward", 0))],
 					Vector2(rect.position.x + 8 * u, y + 9 * u), "Left", TEXT)
 			button(Rect2(rect.end.x - 100 * u, y + 4 * u, 92 * u, 26 * u), "Accept", "accept:%d" % int(c["id"]))
+			# An opted-in player: anyone may put credits on their head too.
+			if str(c.get("kind", "")) == "pvp_mark":
+				var bx := rect.end.x - 100 * u
+				for amount: int in POSTED_AMOUNTS:
+					bx -= 104 * u
+					button(Rect2(bx, y + 4 * u, 98 * u, 26 * u), "Post %d" % amount,
+							"post:%d:%s" % [amount, str(c.get("target_name", ""))])
 			y += 38 * u
 
 
@@ -526,6 +535,9 @@ func _on_click(id: String, _at: Vector2) -> void:
 		_send(ASSEMBLE, 0, 0, _chassis, ",".join(_modules))
 	elif id == "ask":
 		_send(CONTRACTS, 0, 0, "", "", int(terminal.get("index", 0)))
+	elif id.begins_with("post:"):
+		var parts := id.split(":", true, 2)
+		_send(POST_BOUNTY, int(parts[1]), 0, parts[2])
 	elif id.begins_with("accept:"):
 		_send(ACCEPT, int(id.substr(7)))
 	elif id.begins_with("abandon:"):

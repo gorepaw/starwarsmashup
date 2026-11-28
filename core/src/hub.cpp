@@ -671,6 +671,11 @@ void Hub::add_people() {
     }
 }
 
+        // Bounty marks: outlaws of the population's, with its gangs' wits.
+        server_.on_spawn_mark = [this](const std::string& name, Vec3 at, int tier, int guards) {
+            return population_->spawn_mark(name, at, tier, guards);
+        };
+        server_.on_retire_mark = [this](const std::vector<uint32_t>& entities) { population_->retire_mark(entities); };
 // Somewhere in the crowd's area to walk to: on the ground (not a roof),
 // where a soldier could stand.
 std::optional<Vec3> Hub::wander_point(size_t crowd_index) {
@@ -766,6 +771,8 @@ Hub::~Hub() {
     for (auto& battle : battles_) {
         battle->bots->disconnect();
     }
+    server_.on_spawn_mark = nullptr;
+    server_.on_retire_mark = nullptr;
 }
 
 void Hub::say(const std::string& text) const {

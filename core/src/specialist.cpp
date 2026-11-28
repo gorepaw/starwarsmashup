@@ -641,7 +641,7 @@ int64_t contract_reward(ContractKind kind, int tier, double distance) {
     const double d = std::max(0.0, distance);
     switch (kind) {
     case ContractKind::npc_mark: return int64_t(150 * std::max(1, tier) + d * 0.5);
-    case ContractKind::pvp_mark: return 1000;
+    case ContractKind::pvp_mark: return pvp_bounty_base;
     case ContractKind::contraband: return int64_t(100 + d * 0.8);
     case ContractKind::track: return int64_t(80 + d * 0.4);
     case ContractKind::gig: return 300;
@@ -847,6 +847,51 @@ TimedEffect inspiration_effect(const InspirationDef& def, const Inspiration& ins
         e.modifiers.push_back(m);
     }
     return e;
+}
+
+std::string bounty_mark_name(double first_roll, double last_roll) {
+    static constexpr std::array<std::string_view, 16> firsts{"Dorn", "Vesk", "Talla", "Krin", "Mavo", "Shera", "Brask", "Oro",
+                                                             "Jhess", "Tyber", "Nalla", "Corvin", "Rusk", "Ilsa", "Garro", "Pell"};
+    static constexpr std::array<std::string_view, 14> lasts{"Rask", "Vantor", "Oskane", "Drell", "Mokk", "Sarn", "Tevari",
+                                                            "Hoult", "Brennick", "Zayne", "Quell", "Marrow", "Kesh", "Dunmore"};
+    const auto pick = [](const auto& list, double roll) {
+        return list[std::min(list.size() - 1, size_t(std::clamp(roll, 0.0, 1.0) * double(list.size())))];
+    };
+    return std::format("{} {}", pick(firsts, first_roll), pick(lasts, last_roll));
+}
+
+std::string format_posted_bounties(std::span<const PostedBounty> bounties) {
+    std::string out;
+    for (const PostedBounty& b : bounties) {
+        out += std::format("{}\t{}\t{}\t{}\t{}\n", b.poster, b.poster_name, b.target, b.amount, b.expires);
+    }
+    return out;
+}
+
+std::vector<PostedBounty> parse_posted_bounties(std::string_view text) {
+    std::vector<PostedBounty> out;
+    size_t start = 0;
+    while (start < text.size()) {
+        size_t end = text.find('\n', start);
+        if (end == std::string_view::npos) end = text.size();
+        const std::string_view line = text.substr(start, end - start);
+        start = end + 1;
+        std::vector<std::string> f;
+        size_t a = 0;
+        while (true) {
+            const size_t b = line.find('\t', a);
+            f.emplace_back(line.substr(a, b == std::string_view::npos ? std::string_view::npos : b - a));
+            if (b == std::string_view::npos) break;
+            a = b + 1;
+        }
+        if (f.size() != 5) continue;
+        try {
+            out.push_back({std::stoull(f[0]), f[1], f[2], std::stoll(f[3]), std::stoll(f[4])});
+        } catch (const std::exception&) {
+            continue;  // (a damaged line)
+        }
+    }
+    return out;
 }
 
 }  // namespace swm::core

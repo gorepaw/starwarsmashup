@@ -41,7 +41,7 @@ bool has(const std::vector<std::string>& list, std::string_view id) {
 }
 
 void test_shipped_data(const SpecialistBook& book, const ProfessionBook& professions, const ItemCatalog& catalog) {
-    CHECK(book.abilities().size() >= 40);
+    CHECK(book.abilities().size() >= 30);
     // Every ability belongs to a real, available profession: at one of its
     // milestones, or taught by one of its perks (at the perk's level).
     for (const AbilityDef& a : book.abilities()) {
@@ -93,18 +93,34 @@ void test_rules(const SpecialistBook& book, const ProfessionBook& professions) {
     // milestone is learned (docs/PERKS.md).
     const int64_t master = professions.xp_for_level(100);
     std::vector<ProfessionProgress> progress{
-        {"bounty_hunter", master, 100},
+        {"bounty_hunter", master, 0, 0, {"bh_perk_seeker", "bh_perk_toxin_dart"}},
         {"entertainer", master, 0, 0, {"ent_perk_dancer", "ent_perk_flourish"}},
         {"doctor", master, 0},
-        {"squad_leader", master, 0, 0, {"sl_perk_steady_rally", "sl_perk_shields_up"}}};
+        {"squad_leader", master, 0, 0, {"sl_perk_steady_rally", "sl_perk_shields_up", "sl_perk_supply"}}};
     auto world = unlocked_abilities(book, professions, progress, false);
     CHECK(has(world, "ent_perform") && has(world, "ent_flourish") && !has(world, "ent_holo_emitter"));
-    // Perks teach their abilities: this Squad Leader's two orders, not the other rally.
-    CHECK(has(world, "sl_steady_rally") && has(world, "sl_shields_up") && !has(world, "sl_rally"));
-    CHECK(has(world, "bh_bolas") && has(world, "bh_seeker_probe") && !has(world, "bh_recon_probe"));
+    // Perks teach their abilities: this Squad Leader's order and supply drop
+    // (Shields Up is no button: it rides on the order), not the other rally.
+    CHECK(has(world, "sl_steady_rally") && has(world, "sl_supply") && !has(world, "sl_rally"));
+    CHECK(!has(world, "sl_shields_up") && !has(world, "sl_strike"));
+    // Two buttons at most, whatever a character learns in a profession.
+    for (const ProfessionDef& def : professions.all()) {
+        if (!def.chooses() || def.category == ProfessionCategory::weapon || def.category == ProfessionCategory::armor) continue;
+        std::vector<int> tiers_with_buttons;
+        for (const ProfessionPerkDef& perk : def.perks) {
+            if (!perk.abilities.empty() && std::find(tiers_with_buttons.begin(), tiers_with_buttons.end(), perk.level) ==
+                                               tiers_with_buttons.end()) {
+                tiers_with_buttons.push_back(perk.level);
+            }
+        }
+        CHECK(tiers_with_buttons.size() <= 2);
+    }
+    // A Bounty Hunter's two buttons: the probe (the world's or a battle's) and the dart.
+    CHECK(has(world, "bh_seeker_probe") && !has(world, "bh_recon_probe") && has(world, "bh_toxin_dart"));
+    CHECK(!has(world, "bh_hvt_world") && !has(world, "bh_wrist_rocket"));
     CHECK(!has(world, "doc_heal_dart"));  // not learned
     auto match = unlocked_abilities(book, professions, progress, true);
-    CHECK(has(match, "bh_recon_probe") && has(match, "bh_hvt") && !has(match, "bh_seeker_probe") && !has(match, "ent_perform"));
+    CHECK(has(match, "bh_recon_probe") && !has(match, "bh_hvt") && !has(match, "bh_seeker_probe") && !has(match, "ent_perform"));
 
     // Effects: the same id refreshes; modifiers become gear; time runs out.
     std::vector<TimedEffect> effects;
@@ -199,6 +215,10 @@ void test_rules(const SpecialistBook& book, const ProfessionBook& professions) {
     const Inspiration half{"insp_second_wind", 600, 0.5};
     CHECK(parse_inspiration(format_inspiration(half)) == half);
     CHECK(!parse_inspiration("") && format_inspiration(Inspiration{}).empty());
+    const std::vector<PostedBounty> posted{{7, "Poster", "Mark", 500, 1234}, {9, "Other", "Mark Two", 2500, 99}};
+    CHECK(parse_posted_bounties(format_posted_bounties(posted)) == posted);
+    CHECK(parse_posted_bounties("junk\n1\tA\tB\tnope\t3\n").empty());
+    CHECK(!bounty_mark_name(0.0, 0.99).empty() && bounty_mark_name(0.5, 0.5) == bounty_mark_name(0.5, 0.5));
     if (wind != nullptr) {
         const TimedEffect e = inspiration_effect(*wind, half);
         CHECK(e.id == "inspiration" && near(e.remaining, 600) && (e.flags & effect_flag::inspired) != 0);
@@ -209,7 +229,7 @@ void test_rules(const SpecialistBook& book, const ProfessionBook& professions) {
 void test_wire() {
     net::SpecialistSync sync;
     sync.revision = 9;
-    sync.abilities = {{"bh_bolas", 3.5f}};
+    sync.abilities = {{"bh_toxin_dart", 3.5f}};
     sync.effects = {{"inspired", "Inspired", 12, 20, effect_flag::inspired}};
     sync.companions = {{3, "womp_rat", "Biter", "tamed", 0.5, 1, 1, 1, 4, {}, false}};
     sync.active_companion = 3;
@@ -270,8 +290,12 @@ void test_server(const std::filesystem::path& root, const SpecialistBook& book, 
     std::vector<ProfessionProgress> progress;
     for (const char* id : {"bounty_hunter", "creature_handler", "entertainer", "bio_engineer", "merchant", "smuggler"}) {
         progress.push_back({id, master, 0});
-        if (std::string(id) != "entertainer") store.set_extra(vet.id, std::string("trained:") + id, "100");
+        if (std::string(id) != "entertainer" && std::string(id) != "bounty_hunter") {
+            store.set_extra(vet.id, std::string("trained:") + id, "100");
+        }
     }
+    // Bounty Hunter teaches perks: a probe, a dart that holds two charges.
+    store.set_extra(vet.id, "perks:bounty_hunter", "bh_perk_seeker,bh_perk_toxin_dart,bh_perk_twin_charges");
     // Entertainer teaches perks: a musician who leads bands and holo-records.
     store.set_extra(vet.id, "perks:entertainer",
                     "ent_perk_musician,ent_perk_flourish,ent_perk_holo_emitter,ent_perk_band_leader,ent_perk_virtuoso");
@@ -346,6 +370,21 @@ void test_server(const std::filesystem::path& root, const SpecialistBook& book, 
     CHECK(server.health_of(me) >= 399);
     const auto* mine = server.professions_of(me);
     CHECK(mine && profession_xp(*mine, "bounty_hunter") > master);
+    // Twin Charges: a second dart is ready (the cooldown shows none), a third isn't.
+    const auto dart_cooldown = [&] {
+        for (const net::AbilityStatus& a : vet_client.specialist().abilities) {
+            if (a.id == "bh_toxin_dart") return double(a.cooldown);
+        }
+        return -1.0;
+    };
+    CHECK(dart_cooldown() == 0.0);
+    use("bh_toxin_dart", target, {-12, 0, 0});
+    run(0.5);
+    CHECK(dart_cooldown() > 10.0);
+    // A loadout carries its perks' switches into a match.
+    const std::vector<Loadout> carried = server.build_player_loadouts(me);
+    CHECK(!carried.empty() && std::find(carried[0].grants.begin(), carried[0].grants.end(),
+                                        "bounty_hunter:twin_charges") != carried[0].grants.end());
 
     // A performance: the audience (the buyer, near) builds Inspiration, a
     // master's at full strength; the performer doesn't, but is tipped.
@@ -544,6 +583,244 @@ void test_craft_orders(const std::filesystem::path& root, const SpecialistBook& 
     CHECK(mine && profession_xp(*mine, "doctor") > xp);
 }
 
+// A Doctor's heals: Field Triage reaching everyone near, Lingering Bacta
+// after, and the Defibrillator bringing back the just-fallen.
+void test_doctor_heals(const SpecialistBook& book, const ProfessionBook& professions, const ItemCatalog& catalog) {
+    Heightfield ground{101, 2.0, -100, -100, std::vector<float>(101 * 101, 0.0f)};
+    World world{ground};
+    MemoryCharacterStore store;
+    const CharacterRecord medic = store.create("Medic", {0, 0, 0}, 0);
+    store.save_professions(medic.id, std::vector<ProfessionProgress>{{"doctor", professions.xp_for_level(90), 0}});
+    store.set_extra(medic.id, "perks:doctor",
+                    "doc_perk_heal_dart,doc_perk_lingering_bacta,doc_perk_defibrillator,doc_perk_triage");
+    store.create("Left", {6, 0, 0}, 0);
+    store.create("Right", {6, 0, 4}, 0);
+    net::LoopbackHub links;
+    net::Endpoint server_ep{1, 1};
+    net::LoopbackLink srv_link{links, server_ep};
+    net::LoopbackLink m_link{links, {2, 1}}, l_link{links, {3, 1}}, r_link{links, {4, 1}};
+    ServerConfig config;
+    config.catalog = &catalog;
+    config.professions = &professions;
+    config.specialists = &book;
+    config.spawn = {0, 0, 0};
+    config.respawn_delay = 8;
+    GameServer server(srv_link, world, config, &store);
+    GameClient m(m_link, world, ClientConfig{.server = server_ep, .name = "Medic"});
+    GameClient l(l_link, world, ClientConfig{.server = server_ep, .name = "Left"});
+    GameClient r(r_link, world, ClientConfig{.server = server_ep, .name = "Right"});
+    double now = 0;
+    const auto run = [&](double seconds) {
+        for (const double end = now + seconds; now < end; now += 1.0 / 30.0) {
+            server.update(now);
+            m.update(now);
+            l.update(now);
+            r.update(now);
+        }
+    };
+    run(1.0);
+    CHECK(m.status() == GameClient::Status::connected && l.status() == GameClient::Status::connected &&
+          r.status() == GameClient::Status::connected);
+    const uint32_t el = l.entity_id(), er = r.entity_id();
+    const auto dart = [&](uint32_t at) {
+        net::SpecialistRequest q;
+        q.action = net::SpecialistRequest::use_ability;
+        q.id = "doc_heal_dart";
+        q.target = at;
+        m.specialist_request(q);
+    };
+    server.npc_melee(0, el, 200, DamageType::ballistic);
+    server.npc_melee(0, er, 200, DamageType::ballistic);
+    run(0.5);
+    const double hurt_l = server.health_of(el), hurt_r = server.health_of(er);
+    CHECK(hurt_l < 350 && hurt_r < 350);
+    dart(el);
+    run(0.5);
+    // Triage: both healed, though only one was aimed at; Lingering Bacta: and still healing.
+    CHECK(server.health_of(el) > hurt_l + 80 && server.health_of(er) > hurt_r + 80);
+    const SpecialistState* ls = server.specialist_state(el);
+    CHECK(ls && std::any_of(ls->effects.begin(), ls->effects.end(), [](const TimedEffect& e) { return e.id == "doc_lingering_bacta"; }));
+    run(7.0);  // the dart's cooldown
+    // Fallen: the next dart brings them back, with a third of their health.
+    server.npc_melee(0, el, 5000, DamageType::ballistic);
+    run(0.5);
+    CHECK(!server.alive(el));
+    dart(el);
+    run(0.5);
+    CHECK(server.alive(el) && server.health_of(el) > 100);
+}
+
+// Bounties: marks of their own, spawned on accepting and gone after; Big
+// Game's harder one; players' posted bounties paid out on top, or given back
+// when the mark opts out or nobody collects in time.
+void test_bounties(const SpecialistBook& book, const ProfessionBook& professions, const ItemCatalog& catalog) {
+    Heightfield ground{201, 2.0, -200, -200, std::vector<float>(201 * 201, 0.0f)};
+    World world{ground};
+    MemoryCharacterStore store;
+    const CharacterRecord hunter_rec = store.create("Hunter", {0, 0, 0}, 0);
+    store.save_professions(hunter_rec.id, std::vector<ProfessionProgress>{{"bounty_hunter", professions.xp_for_level(60), 0}});
+    store.set_extra(hunter_rec.id, "perks:bounty_hunter", "bh_perk_seeker,bh_perk_toxin_dart,bh_perk_big_game");
+    store.create("Mark", {3, 0, 0}, 0);
+    const CharacterRecord poster_rec = store.create("Poster", {0, 0, 3}, 0);
+    store.update_economy(poster_rec.id, 5000, 0, 0, 0);
+
+    net::LoopbackHub links;
+    net::Endpoint server_ep{1, 1};
+    net::LoopbackLink srv_link{links, server_ep};
+    net::LoopbackLink hunter_link{links, {2, 1}};
+    net::LoopbackLink mark_link{links, {3, 1}};
+    net::LoopbackLink poster_link{links, {4, 1}};
+    int64_t wall = 1'000'000;
+    ServerConfig config;
+    config.catalog = &catalog;
+    config.professions = &professions;
+    config.specialists = &book;
+    config.spawn = {0, 0, 0};
+    config.bounty_post_seconds = 100;
+    config.wall_clock = [&] { return wall; };
+    GameServer server(srv_link, world, config, &store);
+    server.set_quests(nullptr, {}, {{"Bounty Terminal", {0, 0, 0}, 8, "bounty"}});
+    // The test's population: a frail outlaw beside the terminal, and two guards.
+    std::vector<std::vector<uint32_t>> spawned, retired;
+    server.on_spawn_mark = [&](const std::string& name, Vec3, int, int guards) {
+        GameServer::NpcCombatSpec spec;
+        spec.actor_kind = 3;
+        spec.max_health = 1;
+        std::vector<uint32_t> gang{server.add_combat_npc(name, {8, 0, 0}, 0, 0, spec)};
+        for (int g = 0; g < guards; ++g) gang.push_back(server.add_combat_npc("Guard", {9, 0, double(g)}, 0, 0, spec));
+        spawned.push_back(gang);
+        return gang;
+    };
+    server.on_retire_mark = [&](const std::vector<uint32_t>& gang) {
+        retired.push_back(gang);
+        for (const uint32_t e : gang) server.remove_npc(e);
+    };
+    GameClient hunter(hunter_link, world, ClientConfig{.server = server_ep, .name = "Hunter"});
+    GameClient mark(mark_link, world, ClientConfig{.server = server_ep, .name = "Mark"});
+    GameClient poster(poster_link, world, ClientConfig{.server = server_ep, .name = "Poster"});
+    double now = 0;
+    const auto run = [&](double seconds) {
+        for (const double end = now + seconds; now < end; now += 1.0 / 30.0) {
+            server.update(now);
+            hunter.update(now);
+            mark.update(now);
+            poster.update(now);
+        }
+    };
+    const auto act = [&](GameClient& who, uint8_t action, int64_t amount, std::string id = {}, uint32_t target = 0) {
+        net::SpecialistRequest r;
+        r.action = action;
+        r.amount = amount;
+        r.id = std::move(id);
+        r.target = target;
+        who.specialist_request(r);
+    };
+    using R = net::SpecialistRequest;
+    run(1.0);
+    CHECK(hunter.status() == GameClient::Status::connected && mark.status() == GameClient::Status::connected &&
+          poster.status() == GameClient::Status::connected);
+
+    // Posting: on an opted-in player, at least 500, held from the poster.
+    act(poster, R::post_bounty, 500, "Mark");
+    run(0.3);
+    CHECK(server.posted_bounties().empty());  // not opted in yet
+    act(mark, R::bounty_flag, 1);
+    run(0.3);
+    act(poster, R::post_bounty, 100, "Mark");
+    act(poster, R::post_bounty, 500, "Poster");
+    run(0.3);
+    CHECK(server.posted_bounties().empty());  // too little; yourself
+    act(poster, R::post_bounty, 500, "Mark");
+    run(0.3);
+    CHECK(server.posted_bounties().size() == 1 && poster.player_status().credits == 4500);
+    CHECK(parse_posted_bounties(store.get_extra(0, "posted_bounties")) == server.posted_bounties());
+
+    // The terminal: three tier-3 marks (Hunter 60), Big Game's tier 4 at double pay, and the player.
+    act(hunter, R::contracts, 0);
+    run(0.5);
+    std::vector<Contract> offers = hunter.specialist().offers;
+    const auto count_kind = [&](ContractKind k) {
+        return std::count_if(offers.begin(), offers.end(), [&](const Contract& c) { return c.kind == k; });
+    };
+    CHECK(count_kind(ContractKind::npc_mark) == 4 && count_kind(ContractKind::pvp_mark) == 1);
+    const auto player = std::find_if(offers.begin(), offers.end(), [](const Contract& c) { return c.kind == ContractKind::pvp_mark; });
+    CHECK(player != offers.end() && player->reward == 1500 && player->target_name == "Mark");
+    CHECK(std::any_of(offers.begin(), offers.end(), [](const Contract& c) {
+        return c.kind == ContractKind::npc_mark && c.title.find("tier 4, 3 guards") != std::string::npos;
+    }));
+    const auto first = std::find_if(offers.begin(), offers.end(), [](const Contract& c) {
+        return c.kind == ContractKind::npc_mark && c.title.find("tier 3, 2 guards") != std::string::npos;
+    });
+    CHECK(first != offers.end() && first->target_entity == 0);
+    if (first == offers.end() || player == offers.end()) return;
+
+    // Taken: its outlaw and two guards spawn; abandoned: they go.
+    act(hunter, R::contract_accept, int64_t(first->id));
+    run(0.5);
+    CHECK(spawned.size() == 1 && spawned[0].size() == 3);
+    CHECK(hunter.specialist().contracts.size() == 1 && hunter.specialist().contracts[0].target_entity == spawned[0][0]);
+    CHECK(server.npc_info(spawned[0][0]) && server.npc_info(spawned[0][0])->name == first->target_name);
+    act(hunter, R::contract_abandon, int64_t(first->id));
+    run(0.5);
+    CHECK(retired.size() == 1 && !server.npc_info(spawned[0][0]));
+
+    // Another, killed with a toxin dart: paid, and his body lies a while before going.
+    act(hunter, R::contracts, 0);
+    run(0.5);
+    offers = hunter.specialist().offers;
+    const auto second = std::find_if(offers.begin(), offers.end(), [](const Contract& c) { return c.kind == ContractKind::npc_mark; });
+    CHECK(second != offers.end());
+    if (second == offers.end()) return;
+    const int64_t before = hunter.player_status().credits;
+    act(hunter, R::contract_accept, int64_t(second->id));
+    run(0.5);
+    CHECK(spawned.size() == 2);
+    if (spawned.size() != 2) return;
+    net::SpecialistRequest dart;
+    dart.action = R::use_ability;
+    dart.id = "bh_toxin_dart";
+    dart.target = spawned[1][0];
+    dart.position = {8, 0, 0};
+    hunter.specialist_request(dart);
+    run(2.0);
+    CHECK(hunter.specialist().contracts.empty());
+    CHECK(hunter.player_status().credits == before + second->reward);
+    CHECK(retired.size() == 1 && server.npc_info(spawned[1][0]));
+    run(31.0);
+    CHECK(retired.size() == 2 && !server.npc_info(spawned[1][0]));
+
+    // The player mark: what's posted paid out on top of the base, and gone.
+    act(hunter, R::contracts, 0);
+    run(0.5);
+    offers = hunter.specialist().offers;
+    const auto pvp = std::find_if(offers.begin(), offers.end(), [](const Contract& c) { return c.kind == ContractKind::pvp_mark; });
+    CHECK(pvp != offers.end());
+    if (pvp == offers.end()) return;
+    const int64_t before_pvp = hunter.player_status().credits;
+    act(hunter, R::contract_accept, int64_t(pvp->id));
+    run(0.5);
+    server.npc_melee(hunter.entity_id(), mark.entity_id(), 1e6, DamageType::ballistic);
+    run(0.5);
+    CHECK(hunter.player_status().credits == before_pvp + 1500);
+    CHECK(server.posted_bounties().empty());
+
+    // Given back: when the mark opts out, and when nobody collects in time.
+    run(6.0);  // (the mark back on their feet)
+    act(poster, R::post_bounty, 700, "Mark");
+    run(0.3);
+    CHECK(poster.player_status().credits == 3800);
+    act(mark, R::bounty_flag, 0);
+    run(0.5);
+    CHECK(server.posted_bounties().empty() && poster.player_status().credits == 4500);
+    act(mark, R::bounty_flag, 1);
+    act(poster, R::post_bounty, 600, "Mark");
+    run(0.5);
+    CHECK(poster.player_status().credits == 3900);
+    wall += 101;
+    run(1.5);
+    CHECK(server.posted_bounties().empty() && poster.player_status().credits == 4500);
+}
+
 // In a match: a loadout from a hub brings its kit and Companion Slot; a
 // cloak hides you from the other side (they aren't even sent you); a squad
 // beacon is somewhere to spawn; a big creature stays home.
@@ -568,28 +845,33 @@ void test_match(const SpecialistBook& book, const ProfessionBook& professions) {
     net::LoopbackLink srv_link{links, server_ep};
     net::LoopbackLink a_link{links, {2, 1}};
     net::LoopbackLink b_link{links, {3, 1}};
+    net::LoopbackLink c_link{links, {4, 1}};
     ServerConfig config;
     config.battlefield = field;
     config.professions = &professions;
     config.specialists = &book;
     config.respawn_delay = 0.5;
     GameServer server(srv_link, world, config);
-    GameClient a(a_link, world, ClientConfig{.server = server_ep, .name = "Leader", .battlefield = field});
-    GameClient b(b_link, world, ClientConfig{.server = server_ep, .name = "Enemy", .battlefield = field});
+    GameClient a(a_link, world, ClientConfig{.server = server_ep, .name = "Leader", .battlefield = field, .team = 0});
+    GameClient b(b_link, world, ClientConfig{.server = server_ep, .name = "Enemy", .battlefield = field, .team = 1});
+    GameClient c(c_link, world, ClientConfig{.server = server_ep, .name = "Trooper", .battlefield = field, .team = 0});
     double now = 0;
     const auto run = [&](double seconds) {
         for (const double end = now + seconds; now < end; now += 1.0 / 30.0) {
             server.update(now);
             a.update(now);
             b.update(now);
+            c.update(now);
         }
     };
     run(0.6);
     CHECK(a.status() == GameClient::Status::connected && b.status() == GameClient::Status::connected);
-    const uint32_t ea = a.entity_id(), eb = b.entity_id();
-    // What a hub hands over: the kit, the levels, a womp rat in the Companion Slot.
+    const uint32_t ea = a.entity_id(), eb = b.entity_id(), ec = c.entity_id();
+    // What a hub hands over: the kit, the levels, its perks' switches (Squad
+    // Spawn Point), a womp rat in the Companion Slot.
     Loadout kit;
-    kit.abilities = {"rg_cloak", "sl_beacon", "sl_rally", "rg_track"};
+    kit.abilities = {"rg_cloak", "sl_strike", "sl_rally", "rg_track"};
+    kit.grants = {"squad_leader:spawn_point"};
     kit.specialist_levels = {{"ranger", 100}, {"squad_leader", 100}, {"creature_handler", 60}};
     kit.companion = format_companion({7, "womp_rat", "Biter", "tamed", 0.5, 1, 1, 1, 0, {}, false});
     kit.inspiration = format_inspiration({"insp_endurance", 600, 1.0});  // built in the hub
@@ -598,19 +880,21 @@ void test_match(const SpecialistBook& book, const ProfessionBook& professions) {
     b.request_spawn(0, 2);
     run(1.5);
     CHECK(server.alive(ea) && server.alive(eb));
+    const bool c_with_a = true;  // (asked for Leader's side)
     run(0.6);  // the kit refreshes
     const auto in_kit = [&](std::string_view id) {
         return std::any_of(a.specialist().abilities.begin(), a.specialist().abilities.end(),
                            [&](const net::AbilityStatus& s) { return s.id == id; });
     };
-    CHECK(in_kit("rg_cloak") && in_kit("sl_beacon") && !in_kit("rg_track"));  // tracking is world-only
+    CHECK(in_kit("rg_cloak") && in_kit("sl_strike") && !in_kit("rg_track"));  // tracking is world-only
     const auto inspired = [&] {
         const SpecialistState* s = server.specialist_state(ea);
         return s != nullptr && s->inspiration.id == "insp_endurance" && has_effect_flag(s->effects, effect_flag::inspired);
     };
     CHECK(inspired());  // the hub's Inspiration came along
-    const auto sees = [&](GameClient& c, uint32_t e) {
-        return std::any_of(c.remotes().begin(), c.remotes().end(), [&](const GameClient::Remote& r) { return r.id == e; });
+    const auto sees = [&](GameClient& who, uint32_t e) {
+        const std::vector<GameClient::Remote> remotes = who.remotes();  // (a copy: once)
+        return std::any_of(remotes.begin(), remotes.end(), [&](const GameClient::Remote& r) { return r.id == e; });
     };
     CHECK(sees(b, ea));
     const auto use = [&](const char* id, Vec3 at) {
@@ -624,10 +908,7 @@ void test_match(const SpecialistBook& book, const ProfessionBook& professions) {
     run(0.5);
     CHECK(server.hidden_from(eb, ea) && !server.hidden_from(ea, eb));
     CHECK(!sees(b, ea));  // not sent at all
-    // The beacon, and the womp rat from the Companion Slot.
-    const MoveState* at = server.state_of(ea);
-    const Vec3 beacon = at ? at->position + Vec3{4, 0, 0} : Vec3{};
-    use("sl_beacon", beacon);
+    // Their spawn point goes where they go, and the womp rat from the Companion Slot.
     net::SpecialistRequest summon;
     summon.action = net::SpecialistRequest::companion_summon;
     a.specialist_request(summon);
@@ -641,15 +922,24 @@ void test_match(const SpecialistBook& book, const ProfessionBook& professions) {
         });
     };
     CHECK(beacon_seen(a, true) && beacon_seen(b, false));
-    // Killed, and back at the beacon.
+    // A trooper of their side spawns on them.
+    const MoveState* leader_at = server.state_of(ea);
+    const Vec3 leader = leader_at ? leader_at->position : Vec3{};
+    if (c_with_a) {
+        c.request_spawn(0, beacon_spawn_post);
+        run(1.0);
+        const MoveState* by = server.state_of(ec);
+        CHECK(server.alive(ec) && by && std::hypot(by->position.x - leader.x, by->position.z - leader.z) < 3);
+    }
+    // Killed: their spawn point is gone with them.
     server.npc_melee(eb, ea, 5000, DamageType::melee);
     run(1.5);
     CHECK(!server.alive(ea));
     CHECK(!server.companion_of(ea));  // a companion leaves with its owner
-    a.request_spawn(0, beacon_spawn_post);
+    CHECK(server.deployable_count() == 0);
+    a.request_spawn(0, 0);
     run(1.0);
-    const MoveState* back = server.state_of(ea);
-    CHECK(server.alive(ea) && back && std::hypot(back->position.x - beacon.x, back->position.z - beacon.z) < 3);
+    CHECK(server.alive(ea) && server.deployable_count() == 1);
     CHECK(inspired());  // a death in a match doesn't end it
     // A bantha is too big for a battle.
     kit.companion = format_companion({8, "bantha", "Big", "tamed", 0.5, 1, 1, 1, 0, {}, false});
@@ -675,6 +965,8 @@ int main() {
     test_wire();
     test_server(root, book, professions, catalog);
     test_craft_orders(root, book, professions, catalog);
+    test_bounties(book, professions, catalog);
+    test_doctor_heals(book, professions, catalog);
     test_match(book, professions);
     return swm::test::finish("specialist_test");
 }

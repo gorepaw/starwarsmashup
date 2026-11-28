@@ -275,6 +275,15 @@ void GameServer::fill_specialist_loadout(const Client& client, const CharacterLo
         // loadout carries the level only below it.
         loadout.specialist_levels[def.id] = def.id == "pilot" && st.trained < 75 ? std::min(st.level, 74) : st.level;
     }
+    // Its perks' switches, for a match to know them by.
+    loadout.grants.clear();
+    for (const ProfessionProgress& p : client.professions) {
+        for (const std::string& id : p.perks) {
+            if (const ProfessionPerkDef* perk = professions->find_perk(id)) {
+                for (const std::string& g : perk->grants) loadout.grants.push_back(p.id + ":" + g);
+            }
+        }
+    }
     loadout.companion.clear();
     if (!cl.companion.empty()) {
         const uint64_t id = std::strtoull(cl.companion.c_str(), nullptr, 10);
@@ -388,7 +397,13 @@ void GameServer::give_effect(Client& client, TimedEffect effect) {
 }
 
 bool GameServer::granted(const Client& client, std::string_view profession, std::string_view grant) const {
-    return config_.professions != nullptr && has_grant(*config_.professions, client.professions, profession, grant);
+    if (config_.professions != nullptr && !client.professions.empty()) {
+        return has_grant(*config_.professions, client.professions, profession, grant);
+    }
+    // A match: what its loadout brought (fill_specialist_loadout).
+    const std::string key = std::format("{}:{}", profession, grant);
+    const std::vector<std::string>& g = loadout_of(client).grants;
+    return std::find(g.begin(), g.end(), key) != g.end();
 }
 
 ProfessionStanding GameServer::entertainer_standing(const Client& client) const {
@@ -557,7 +572,12 @@ void GameServer::handle_specialist_request(Client& client, const net::Specialist
             return;
         }
         if (client.life != Life::alive) return;
-        if (const auto it = client.spec.cooldowns.find(ability->id); it != client.spec.cooldowns.end() && it->second > 0) {
+        // With charges (Twin Charges), it's ready while a charge is: the
+        // cooldown left is short of the time to refill all but one.
+        const double cooldown = ability->cooldown * client.stats.ability_cooldown;
+        const int charges = ability_charges(client, *ability);
+        if (const auto it = client.spec.cooldowns.find(ability->id);
+            it != client.spec.cooldowns.end() && it->second > cooldown * (charges - 1) + 1e-9) {
             return;
         }
         if (!client.spec.channel.empty()) {
@@ -565,7 +585,8 @@ void GameServer::handle_specialist_request(Client& client, const net::Specialist
             return;
         }
         if (use_ability(client, *ability, request.target, request.position)) {
-            client.spec.cooldowns[ability->id] = ability->cooldown * client.stats.ability_cooldown;
+            double& left = client.spec.cooldowns[ability->id];
+            left = charges > 1 ? left + cooldown : cooldown;
             ++client.spec.revision;
             client.spec.sync_tick = 0;
         }
@@ -620,13 +641,33 @@ void GameServer::handle_specialist_request(Client& client, const net::Specialist
             notify(client.entity, std::format("You can hold {} contracts at once", max_contracts));
             return;
         }
-        client.spec.contracts.push_back(*it);
+        Contract taken = *it;
+        if (taken.kind == ContractKind::npc_mark && taken.target_entity == 0) {
+            // Its outlaw and gang, where it said (the hub's population gives them wits).
+            std::vector<uint32_t> gang;
+            if (on_spawn_mark) gang = on_spawn_mark(taken.target_name, taken.waypoint, taken.tier, taken.guards);
+            if (gang.empty()) {
+                NpcCombatSpec spec;
+                spec.actor_kind = 3;
+                for (int g = 0; g <= taken.guards; ++g) {
+                    spec.max_health = g == 0 ? 220 * (1.5 + 0.25 * taken.tier) : 220;
+                    const Vec3 at = g == 0 ? taken.waypoint : taken.waypoint + Vec3{4.0 * std::cos(g * 2.1), 0, 4.0 * std::sin(g * 2.1)};
+                    gang.push_back(add_combat_npc(g == 0 ? taken.target_name : "Outlaw", at, 0, 0, spec));
+                }
+            }
+            taken.target_entity = gang.front();
+            bounty_marks_.push_back({client.entity, taken.id, std::move(gang)});
+        }
+        client.spec.contracts.push_back(taken);
         notify(client.entity, "Contract accepted: " + it->title);
         client.spec.offers.erase(it);
         ++client.spec.revision;
         client.spec.sync_tick = 0;
         return;
     }
+    case R::post_bounty:
+        post_bounty(client, request.id, request.amount);
+        return;
     case R::contract_abandon:
         std::erase_if(client.spec.contracts, [&](const Contract& c) { return int64_t(c.id) == request.amount; });
         ++client.spec.revision;
@@ -740,6 +781,19 @@ bool GameServer::use_ability(Client& client, const AbilityDef& a, uint32_t targe
             targets.push_back(&client);
         }
         for (Client* t : targets) give_effect(*t, buff_effect());
+        // Shields Up and Press On (a Squad Leader's 25): what an order carries besides.
+        if (order) {
+            const double seconds = std::max(1.0, a.duration * order_scale);
+            const auto rider = [&](const char* id, const char* name, std::vector<StatModifier> mods) {
+                for (Client* t : targets) give_effect(*t, {id, name, me, seconds, seconds, mods});
+            };
+            if (granted(client, "squad_leader", "shields_up")) {
+                rider("sl_shields_up", "Shields Up", {{Stat::shield_recharge, 0, 1.5}, {Stat::shield_delay, -1, 1}});
+            }
+            if (granted(client, "squad_leader", "press_on")) {
+                rider("sl_press_on", "Press On", {{Stat::ability_cooldown, 0, 0.8}, {Stat::slow_resist, 0.5, 1}});
+            }
+        }
         // Second Wind: once a life, an order fills its side's stamina too.
         if (order && !client.spec.second_wind_used && granted(client, "squad_leader", "second_wind")) {
             client.spec.second_wind_used = true;
@@ -754,13 +808,53 @@ bool GameServer::use_ability(Client& client, const AbilityDef& a, uint32_t targe
     }
     case AbilityEffect::heal: {
         Client* t = target != 0 ? find(target) : &client;
+        const bool doctor = a.profession == "doctor";
+        // Defibrillator (a Doctor's 65): a heal on an ally fallen in the last 10 s brings them back.
+        if (t != nullptr && t != &client && t->life == Life::dead && doctor && in_reach(t->state.position) &&
+            (!conquest_ || allied(t->team, client.team)) && granted(client, "doctor", "defibrillator")) {
+            const uint32_t delay = uint32_t(std::lround(config_.respawn_delay * config_.tick_rate));
+            const uint32_t fell = t->respawn_tick > delay ? t->respawn_tick - delay : 0;
+            if (tick_ - fell <= uint32_t(10 * config_.tick_rate)) {
+                t->life = Life::alive;
+                t->health = std::max(1.0, t->stats.max_health / 3);
+                t->shield = 0;
+                t->state.velocity = {};
+                t->wants_spawn.reset();
+                notify(t->entity, std::format("{} brought you back!", client.name));
+                earn_specialist_xp(client, profession, a.xp * 3);
+                return true;
+            }
+        }
         if (t == nullptr || t->life != Life::alive || !in_reach(t->state.position) ||
             (t != &client && conquest_ && !allied(t->team, client.team))) {
             notify(client.entity, "No ally in reach");
             return false;
         }
-        const double healed = heal(*t, a.amount);
-        if (healed > 0 && t != &client) notify(t->entity, std::format("{} healed you (+{})", client.name, int(healed)));
+        // Who it reaches and how much: Field Triage (85) all of the side
+        // within 8 m in full; else Splash (45) those within 5 m at half.
+        std::vector<std::pair<Client*, double>> healed_who{{t, a.amount}};
+        if (doctor && granted(client, "doctor", "triage")) {
+            for (Client* o : allies_near(t->state.position, 8.0)) {
+                if (o != t) healed_who.emplace_back(o, a.amount);
+            }
+        } else if (doctor && granted(client, "doctor", "splash")) {
+            for (Client* o : allies_near(t->state.position, 5.0)) {
+                if (o != t) healed_who.emplace_back(o, a.amount * 0.5);
+            }
+        }
+        // Lingering Bacta (45): 12 health a second for 10 s after.
+        const bool lingering = doctor && granted(client, "doctor", "lingering_bacta");
+        double healed = 0;
+        for (const auto& [who, amount] : healed_who) {
+            const double h = heal(*who, amount);
+            healed += h;
+            if (lingering) {
+                TimedEffect e{"doc_lingering_bacta", "Lingering Bacta", me, 10, 10, {}};
+                e.heal_per_second = 12;
+                give_effect(*who, std::move(e));
+            }
+            if (h > 0 && who != &client) notify(who->entity, std::format("{} healed you (+{})", client.name, int(h)));
+        }
         earn_specialist_xp(client, profession, healed > 0 ? a.xp + int64_t(healed / 10) : a.xp / 4);
         return true;
     }
@@ -1418,6 +1512,11 @@ void GameServer::specialist_kill(uint32_t victim, uint32_t killer, bool npc) {
     if (npc) companion_died(victim);
     Client* hunter = find(killer);
     if (hunter == nullptr) return;
+    // Clean Getaway (a Bounty Hunter's 85): away fast after a kill, the shield already coming back.
+    if (hunter->life == Life::alive && granted(*hunter, "bounty_hunter", "clean_getaway")) {
+        give_effect(*hunter, {"bh_clean_getaway", "Clean Getaway", hunter->entity, 4, 4, {{Stat::run_speed, 0, 1.2}}});
+        hunter->shield_recharge_timer = 0;
+    }
     // A kill from a vehicle: the Pilot's (licensed, in a match).
     if (!npc && conquest_ && hunter->state.vehicle >= 0 && specialist_level(*hunter, "pilot") > 0) {
         earn_specialist_xp(*hunter, "pilot", 40);
@@ -1433,10 +1532,32 @@ void GameServer::specialist_kill(uint32_t victim, uint32_t killer, bool npc) {
     }
     for (auto it = hunter->spec.contracts.begin(); it != hunter->spec.contracts.end(); ++it) {
         if ((it->kind == ContractKind::npc_mark || it->kind == ContractKind::pvp_mark) && it->target_entity == victim) {
-            hunter->credits += it->reward;
+            int64_t reward = it->reward;
+            int64_t xp = it->xp;
+            if (it->kind == ContractKind::pvp_mark) {
+                // What players put up on them, as it stands now: paid out, and gone.
+                reward = pvp_bounty_base + posted_on(it->target_name);
+                std::vector<PostedBounty> paid;
+                std::erase_if(posted_, [&](const PostedBounty& b) {
+                    if (b.target != it->target_name) return false;
+                    paid.push_back(b);
+                    return true;
+                });
+                if (!paid.empty()) save_posted_bounties();
+                for (const PostedBounty& b : paid) {
+                    for (Client& c : clients_) {
+                        if (c.character == b.poster) notify(c.entity, std::format("{} collected your bounty on {}", hunter->name, b.target));
+                    }
+                }
+            }
+            if (granted(*hunter, "bounty_hunter", "collector")) {  // Collector: half again
+                reward += reward / 2;
+                xp += xp / 2;
+            }
+            hunter->credits += reward;
             save_economy(*hunter);
-            notify(hunter->entity, std::format("Bounty collected: {} (+{} credits)", it->target_name, it->reward));
-            earn_specialist_xp(*hunter, it->profession, it->xp);
+            notify(hunter->entity, std::format("Bounty collected: {} (+{} credits)", it->target_name, reward));
+            earn_specialist_xp(*hunter, it->profession, xp);
             if (it->kind == ContractKind::pvp_mark) {
                 if (Client* mark = find(victim)) notify(mark->entity, std::format("{} collected the bounty on you", hunter->name));
             }
@@ -1534,6 +1655,8 @@ void GameServer::update_specialists(double dt) {
         return;
     }
     specialist_clock_ += dt;
+    update_bounties(dt);
+    update_spawn_points();
 
     // Characters: their effects, channels and cooldowns.
     for (Client& client : clients_) {
@@ -1845,20 +1968,26 @@ void GameServer::offer_contracts(Client& client, size_t terminal) {
         return found;
     };
     if (t.kind == "bounty") {
-        for (const Npc* n : pick_npcs(3, 120, 1500, 3)) {
+        // Marks of their own, out in the wilds, as tough as the hunter is
+        // seasoned (a tier every 25 levels); they spawn when one is taken.
+        const int tier = std::clamp(1 + specialist_level(client, "bounty_hunter") / 25, 1, 5);
+        const auto mark = [&](int mark_tier, int guards, int64_t pay_times) {
+            const auto spot = bounty_spot(at);
+            if (!spot) return;
             Contract c;
             c.kind = ContractKind::npc_mark;
             c.profession = "bounty_hunter";
-            c.target_name = n->name;
-            c.target_entity = n->entity;
-            c.waypoint = n->state.position;
-            const double d = flat_distance(n->state.position, at);
-            const int tier = std::clamp(int(n->max_health / 120), 1, 5);
-            c.title = std::format("Bounty: {}", n->name);
-            c.reward = contract_reward(c.kind, tier, d);
-            c.xp = 120 + tier * 40;
+            c.target_name = bounty_mark_name(random_unit(), random_unit());
+            c.waypoint = *spot;
+            c.tier = mark_tier;
+            c.guards = guards;
+            c.title = std::format("Bounty: {} (tier {}, {} guards)", c.target_name, mark_tier, guards);
+            c.reward = contract_reward(c.kind, mark_tier, flat_distance(*spot, at)) * pay_times;
+            c.xp = 120 + mark_tier * 40;
             spec.offers.push_back(dressed(c));
-        }
+        };
+        for (int i = 0; i < 3; ++i) mark(tier, 2, 1);
+        if (granted(client, "bounty_hunter", "big_game")) mark(tier + 1, 3, 2);  // Big Game: harder, double pay
         for (const Client& other : clients_) {
             if (&other == &client || !other.spec.bounty_flag || other.life == Life::waiting) continue;
             Contract c;
@@ -1867,11 +1996,13 @@ void GameServer::offer_contracts(Client& client, size_t terminal) {
             c.target_name = other.name;
             c.target_entity = other.entity;
             c.waypoint = other.state.position;
-            c.title = std::format("Bounty: {} (player, opted in)", other.name);
-            c.reward = contract_reward(c.kind, 1, 0);
+            const int64_t posted = posted_on(other.name);
+            c.title = posted > 0 ? std::format("Bounty: {} (player, opted in; {} cr posted)", other.name, posted)
+                                 : std::format("Bounty: {} (player, opted in)", other.name);
+            c.reward = pvp_bounty_base + posted;
             c.xp = 400;
             spec.offers.push_back(dressed(c));
-            if (spec.offers.size() >= 5) break;
+            if (spec.offers.size() >= 8) break;
         }
     } else if (t.kind == "scout") {
         for (const Npc* n : pick_npcs(2, 150, 900, 3)) {
@@ -2564,6 +2695,17 @@ void GameServer::datapad_action(Client& client, const net::SpecialistRequest& re
         spec.bounty_flag = request.amount == 1;
         notify(client.entity, spec.bounty_flag ? "You're open to bounty hunters: they can hunt you, and you can fight back"
                                                : "You're no longer open to bounty hunters");
+        if (!spec.bounty_flag && store_ != nullptr) {
+            load_posted_bounties();
+            std::vector<PostedBounty> back;
+            std::erase_if(posted_, [&](const PostedBounty& b) {
+                if (b.target != client.name) return false;
+                back.push_back(b);
+                return true;
+            });
+            if (!back.empty()) save_posted_bounties();
+            for (const PostedBounty& b : back) refund_bounty(b, std::format("{} is no longer open to bounty hunters", b.target));
+        }
         changed();
         return;
     case R::supply_contract: {
@@ -2682,7 +2824,12 @@ void GameServer::send_specialist_sync(Client& client) {
     sync.revision = spec.revision;
     for (const std::string& id : spec.abilities) {
         const auto it = spec.cooldowns.find(id);
-        sync.abilities.push_back({id, float(it != spec.cooldowns.end() ? it->second : 0)});
+        double left = it != spec.cooldowns.end() ? it->second : 0;
+        if (const AbilityDef* a = config_.specialists ? config_.specialists->ability(id) : nullptr; a && left > 0) {
+            // With a spare charge, ready until the last is spent.
+            left = std::max(0.0, left - a->cooldown * client.stats.ability_cooldown * (ability_charges(client, *a) - 1));
+        }
+        sync.abilities.push_back({id, float(left)});
     }
     for (const TimedEffect& e : spec.effects) {
         sync.effects.push_back({e.id, e.name, float(e.remaining), float(e.duration), e.flags});
@@ -2718,6 +2865,214 @@ void GameServer::send_specialist_sync(Client& client) {
     sync.channel_remaining = float(spec.channel_remaining);
     link_.send(client.endpoint, net::encode(sync));
     client.spec.sync_tick = std::max<uint32_t>(1, tick_);
+}
+
+// ---------------------------------------------------------------------------
+// Bounty Hunter: charges, marks, posted bounties, Bloodhound
+
+int GameServer::ability_charges(const Client& client, const AbilityDef& a) const {
+    // Twin Charges: the profession's level-25 button holds two.
+    return a.level == 25 && granted(client, a.profession, "twin_charges") ? 2 : 1;
+}
+
+int64_t GameServer::wall_now() const {
+    if (config_.wall_clock) return config_.wall_clock();
+    return std::chrono::duration_cast<std::chrono::seconds>(std::chrono::system_clock::now().time_since_epoch()).count();
+}
+
+// Somewhere out in the wilds for a mark: 300 to 1,500 m off, clear of towns.
+std::optional<Vec3> GameServer::bounty_spot(Vec3 from) {
+    for (int attempt = 0; attempt < 40; ++attempt) {
+        const double angle = random_unit() * 2.0 * std::numbers::pi;
+        const double dist = 300.0 + random_unit() * 1200.0;
+        Vec3 p = world_.clamp({from.x + dist * std::cos(angle), 0, from.z + dist * std::sin(angle)});
+        p.y = world_.terrain().height_at(p.x, p.z);
+        if (world_.near_structure(p, 60.0)) continue;
+        return p;
+    }
+    return std::nullopt;
+}
+
+void GameServer::load_posted_bounties() {
+    if (posted_loaded_) return;
+    posted_loaded_ = true;
+    if (store_ != nullptr) posted_ = parse_posted_bounties(store_->get_extra(0, "posted_bounties"));
+}
+
+void GameServer::save_posted_bounties() {
+    if (store_ != nullptr) store_->set_extra(0, "posted_bounties", format_posted_bounties(posted_));
+}
+
+int64_t GameServer::posted_on(std::string_view target) {
+    load_posted_bounties();
+    int64_t sum = 0;
+    for (const PostedBounty& b : posted_) {
+        if (b.target == target) sum += b.amount;
+    }
+    return sum;
+}
+
+// A posted bounty's credits back to who put them up, here or not.
+void GameServer::refund_bounty(const PostedBounty& bounty, std::string_view why) {
+    for (Client& c : clients_) {
+        if (c.character != 0 && c.character == bounty.poster) {
+            c.credits += bounty.amount;
+            save_economy(c);
+            notify(c.entity, std::format("Your {} cr bounty on {} came back: {}", bounty.amount, bounty.target, why));
+            return;
+        }
+    }
+    if (store_ == nullptr) return;
+    if (const auto record = store_->find(bounty.poster)) {
+        store_->update_economy(bounty.poster, record->credits + bounty.amount, record->faction_points, record->experience,
+                               record->active_loadout);
+    }
+}
+
+void GameServer::post_bounty(Client& client, const std::string& target, int64_t amount) {
+    if (conquest_ || store_ == nullptr || client.character == 0) return;
+    const bool at_terminal = std::any_of(mission_terminals_.begin(), mission_terminals_.end(), [&](const net::MissionTerminal& t) {
+        return t.kind == "bounty" && flat_distance(client.state.position, t.position) <= t.radius + 2;
+    });
+    if (!at_terminal) {
+        notify(client.entity, "Post bounties at a bounty terminal");
+        return;
+    }
+    Client* mark = nullptr;
+    for (Client& c : clients_) {
+        if (c.name == target) mark = &c;
+    }
+    if (mark == &client) {
+        notify(client.entity, "You can't put a bounty on yourself");
+        return;
+    }
+    if (mark == nullptr || !mark->spec.bounty_flag) {
+        notify(client.entity, std::format("{} isn't open to bounty hunters", target));
+        return;
+    }
+    if (amount < min_posted_bounty) {
+        notify(client.entity, std::format("A bounty is at least {} credits", min_posted_bounty));
+        return;
+    }
+    if (client.credits < amount) {
+        notify(client.entity, "Not enough credits");
+        return;
+    }
+    load_posted_bounties();
+    client.credits -= amount;
+    save_economy(client);
+    posted_.push_back({client.character, client.name, mark->name, amount, wall_now() + config_.bounty_post_seconds});
+    save_posted_bounties();
+    notify(client.entity, std::format("Posted {} cr on {}: theirs who collects it within {} h, else yours again", amount,
+                                      mark->name, config_.bounty_post_seconds / 3600));
+    notify(mark->entity, std::format("{} put {} credits on your head", client.name, amount));
+}
+
+// A hit's marks: Bloodhound (a Bounty Hunter's 45; in a match, whoever
+// shoots you shows to your side) and Spotter (a Squad Leader's 85: whoever
+// you shoot shows to yours).
+void GameServer::specialist_hit(uint32_t attacker, uint32_t victim) {
+    if (attacker == 0 || attacker == victim) return;
+    Client* shooter = find(attacker);
+    Client* hit = find(victim);
+    if (conquest_ && hit != nullptr && (shooter != nullptr || find_npc(attacker) != nullptr) &&
+        granted(*hit, "bounty_hunter", "bloodhound")) {
+        mark_entity(attacker, field_team(*hit), victim, 5.0, net::FieldMark::marked);
+    }
+    if (shooter != nullptr && is_enemy(*shooter, victim) && granted(*shooter, "squad_leader", "spotter")) {
+        mark_entity(victim, field_team(*shooter), attacker, 5.0, net::FieldMark::marked);
+    }
+}
+
+// Squad Spawn Point (a Squad Leader's 85), in a match: a spawn beacon that
+// goes where they go, while they live.
+void GameServer::update_spawn_points() {
+    if (!conquest_) return;
+    for (const Client& c : clients_) {
+        const auto it = std::find_if(deployables_.begin(), deployables_.end(), [&](const Deployable& d) {
+            return d.owner == c.entity && d.ability == "sl_spawn_point";
+        });
+        if (c.life != Life::alive || !granted(c, "squad_leader", "spawn_point")) {
+            if (it != deployables_.end()) deployables_.erase(it);
+            continue;
+        }
+        if (it != deployables_.end()) {
+            it->position = c.state.position;
+            it->team = field_team(c);
+            it->remaining = 3600;
+            continue;
+        }
+        Deployable d;
+        d.id = next_field_id_++;
+        d.kind = DeployKind::spawn_beacon;
+        d.ability = "sl_spawn_point";
+        d.owner = c.entity;
+        d.team = field_team(c);
+        d.position = c.state.position;
+        d.remaining = 3600;
+        deployables_.push_back(d);
+    }
+    // Gone with their owner.
+    std::erase_if(deployables_, [&](const Deployable& d) { return d.ability == "sl_spawn_point" && find(d.owner) == nullptr; });
+}
+
+void GameServer::update_bounties(double dt) {
+    // Marks whose contract is over (done, failed, abandoned, or their hunter
+    // gone) leave the world: at once, or a dead outlaw after his body has lain a while.
+    for (auto it = bounty_marks_.begin(); it != bounty_marks_.end();) {
+        if (it->retire_in < 0) {
+            const Client* hunter = find(it->hunter);
+            const bool held = hunter != nullptr && std::any_of(hunter->spec.contracts.begin(), hunter->spec.contracts.end(),
+                                                               [&](const Contract& c) { return c.id == it->contract; });
+            if (!held) {
+                const Npc* outlaw = it->entities.empty() ? nullptr : find_npc(it->entities.front());
+                it->retire_in = outlaw != nullptr && outlaw->life != Life::alive ? 30.0 : 0.0;
+            }
+        }
+        if (it->retire_in >= 0) {
+            it->retire_in -= dt;
+            if (it->retire_in < 0) {
+                if (on_retire_mark) {
+                    on_retire_mark(it->entities);
+                } else {
+                    for (const uint32_t e : it->entities) remove_npc(e);
+                }
+                it = bounty_marks_.erase(it);
+                continue;
+            }
+        }
+        ++it;
+    }
+    bounty_tick_ += dt;
+    if (bounty_tick_ < 1.0 || conquest_) return;
+    bounty_tick_ = 0;
+    // Bloodhound, in the world: marks within 150 m stay on the hunter's HUD.
+    for (Client& c : clients_) {
+        if (c.life != Life::alive || c.spec.contracts.empty() || !granted(c, "bounty_hunter", "bloodhound")) continue;
+        for (Contract& k : c.spec.contracts) {
+            if ((k.kind != ContractKind::npc_mark && k.kind != ContractKind::pvp_mark) || k.target_entity == 0) continue;
+            std::optional<Vec3> p;
+            if (const Client* o = find(k.target_entity)) p = o->state.position;
+            else if (const Npc* n = find_npc(k.target_entity)) p = n->state.position;
+            if (p && flat_distance(*p, c.state.position) <= 150.0) {
+                k.waypoint = *p;
+                mark_entity(k.target_entity, -2, c.entity, 1.5, net::FieldMark::bounty);
+            }
+        }
+    }
+    // Posted bounties nobody collected in time go back.
+    if (store_ != nullptr) {
+        load_posted_bounties();
+        const int64_t now = wall_now();
+        std::vector<PostedBounty> lapsed;
+        std::erase_if(posted_, [&](const PostedBounty& b) {
+            if (b.expires > now) return false;
+            lapsed.push_back(b);
+            return true;
+        });
+        if (!lapsed.empty()) save_posted_bounties();
+        for (const PostedBounty& b : lapsed) refund_bounty(b, "nobody collected it in time");
+    }
 }
 
 } // namespace swm::core
