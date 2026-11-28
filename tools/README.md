@@ -25,6 +25,7 @@ python -I tools\assets\rebuild_imported_assets.py --swg E:\swg_te\extracted\Star
 - `--swg`: a folder of unencrypted Galaxies `.tre` archives (*The Total Experience*'s, extracted as in [Manifests](#manifests)). `--bf2`: Battlefront II's `_lvl_pc`. It defaults to the Steam install's.
 - `--list` prints every command without running anything. Each step's output goes to a log; failures are listed at the end. The last phase, `check`, confirms that every `imported_assets` path named by the repo's data and code exists.
 - Run it from the repository root. A full rebuild takes about 10 minutes and about 5 GB.
+- `--emit-recipe <file>` writes the same steps as JSON for the launcher ([Distribution](../docs/DISTRIBUTION.md)): argv with `{tools}`, `{bf2}`, `{swg}` and `{scratch}` placeholders, run from an install dir laid out like the repo root, each with a key that changes when its command does, plus the `check` phase's required paths. The space maps' options and the space vehicles are worked out while emitting, from your Battlefront II and `imported_assets` (Battlefront's data is the same on every release), so it needs a full export first.
 
 Where its commands come from, so a new asset is added by recording it, not by remembering a command line:
 
@@ -48,11 +49,13 @@ Where its commands come from, so a new asset is added by recording it, not by re
 swgtool list <archive.tre>
 swgtool manifest <dir> --name <name> --source <text> -o <out.tsv>
 swgtool coverage <manifest.tsv> <dir> [--missing <out.tsv>]
+swgtool verify <x.sources> [--missing <out.tsv>]
 swgtool groups <manifest.tsv> [--list <group>]
 swgtool iff <archive.tre|dir> <path> [--full]
 swgtool iff-check <dir>
 swgtool datatable <dir> <path.iff> [--match <text>]
 swgtool extract <dir> <path> <out_file>
+swgtool extract-list <dir> <list.txt> <out_dir>
 swgtool export-character <dir> <out_dir> --name <name> --sat <path.sat>... [--weapon <path.lod>]
                          [--bf2-lvl <ingame.lvl> --bf2-bank <bank> --anim <name>...]
 swgtool export-species <dir> <out_dir> [--bf2-lvl <ingame.lvl>] [--species <id>] [--max-hairs <n>]
@@ -69,6 +72,18 @@ swgtool snapshot <dir> <path.ws> [--match <text>] [--near <x> <z> <radius>] [--i
 swgtool export-city <dir> <bake_prefix> --snapshot <path.ws> --center <x> <z> --radius <m> [--hub <hub.ini>]
 ```
 
+`<dir>` is a folder of `.tre` archives, every copy trusted (your own Total Experience extraction), or a **`.sources` file** for anyone else's install:
+
+```
+manifest C:\...\tools\manifests\swg-total-experience-2005.tsv
+source D:\SWGEmu
+source E:\swg_cache\total_experience
+```
+
+Then every archive in every source is read, but only SOE originals are used: for each path, the copy the reference install loads (its highest-priority archive's), matched by size when indexed and by SHA-256 when read. A modified copy is passed over for another source's; a path nobody has byte for byte fails when read; files the reference lacks don't exist. Archives that can't be opened are skipped with a warning. This is how the launcher reads players' folders ([Supported game versions](../docs/ARCHITECTURE.md#supported-game-versions)).
+
+- **verify**: how much of the reference a `.sources` file's folders supply as SOE originals: a `group <name> <found> <total>` line per content group, then a summary. Exit code 3 if any `base` file is missing. `--missing` lists them.
+- **extract-list**: every path in a list file (one per line, `#` comments) into `<out_dir>` under its file name; the rebuild's Galaxies music and ambience (`game/audio/swg_audio_files.txt`).
 - **list**: print every file in a TRE archive (uncompressed size, stored size, compressed flag, path).
 - **manifest**: hash the uncompressed contents of every file in every `.tre` under `<dir>` and write a reference manifest. Refuses to write if any archive or file fails to read.
 - **coverage**: compare an install against a reference manifest. For each reference file it reports `matched` (byte-identical at the same path), `moved` (identical, but only under another path), `changed` (path exists, contents differ), or `absent`, plus a per-folder breakdown and a count of install files that aren't in the reference.

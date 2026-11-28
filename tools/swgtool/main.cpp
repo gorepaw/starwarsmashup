@@ -48,10 +48,16 @@ constexpr const char* usage = R"(usage:
   swgtool list <archive.tre>
   swgtool manifest <dir> --name <name> --source <text> -o <out.tsv>
   swgtool coverage <manifest.tsv> <dir> [--missing <out.tsv>]
+  swgtool verify <x.sources> [--missing <out.tsv>]
   swgtool groups <manifest.tsv> [--list <group>]
   swgtool iff <archive.tre|dir> <path> [--full]
   swgtool iff-check <dir>
   swgtool extract <dir> <path> <out_file>
+  swgtool extract-list <dir> <list.txt> <out_dir>
+
+<dir> is a folder of .tre archives, or a .sources file naming a reference
+manifest and source folders (lines "manifest <tsv>", "source <dir>"): then only
+files byte-identical to the reference's are read.
   swgtool datatable <dir> <path.iff> [--match <text>]
   swgtool export-character <dir> <out_dir> (--name <name> --sat <path.sat>... | --template <object/mobile/...iff>)
                            [--weapon <path.lod>]
@@ -295,6 +301,70 @@ int cmd_coverage(const std::vector<std::string>& args) {
         std::cout << std::format("Wrote {} unmatched paths to {}\n", not_matched.size(), missing_path);
     }
     return install.errors.empty() ? 0 : 1;
+}
+
+// How much of a reference the sources in a .sources file supply as SOE
+// originals: per content group, the paths whose loaded copy (the reference's
+// highest-priority one) is among the sources, byte for byte. Prints a
+// "group <name> <found> <total>" line per group for the launcher. Exit code 3
+// if any "base" file is missing (the game's core needs all of them).
+int cmd_verify(const std::vector<std::string>& args) {
+    if (args.empty()) {
+        std::cerr << usage;
+        return 2;
+    }
+    const SourcesFile sources = read_sources_file(args[0]);
+    std::ifstream manifest_file(sources.manifest, std::ios::binary);
+    if (!manifest_file) {
+        std::cerr << "cannot open " << sources.manifest.string() << "\n";
+        return 1;
+    }
+    const Manifest reference = read_manifest(manifest_file);
+    const auto copies = reference_copies(reference);
+    const std::map<std::string, std::string> groups = path_content_groups(reference);
+
+    std::unordered_set<std::string> found;
+    for (const auto& dir : sources.sources) {
+        if (!std::filesystem::is_directory(dir)) {
+            std::cerr << "warning: no folder " << dir.string() << "\n";
+            continue;
+        }
+        const ScanResult scan = scan_tre_directory(dir, std::cerr);
+        print_errors(scan.errors);
+        for (const ManifestEntry& entry : scan.entries) {
+            const auto copy = copies.find(entry.path);
+            if (copy != copies.end() && copy->second.sha256 == entry.sha256) {
+                found.insert(entry.path);
+            }
+        }
+    }
+
+    std::map<std::string, std::pair<uint64_t, uint64_t>> by_group;  // found, total
+    std::vector<std::pair<std::string, std::string>> missing;
+    for (const auto& [path, group] : groups) {
+        auto& [have, total] = by_group[group];
+        ++total;
+        if (found.contains(path)) {
+            ++have;
+        } else {
+            missing.emplace_back(group, path);
+        }
+    }
+    for (const auto& [group, counts] : by_group) {
+        std::cout << std::format("group {} {} {}\n", group, counts.first, counts.second);
+    }
+    const std::string missing_path = option(args, "--missing");
+    if (!missing_path.empty()) {
+        std::ofstream out(missing_path, std::ios::binary);
+        for (const auto& [group, path] : missing) {
+            out << group << '\t' << path << '\n';
+        }
+    }
+    const bool base_complete = std::none_of(missing.begin(), missing.end(),
+                                            [](const auto& m) { return m.first == "base"; });
+    std::cout << std::format("verified {} of {} reference files; core (base) {}\n", found.size(), groups.size(),
+                             base_complete ? "complete" : "INCOMPLETE");
+    return base_complete ? 0 : 3;
 }
 
 int cmd_groups(const std::vector<std::string>& args) {
@@ -998,6 +1068,52 @@ int cmd_extract(const std::vector<std::string>& args) {
     std::ofstream out(args[2], std::ios::binary);
     out.write(reinterpret_cast<const char*>(data.data()), std::streamsize(data.size()));
     return out ? 0 : 1;
+}
+
+// Every path listed in a text file (one per line, '#' comments) to out_dir,
+// under its file name. Lists the ones that failed; exit code 1 if any did.
+int cmd_extract_list(const std::vector<std::string>& args) {
+    if (args.size() < 3) {
+        std::cerr << usage;
+        return 2;
+    }
+    TreLibrary library(args[0]);
+    std::ifstream list(args[1], std::ios::binary);
+    if (!list) {
+        std::cerr << "cannot open " << args[1] << "\n";
+        return 1;
+    }
+    const std::filesystem::path out_dir(args[2]);
+    std::filesystem::create_directories(out_dir);
+    size_t done = 0;
+    std::vector<std::string> failed;
+    std::string line;
+    while (std::getline(list, line)) {
+        while (!line.empty() && (line.back() == '\r' || line.back() == ' ' || line.back() == '\t')) {
+            line.pop_back();
+        }
+        const size_t start = line.find_first_not_of(" \t");
+        if (start == std::string::npos || line[start] == '#') {
+            continue;
+        }
+        const std::string path = normalize_path(line.substr(start));
+        try {
+            const std::vector<uint8_t> data = library.read(path);
+            std::ofstream out(out_dir / path.substr(path.find_last_of('/') + 1), std::ios::binary);
+            out.write(reinterpret_cast<const char*>(data.data()), std::streamsize(data.size()));
+            if (!out) {
+                throw std::runtime_error("cannot write");
+            }
+            ++done;
+        } catch (const std::exception& e) {
+            failed.push_back(path + ": " + e.what());
+        }
+    }
+    std::cout << std::format("extracted {} file(s) to {}\n", done, out_dir.string());
+    for (const std::string& f : failed) {
+        std::cerr << "failed " << f << "\n";
+    }
+    return failed.empty() ? 0 : 1;
 }
 
 int cmd_datatable(const std::vector<std::string>& args) {
@@ -1732,6 +1848,12 @@ int main(int argc, char** argv) {
         }
         if (command == "coverage") {
             return cmd_coverage(args);
+        }
+        if (command == "verify") {
+            return cmd_verify(args);
+        }
+        if (command == "extract-list") {
+            return cmd_extract_list(args);
         }
         if (command == "groups") {
             return cmd_groups(args);

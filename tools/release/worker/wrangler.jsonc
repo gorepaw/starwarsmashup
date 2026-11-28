@@ -1,0 +1,16 @@
+{
+  // The update server (docs/DISTRIBUTION.md). Deploy: npx wrangler deploy
+  // Secrets: npx wrangler secret put PUBLISH_TOKEN / PORTABLE_TOKEN
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "swm-updates",
+  "main": "src/index.js",
+  "compatibility_date": "2026-11-01",
+  "workers_dev": true,
+  "observability": { "enabled": true },
+  "r2_buckets": [
+    // The player build's channel (no game assets).
+    { "binding": "PUBLIC", "bucket_name": "swm-public" },
+    // The portable build's channel: holds game assets, never public.
+    { "binding": "PRIVATE", "bucket_name": "swm-private" }
+  ]
+}

@@ -9,7 +9,10 @@
 
 #include <zlib.h>
 
+#include "swg/manifest.h"
+#include "swg/sha256.h"
 #include "swg/tre_archive.h"
+#include "swg/tre_library.h"
 
 using namespace swm::swg;
 
@@ -127,6 +130,91 @@ void test_rejects_non_tre() {
     std::filesystem::remove(path);
 }
 
+// A .sources file: only the copy the reference loads (its highest-priority
+// archive's), byte for byte, from whichever source has it.
+void test_sources_use_only_reference_copies() {
+    const auto root = std::filesystem::temp_directory_path() / "swm_tre_sources_test";
+    std::filesystem::remove_all(root);
+    std::filesystem::create_directories(root / "emu");
+    std::filesystem::create_directories(root / "disc");
+    std::filesystem::create_directories(root / "old");
+
+    // The reference: a.iff patched (A2 beats A1), b.iff and c.iff as shipped.
+    Manifest manifest{"test", "synthetic", {}};
+    const auto add = [&](const char* archive, const char* path, const std::string& contents) {
+        manifest.entries.push_back({Sha256::hex_of(contents.data(), contents.size()), contents.size(), archive, path});
+    };
+    add("data_a.tre", "a.iff", "A1");
+    add("patch_01.tre", "a.iff", "A2");
+    add("data_a.tre", "b.iff", "B1");
+    add("data_a.tre", "c.iff", "C1");
+    {
+        std::ofstream out(root / "ref.tsv", std::ios::binary);
+        write_manifest(manifest, out);
+    }
+
+    // An emulator's folder: the patched a.iff, its own edit of b.iff (same
+    // size), a file of its own, and an archive that isn't one.
+    write_tre(root / "emu" / "emu_custom.tre", "5000",
+              {{"a.iff", bytes_of("A2"), false}, {"b.iff", bytes_of("XX"), true}, {"d.iff", bytes_of("custom"), false}},
+              false);
+    std::ofstream(root / "emu" / "broken.tre", std::ios::binary) << "not an archive, padded to some length....";
+    // Discs: the original b.iff.
+    write_tre(root / "disc" / "data_a.tre", "5000", {{"b.iff", bytes_of("B1"), false}}, true);
+    // An older install: only the unpatched a.iff.
+    write_tre(root / "old" / "data_a.tre", "5000", {{"a.iff", bytes_of("A1"), false}}, false);
+
+    const auto sources = [&](const std::string& name, const std::vector<std::string>& dirs) {
+        const auto path = root / (name + ".sources");
+        std::ofstream out(path, std::ios::binary);
+        out << "# test\nmanifest " << (root / "ref.tsv").string() << "\n";
+        for (const auto& d : dirs) {
+            out << "source   " << (root / d).string() << "\r\n";
+        }
+        return path;
+    };
+
+    {
+        TreLibrary library(sources("both", {"emu", "disc"}));
+        CHECK(library.verified());
+        CHECK(library.warnings().size() == 1);  // broken.tre
+        CHECK(library.read("a.iff") == bytes_of("A2"));
+        CHECK(library.read("B.IFF") == bytes_of("B1"));  // the emulator's edit is passed over
+        CHECK(!library.contains("c.iff"));                // nobody has it
+        CHECK(!library.contains("d.iff"));                // not in the reference
+        CHECK(library.paths() == std::vector<std::string>({"a.iff", "b.iff"}));
+    }
+    {
+        // Only the emulator's b.iff: no original to read.
+        TreLibrary library(sources("emu_only", {"emu"}));
+        bool threw = false;
+        try {
+            library.read("b.iff");
+        } catch (const std::runtime_error&) {
+            threw = true;
+        }
+        CHECK(threw);
+    }
+    {
+        // An SOE original, but not the version the reference loads.
+        TreLibrary library(sources("old", {"old"}));
+        bool threw = false;
+        try {
+            library.read("a.iff");
+        } catch (const std::runtime_error&) {
+            threw = true;
+        }
+        CHECK(threw);
+    }
+    {
+        // A plain folder trusts every copy, as before.
+        TreLibrary library(root / "disc");
+        CHECK(!library.verified());
+        CHECK(library.read("b.iff") == bytes_of("B1"));
+    }
+    std::filesystem::remove_all(root);
+}
+
 } // namespace
 
 int main() {
@@ -134,6 +222,7 @@ int main() {
     test_round_trip("5000", false);
     test_round_trip("6000", true);
     test_rejects_non_tre();
+    test_sources_use_only_reference_copies();
 
     if (failures == 0) {
         std::printf("tre_archive_test: all passed\n");

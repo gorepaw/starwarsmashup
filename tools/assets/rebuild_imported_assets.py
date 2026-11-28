@@ -2,6 +2,7 @@
 
   python -I tools/assets/rebuild_imported_assets.py --swg <dir of .tre> [--bf2 <_lvl_pc>] [phase...]
   python -I tools/assets/rebuild_imported_assets.py --swg <dir> --list      print every command, run nothing
+  python -I tools/assets/rebuild_imported_assets.py --emit-recipe <file>    write the launcher's recipe
 
 Run from the repository root after building the tools (cmake --build build\\msvc
 --config Release --target swgtool bf2tool). Phases, in order (all by default):
@@ -27,6 +28,8 @@ run goes on. Nothing here contains game data: it all comes from your files.
 """
 import argparse
 import glob
+import hashlib
+import json
 import os
 import re
 import shutil
@@ -196,8 +199,9 @@ def plan(bf2, swg, scratch):
     steps.append(Step("swg", "mos eisley city", [tool("swgtool"), "export-city", swg, me, "--snapshot",
                                                  "snapshot/tatooine.ws", "--center", "3500", "-4800", "--radius",
                                                  "700", "--hub", os.path.join("game", "hubs", "mos_eisley.ini")]))
-    steps.append(Step("swg", "swg audio", ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File",
-                                           os.path.join("tools", "import_swg_audio.ps1"), "-Archives", swg]))
+    steps.append(Step("swg", "swg audio", [tool("swgtool"), "extract-list", swg,
+                                           os.path.join("game", "audio", "swg_audio_files.txt"),
+                                           os.path.join(OUT, "audio", "swg")]))
 
     # planets
     planets, cur = [], None
@@ -245,11 +249,12 @@ def space_map_steps(bf2):
             space_assault.commands(bf2, os.path.join(OUT, "maps"), tool("bf2tool"))]
 
 
-def space_vehicle_steps(bf2):
+def space_vehicle_steps(bf2, done=None):
     # Each space map's spawns (Class = <side> <atk|def> <class>) and turrets
-    # (Class = <class>) not exported yet. A starfighter is in its side's file;
-    # a capital ship's turret is the map's own (spa/<map>.lvl).
-    done = {os.path.basename(p) for p in glob.glob(os.path.join(OUT, "vehicles", "*"))}
+    # (Class = <class>) not exported yet (or not in `done`). A starfighter is in
+    # its side's file; a capital ship's turret is the map's own (spa/<map>.lvl).
+    if done is None:
+        done = {os.path.basename(p) for p in glob.glob(os.path.join(OUT, "vehicles", "*"))}
     found = {}
     for mp, _era in space_assault.MAPS:
         for f in glob.glob(os.path.join(OUT, "maps", mp, "*.ini")):
@@ -276,13 +281,18 @@ def space_vehicle_steps(bf2):
 
 def check():
     """The imported_assets paths the repo names that don't exist."""
-    missing, count = [], 0
+    needed = required_paths()
+    missing = [(p, why) for p, why in needed if not (os.path.exists(p) or os.path.exists(p + ".r32"))]
+    return len(needed), sorted(set(missing))
+
+
+def required_paths():
+    """[(path, why)]: every imported_assets path the repo's data and code name
+    (a terrain bake's prefix counts if <prefix>.r32 exists)."""
+    needed = []
 
     def need(path, why):
-        nonlocal count
-        count += 1
-        if not (os.path.exists(path) or os.path.exists(path + ".r32")):
-            missing.append((path, why))
+        needed.append((path, why))
 
     for f in glob.glob(os.path.join("game", "**", "*.ini"), recursive=True):
         if os.path.abspath(f).startswith(os.path.abspath(OUT)):
@@ -315,7 +325,7 @@ def check():
                "sullustan"]:
         for g in ["male", "female"]:
             need(os.path.join(OUT, "species", "%s_%s" % (sp, g), "%s_%s.gltf" % (sp, g)), "species")
-    return count, sorted(set(missing))
+    return needed
 
 
 def run(steps, log_dir):
@@ -361,6 +371,84 @@ def run(steps, log_dir):
     return failed
 
 
+# Bump a tool's number when its exports change (new data in an existing export,
+# a fixed exporter): every recipe step it runs gets a new key, so launchers
+# export them again after updating. New or changed commands need no bump.
+EXPORT_VERSIONS = {"bf2tool": 1, "swgtool": 1}
+# Repo files a command reads without naming them.
+IMPLICIT_INPUTS = {"export-items": [os.path.join("game", "items", "swg_catalog.ini")]}
+
+
+def step_key(argv, copy):
+    """A recipe step's key: its command, its tool's export version, and the
+    contents of the repo files it reads (those its argv names, a hub's Town
+    files, IMPLICIT_INPUTS), so a changed hub or catalog exports again."""
+    h = hashlib.sha256(json.dumps([argv, copy]).encode())
+    exe = os.path.splitext(os.path.basename(argv[0]))[0]
+    h.update(("%s=%d" % (exe, EXPORT_VERSIONS.get(exe, 0))).encode())
+    inputs = [t for t in argv[1:] if not t.startswith("{") and os.path.isfile(t)]
+    for t in list(inputs):
+        if os.path.normpath(t).startswith(os.path.join("game", "hubs") + os.sep):
+            inputs += [os.path.join("game", "hubs", v) for v in ini_values(t, "Town")]
+    inputs += IMPLICIT_INPUTS.get(argv[1] if len(argv) > 1 else "", [])
+    for f in sorted(set(inputs)):
+        if os.path.isfile(f):
+            h.update(f.replace("\\", "/").encode())
+            with open(f, "rb") as fh:
+                h.update(hashlib.sha256(fh.read().replace(b"\r\n", b"\n")).digest())
+    return h.hexdigest()[:16]
+
+
+def emit_recipe(path, bf2):
+    """The launcher's recipe (docs/DISTRIBUTION.md): every step as argv with
+    placeholders, run from the install dir (laid out like the repo root):
+    {tools} its tools folder, {bf2} Battlefront II's _lvl_pc, {swg} the Galaxies
+    sources, {scratch} a temp folder. The space maps' options and the space
+    vehicles are worked out here, from this machine's Battlefront II and
+    imported_assets (Battlefront's data is the same on every release)."""
+    tools_prefix = os.path.dirname(tool("bf2tool"))
+
+    def template(argv):
+        out = []
+        for t in argv:
+            t = t.replace(tools_prefix + os.sep, "{tools}" + os.sep)
+            if t.startswith(bf2):
+                t = "{bf2}" + t[len(bf2):]
+            out.append(t)
+        return out
+
+    steps = plan(bf2, "{swg}", "{scratch}")
+    planned_vehicles = {s.argv[4] for s in steps if s.argv and s.label.startswith("vehicle ")}
+    entries, required = [], []
+    for s in steps:
+        if s.expand == "space_maps":
+            group = space_map_steps(bf2)
+        elif s.expand == "space_vehicles":
+            group = space_vehicle_steps(bf2, done=planned_vehicles)
+        elif s.expand == "check":
+            required = sorted({p for p, _why in required_paths()})
+            continue
+        else:
+            group = [s]
+        for g in group:
+            e = {"phase": g.phase, "label": g.label, "argv": template(g.argv)}
+            if g.after and g.after[0] == "copy_mode":
+                _, mp, mode, tmp = g.after
+                e["copy"] = {"from": os.path.join(tmp, "%s_%s.ini" % (mp, mode)),
+                             "to_dir": os.path.join(OUT, "maps", mp)}
+            e["key"] = step_key(e["argv"], e.get("copy"))
+            entries.append(e)
+    try:
+        commit = subprocess.run(["git", "rev-parse", "HEAD"], capture_output=True, text=True).stdout.strip()
+    except OSError:
+        commit = ""
+    recipe = {"format": 1, "commit": commit, "out": OUT, "steps": entries, "required": required}
+    with open(path, "w", encoding="utf-8", newline="\n") as f:
+        json.dump(recipe, f, indent=1)
+        f.write("\n")
+    print("wrote %s: %d steps, %d required paths" % (path, len(entries), len(required)))
+
+
 def main():
     global ARGS
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
@@ -369,6 +457,7 @@ def main():
     ap.add_argument("--swg", help="a folder of Galaxies .tre archives swgtool reads (not encrypted ones)")
     ap.add_argument("--list", action="store_true", help="print the commands, run nothing")
     ap.add_argument("--logs", default=None, help="where each step's log goes (default: a temp folder)")
+    ap.add_argument("--emit-recipe", metavar="FILE", help="write the launcher's recipe (JSON) and run nothing")
     ARGS = ap.parse_args()
     phases = ARGS.phases or PHASES
     if set(phases) - set(PHASES):
@@ -377,6 +466,8 @@ def main():
         sys.exit("run from the repository root")
     if not os.path.exists(os.path.join(ARGS.bf2, "ingame.lvl")):
         sys.exit("no Battlefront II at %s: pass --bf2 <...\\GameData\\Data\\_lvl_pc>" % ARGS.bf2)
+    if ARGS.emit_recipe:
+        return emit_recipe(ARGS.emit_recipe, ARGS.bf2)
     if ({"swg", "planets"} & set(phases)) and not ARGS.swg:
         sys.exit("the swg and planets phases need --swg <folder of Galaxies .tre archives>")
     scratch = tempfile.mkdtemp(prefix="swm_modes_")

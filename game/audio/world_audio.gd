@@ -5,7 +5,7 @@
 # this fades out while one's on.
 #
 # Its files are Galaxies' (game/audio/swg_audio_files.txt), extracted by
-# tools/import_swg_audio.ps1 to res://imported_assets/audio/swg/. Without
+# swgtool extract-list (rebuild_imported_assets.py) to res://imported_assets/audio/swg/. Without
 # them it stays silent.
 #
 #   var world_audio := WorldAudio.new(root)

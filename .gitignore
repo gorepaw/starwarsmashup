@@ -79,3 +79,7 @@ compile_commands.json
 .idea/
 Thumbs.db
 .DS_Store
+
+# The update Worker's local leftovers (tools/release/worker)
+/tools/release/worker/node_modules/
+/tools/release/worker/.wrangler/

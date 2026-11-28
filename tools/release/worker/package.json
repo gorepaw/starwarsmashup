@@ -1,0 +1,12 @@
+{
+  "name": "swm-updates",
+  "private": true,
+  "description": "The update server (docs/DISTRIBUTION.md)",
+  "scripts": {
+    "deploy": "wrangler deploy",
+    "dev": "wrangler dev"
+  },
+  "devDependencies": {
+    "wrangler": "^4.169.0"
+  }
+}

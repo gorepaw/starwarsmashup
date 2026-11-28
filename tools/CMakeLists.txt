@@ -73,3 +73,26 @@ foreach(test animation_test effect_test hud_test level_test model_test sound_tes
   swm_target_warnings(${test})
   add_test(NAME ${test} COMMAND ${test})
 endforeach()
+
+# The extractor (Windows): finds installs, reads the discs' cabinets, runs the
+# recipe; the launcher's core, and swm_extract over it (docs/DISTRIBUTION.md).
+if(WIN32)
+  add_library(swm_extract_lib STATIC
+    extract/cabs.cpp
+    extract/discovery.cpp
+    extract/process.cpp
+    extract/recipe.cpp)
+  target_include_directories(swm_extract_lib PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+  target_link_libraries(swm_extract_lib PUBLIC nlohmann_json::nlohmann_json PRIVATE swm::unshield advapi32)
+  target_compile_definitions(swm_extract_lib PUBLIC UNICODE _UNICODE)
+  swm_target_warnings(swm_extract_lib)
+
+  add_executable(swm_extract extract/main.cpp)
+  target_link_libraries(swm_extract PRIVATE swm_extract_lib shell32)
+  swm_target_warnings(swm_extract)
+
+  add_executable(extract_test extract/tests/extract_test.cpp)
+  target_link_libraries(extract_test PRIVATE swm_extract_lib shell32)
+  swm_target_warnings(extract_test)
+  add_test(NAME extract_test COMMAND extract_test)
+endif()

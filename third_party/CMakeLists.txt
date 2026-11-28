@@ -49,3 +49,90 @@ target_include_directories(swm_sqlite3 SYSTEM PUBLIC ${sqlite_SOURCE_DIR})
 target_compile_definitions(swm_sqlite3 PRIVATE
   SQLITE_DQS=0 SQLITE_OMIT_LOAD_EXTENSION SQLITE_OMIT_DEPRECATED SQLITE_DEFAULT_FOREIGN_KEYS=1)
 add_library(swm::sqlite3 ALIAS swm_sqlite3)
+
+# nlohmann/json (MIT, header-only): the extractor's recipe and the launcher's
+# update manifests (docs/DISTRIBUTION.md).
+FetchContent_Declare(nlohmann_json
+  URL https://github.com/nlohmann/json/releases/download/v3.11.3/json.tar.xz
+  URL_HASH SHA256=d6c65aca6b1ed68e7a182f4757257b107ae403032760ed6ef121c9d55e81757d
+  DOWNLOAD_EXTRACT_TIMESTAMP TRUE
+  EXCLUDE_FROM_ALL)
+FetchContent_MakeAvailable(nlohmann_json)
+
+# unshield 1.6.2 (MIT): reads the Total Experience discs' InstallShield
+# cabinets, the version the reference manifest was made with. Only its library,
+# built here (its own MD5, no OpenSSL); SOURCE_SUBDIR keeps its CMake out.
+FetchContent_Declare(unshield
+  URL https://github.com/twogood/unshield/archive/refs/tags/1.6.2.tar.gz
+  URL_HASH SHA256=a937ef596ad94d16e7ed2c8553ad7be305798dcdcfd65ae60210b1e54ab51a2f
+  DOWNLOAD_EXTRACT_TIMESTAMP TRUE
+  SOURCE_SUBDIR do-not-add
+  EXCLUDE_FROM_ALL)
+FetchContent_MakeAvailable(unshield)
+set(SWM_UNSHIELD_CONFIG "${CMAKE_CURRENT_BINARY_DIR}/unshield_config")
+file(WRITE "${SWM_UNSHIELD_CONFIG}/lib/unshield_config.h" [=[
+#define HAVE_INTTYPES_H 1
+#define HAVE_MEMORY_H 1
+#define HAVE_STDBOOL_H 1
+#define HAVE_STDINT_H 1
+#define HAVE_STDLIB_H 1
+#define HAVE_STRING_H 1
+#define HAVE_SYS_STAT_H 1
+#define HAVE_SYS_TYPES_H 1
+#define PACKAGE "unshield"
+#define PACKAGE_BUGREPORT ""
+#define PACKAGE_NAME "unshield"
+#define PACKAGE_STRING "unshield 1.6.2"
+#define PACKAGE_TARNAME "unshield"
+#define PACKAGE_URL ""
+#define PACKAGE_VERSION "1.6.2"
+#define SIZE_FORMAT "zi"
+#define USE_OUR_OWN_MD5 1
+#define VERSION "1.6.2"
+]=])
+set(SWM_UNSHIELD_LIB "${unshield_SOURCE_DIR}/lib")
+add_library(swm_unshield STATIC
+  ${SWM_UNSHIELD_LIB}/component.c ${SWM_UNSHIELD_LIB}/converter.c ${SWM_UNSHIELD_LIB}/directory.c
+  ${SWM_UNSHIELD_LIB}/file.c ${SWM_UNSHIELD_LIB}/file_group.c ${SWM_UNSHIELD_LIB}/helper.c
+  ${SWM_UNSHIELD_LIB}/libunshield.c ${SWM_UNSHIELD_LIB}/log.c ${SWM_UNSHIELD_LIB}/md5/md5c.c)
+target_include_directories(swm_unshield SYSTEM PUBLIC ${SWM_UNSHIELD_LIB})
+target_include_directories(swm_unshield PRIVATE ${SWM_UNSHIELD_CONFIG} ${unshield_SOURCE_DIR})
+if(MSVC)
+  target_include_directories(swm_unshield PRIVATE ${unshield_SOURCE_DIR}/win32_msvc)
+  target_compile_options(swm_unshield PRIVATE /W0)
+  target_compile_definitions(swm_unshield PRIVATE _CRT_SECURE_NO_WARNINGS _CRT_NONSTDC_NO_WARNINGS)
+endif()
+target_compile_definitions(swm_unshield PRIVATE HAVE_CONFIG_H)
+target_link_libraries(swm_unshield PUBLIC swm::zlib)
+add_library(swm::unshield ALIAS swm_unshield)
+
+# Monocypher 4.0.2 (CC0 / BSD-2): Ed25519 signatures on update manifests.
+FetchContent_Declare(monocypher
+  URL https://monocypher.org/download/monocypher-4.0.2.tar.gz
+  URL_HASH SHA256=38d07179738c0c90677dba3ceb7a7b8496bcfea758ba1a53e803fed30ae0879c
+  DOWNLOAD_EXTRACT_TIMESTAMP TRUE
+  SOURCE_SUBDIR do-not-add
+  EXCLUDE_FROM_ALL)
+FetchContent_MakeAvailable(monocypher)
+add_library(swm_monocypher STATIC
+  ${monocypher_SOURCE_DIR}/src/monocypher.c ${monocypher_SOURCE_DIR}/src/optional/monocypher-ed25519.c)
+target_include_directories(swm_monocypher SYSTEM PUBLIC ${monocypher_SOURCE_DIR}/src ${monocypher_SOURCE_DIR}/src/optional)
+add_library(swm::monocypher ALIAS swm_monocypher)
+
+# Dear ImGui 1.91.5 (MIT): the launcher's UI, on Win32 + Direct3D 11.
+if(WIN32)
+  FetchContent_Declare(imgui
+    URL https://github.com/ocornut/imgui/archive/refs/tags/v1.91.5.tar.gz
+    URL_HASH SHA256=2aa2d169c569368439e5d5667e0796d09ca5cc6432965ce082e516937d7db254
+    DOWNLOAD_EXTRACT_TIMESTAMP TRUE
+    SOURCE_SUBDIR do-not-add
+    EXCLUDE_FROM_ALL)
+  FetchContent_MakeAvailable(imgui)
+  add_library(swm_imgui STATIC
+    ${imgui_SOURCE_DIR}/imgui.cpp ${imgui_SOURCE_DIR}/imgui_draw.cpp ${imgui_SOURCE_DIR}/imgui_tables.cpp
+    ${imgui_SOURCE_DIR}/imgui_widgets.cpp
+    ${imgui_SOURCE_DIR}/backends/imgui_impl_win32.cpp ${imgui_SOURCE_DIR}/backends/imgui_impl_dx11.cpp)
+  target_include_directories(swm_imgui SYSTEM PUBLIC ${imgui_SOURCE_DIR} ${imgui_SOURCE_DIR}/backends)
+  target_link_libraries(swm_imgui PUBLIC d3d11 d3dcompiler dxgi)
+  add_library(swm::imgui ALIAS swm_imgui)
+endif()
